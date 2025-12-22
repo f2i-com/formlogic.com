@@ -4,6 +4,32 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
 
+// Generate a human-friendly field ID from a label
+function generateFieldId(label: string, existingIds: string[]): string {
+  // Convert label to slug: lowercase, replace spaces/special chars with underscores
+  let baseId = label
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')  // Replace non-alphanumeric with underscore
+    .replace(/^_+|_+$/g, '')       // Remove leading/trailing underscores
+    .substring(0, 32);             // Limit length
+
+  // If empty after sanitization, use a default
+  if (!baseId) {
+    baseId = 'field';
+  }
+
+  // Check if ID already exists, if so append a number
+  let finalId = baseId;
+  let counter = 1;
+  while (existingIds.includes(finalId)) {
+    finalId = `${baseId}_${counter}`;
+    counter++;
+  }
+
+  return finalId;
+}
+
 // Storage mode: 'local' for localStorage, 'api' for backend
 type StorageMode = 'local' | 'api';
 
@@ -235,11 +261,12 @@ export const useFormStore = create<FormState>()(
         const form = state.forms.find((f) => f.id === id);
         if (!form) return null;
 
+        // Keep the same field IDs since they're human-readable and unique per form
         const newForm: Form = {
           ...form,
           id: uuidv4(),
           title: `${form.title} (Copy)`,
-          fields: form.fields.map((field) => ({ ...field, id: uuidv4() })),
+          fields: form.fields.map((field) => ({ ...field })),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           status: 'draft',
@@ -277,9 +304,13 @@ export const useFormStore = create<FormState>()(
         const form = get().forms.find((f) => f.id === formId);
         if (!form) throw new Error('Form not found');
 
+        // Generate human-friendly ID from label
+        const existingIds = form.fields.map((f) => f.id);
+        const fieldId = generateFieldId(fieldData.label, existingIds);
+
         const field: FormField = {
           ...fieldData,
-          id: uuidv4(),
+          id: fieldId,
           order: form.fields.length,
         };
 

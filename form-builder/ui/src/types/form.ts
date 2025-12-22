@@ -107,6 +107,7 @@ export interface Form {
   fields: FormField[];
   settings: FormSettings;
   theme: FormTheme;
+  logicScript?: string;
   createdAt: string;
   updatedAt: string;
   status: 'draft' | 'published' | 'archived';

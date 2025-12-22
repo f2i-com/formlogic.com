@@ -30,7 +30,8 @@ import {
   PartyPopper,
   Heart,
   Zap,
-  ShieldCheck
+  ShieldCheck,
+  Code2
 } from 'lucide-react';
 import {
   DndContext,
@@ -54,8 +55,9 @@ import { Input } from '../components/ui/Input';
 import { Switch } from '../components/ui/Switch';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
-import { LogicEditor, ValidationEditor, CalculatedFieldEditor } from '../components/builder';
+import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } from '../components/builder';
 import { useFormStore } from '../stores/formStore';
+import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
 import { cn } from '../lib/utils';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type ConditionalLogic } from '../types/form';
@@ -483,6 +485,7 @@ function FieldSettingsPanel({
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const [showScriptEditor, setShowScriptEditor] = useState(false);
 
   const {
     getForm,
@@ -607,6 +610,16 @@ export default function FormBuilder() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowScriptEditor(true)}
+            title="Backend Logic Script"
+          >
+            <Code2 className="h-4 w-4 mr-2" />
+            <span className="hidden sm:inline">Script</span>
+            {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
+          </Button>
           <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)}>
             <Eye className="h-4 w-4 mr-2" />
             <span className="hidden sm:inline">Preview</span>
@@ -732,6 +745,18 @@ export default function FormBuilder() {
           </aside>
         )}
       </div>
+
+      {/* Script Editor Modal */}
+      <ScriptEditor
+        isOpen={showScriptEditor}
+        onClose={() => setShowScriptEditor(false)}
+        script={form.logicScript || ''}
+        onSave={(script) => {
+          updateForm(form.id, { logicScript: script });
+          toast.success('Script Saved', 'Your backend logic script has been saved');
+        }}
+        formFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+      />
     </div>
   );
 }
