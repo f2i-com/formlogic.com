@@ -139,11 +139,21 @@ class ResponseController
             ], 403);
         }
 
+        // Validate answers against form fields
+        $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        if (!empty($validationErrors)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Validation failed',
+                'errors' => $validationErrors,
+            ], 400);
+        }
+
         // Add request metadata
         $serverParams = $request->getServerParams();
-        $data['ipAddress'] = $serverParams['REMOTE_ADDR'] ?? null;
-        $data['userAgent'] = $request->getHeaderLine('User-Agent');
-        $data['referrer'] = $request->getHeaderLine('Referer');
+        $data['ipAddress'] = $this->getClientIp($request);
+        $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500); // Limit length
+        $data['referrer'] = substr($request->getHeaderLine('Referer'), 0, 2000); // Limit length
 
         // Get the script from the form (if any)
         $script = $form['logicScript'] ?? null;
@@ -166,6 +176,204 @@ class ResponseController
                 'message' => $e->getMessage(),
             ], 400);
         }
+    }
+
+    /**
+     * Validate answers against form field definitions
+     *
+     * @param array $fields Form field definitions
+     * @param array $answers Submitted answers
+     * @return array Validation errors (empty if valid)
+     */
+    private function validateAnswers(array $fields, array $answers): array
+    {
+        $errors = [];
+
+        // Create a map of field IDs to field definitions
+        $fieldMap = [];
+        foreach ($fields as $field) {
+            if (isset($field['id'])) {
+                $fieldMap[$field['id']] = $field;
+            }
+        }
+
+        // Check required fields
+        foreach ($fields as $field) {
+            $fieldId = $field['id'] ?? null;
+            if (!$fieldId) {
+                continue;
+            }
+
+            $isRequired = $field['required'] ?? false;
+            $fieldType = $field['type'] ?? 'short_text';
+
+            // Skip validation for non-input field types
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you'], true)) {
+                continue;
+            }
+
+            $value = $answers[$fieldId] ?? null;
+
+            // Check required fields
+            if ($isRequired && $this->isEmpty($value)) {
+                $errors[$fieldId] = 'This field is required';
+                continue;
+            }
+
+            // Skip further validation if empty and not required
+            if ($this->isEmpty($value)) {
+                continue;
+            }
+
+            // Type-specific validation
+            $typeError = $this->validateFieldType($field, $value);
+            if ($typeError) {
+                $errors[$fieldId] = $typeError;
+            }
+        }
+
+        // Check for unknown fields (potential injection attempt)
+        foreach ($answers as $fieldId => $value) {
+            if (!isset($fieldMap[$fieldId])) {
+                // Unknown field - could be injection attempt, silently ignore
+                // but log for monitoring
+                error_log("Unknown field submitted: {$fieldId}");
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Check if a value is considered empty
+     */
+    private function isEmpty($value): bool
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return true;
+        }
+        if (is_string($value) && trim($value) === '') {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Validate a field value against its type
+     */
+    private function validateFieldType(array $field, $value): ?string
+    {
+        $type = $field['type'] ?? 'short_text';
+
+        switch ($type) {
+            case 'email':
+                if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                    return 'Invalid email address';
+                }
+                break;
+
+            case 'url':
+                if (!filter_var($value, FILTER_VALIDATE_URL)) {
+                    return 'Invalid URL';
+                }
+                break;
+
+            case 'number':
+                if (!is_numeric($value)) {
+                    return 'Must be a number';
+                }
+                break;
+
+            case 'phone':
+                // Basic phone validation - allows common formats
+                if (!preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
+                    return 'Invalid phone number format';
+                }
+                break;
+
+            case 'date':
+            case 'datetime':
+            case 'time':
+                // Basic date/time validation
+                if (is_string($value) && strlen($value) > 100) {
+                    return 'Invalid date/time format';
+                }
+                break;
+
+            case 'rating':
+                $maxStars = $field['properties']['maxStars'] ?? 5;
+                if (!is_numeric($value) || $value < 1 || $value > $maxStars) {
+                    return "Rating must be between 1 and {$maxStars}";
+                }
+                break;
+
+            case 'scale':
+                $min = $field['properties']['scaleStart'] ?? 1;
+                $max = $field['properties']['scaleEnd'] ?? 10;
+                if (!is_numeric($value) || $value < $min || $value > $max) {
+                    return "Value must be between {$min} and {$max}";
+                }
+                break;
+
+            case 'dropdown':
+            case 'multiple_choice':
+                // Validate against allowed options
+                $options = $field['properties']['options'] ?? [];
+                $allowedValues = array_column($options, 'value');
+                if (!in_array($value, $allowedValues, true)) {
+                    return 'Invalid selection';
+                }
+                break;
+
+            case 'checkboxes':
+                // For checkboxes, value should be an array
+                if (!is_array($value)) {
+                    return 'Invalid selection format';
+                }
+                $options = $field['properties']['options'] ?? [];
+                $allowedValues = array_column($options, 'value');
+                foreach ($value as $selected) {
+                    if (!in_array($selected, $allowedValues, true)) {
+                        return 'Invalid selection';
+                    }
+                }
+                break;
+
+            case 'short_text':
+            case 'long_text':
+                // Enforce reasonable length limits
+                if (is_string($value)) {
+                    $maxLength = $type === 'short_text' ? 1000 : 50000;
+                    if (strlen($value) > $maxLength) {
+                        return "Text exceeds maximum length of {$maxLength} characters";
+                    }
+                }
+                break;
+        }
+
+        return null;
+    }
+
+    /**
+     * Get client IP address from request
+     */
+    private function getClientIp(Request $request): string
+    {
+        $serverParams = $request->getServerParams();
+
+        // Check common proxy headers
+        $headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP'];
+        foreach ($headers as $header) {
+            if (!empty($serverParams[$header])) {
+                $ips = explode(',', $serverParams[$header]);
+                $ip = trim($ips[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+
+        return $serverParams['REMOTE_ADDR'] ?? '127.0.0.1';
     }
 
     /**

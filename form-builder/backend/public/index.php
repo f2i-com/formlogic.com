@@ -112,7 +112,8 @@ $container->set(DocumentConverter::class, function () {
 $container->set(AIController::class, function (Container $c) {
     return new AIController(
         $c->get(AIService::class),
-        $c->get(DocumentConverter::class)
+        $c->get(DocumentConverter::class),
+        $c->get('settings')['uploads'] ?? []
     );
 });
 
@@ -318,7 +319,10 @@ $app->get('/api/forms/{formId}/export/json', function ($request, $response) use 
     return $container->get(ResponseController::class)->exportJson($request, $response, $getArgs($request));
 })->add($authRequired);
 
-// Public form view (for embedding/sharing)
+// Create rate limiter for public form viewing (60 requests per minute per IP)
+$publicFormRateLimiter = new RateLimitMiddleware(60, 60, 'public_form');
+
+// Public form view (for embedding/sharing) - rate limited to prevent enumeration
 $app->get('/api/public/forms/{id}', function ($request, $response) use ($container, $getArgs) {
     $formService = $container->get(FormService::class);
     $args = $getArgs($request);
@@ -344,7 +348,7 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     unset($form['userId']);
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
-});
+})->add($publicFormRateLimiter);
 
 // Run app
 $app->run();

@@ -547,12 +547,16 @@ class ResponseService
 
     /**
      * Update form analytics
+     *
+     * Note: Uses validated column names in SQL. The column name is strictly
+     * controlled by the match statement and validated against a whitelist
+     * to prevent any possibility of SQL injection.
      */
     private function updateAnalytics(string $formId, string $type): void
     {
         $today = date('Y-m-d');
 
-        // Try to update existing record
+        // Map type to column name - strictly controlled
         $column = match ($type) {
             'view' => 'views',
             'start' => 'starts',
@@ -564,12 +568,36 @@ class ResponseService
             return;
         }
 
-        $stmt = $this->mysql->prepare("
-            INSERT INTO form_analytics (id, form_id, date, $column)
-            VALUES (:id, :form_id, :date, 1)
-            ON DUPLICATE KEY UPDATE $column = $column + 1
-        ");
+        // Whitelist validation as defense-in-depth
+        // This ensures even if the match statement is extended incorrectly,
+        // we won't have SQL injection
+        $allowedColumns = ['views', 'starts', 'completions'];
+        if (!in_array($column, $allowedColumns, true)) {
+            error_log("Invalid analytics column attempted: " . $column);
+            return;
+        }
 
+        // Use separate prepared statements for each column type
+        // This avoids any string interpolation in SQL entirely
+        $queries = [
+            'views' => "
+                INSERT INTO form_analytics (id, form_id, date, views)
+                VALUES (:id, :form_id, :date, 1)
+                ON DUPLICATE KEY UPDATE views = views + 1
+            ",
+            'starts' => "
+                INSERT INTO form_analytics (id, form_id, date, starts)
+                VALUES (:id, :form_id, :date, 1)
+                ON DUPLICATE KEY UPDATE starts = starts + 1
+            ",
+            'completions' => "
+                INSERT INTO form_analytics (id, form_id, date, completions)
+                VALUES (:id, :form_id, :date, 1)
+                ON DUPLICATE KEY UPDATE completions = completions + 1
+            ",
+        ];
+
+        $stmt = $this->mysql->prepare($queries[$column]);
         $stmt->execute([
             'id' => $this->generateUuid(),
             'form_id' => $formId,

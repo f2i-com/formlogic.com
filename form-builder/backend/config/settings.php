@@ -73,5 +73,18 @@ return [
                 'decayMinutes' => (int)($_ENV['LOGIN_DECAY_MINUTES'] ?? 15),
             ],
         ],
+
+        'uploads' => [
+            'maxFileSize' => (int)($_ENV['UPLOAD_MAX_FILE_SIZE'] ?? 10 * 1024 * 1024), // 10MB default
+            'allowedTypes' => [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+            ],
+        ],
     ],
 ];

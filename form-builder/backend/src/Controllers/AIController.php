@@ -13,11 +13,24 @@ class AIController
 {
     private AIService $aiService;
     private DocumentConverter $documentConverter;
+    private array $uploadSettings;
 
-    public function __construct(AIService $aiService, DocumentConverter $documentConverter)
+    public function __construct(AIService $aiService, DocumentConverter $documentConverter, array $uploadSettings = [])
     {
         $this->aiService = $aiService;
         $this->documentConverter = $documentConverter;
+        $this->uploadSettings = array_merge([
+            'maxFileSize' => 10 * 1024 * 1024, // 10MB default
+            'allowedTypes' => [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+            ],
+        ], $uploadSettings);
     }
 
     /**
@@ -72,9 +85,6 @@ class AIController
         }
     }
 
-    // Maximum file size for uploads (10MB)
-    private const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
     /**
      * Generate form from uploaded document or image
      * POST /api/ai/generate-form-from-file
@@ -101,29 +111,21 @@ class AIController
         }
 
         // Validate file size before processing
+        $maxFileSize = $this->uploadSettings['maxFileSize'];
         $fileSize = $file->getSize();
-        if ($fileSize > self::MAX_FILE_SIZE) {
+        if ($fileSize > $maxFileSize) {
             $response->getBody()->write(json_encode([
-                'error' => 'File too large. Maximum size is ' . (self::MAX_FILE_SIZE / 1024 / 1024) . 'MB',
-                'maxSize' => self::MAX_FILE_SIZE,
+                'error' => 'File too large. Maximum size is ' . round($maxFileSize / 1024 / 1024, 1) . 'MB',
+                'maxSize' => $maxFileSize,
                 'actualSize' => $fileSize,
             ]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
         // Validate file type
-        $allowedTypes = [
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'image/jpeg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-        ];
-
+        $allowedTypes = $this->uploadSettings['allowedTypes'];
         $mimeType = $file->getClientMediaType();
-        if (!in_array($mimeType, $allowedTypes)) {
+        if (!in_array($mimeType, $allowedTypes, true)) {
             $response->getBody()->write(json_encode([
                 'error' => 'Unsupported file type: ' . $mimeType,
                 'allowed' => $allowedTypes,
@@ -131,13 +133,18 @@ class AIController
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
-        // Sanitize filename to prevent path traversal
+        // Create a secure temp file with restrictive permissions BEFORE writing
+        // This prevents the race condition where file is created with default permissions
+        $tempDir = sys_get_temp_dir();
         $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($file->getClientFilename()));
-        $tempPath = sys_get_temp_dir() . '/' . uniqid('upload_', true) . '_' . $safeFilename;
+        $tempPath = $tempDir . '/' . bin2hex(random_bytes(16)) . '_' . $safeFilename;
 
-        // Set restrictive permissions before moving
-        $file->moveTo($tempPath);
+        // Create an empty file with restrictive permissions first
+        touch($tempPath);
         chmod($tempPath, 0600);
+
+        // Now move the uploaded file to our prepared location
+        $file->moveTo($tempPath);
 
         try {
             // Convert document to images
