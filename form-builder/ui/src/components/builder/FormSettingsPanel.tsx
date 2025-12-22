@@ -79,8 +79,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           ))}
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        {/* Content - Fixed height to prevent resizing when switching tabs */}
+        <div className="h-[400px] overflow-y-auto p-6">
           {/* Presentation Tab */}
           {activeTab === 'presentation' && (
             <div className="space-y-6">
