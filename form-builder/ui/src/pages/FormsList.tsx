@@ -10,7 +10,8 @@ import {
   BarChart3,
   Copy,
   Trash2,
-  Table
+  Table,
+  Share2
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -21,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs'
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { formatRelativeTime } from '../lib/utils';
+import { EmbedModal } from '../components/builder/EmbedModal';
 import type { Form } from '../types/form';
 
 export function FormsList() {
@@ -29,6 +31,7 @@ export function FormsList() {
   const { getResponsesByFormId } = useResponseStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
 
   const handleCreateForm = async () => {
     const form = await createForm('Untitled Form');
@@ -129,6 +132,15 @@ export function FormsList() {
                       className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <Copy className="h-4 w-4" /> Duplicate
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEmbedModalForm({ id: form.id, title: form.title });
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Share2 className="h-4 w-4" /> Share & Embed
                     </button>
                     <hr className="my-1" />
                     <button
@@ -258,6 +270,16 @@ export function FormsList() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Embed Modal */}
+      {embedModalForm && (
+        <EmbedModal
+          isOpen={true}
+          onClose={() => setEmbedModalForm(null)}
+          formId={embedModalForm.id}
+          formTitle={embedModalForm.title}
+        />
+      )}
     </div>
   );
 }

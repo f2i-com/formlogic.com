@@ -31,7 +31,8 @@ import {
   Heart,
   Zap,
   ShieldCheck,
-  Code2
+  Code2,
+  Share2
 } from 'lucide-react';
 import {
   DndContext,
@@ -56,6 +57,7 @@ import { Switch } from '../components/ui/Switch';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } from '../components/builder';
+import { EmbedModal } from '../components/builder/EmbedModal';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
@@ -488,6 +490,7 @@ export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const [showScriptEditor, setShowScriptEditor] = useState(false);
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
 
   const {
     getForm,
@@ -618,13 +621,22 @@ export default function FormBuilder() {
             onClick={() => setShowScriptEditor(true)}
             title="Backend Logic Script"
           >
-            <Code2 className="h-4 w-4 mr-2" />
+            <Code2 className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Script</span>
             {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
           </Button>
           <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)}>
-            <Eye className="h-4 w-4 mr-2" />
+            <Eye className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Preview</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowEmbedModal(true)}
+            title="Share & Embed"
+          >
+            <Share2 className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Share</span>
           </Button>
           <Button
             size="sm"
@@ -758,6 +770,14 @@ export default function FormBuilder() {
           toast.success('Script Saved', 'Your backend logic script has been saved');
         }}
         formFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+      />
+
+      {/* Embed Modal */}
+      <EmbedModal
+        isOpen={showEmbedModal}
+        onClose={() => setShowEmbedModal(false)}
+        formId={form.id}
+        formTitle={form.title}
       />
     </div>
   );

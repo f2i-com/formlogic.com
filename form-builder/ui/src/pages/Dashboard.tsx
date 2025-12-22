@@ -12,7 +12,8 @@ import {
   MoreVertical,
   Database,
   FileJson,
-  Table
+  Table,
+  Share2
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -24,6 +25,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
 import { formatRelativeTime } from '../lib/utils';
+import { EmbedModal } from '../components/builder/EmbedModal';
 
 interface DashboardStats {
   totalResponses: number;
@@ -38,7 +40,8 @@ function FormActionsDropdown({
   onEdit,
   onPreview,
   onAnalytics,
-  onViewData
+  onViewData,
+  onShare
 }: {
   formId: string;
   formTitle: string;
@@ -47,6 +50,7 @@ function FormActionsDropdown({
   onPreview: () => void;
   onAnalytics: () => void;
   onViewData: () => void;
+  onShare: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -156,6 +160,13 @@ function FormActionsDropdown({
               <Table className="h-4 w-4 text-gray-600" />
               View Data
             </button>
+            <button
+              onClick={() => { onShare(); setIsOpen(false); }}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Share2 className="h-4 w-4 text-gray-600" />
+              Share & Embed
+            </button>
             <div className="border-t border-gray-200 my-1" />
           </div>
           <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -202,6 +213,7 @@ export function Dashboard() {
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
+  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
 
   const handleCreateForm = async () => {
     const form = await createForm('Untitled Form');
@@ -418,6 +430,7 @@ export function Dashboard() {
                         onPreview={() => navigate(`/preview/${form.id}`)}
                         onAnalytics={() => navigate(`/analytics/${form.id}`)}
                         onViewData={() => navigate(`/responses/${form.id}`)}
+                        onShare={() => setEmbedModalForm({ id: form.id, title: form.title })}
                       />
                     </div>
                   </CardContent>
@@ -427,6 +440,16 @@ export function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Embed Modal */}
+      {embedModalForm && (
+        <EmbedModal
+          isOpen={true}
+          onClose={() => setEmbedModalForm(null)}
+          formId={embedModalForm.id}
+          formTitle={embedModalForm.title}
+        />
+      )}
     </div>
   );
 }

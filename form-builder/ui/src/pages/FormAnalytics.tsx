@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -10,6 +10,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { EmbedModal } from '../components/builder/EmbedModal';
 
 interface DailyResponse {
   day: string;
@@ -120,6 +121,7 @@ export default function FormAnalytics() {
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -219,6 +221,10 @@ export default function FormAnalytics() {
             <Button variant="outline" onClick={() => navigate(`/responses/${form.id}`)}>
               <Table className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">View Data</span>
+            </Button>
+            <Button variant="outline" onClick={() => setShowEmbedModal(true)} title="Share & Embed">
+              <Share2 className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Share</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
@@ -397,6 +403,14 @@ export default function FormAnalytics() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Embed Modal */}
+      <EmbedModal
+        isOpen={showEmbedModal}
+        onClose={() => setShowEmbedModal(false)}
+        formId={form.id}
+        formTitle={form.title}
+      />
     </div>
   );
 }

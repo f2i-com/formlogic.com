@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
@@ -9,6 +9,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
+import { EmbedModal } from '../components/builder/EmbedModal';
 import type { FormField } from '../types/form';
 
 // Field Preview Component
@@ -525,6 +526,7 @@ export default function FormPreview() {
 
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
 
   const form = formId ? getForm(formId) : undefined;
 
@@ -640,6 +642,15 @@ export default function FormPreview() {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => setShowEmbedModal(true)}
+            title="Share & Embed"
+          >
+            <Share2 className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Share</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => window.open(`/form/${form.id}`, '_blank')}
           >
             <ExternalLink className="h-4 w-4 sm:mr-2" />
@@ -647,6 +658,14 @@ export default function FormPreview() {
           </Button>
         </div>
       </header>
+
+      {/* Embed Modal */}
+      <EmbedModal
+        isOpen={showEmbedModal}
+        onClose={() => setShowEmbedModal(false)}
+        formId={form.id}
+        formTitle={form.title}
+      />
 
       {/* Preview Area */}
       <div className="flex-1 flex items-center justify-center p-8">

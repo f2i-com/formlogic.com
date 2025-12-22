@@ -15,6 +15,7 @@ import {
   Calendar,
   Clock,
   Filter,
+  Share2,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
@@ -24,6 +25,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
+import { EmbedModal } from '../components/builder/EmbedModal';
 import type { Form, FormField, FormResponse } from '../types/form';
 
 const ITEMS_PER_PAGE = 10;
@@ -55,6 +57,7 @@ export function FormResponses() {
   const [isSaving, setIsSaving] = useState(false);
   const [sortField, setSortField] = useState<'submittedAt' | 'completionTime'>('submittedAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
 
   // Load form and responses
   useEffect(() => {
@@ -310,6 +313,10 @@ export function FormResponses() {
             <Button variant="outline" onClick={() => navigate(`/analytics/${formId}`)}>
               <ArrowLeft className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Back to Analytics</span>
+            </Button>
+            <Button variant="outline" onClick={() => setShowEmbedModal(true)} title="Share & Embed">
+              <Share2 className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Share</span>
             </Button>
             <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0}>
               <Download className="h-4 w-4 sm:mr-2" />
@@ -685,6 +692,14 @@ export function FormResponses() {
           </div>
         </div>
       )}
+
+      {/* Embed Modal */}
+      <EmbedModal
+        isOpen={showEmbedModal}
+        onClose={() => setShowEmbedModal(false)}
+        formId={form.id}
+        formTitle={form.title}
+      />
     </div>
   );
 }
