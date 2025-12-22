@@ -43,6 +43,7 @@ export function FormResponses() {
   const getForm = useFormStore((state) => state.getForm);
   const localResponses = useResponseStore((state) => state.getResponsesByFormId);
   const deleteLocalResponse = useResponseStore((state) => state.deleteResponse);
+  const updateLocalResponse = useResponseStore((state) => state.updateResponse);
 
   const [form, setForm] = useState<Form | null>(null);
   const [responses, setResponses] = useState<ResponseWithStatus[]>([]);
@@ -181,9 +182,14 @@ export function FormResponses() {
           )
         );
       } else {
-        // Local storage update - would need to add updateResponse to store
-        toast.warning('Edit not available', 'Editing is only available in cloud mode');
-        return;
+        // Local storage update
+        updateLocalResponse(selectedResponse.id, editedAnswers);
+        // Update local state
+        setResponses((prev) =>
+          prev.map((r) =>
+            r.id === selectedResponse.id ? { ...r, answers: editedAnswers } : r
+          )
+        );
       }
       toast.success('Response updated', 'Changes saved successfully');
       setIsEditModalOpen(false);

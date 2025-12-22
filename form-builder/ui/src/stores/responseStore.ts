@@ -24,6 +24,7 @@ interface ResponseState {
   // Response queries
   getResponsesByFormId: (formId: string) => FormResponse[];
   getResponseById: (id: string) => FormResponse | undefined;
+  updateResponse: (id: string, answers: Record<string, unknown>) => void;
   deleteResponse: (id: string) => void;
   deleteResponsesByFormId: (formId: string) => void;
 }
@@ -109,6 +110,14 @@ export const useResponseStore = create<ResponseState>()(
 
       getResponseById: (id) => {
         return get().responses.find((r) => r.id === id);
+      },
+
+      updateResponse: (id, answers) => {
+        set((state) => ({
+          responses: state.responses.map((r) =>
+            r.id === id ? { ...r, answers } : r
+          ),
+        }));
       },
 
       deleteResponse: (id) => {

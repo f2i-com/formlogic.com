@@ -29,9 +29,15 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Initialize auth first, then forms
-    initializeAuth().then(() => {
-      initializeForms();
-    });
+    initializeAuth()
+      .then(() => {
+        initializeForms();
+      })
+      .catch((error) => {
+        console.error('Failed to initialize app:', error);
+        // Continue with forms initialization even if auth fails
+        initializeForms();
+      });
   }, [initializeAuth, initializeForms]);
 
   // Show loading while initializing

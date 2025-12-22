@@ -351,7 +351,7 @@ export default function FormAnalytics() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">Recent Responses</h2>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)}>
               View All
             </Button>
           </CardHeader>

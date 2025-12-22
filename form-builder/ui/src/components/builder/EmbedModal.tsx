@@ -90,11 +90,15 @@ function closeFormPopup() {
     }
   };
 
-  const handleCopy = (text: string, type: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(type);
-    toast.success('Copied!', 'Code copied to clipboard');
-    setTimeout(() => setCopied(null), 2000);
+  const handleCopy = async (text: string, type: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(type);
+      toast.success('Copied!', 'Code copied to clipboard');
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      toast.error('Copy failed', 'Could not copy to clipboard. Please select and copy manually.');
+    }
   };
 
   const embedTypes: { id: EmbedType; label: string; description: string; icon: React.ReactNode }[] = [
