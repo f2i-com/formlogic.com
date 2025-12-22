@@ -1,0 +1,253 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  FileText,
+  Plus,
+  Search,
+  MoreVertical,
+  Pencil,
+  Eye,
+  BarChart3,
+  Copy,
+  Trash2
+} from 'lucide-react';
+import { Header } from '../components/layout/Header';
+import { Card, CardContent } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { Badge } from '../components/ui/Badge';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
+import { useFormStore } from '../stores/formStore';
+import { useResponseStore } from '../stores/responseStore';
+import { formatRelativeTime } from '../lib/utils';
+import type { Form } from '../types/form';
+
+export function FormsList() {
+  const navigate = useNavigate();
+  const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
+  const { getResponsesByFormId } = useResponseStore();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+
+  const handleCreateForm = () => {
+    const form = createForm('Untitled Form');
+    setActiveForm(form.id);
+    navigate(`/builder/${form.id}`);
+  };
+
+  const handleDuplicate = (id: string) => {
+    const newForm = duplicateForm(id);
+    if (newForm) {
+      setActiveForm(newForm.id);
+      navigate(`/builder/${newForm.id}`);
+    }
+    setActiveMenu(null);
+  };
+
+  const filteredForms = forms.filter((form) =>
+    form.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const draftForms = filteredForms.filter((f) => f.status === 'draft');
+  const publishedForms = filteredForms.filter((f) => f.status === 'published');
+  const archivedForms = filteredForms.filter((f) => f.status === 'archived');
+
+  const FormCard = ({ form }: { form: Form }) => {
+    const responses = getResponsesByFormId(form.id);
+    const isMenuOpen = activeMenu === form.id;
+
+    return (
+      <Card className="hover:shadow-md transition-shadow">
+        <CardContent>
+          <div className="flex items-start justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-primary-100 rounded-lg">
+                <FileText className="h-5 w-5 text-primary-600" />
+              </div>
+              <div>
+                <h3 className="font-medium text-gray-900">{form.title}</h3>
+                <p className="text-sm text-gray-500">
+                  {form.fields.length} fields
+                </p>
+              </div>
+            </div>
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveMenu(isMenuOpen ? null : form.id)}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+
+              {isMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setActiveMenu(null)}
+                  />
+                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-1">
+                    <button
+                      onClick={() => {
+                        navigate(`/builder/${form.id}`);
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Pencil className="h-4 w-4" /> Edit
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigate(`/preview/${form.id}`);
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Eye className="h-4 w-4" /> Preview
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigate(`/analytics/${form.id}`);
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <BarChart3 className="h-4 w-4" /> Analytics
+                    </button>
+                    <button
+                      onClick={() => handleDuplicate(form.id)}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Copy className="h-4 w-4" /> Duplicate
+                    </button>
+                    <hr className="my-1" />
+                    <button
+                      onClick={() => {
+                        deleteForm(form.id);
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-gray-500">
+              Updated {formatRelativeTime(form.updatedAt)}
+            </span>
+            <Badge variant={form.status === 'published' ? 'success' : 'default'}>
+              {responses.length} responses
+            </Badge>
+          </div>
+
+          <div className="flex gap-2 mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={() => navigate(`/builder/${form.id}`)}
+            >
+              Edit
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              className="flex-1"
+              onClick={() => navigate(`/preview/${form.id}`)}
+            >
+              Preview
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
+  const EmptyState = ({ message }: { message: string }) => (
+    <div className="col-span-full py-12 text-center">
+      <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+      <p className="text-gray-500">{message}</p>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen">
+      <Header
+        title="My Forms"
+        actions={
+          <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+            New Form
+          </Button>
+        }
+      />
+
+      <div className="p-6 max-w-7xl mx-auto">
+        {/* Search */}
+        <div className="mb-6">
+          <Input
+            placeholder="Search forms..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            leftIcon={<Search className="h-4 w-4" />}
+            className="max-w-md"
+          />
+        </div>
+
+        {/* Tabs */}
+        <Tabs defaultValue="all">
+          <TabsList className="mb-6">
+            <TabsTrigger value="all">All ({filteredForms.length})</TabsTrigger>
+            <TabsTrigger value="published">Published ({publishedForms.length})</TabsTrigger>
+            <TabsTrigger value="draft">Drafts ({draftForms.length})</TabsTrigger>
+            <TabsTrigger value="archived">Archived ({archivedForms.length})</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="all">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredForms.length === 0 ? (
+                <EmptyState message="No forms found. Create your first form!" />
+              ) : (
+                filteredForms.map((form) => <FormCard key={form.id} form={form} />)
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="published">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {publishedForms.length === 0 ? (
+                <EmptyState message="No published forms yet." />
+              ) : (
+                publishedForms.map((form) => <FormCard key={form.id} form={form} />)
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="draft">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {draftForms.length === 0 ? (
+                <EmptyState message="No draft forms." />
+              ) : (
+                draftForms.map((form) => <FormCard key={form.id} form={form} />)
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="archived">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {archivedForms.length === 0 ? (
+                <EmptyState message="No archived forms." />
+              ) : (
+                archivedForms.map((form) => <FormCard key={form.id} form={form} />)
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
