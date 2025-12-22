@@ -49,9 +49,11 @@ $container->set(SQLiteConnection::class, function (Container $c) {
 
 // Register services
 $container->set(AuthService::class, function (Container $c) {
+    $settings = $c->get('settings');
     return new AuthService(
         $c->get(MySQLConnection::class),
-        $c->get('settings')['jwt']
+        $settings['jwt'],
+        $settings['rateLimit']['login'] ?? []
     );
 });
 
@@ -148,7 +150,13 @@ $errorMiddleware->setDefaultErrorHandler(function (
 
     $statusCode = 500;
     if ($exception instanceof \Slim\Exception\HttpException) {
-        $statusCode = $exception->getCode();
+        $statusCode = $exception->getCode() ?: 500;
+        // Slim's HttpException uses getCode() for HTTP status, but it might be 0
+        // HttpNotFoundException, HttpMethodNotAllowedException, etc. set the code properly
+        // For extra safety, also check if there's a getStatusCode method
+        if (method_exists($exception, 'getStatusCode')) {
+            $statusCode = $exception->getStatusCode();
+        }
     }
 
     return $response
@@ -156,8 +164,12 @@ $errorMiddleware->setDefaultErrorHandler(function (
         ->withHeader('Content-Type', 'application/json');
 });
 
-// Add CORS middleware
-$app->add(new CorsMiddleware($settings['settings']['cors']['origin']));
+// Add CORS middleware with allowlist support
+$corsSettings = $settings['settings']['cors'];
+$app->add(new CorsMiddleware(
+    $corsSettings['origin'],
+    $corsSettings['allowedOrigins'] ?? null
+));
 
 // Create auth middleware instances
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false);
@@ -189,13 +201,13 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->put('/me', [AuthController::class, 'updateProfile']);
 })->add($authRequired);
 
-// AI routes
-$app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
-    // Status check (public)
-    $group->get('/status', function ($request, $response) use ($container) {
-        return $container->get(AIController::class)->status($request, $response);
-    });
+// AI routes - status is public, everything else requires auth
+$app->get('/api/ai/status', function ($request, $response) use ($container) {
+    return $container->get(AIController::class)->status($request, $response);
+});
 
+// Protected AI routes (require authentication to prevent abuse)
+$app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
     // Form generation from text prompt
     $group->post('/generate-form', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateForm($request, $response);
@@ -220,7 +232,7 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
     $group->post('/improve-script', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->improveScript($request, $response);
     });
-})->add($authOptional);
+})->add($authRequired);
 
 // Helper function to get route args
 $getArgs = function ($request) {

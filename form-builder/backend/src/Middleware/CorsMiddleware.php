@@ -12,32 +12,133 @@ use Slim\Psr7\Response as SlimResponse;
 
 class CorsMiddleware implements MiddlewareInterface
 {
-    private string $origin;
+    private string $defaultOrigin;
+    private ?array $allowedOrigins;
 
-    public function __construct(string $origin = '*')
+    /**
+     * @param string $defaultOrigin Default allowed origin (for single-origin mode)
+     * @param array|null $allowedOrigins Array of allowed origins (for multi-origin mode), or null for single-origin
+     */
+    public function __construct(string $defaultOrigin = 'http://localhost:5173', ?array $allowedOrigins = null)
     {
-        $this->origin = $origin;
+        $this->defaultOrigin = $defaultOrigin;
+        $this->allowedOrigins = $allowedOrigins;
     }
 
     public function process(Request $request, RequestHandler $handler): Response
     {
+        $requestOrigin = $this->getRequestOrigin($request);
+        $allowedOrigin = $this->validateOrigin($requestOrigin);
+
         // Handle preflight requests
         if ($request->getMethod() === 'OPTIONS') {
             $response = new SlimResponse();
-            return $this->addCorsHeaders($response);
+            return $this->addCorsHeaders($response, $allowedOrigin);
         }
 
         $response = $handler->handle($request);
-        return $this->addCorsHeaders($response);
+        return $this->addCorsHeaders($response, $allowedOrigin);
     }
 
-    private function addCorsHeaders(Response $response): Response
+    /**
+     * Get the Origin header from the request
+     */
+    private function getRequestOrigin(Request $request): ?string
     {
-        return $response
-            ->withHeader('Access-Control-Allow-Origin', $this->origin)
+        $origins = $request->getHeader('Origin');
+        return !empty($origins) ? $origins[0] : null;
+    }
+
+    /**
+     * Validate the request origin against allowed origins
+     * Returns the allowed origin to use in the response, or null if not allowed
+     */
+    private function validateOrigin(?string $requestOrigin): ?string
+    {
+        // No origin header (e.g., same-origin request or non-browser client)
+        if ($requestOrigin === null) {
+            return $this->defaultOrigin;
+        }
+
+        // Never allow wildcard origins when credentials are enabled
+        // This is a security requirement per CORS spec
+        if ($this->defaultOrigin === '*') {
+            // In wildcard mode, reflect the origin but don't allow credentials
+            return $requestOrigin;
+        }
+
+        // Multi-origin mode: check against allowlist
+        if ($this->allowedOrigins !== null) {
+            foreach ($this->allowedOrigins as $allowed) {
+                if ($this->originMatches($requestOrigin, $allowed)) {
+                    return $requestOrigin;
+                }
+            }
+            // Origin not in allowlist - still return default but won't match
+            // Browser will block the request due to origin mismatch
+            return $this->defaultOrigin;
+        }
+
+        // Single-origin mode: strict match only
+        if ($this->originMatches($requestOrigin, $this->defaultOrigin)) {
+            return $requestOrigin;
+        }
+
+        // Origin doesn't match - return default (browser will block)
+        return $this->defaultOrigin;
+    }
+
+    /**
+     * Check if origin matches allowed pattern
+     * Supports exact match and wildcard subdomains (*.example.com)
+     */
+    private function originMatches(string $origin, string $pattern): bool
+    {
+        // Exact match
+        if ($origin === $pattern) {
+            return true;
+        }
+
+        // Wildcard subdomain match (e.g., *.example.com)
+        if (str_starts_with($pattern, '*.')) {
+            $domain = substr($pattern, 2);
+            $parsed = parse_url($origin);
+            if ($parsed && isset($parsed['host'])) {
+                $host = $parsed['host'];
+                // Check if host ends with .domain or is exactly domain
+                if ($host === $domain || str_ends_with($host, '.' . $domain)) {
+                    // Reconstruct origin without host to compare scheme/port
+                    $patternScheme = parse_url($pattern, PHP_URL_SCHEME) ?? 'https';
+                    $originScheme = $parsed['scheme'] ?? 'https';
+                    return $originScheme === $patternScheme;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function addCorsHeaders(Response $response, ?string $allowedOrigin): Response
+    {
+        if ($allowedOrigin === null) {
+            // No valid origin - don't add CORS headers
+            return $response;
+        }
+
+        $response = $response
+            ->withHeader('Access-Control-Allow-Origin', $allowedOrigin)
             ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-            ->withHeader('Access-Control-Allow-Credentials', 'true')
             ->withHeader('Access-Control-Max-Age', '86400');
+
+        // Only allow credentials for non-wildcard origins
+        if ($allowedOrigin !== '*') {
+            $response = $response->withHeader('Access-Control-Allow-Credentials', 'true');
+        }
+
+        // Add Vary header to ensure proper caching
+        $response = $response->withHeader('Vary', 'Origin');
+
+        return $response;
     }
 }

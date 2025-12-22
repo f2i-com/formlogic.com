@@ -61,11 +61,26 @@ class SQLiteConnection
 
     /**
      * Get the path to a form's SQLite database
+     *
+     * Uses a hash-based approach to prevent:
+     * 1. Directory traversal attacks
+     * 2. Filename collisions from ID normalization
+     * 3. Issues with special characters in form IDs
      */
     public function getFormDbPath(string $formId): string
     {
-        // Sanitize form ID to prevent directory traversal
-        $safeFormId = preg_replace('/[^a-zA-Z0-9\-_]/', '', $formId);
+        // For valid UUID format, use the sanitized version directly for readability
+        // UUIDs are guaranteed unique and safe for filenames
+        if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $formId)) {
+            $safeFormId = strtolower($formId);
+        } else {
+            // For non-UUID IDs, use a deterministic hash to prevent collisions
+            // The hash is prefixed with a sanitized version for debuggability
+            $sanitized = preg_replace('/[^a-zA-Z0-9\-_]/', '', substr($formId, 0, 20));
+            $hash = substr(hash('sha256', $formId), 0, 16);
+            $safeFormId = ($sanitized ? $sanitized . '_' : '') . $hash;
+        }
+
         return $this->storagePath . '/' . $safeFormId . '.sqlite';
     }
 

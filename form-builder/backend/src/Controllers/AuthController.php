@@ -77,15 +77,45 @@ class AuthController
             ], 400);
         }
 
+        // Get client IP for rate limiting
+        $ipAddress = $this->getClientIp($request);
+
         try {
-            $result = $this->authService->login($data['email'], $data['password']);
+            $result = $this->authService->login($data['email'], $data['password'], $ipAddress);
             return $this->jsonResponse($response, $result);
         } catch (\Exception $e) {
+            // Check if this is a rate limit error (429 Too Many Requests)
+            $statusCode = str_contains($e->getMessage(), 'Too many login attempts') ? 429 : 401;
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
-            ], 401);
+            ], $statusCode);
         }
+    }
+
+    /**
+     * Get client IP address from request
+     */
+    private function getClientIp(Request $request): string
+    {
+        // Check for forwarded IP (behind proxy/load balancer)
+        $serverParams = $request->getServerParams();
+
+        // Check common proxy headers
+        $headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP'];
+        foreach ($headers as $header) {
+            if (!empty($serverParams[$header])) {
+                // X-Forwarded-For may contain multiple IPs, get the first one
+                $ips = explode(',', $serverParams[$header]);
+                $ip = trim($ips[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    return $ip;
+                }
+            }
+        }
+
+        // Fall back to direct connection IP
+        return $serverParams['REMOTE_ADDR'] ?? '127.0.0.1';
     }
 
     /**

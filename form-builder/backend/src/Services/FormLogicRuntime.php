@@ -67,6 +67,9 @@ class FormLogicRuntime
         $this->registerHttpModule($engine);
 
         try {
+            // Validate script safety before execution
+            $this->validateScriptSafety($script);
+
             // Build the execution wrapper code
             $wrapperCode = $this->buildWrapperCode($script, $context);
 
@@ -536,6 +539,49 @@ class FormLogicRuntime
             503 => 'Service Unavailable',
         ];
         return $statusTexts[$code] ?? 'Unknown';
+    }
+
+    /**
+     * Validate script doesn't try to override reserved names
+     * @throws \Exception if reserved names are used
+     */
+    private function validateScriptSafety(string $script): void
+    {
+        // Reserved module/builtin names that scripts cannot override
+        $reservedNames = [
+            '__db', '__utils', '__http', '__meta', '__answers',
+            'ctx', // The context object itself
+        ];
+
+        // Check for attempts to reassign reserved names
+        // This catches patterns like: let __db = ..., const __db = ..., var __db = ..., __db = ...
+        foreach ($reservedNames as $name) {
+            // Check for variable declarations
+            $patterns = [
+                '/\b(let|const|var)\s+' . preg_quote($name, '/') . '\b/',  // let __db, const __db, var __db
+                '/\b' . preg_quote($name, '/') . '\s*=(?!=)/',              // __db = (but not __db ==)
+            ];
+
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $script)) {
+                    throw new \Exception("Cannot override reserved name: {$name}");
+                }
+            }
+        }
+
+        // Also check for dangerous patterns
+        $dangerousPatterns = [
+            '/\beval\s*\(/' => 'eval() is not allowed',
+            '/\bFunction\s*\(/' => 'Function constructor is not allowed',
+            '/\bwhile\s*\(\s*true\s*\)/' => 'Infinite while loop detected',
+            '/\bfor\s*\(\s*;\s*;\s*\)/' => 'Infinite for loop detected',
+        ];
+
+        foreach ($dangerousPatterns as $pattern => $message) {
+            if (preg_match($pattern, $script)) {
+                throw new \Exception("Unsafe script: {$message}");
+            }
+        }
     }
 
     /**

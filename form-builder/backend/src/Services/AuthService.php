@@ -14,11 +14,20 @@ class AuthService
 {
     private PDO $mysql;
     private array $jwtConfig;
+    private array $rateLimitConfig;
 
-    public function __construct(MySQLConnection $mysql, array $jwtConfig)
+    // In-memory rate limit tracking (for single-server deployments)
+    // For production with multiple servers, use Redis or database
+    private static array $loginAttempts = [];
+
+    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [])
     {
         $this->mysql = $mysql->getConnection();
         $this->jwtConfig = $jwtConfig;
+        $this->rateLimitConfig = array_merge([
+            'maxAttempts' => 5,
+            'decayMinutes' => 15,
+        ], $rateLimitConfig);
     }
 
     /**
@@ -62,21 +71,37 @@ class AuthService
     }
 
     /**
-     * Login a user
+     * Login a user with brute-force protection
      */
-    public function login(string $email, string $password): array
+    public function login(string $email, string $password, ?string $ipAddress = null): array
     {
+        $rateLimitKey = $this->getRateLimitKey($email, $ipAddress);
+
+        // Check rate limit
+        if ($this->isRateLimited($rateLimitKey)) {
+            $remainingSeconds = $this->getRateLimitRemainingSeconds($rateLimitKey);
+            throw new \Exception(
+                "Too many login attempts. Please try again in " .
+                ceil($remainingSeconds / 60) . " minute(s)."
+            );
+        }
+
         $stmt = $this->mysql->prepare("SELECT * FROM users WHERE email = :email");
         $stmt->execute(['email' => $email]);
         $row = $stmt->fetch();
 
         if (!$row) {
+            $this->recordFailedLogin($rateLimitKey);
             throw new \Exception('Invalid email or password');
         }
 
         if (!password_verify($password, $row['password_hash'])) {
+            $this->recordFailedLogin($rateLimitKey);
             throw new \Exception('Invalid email or password');
         }
+
+        // Clear rate limit on successful login
+        $this->clearRateLimit($rateLimitKey);
 
         $user = User::fromArray($row);
         $token = $this->generateToken($user);
@@ -88,19 +113,132 @@ class AuthService
     }
 
     /**
+     * Get rate limit key combining email and IP
+     */
+    private function getRateLimitKey(string $email, ?string $ipAddress): string
+    {
+        // Use both email and IP to prevent both per-account and per-IP attacks
+        return hash('sha256', strtolower($email) . '|' . ($ipAddress ?? 'unknown'));
+    }
+
+    /**
+     * Check if a rate limit key is currently rate limited
+     */
+    private function isRateLimited(string $key): bool
+    {
+        $this->cleanupExpiredAttempts($key);
+
+        $attempts = self::$loginAttempts[$key] ?? [];
+        return count($attempts) >= $this->rateLimitConfig['maxAttempts'];
+    }
+
+    /**
+     * Get remaining seconds until rate limit expires
+     */
+    private function getRateLimitRemainingSeconds(string $key): int
+    {
+        $attempts = self::$loginAttempts[$key] ?? [];
+        if (empty($attempts)) {
+            return 0;
+        }
+
+        $oldestAttempt = min($attempts);
+        $expiresAt = $oldestAttempt + ($this->rateLimitConfig['decayMinutes'] * 60);
+        return max(0, $expiresAt - time());
+    }
+
+    /**
+     * Record a failed login attempt
+     */
+    private function recordFailedLogin(string $key): void
+    {
+        if (!isset(self::$loginAttempts[$key])) {
+            self::$loginAttempts[$key] = [];
+        }
+        self::$loginAttempts[$key][] = time();
+    }
+
+    /**
+     * Clear rate limit for a key (on successful login)
+     */
+    private function clearRateLimit(string $key): void
+    {
+        unset(self::$loginAttempts[$key]);
+    }
+
+    /**
+     * Clean up expired login attempts
+     */
+    private function cleanupExpiredAttempts(string $key): void
+    {
+        if (!isset(self::$loginAttempts[$key])) {
+            return;
+        }
+
+        $cutoff = time() - ($this->rateLimitConfig['decayMinutes'] * 60);
+        self::$loginAttempts[$key] = array_filter(
+            self::$loginAttempts[$key],
+            fn($timestamp) => $timestamp > $cutoff
+        );
+
+        if (empty(self::$loginAttempts[$key])) {
+            unset(self::$loginAttempts[$key]);
+        }
+    }
+
+    /**
      * Validate a JWT token and return the user
+     *
+     * Validates:
+     * - Signature (done by Firebase JWT)
+     * - Expiry (exp claim, done by Firebase JWT)
+     * - Not Before (nbf claim, done by Firebase JWT)
+     * - Issuer (iss claim)
+     * - Audience (aud claim)
+     * - Subject (sub claim - user ID)
      */
     public function validateToken(string $token): ?User
     {
         try {
+            // Firebase JWT library automatically validates:
+            // - Signature
+            // - exp (expiry time) - throws ExpiredException
+            // - nbf (not before) - throws BeforeValidException
+            // - iat (issued at) - validates it's not in the future
             $decoded = JWT::decode($token, new Key($this->jwtConfig['secret'], $this->jwtConfig['algorithm']));
 
+            // Validate subject exists
             if (!isset($decoded->sub)) {
                 return null;
             }
 
+            // Validate issuer if configured
+            $expectedIssuer = $this->jwtConfig['issuer'] ?? 'formlogic';
+            if (isset($decoded->iss) && $decoded->iss !== $expectedIssuer) {
+                return null;
+            }
+
+            // Validate audience if configured
+            $expectedAudience = $this->jwtConfig['audience'] ?? 'formlogic-api';
+            if (isset($decoded->aud)) {
+                $audiences = is_array($decoded->aud) ? $decoded->aud : [$decoded->aud];
+                if (!in_array($expectedAudience, $audiences, true)) {
+                    return null;
+                }
+            }
+
             return $this->getUserById($decoded->sub);
+        } catch (\Firebase\JWT\ExpiredException $e) {
+            // Token has expired
+            return null;
+        } catch (\Firebase\JWT\BeforeValidException $e) {
+            // Token not yet valid (nbf)
+            return null;
+        } catch (\Firebase\JWT\SignatureInvalidException $e) {
+            // Invalid signature
+            return null;
         } catch (\Exception $e) {
+            // Other JWT errors
             return null;
         }
     }
@@ -172,10 +310,12 @@ class AuthService
     {
         $now = time();
         $payload = [
-            'iss' => 'formlogic',
+            'iss' => $this->jwtConfig['issuer'] ?? 'formlogic',
+            'aud' => $this->jwtConfig['audience'] ?? 'formlogic-api',
             'sub' => $user->id,
             'email' => $user->email,
             'iat' => $now,
+            'nbf' => $now, // Not valid before now
             'exp' => $now + $this->jwtConfig['expiry'],
         ];
 
