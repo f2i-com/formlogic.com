@@ -60,6 +60,7 @@ interface FormState {
   addField: (formId: string, field: Omit<FormField, 'id' | 'order'>) => FormField;
   updateField: (formId: string, fieldId: string, updates: Partial<FormField>) => void;
   deleteField: (formId: string, fieldId: string) => void;
+  duplicateField: (formId: string, fieldId: string) => FormField | null;
   reorderFields: (formId: string, fieldIds: string[]) => void;
   setSelectedField: (fieldId: string | null) => void;
 
@@ -409,6 +410,59 @@ export const useFormStore = create<FormState>()(
             }
           });
         }
+      },
+
+      duplicateField: (formId, fieldId) => {
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) return null;
+
+        const field = form.fields.find((f) => f.id === fieldId);
+        if (!field) return null;
+
+        // Generate new ID for duplicated field
+        const existingIds = form.fields.map((f) => f.id);
+        const newFieldId = generateFieldId(`${field.label} copy`, existingIds);
+        const fieldIndex = form.fields.findIndex((f) => f.id === fieldId);
+
+        const newField: FormField = {
+          ...field,
+          id: newFieldId,
+          label: `${field.label} (Copy)`,
+          order: fieldIndex + 1,
+        };
+
+        // Insert the new field right after the original
+        const newFields = [...form.fields];
+        newFields.splice(fieldIndex + 1, 0, newField);
+
+        // Update order for all fields after the insertion
+        const reorderedFields = newFields.map((f, index) => ({ ...f, order: index }));
+
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId
+              ? {
+                  ...f,
+                  fields: reorderedFields,
+                  updatedAt: new Date().toISOString(),
+                }
+              : f
+          ),
+          selectedFieldId: newFieldId,
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { fields: updatedForm.fields });
+            }
+          });
+        }
+
+        return newField;
       },
 
       reorderFields: (formId, fieldIds) => {

@@ -5,3 +5,5 @@ export { ScriptEditor } from './ScriptEditor';
 export { ThemeEditor } from './ThemeEditor';
 export { EmbedModal } from './EmbedModal';
 export { AIFormGenerator } from './AIFormGenerator';
+export { FormSettingsModal } from './FormSettingsPanel';
+export { TemplateSelector } from './TemplateSelector';

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -34,7 +34,8 @@ import {
   Code2,
   Share2,
   Sparkles,
-  Palette
+  Palette,
+  Keyboard
 } from 'lucide-react';
 import {
   DndContext,
@@ -62,7 +63,10 @@ import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } fr
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
+import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
+import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
 import { useFormStore } from '../stores/formStore';
+import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
 import { cn } from '../lib/utils';
@@ -497,6 +501,8 @@ export default function FormBuilder() {
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
   const [showThemeEditor, setShowThemeEditor] = useState(false);
+  const [showFormSettings, setShowFormSettings] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
 
   const {
     getForm,
@@ -507,6 +513,7 @@ export default function FormBuilder() {
     reorderFields,
     selectedFieldId,
     setSelectedField,
+    duplicateField,
   } = useFormStore();
 
   const { isMobile, mobilePanel, setMobilePanel } = useUIStore();
@@ -535,8 +542,10 @@ export default function FormBuilder() {
   }
 
   const selectedField = form.fields.find((f) => f.id === selectedFieldId);
+  const selectedFieldIndex = form.fields.findIndex((f) => f.id === selectedFieldId);
 
-  const handleAddField = (type: FieldType) => {
+  // Add field handler (defined first for use in shortcuts)
+  const handleAddField = useCallback((type: FieldType) => {
     const defaultLabels: Partial<Record<FieldType, string>> = {
       short_text: 'Your answer',
       long_text: 'Your thoughts',
@@ -582,7 +591,81 @@ export default function FormBuilder() {
     });
 
     setSelectedField(field.id);
-  };
+  }, [form.id, addField, setSelectedField]);
+
+  // Keyboard shortcuts
+  const handleSave = useCallback(() => {
+    updateForm(form.id, { status: form.status });
+    toast.success('Saved', 'Form saved successfully');
+  }, [form.id, form.status, updateForm]);
+
+  const handlePreview = useCallback(() => {
+    navigate(`/preview/${form.id}`);
+  }, [form.id, navigate]);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (selectedFieldId) {
+      deleteField(form.id, selectedFieldId);
+      toast.success('Deleted', 'Field deleted');
+    }
+  }, [form.id, selectedFieldId, deleteField]);
+
+  const handleDuplicateSelected = useCallback(() => {
+    if (selectedFieldId && duplicateField) {
+      duplicateField(form.id, selectedFieldId);
+      toast.success('Duplicated', 'Field duplicated');
+    }
+  }, [form.id, selectedFieldId, duplicateField]);
+
+  const handleNavigateFields = useCallback((direction: 'up' | 'down') => {
+    if (form.fields.length === 0) return;
+
+    if (!selectedFieldId) {
+      setSelectedField(form.fields[0].id);
+      return;
+    }
+
+    const newIndex = direction === 'up'
+      ? Math.max(0, selectedFieldIndex - 1)
+      : Math.min(form.fields.length - 1, selectedFieldIndex + 1);
+
+    setSelectedField(form.fields[newIndex].id);
+  }, [form.fields, selectedFieldId, selectedFieldIndex, setSelectedField]);
+
+  const handleMoveField = useCallback((direction: 'up' | 'down') => {
+    if (!selectedFieldId || form.fields.length < 2) return;
+
+    const newIndex = direction === 'up'
+      ? Math.max(0, selectedFieldIndex - 1)
+      : Math.min(form.fields.length - 1, selectedFieldIndex + 1);
+
+    if (newIndex !== selectedFieldIndex) {
+      const newOrder = [...form.fields.map(f => f.id)];
+      [newOrder[selectedFieldIndex], newOrder[newIndex]] = [newOrder[newIndex], newOrder[selectedFieldIndex]];
+      reorderFields(form.id, newOrder);
+    }
+  }, [form.id, form.fields, selectedFieldId, selectedFieldIndex, reorderFields]);
+
+  const shortcuts: KeyboardShortcut[] = useMemo(() => [
+    { key: 's', ctrl: true, description: 'Save form', action: handleSave },
+    { key: 'p', ctrl: true, description: 'Preview form', action: handlePreview },
+    { key: '/', ctrl: true, description: 'Show keyboard shortcuts', action: () => setShowKeyboardShortcuts(true) },
+    { key: '?', ctrl: true, description: 'Show keyboard shortcuts', action: () => setShowKeyboardShortcuts(true) },
+    { key: 'Escape', description: 'Deselect field', action: () => setSelectedField(null) },
+    { key: 'd', ctrl: true, description: 'Duplicate selected field', action: handleDuplicateSelected },
+    { key: 'Delete', description: 'Delete selected field', action: handleDeleteSelected },
+    { key: 'Backspace', description: 'Delete selected field', action: handleDeleteSelected },
+    { key: 'ArrowUp', description: 'Select previous field', action: () => handleNavigateFields('up') },
+    { key: 'ArrowDown', description: 'Select next field', action: () => handleNavigateFields('down') },
+    { key: 'ArrowUp', ctrl: true, description: 'Move field up', action: () => handleMoveField('up') },
+    { key: 'ArrowDown', ctrl: true, description: 'Move field down', action: () => handleMoveField('down') },
+    { key: 't', description: 'Add text field', action: () => handleAddField('short_text') },
+    { key: 'e', description: 'Add email field', action: () => handleAddField('email') },
+    { key: 'n', description: 'Add number field', action: () => handleAddField('number') },
+    { key: 'r', description: 'Add rating field', action: () => handleAddField('rating') },
+  ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
+
+  useKeyboardShortcuts({ shortcuts });
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -660,6 +743,15 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => setShowFormSettings(true)}
+            title="Form Settings"
+          >
+            <Settings className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Settings</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setShowThemeEditor(true)}
             title="Theme Customization"
           >
@@ -688,6 +780,14 @@ export default function FormBuilder() {
           >
             <Share2 className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Share</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowKeyboardShortcuts(true)}
+            title="Keyboard Shortcuts (Ctrl+?)"
+          >
+            <Keyboard className="h-4 w-4" />
           </Button>
           <Button
             size="sm"
@@ -854,6 +954,20 @@ export default function FormBuilder() {
         onClose={() => setShowThemeEditor(false)}
         theme={form.theme}
         onSave={(theme) => updateForm(form.id, { theme })}
+      />
+
+      {/* Form Settings Modal */}
+      <FormSettingsModal
+        isOpen={showFormSettings}
+        onClose={() => setShowFormSettings(false)}
+        settings={form.settings}
+        onSave={(settings) => updateForm(form.id, { settings })}
+      />
+
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp
+        isOpen={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
       />
     </div>
   );

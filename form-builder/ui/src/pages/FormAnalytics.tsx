@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2 } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -118,6 +118,89 @@ export default function FormAnalytics() {
 
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
   const weeklyChange = localAnalytics.weeklyChange;
+
+  // Calculate field breakdown statistics
+  const fieldBreakdown = useMemo(() => {
+    const breakdown: Record<string, { type: string; label: string; data: { label: string; count: number; percentage: number }[] }> = {};
+
+    form.fields.forEach((field) => {
+      // Only analyze rating, scale, dropdown, multiple_choice, and checkboxes fields
+      if (!['rating', 'scale', 'dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+        return;
+      }
+
+      const counts: Record<string, number> = {};
+      let totalAnswers = 0;
+
+      localResponses.forEach((response) => {
+        const answer = response.answers[field.id];
+        if (answer === undefined || answer === null || answer === '') return;
+
+        totalAnswers++;
+
+        if (field.type === 'rating') {
+          const rating = String(answer);
+          counts[rating] = (counts[rating] || 0) + 1;
+        } else if (field.type === 'scale') {
+          const value = String(answer);
+          counts[value] = (counts[value] || 0) + 1;
+        } else if (field.type === 'checkboxes' && Array.isArray(answer)) {
+          answer.forEach((val) => {
+            counts[String(val)] = (counts[String(val)] || 0) + 1;
+          });
+        } else {
+          counts[String(answer)] = (counts[String(answer)] || 0) + 1;
+        }
+      });
+
+      if (totalAnswers === 0) return;
+
+      let data: { label: string; count: number; percentage: number }[] = [];
+
+      if (field.type === 'rating') {
+        const maxStars = field.properties.maxStars || 5;
+        for (let i = 1; i <= maxStars; i++) {
+          const count = counts[String(i)] || 0;
+          data.push({
+            label: `${'★'.repeat(i)}${'☆'.repeat(maxStars - i)}`,
+            count,
+            percentage: Math.round((count / totalAnswers) * 100),
+          });
+        }
+      } else if (field.type === 'scale') {
+        const start = field.properties.scaleStart || 1;
+        const end = field.properties.scaleEnd || 10;
+        for (let i = start; i <= end; i++) {
+          const count = counts[String(i)] || 0;
+          data.push({
+            label: String(i),
+            count,
+            percentage: Math.round((count / totalAnswers) * 100),
+          });
+        }
+      } else if (field.properties.options) {
+        // For choice fields, use the options
+        data = field.properties.options.map((option) => {
+          const count = counts[option.value] || counts[option.label] || 0;
+          return {
+            label: option.label,
+            count,
+            percentage: Math.round((count / totalAnswers) * 100),
+          };
+        });
+      }
+
+      if (data.length > 0) {
+        breakdown[field.id] = {
+          type: field.type,
+          label: field.label,
+          data,
+        };
+      }
+    });
+
+    return breakdown;
+  }, [form.fields, localResponses]);
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -346,6 +429,50 @@ export default function FormAnalytics() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Field Breakdown */}
+        {Object.keys(fieldBreakdown).length > 0 && (
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-primary-600" />
+              <h2 className="text-lg font-semibold text-gray-900">Field Breakdown</h2>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-8">
+                {Object.entries(fieldBreakdown).map(([fieldId, breakdown]) => (
+                  <div key={fieldId}>
+                    <div className="flex items-center gap-2 mb-3">
+                      {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500" />}
+                      <h3 className="font-medium text-gray-900">{breakdown.label}</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {breakdown.data.map((item, index) => {
+                        const maxPercentage = Math.max(...breakdown.data.map((d) => d.percentage), 1);
+                        return (
+                          <div key={index} className="flex items-center gap-3">
+                            <div className="w-32 sm:w-40 text-sm text-gray-700 truncate" title={item.label}>
+                              {item.label}
+                            </div>
+                            <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary-500 rounded-full transition-all"
+                                style={{ width: `${(item.percentage / maxPercentage) * 100}%` }}
+                              />
+                            </div>
+                            <div className="w-20 text-right">
+                              <span className="text-sm font-medium text-gray-900">{item.percentage}%</span>
+                              <span className="text-xs text-gray-500 ml-1">({item.count})</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recent Responses */}
         <Card>

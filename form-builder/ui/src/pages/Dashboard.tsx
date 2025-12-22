@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { v4 as uuidv4 } from 'uuid';
 import {
   FileText,
   Eye,
@@ -25,7 +26,8 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
 import { formatRelativeTime } from '../lib/utils';
-import { EmbedModal } from '../components/builder/EmbedModal';
+import { EmbedModal, TemplateSelector } from '../components/builder';
+import type { FormTemplate } from '../data/formTemplates';
 
 interface DashboardStats {
   totalResponses: number;
@@ -214,11 +216,39 @@ export function Dashboard() {
   const user = useAuthStore((state) => state.user);
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
 
-  const handleCreateForm = async () => {
-    const form = await createForm('Untitled Form');
-    setActiveForm(form.id);
-    navigate(`/builder/${form.id}`);
+  const handleCreateForm = () => {
+    setShowTemplateSelector(true);
+  };
+
+  const handleSelectTemplate = async (template: FormTemplate | null) => {
+    setShowTemplateSelector(false);
+
+    if (template) {
+      // Create form with template
+      const form = await createForm(template.name);
+
+      // Add template fields to the form
+      const fieldsWithIds = template.fields.map((field, index) => ({
+        ...field,
+        id: uuidv4(),
+        order: index,
+      }));
+
+      // Update the form with template fields
+      const formStore = useFormStore.getState();
+      formStore.updateForm(form.id, { fields: fieldsWithIds });
+
+      setActiveForm(form.id);
+      navigate(`/builder/${form.id}`);
+      toast.success('Form Created', `Started with "${template.name}" template`);
+    } else {
+      // Create blank form
+      const form = await createForm('Untitled Form');
+      setActiveForm(form.id);
+      navigate(`/builder/${form.id}`);
+    }
   };
 
   const totalForms = forms.length;
@@ -450,6 +480,13 @@ export function Dashboard() {
           formTitle={embedModalForm.title}
         />
       )}
+
+      {/* Template Selector */}
+      <TemplateSelector
+        isOpen={showTemplateSelector}
+        onClose={() => setShowTemplateSelector(false)}
+        onSelectTemplate={handleSelectTemplate}
+      />
     </div>
   );
 }
