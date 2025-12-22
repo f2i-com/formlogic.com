@@ -12,11 +12,16 @@ class ResponseService
 {
     private PDO $mysql;
     private SQLiteConnection $sqlite;
+    private ?FormLogicRuntime $runtime;
 
-    public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite)
-    {
+    public function __construct(
+        MySQLConnection $mysql,
+        SQLiteConnection $sqlite,
+        ?FormLogicRuntime $runtime = null
+    ) {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
+        $this->runtime = $runtime;
     }
 
     /**
@@ -72,7 +77,7 @@ class ResponseService
 
         $responses = [];
         while ($row = $stmt->fetch()) {
-            $responses[] = $this->formatResponse($row);
+            $responses[] = $this->formatResponse($db, $row);
         }
 
         return $responses;
@@ -96,19 +101,52 @@ class ResponseService
             return null;
         }
 
-        return $this->formatResponse($row);
+        return $this->formatResponse($db, $row);
     }
 
     /**
      * Create a new response (form submission)
+     *
+     * @param string $formId The form ID
+     * @param array $data The submission data
+     * @param string|null $script Optional FormLogic script to execute
+     * @return array|ScriptRejection The created response or a rejection
      */
-    public function createResponse(string $formId, array $data): array
+    public function createResponse(string $formId, array $data, ?string $script = null): array|ScriptRejection
     {
         $db = $this->sqlite->getFormDatabase($formId);
+
+        // Run migrations to ensure new tables exist
+        $this->sqlite->migrateFormDatabase($db);
+
         $id = $data['id'] ?? $this->generateUuid();
         $now = date('Y-m-d H:i:s');
 
-        // Insert into SQLite
+        // 1. Execute script FIRST if exists (to allow rejection)
+        $scriptResult = null;
+        if ($this->runtime !== null && $script !== null && trim($script) !== '') {
+            $scriptResult = $this->runtime->execute($script, [
+                'answers' => $data['answers'] ?? [],
+                'ipAddress' => $data['ipAddress'] ?? null,
+                'userAgent' => $data['userAgent'] ?? null,
+                'timestamp' => time(),
+                'responseId' => $id,
+                'formId' => $formId,
+            ]);
+
+            // Handle rejection
+            if ($scriptResult->isRejected()) {
+                return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected');
+            }
+        }
+
+        // 2. Determine initial status (may be overridden by script)
+        $status = $data['status'] ?? 'submitted';
+        if ($scriptResult !== null && $scriptResult->success && $scriptResult->status !== null) {
+            $status = $scriptResult->status;
+        }
+
+        // 3. Insert into SQLite
         $stmt = $db->prepare("
             INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
             VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
@@ -123,12 +161,22 @@ class ResponseService
                 'completionTime' => $data['completionTime'] ?? null,
                 'ipAddress' => $data['ipAddress'] ?? null,
             ]),
-            'status' => $data['status'] ?? 'submitted',
+            'status' => $status,
             'submitted_at' => $now,
             'updated_at' => $now,
         ]);
 
-        // Also insert metadata into MySQL for global querying
+        // 4. Apply script results (computed fields, tags)
+        if ($scriptResult !== null && $scriptResult->success) {
+            $this->applyScriptResult($db, $id, $scriptResult);
+        }
+
+        // 5. Log script execution
+        if ($scriptResult !== null) {
+            $this->logScriptExecution($db, $id, $scriptResult);
+        }
+
+        // 6. Also insert metadata into MySQL for global querying
         $mysqlStmt = $this->mysql->prepare("
             INSERT INTO response_metadata (id, form_id, status, submitted_at, ip_address, user_agent, completion_time)
             VALUES (:id, :form_id, :status, :submitted_at, :ip_address, :user_agent, :completion_time)
@@ -137,17 +185,120 @@ class ResponseService
         $mysqlStmt->execute([
             'id' => $id,
             'form_id' => $formId,
-            'status' => $data['status'] ?? 'submitted',
+            'status' => $status,
             'submitted_at' => $now,
             'ip_address' => $data['ipAddress'] ?? null,
             'user_agent' => $data['userAgent'] ?? null,
             'completion_time' => $data['completionTime'] ?? null,
         ]);
 
-        // Update analytics
+        // 7. Update analytics
         $this->updateAnalytics($formId, 'completion');
 
         return $this->getResponse($formId, $id);
+    }
+
+    /**
+     * Re-run script on an existing response
+     */
+    public function recomputeResponse(string $formId, string $responseId, string $script): ScriptResult
+    {
+        $response = $this->getResponse($formId, $responseId);
+        if (!$response) {
+            return ScriptResult::error('Response not found');
+        }
+
+        if ($this->runtime === null) {
+            return ScriptResult::error('Script runtime not available');
+        }
+
+        $result = $this->runtime->execute($script, [
+            'answers' => $response['answers'],
+            'responseId' => $responseId,
+            'formId' => $formId,
+            'timestamp' => time(),
+        ]);
+
+        if ($result->success && !$result->isRejected()) {
+            $db = $this->sqlite->getFormDatabase($formId);
+
+            // Run migrations to ensure new tables exist
+            $this->sqlite->migrateFormDatabase($db);
+
+            // Clear existing computed fields and tags
+            $this->clearComputedData($db, $responseId);
+
+            // Apply new results
+            $this->applyScriptResult($db, $responseId, $result);
+
+            // Update status if changed
+            if ($result->status !== null) {
+                $this->updateResponse($formId, $responseId, ['status' => $result->status]);
+            }
+
+            // Log execution
+            $this->logScriptExecution($db, $responseId, $result);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Apply script results to the database
+     */
+    private function applyScriptResult(PDO $db, string $responseId, ScriptResult $result): void
+    {
+        // Store computed fields
+        foreach ($result->fields as $name => $value) {
+            $stmt = $db->prepare("
+                INSERT OR REPLACE INTO computed (response_id, field_name, field_value)
+                VALUES (:response_id, :field_name, :field_value)
+            ");
+            $stmt->execute([
+                'response_id' => $responseId,
+                'field_name' => $name,
+                'field_value' => is_scalar($value) ? (string)$value : json_encode($value),
+            ]);
+        }
+
+        // Store tags
+        foreach ($result->tags as $tag) {
+            $stmt = $db->prepare("
+                INSERT OR IGNORE INTO tags (response_id, tag)
+                VALUES (:response_id, :tag)
+            ");
+            $stmt->execute([
+                'response_id' => $responseId,
+                'tag' => $tag,
+            ]);
+        }
+    }
+
+    /**
+     * Clear computed data for a response (before recompute)
+     */
+    private function clearComputedData(PDO $db, string $responseId): void
+    {
+        $db->prepare("DELETE FROM computed WHERE response_id = :id")->execute(['id' => $responseId]);
+        $db->prepare("DELETE FROM tags WHERE response_id = :id")->execute(['id' => $responseId]);
+    }
+
+    /**
+     * Log script execution for debugging
+     */
+    private function logScriptExecution(PDO $db, string $responseId, ScriptResult $result): void
+    {
+        $stmt = $db->prepare("
+            INSERT INTO script_logs (response_id, success, error_message, execution_time_ms, instruction_count)
+            VALUES (:response_id, :success, :error_message, :execution_time_ms, :instruction_count)
+        ");
+        $stmt->execute([
+            'response_id' => $responseId,
+            'success' => $result->success ? 1 : 0,
+            'error_message' => $result->error,
+            'execution_time_ms' => $result->executionTimeMs,
+            'instruction_count' => $result->instructionCount,
+        ]);
     }
 
     /**
@@ -429,17 +580,47 @@ class ResponseService
     /**
      * Format a response row for output
      */
-    private function formatResponse(array $row): array
+    private function formatResponse(PDO $db, array $row): array
     {
         $metadata = json_decode($row['metadata'] ?? '{}', true);
+        $responseId = $row['id'];
+
+        // Get computed fields
+        $computed = [];
+        try {
+            $stmt = $db->prepare("SELECT field_name, field_value FROM computed WHERE response_id = :id");
+            $stmt->execute(['id' => $responseId]);
+            while ($field = $stmt->fetch()) {
+                $value = $field['field_value'];
+                // Try to decode JSON values
+                $decoded = json_decode($value, true);
+                $computed[$field['field_name']] = json_last_error() === JSON_ERROR_NONE ? $decoded : $value;
+            }
+        } catch (\PDOException $e) {
+            // Table may not exist yet, ignore
+        }
+
+        // Get tags
+        $tags = [];
+        try {
+            $stmt = $db->prepare("SELECT tag FROM tags WHERE response_id = :id");
+            $stmt->execute(['id' => $responseId]);
+            while ($tagRow = $stmt->fetch()) {
+                $tags[] = $tagRow['tag'];
+            }
+        } catch (\PDOException $e) {
+            // Table may not exist yet, ignore
+        }
 
         return [
-            'id' => $row['id'],
+            'id' => $responseId,
             'answers' => json_decode($row['answers'], true),
             'status' => $row['status'],
             'submittedAt' => $row['submitted_at'],
             'updatedAt' => $row['updated_at'],
             'metadata' => $metadata,
+            'computed' => $computed,
+            'tags' => $tags,
         ];
     }
 

@@ -162,6 +162,98 @@ class SQLiteConnection
                 created_at TEXT DEFAULT (datetime('now'))
             )
         ");
+
+        // Computed fields (from script execution)
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS computed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                field_value TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                UNIQUE(response_id, field_name)
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response ON computed(response_id)");
+
+        // Tags (from script execution)
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                UNIQUE(response_id, tag)
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response ON tags(response_id)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)");
+
+        // Script execution logs
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS script_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                success INTEGER DEFAULT 1,
+                error_message TEXT,
+                execution_time_ms INTEGER,
+                instruction_count INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
+    }
+
+    /**
+     * Run migrations on an existing form database
+     */
+    public function migrateFormDatabase(PDO $pdo): void
+    {
+        // Add computed table if it doesn't exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS computed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                field_name TEXT NOT NULL,
+                field_value TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                UNIQUE(response_id, field_name)
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response ON computed(response_id)");
+
+        // Add tags table if it doesn't exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                UNIQUE(response_id, tag)
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response ON tags(response_id)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)");
+
+        // Add script_logs table if it doesn't exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS script_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id TEXT NOT NULL,
+                success INTEGER DEFAULT 1,
+                error_message TEXT,
+                execution_time_ms INTEGER,
+                instruction_count INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
+            )
+        ");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
     }
 
     /**

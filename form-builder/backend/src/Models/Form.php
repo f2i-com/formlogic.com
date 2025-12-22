@@ -15,6 +15,7 @@ class Form
         public array $fields = [],
         public array $settings = [],
         public array $theme = [],
+        public ?string $logicScript = null,
         public ?string $createdAt = null,
         public ?string $updatedAt = null,
         public ?string $publishedAt = null
@@ -37,6 +38,7 @@ class Form
             theme: is_string($data['theme'] ?? null)
                 ? json_decode($data['theme'], true) ?? []
                 : ($data['theme'] ?? []),
+            logicScript: $data['logic_script'] ?? $data['logicScript'] ?? null,
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null,
             publishedAt: $data['published_at'] ?? $data['publishedAt'] ?? null
@@ -54,6 +56,7 @@ class Form
             'fields' => $this->fields,
             'settings' => $this->settings,
             'theme' => $this->theme,
+            'logicScript' => $this->logicScript,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
             'publishedAt' => $this->publishedAt,
@@ -70,6 +73,7 @@ class Form
             'status' => $this->status,
             'settings' => json_encode($this->settings),
             'theme' => json_encode($this->theme),
+            'logic_script' => $this->logicScript,
         ];
     }
 }

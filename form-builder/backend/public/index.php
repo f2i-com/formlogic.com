@@ -10,6 +10,7 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AuthService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
+use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Controllers\AuthController;
 use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\ResponseController;
@@ -58,10 +59,20 @@ $container->set(FormService::class, function (Container $c) {
     );
 });
 
+// Register FormLogic runtime with execution limits
+$container->set(FormLogicRuntime::class, function (Container $c) {
+    return new FormLogicRuntime([
+        'maxInstructions' => 50000,
+        'maxWallTimeMs' => 2000,
+        'maxCallDepth' => 100,
+    ]);
+});
+
 $container->set(ResponseService::class, function (Container $c) {
     return new ResponseService(
         $c->get(MySQLConnection::class),
-        $c->get(SQLiteConnection::class)
+        $c->get(SQLiteConnection::class),
+        $c->get(FormLogicRuntime::class)
     );
 });
 
@@ -207,6 +218,11 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     })->add($authOptional);
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->delete($request, $response, $getArgs($request));
+    })->add($authOptional);
+
+    // Re-run script on a response (requires auth)
+    $group->post('/{id}/recompute', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ResponseController::class)->recompute($request, $response, $getArgs($request));
     })->add($authOptional);
 
     // Submit response (public - no auth required)

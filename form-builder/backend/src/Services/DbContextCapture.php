@@ -1,0 +1,159 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FormLogic\Services;
+
+/**
+ * Captures ctx.db operations during script execution
+ * Operations are recorded but not executed until after script completes
+ */
+class DbContextCapture
+{
+    // Maximum limits to prevent abuse
+    private const MAX_FIELDS = 50;
+    private const MAX_TAGS = 20;
+    private const MAX_FIELD_NAME_LENGTH = 64;
+    private const MAX_TAG_LENGTH = 32;
+
+    // Allowed status values
+    private const ALLOWED_STATUSES = [
+        'submitted',
+        'reviewed',
+        'approved',
+        'rejected',
+        'spam',
+        'archived',
+    ];
+
+    /** @var array<string, mixed> */
+    private array $fields = [];
+
+    /** @var string[] */
+    private array $tags = [];
+
+    private ?string $status = null;
+
+    /**
+     * Set a computed field value
+     * @param string $name Field name
+     * @param mixed $value Field value
+     * @return bool Success
+     */
+    public function setField(string $name, mixed $value): bool
+    {
+        // Validate field name length
+        if (strlen($name) > self::MAX_FIELD_NAME_LENGTH) {
+            return false;
+        }
+
+        // Check max fields limit
+        if (count($this->fields) >= self::MAX_FIELDS && !isset($this->fields[$name])) {
+            return false;
+        }
+
+        // Sanitize field name (only allow alphanumeric and underscore)
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
+            return false;
+        }
+
+        $this->fields[$name] = $value;
+        return true;
+    }
+
+    /**
+     * Get a field value (from previously set computed fields)
+     * @param string $name Field name
+     * @return mixed|null Field value or null if not set
+     */
+    public function getField(string $name): mixed
+    {
+        return $this->fields[$name] ?? null;
+    }
+
+    /**
+     * Set the submission status
+     * @param string $status Status value
+     * @return bool Success
+     */
+    public function setStatus(string $status): bool
+    {
+        $status = strtolower(trim($status));
+
+        if (!in_array($status, self::ALLOWED_STATUSES, true)) {
+            return false;
+        }
+
+        $this->status = $status;
+        return true;
+    }
+
+    /**
+     * Add a tag to the submission
+     * @param string $tag Tag value
+     * @return bool Success
+     */
+    public function addTag(string $tag): bool
+    {
+        $tag = trim($tag);
+
+        // Validate tag length
+        if (strlen($tag) > self::MAX_TAG_LENGTH || strlen($tag) === 0) {
+            return false;
+        }
+
+        // Check max tags limit
+        if (count($this->tags) >= self::MAX_TAGS) {
+            return false;
+        }
+
+        // Sanitize tag (only allow alphanumeric, underscore, hyphen)
+        if (!preg_match('/^[a-zA-Z0-9_-]+$/', $tag)) {
+            return false;
+        }
+
+        // Don't add duplicates
+        if (!in_array($tag, $this->tags, true)) {
+            $this->tags[] = $tag;
+        }
+
+        return true;
+    }
+
+    /**
+     * Get all captured fields
+     * @return array<string, mixed>
+     */
+    public function getFields(): array
+    {
+        return $this->fields;
+    }
+
+    /**
+     * Get all captured tags
+     * @return string[]
+     */
+    public function getTags(): array
+    {
+        return $this->tags;
+    }
+
+    /**
+     * Get the captured status
+     * @return string|null
+     */
+    public function getStatus(): ?string
+    {
+        return $this->status;
+    }
+
+    /**
+     * Reset all captured operations
+     */
+    public function reset(): void
+    {
+        $this->fields = [];
+        $this->tags = [];
+        $this->status = null;
+    }
+}

@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\ScriptRejection;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -106,9 +107,21 @@ class ResponseController
         $data['userAgent'] = $request->getHeaderLine('User-Agent');
         $data['referrer'] = $request->getHeaderLine('Referer');
 
+        // Get the script from the form (if any)
+        $script = $form['logicScript'] ?? null;
+
         try {
-            $formResponse = $this->responseService->createResponse($formId, $data);
-            return $this->jsonResponse($response, ['response' => $formResponse], 201);
+            $result = $this->responseService->createResponse($formId, $data, $script);
+
+            // Handle rejection from script
+            if ($result instanceof ScriptRejection) {
+                return $this->jsonResponse($response, [
+                    'error' => 'submission_rejected',
+                    'message' => $result->message,
+                ], 422);
+            }
+
+            return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -222,6 +235,54 @@ class ResponseController
         return $response
             ->withHeader('Content-Type', 'text/csv')
             ->withHeader('Content-Disposition', 'attachment; filename="' . $this->sanitizeFilename($form['title']) . '-responses.csv"');
+    }
+
+    /**
+     * Re-run script on an existing response
+     * POST /api/forms/{formId}/responses/{id}/recompute
+     */
+    public function recompute(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+        $responseId = $args['id'];
+
+        // Check form exists
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found',
+            ], 404);
+        }
+
+        // Get script from form
+        $script = $form['logicScript'] ?? null;
+        if (!$script) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'No script configured for this form',
+            ], 400);
+        }
+
+        try {
+            $result = $this->responseService->recomputeResponse($formId, $responseId, $script);
+
+            return $this->jsonResponse($response, [
+                'success' => $result->success,
+                'computed' => $result->computed,
+                'fields' => $result->fields,
+                'status' => $result->status,
+                'tags' => $result->tags,
+                'error' => $result->error,
+                'executionTimeMs' => $result->executionTimeMs,
+                'instructionCount' => $result->instructionCount,
+            ]);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
