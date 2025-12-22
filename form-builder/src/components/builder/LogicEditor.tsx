@@ -1,0 +1,452 @@
+import { useState, useEffect, useMemo } from 'react';
+import { Code, Wand2, Play, AlertCircle, CheckCircle, Plus, Trash2, HelpCircle } from 'lucide-react';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { Textarea } from '../ui/Textarea';
+import { Dropdown } from '../ui/Dropdown';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
+import { cn, createFieldVariableMap, replaceVariablesWithIds, replaceIdsWithVariables } from '../../lib/utils';
+import { useExpressionTester } from '../../hooks/useFormLogic';
+import type { FormField, ConditionalLogic } from '../../types/form';
+
+interface LogicEditorProps {
+  isOpen: boolean;
+  onClose: () => void;
+  field: FormField;
+  allFields: FormField[];
+  onSave: (logic: ConditionalLogic | undefined) => void;
+}
+
+interface SimpleCondition {
+  fieldId: string;
+  operator: string;
+  value: string;
+}
+
+const OPERATORS = [
+  { value: '===', label: 'equals' },
+  { value: '!==', label: 'does not equal' },
+  { value: '>', label: 'is greater than' },
+  { value: '<', label: 'is less than' },
+  { value: '>=', label: 'is greater than or equal to' },
+  { value: '<=', label: 'is less than or equal to' },
+  { value: 'contains', label: 'contains' },
+  { value: 'notEmpty', label: 'is not empty' },
+  { value: 'empty', label: 'is empty' },
+];
+
+const ACTIONS = [
+  { value: 'show', label: 'Show this field' },
+  { value: 'hide', label: 'Hide this field' },
+  { value: 'require', label: 'Make this field required' },
+  { value: 'skip', label: 'Skip this field' },
+];
+
+function simpleConditionToExpression(
+  conditions: SimpleCondition[],
+  combinator: 'and' | 'or',
+  idToVar: Record<string, string>
+): string {
+  if (conditions.length === 0) return 'true';
+
+  const parts = conditions.map((cond) => {
+    // Use variable name instead of field ID
+    const fieldRef = idToVar[cond.fieldId] || cond.fieldId;
+    const value = cond.value;
+
+    switch (cond.operator) {
+      case '===':
+        return `${fieldRef} === "${value}"`;
+      case '!==':
+        return `${fieldRef} !== "${value}"`;
+      case '>':
+        return `${fieldRef} > ${value}`;
+      case '<':
+        return `${fieldRef} < ${value}`;
+      case '>=':
+        return `${fieldRef} >= ${value}`;
+      case '<=':
+        return `${fieldRef} <= ${value}`;
+      case 'contains':
+        return `${fieldRef}.includes("${value}")`;
+      case 'notEmpty':
+        return `isNotEmpty(${fieldRef})`;
+      case 'empty':
+        return `isEmpty(${fieldRef})`;
+      default:
+        return 'true';
+    }
+  });
+
+  const operator = combinator === 'and' ? ' && ' : ' || ';
+  return parts.join(operator);
+}
+
+export function LogicEditor({
+  isOpen,
+  onClose,
+  field,
+  allFields,
+  onSave,
+}: LogicEditorProps) {
+  const [mode, setMode] = useState<'simple' | 'expression'>('simple');
+  const [action, setAction] = useState<string>(field.conditionalLogic?.action || 'show');
+  const [expression, setExpression] = useState('');
+  const [conditions, setConditions] = useState<SimpleCondition[]>([]);
+  const [combinator, setCombinator] = useState<'and' | 'or'>('and');
+  const [testContext, setTestContext] = useState('{}');
+
+  const { result, isTesting, testExpression } = useExpressionTester();
+
+  // Available fields for conditions (excluding the current field)
+  const availableFields = allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+
+  // Create variable name mappings
+  const { toId: varToId, toVar: idToVar } = useMemo(
+    () => createFieldVariableMap(availableFields),
+    [availableFields]
+  );
+
+  // Initialize from existing logic (convert IDs to variable names for display)
+  useEffect(() => {
+    if (field.conditionalLogic) {
+      setAction(field.conditionalLogic.action);
+      // Convert field IDs to variable names for display
+      const displayExpr = replaceIdsWithVariables(field.conditionalLogic.expression, idToVar);
+      setExpression(displayExpr);
+    } else {
+      setAction('show');
+      setExpression('');
+      setConditions([]);
+    }
+  }, [field, idToVar]);
+
+  // Update expression when simple conditions change
+  useEffect(() => {
+    if (mode === 'simple' && conditions.length > 0) {
+      const expr = simpleConditionToExpression(conditions, combinator, idToVar);
+      setExpression(expr);
+    }
+  }, [conditions, combinator, mode, idToVar]);
+
+  const handleAddCondition = () => {
+    if (availableFields.length === 0) return;
+    setConditions([
+      ...conditions,
+      { fieldId: availableFields[0].id, operator: '===', value: '' },
+    ]);
+  };
+
+  const handleRemoveCondition = (index: number) => {
+    setConditions(conditions.filter((_, i) => i !== index));
+  };
+
+  const handleConditionChange = (index: number, updates: Partial<SimpleCondition>) => {
+    setConditions(
+      conditions.map((cond, i) => (i === index ? { ...cond, ...updates } : cond))
+    );
+  };
+
+  const handleTest = async () => {
+    // Convert variable names to field IDs before testing
+    const exprWithIds = replaceVariablesWithIds(expression, varToId);
+    try {
+      const context = JSON.parse(testContext);
+      // Also convert context keys from variable names to field IDs
+      const contextWithIds: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(context)) {
+        const fieldId = varToId[key] || key;
+        contextWithIds[fieldId] = value;
+      }
+      await testExpression(exprWithIds, contextWithIds);
+    } catch {
+      await testExpression(exprWithIds, {});
+    }
+  };
+
+  const handleSave = () => {
+    if (!expression.trim()) {
+      onSave(undefined);
+    } else {
+      // Convert variable names to field IDs when saving
+      const exprWithIds = replaceVariablesWithIds(expression.trim(), varToId);
+      onSave({
+        expression: exprWithIds,
+        action: action as ConditionalLogic['action'],
+      });
+    }
+    onClose();
+  };
+
+  const handleClear = () => {
+    setExpression('');
+    setConditions([]);
+    setAction('show');
+  };
+
+  const fieldOptions = availableFields.map((f) => ({
+    value: f.id,
+    label: f.label || f.id,
+  }));
+
+  // Generate sample test context with variable names
+  const sampleContext = useMemo(() => {
+    const sample: Record<string, string> = {};
+    availableFields.slice(0, 2).forEach((f) => {
+      const varName = idToVar[f.id];
+      sample[varName] = f.type === 'number' ? '0' : 'value';
+    });
+    return JSON.stringify(sample, null, 2);
+  }, [availableFields, idToVar]);
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Conditional Logic"
+      size="lg"
+    >
+      <div className="p-6 space-y-6">
+        {/* Field Info */}
+        <div className="bg-gray-50 rounded-lg p-4">
+          <p className="text-sm text-gray-600">
+            Configure when the field <strong>"{field.label}"</strong> should be shown, hidden, or required.
+          </p>
+        </div>
+
+        {/* Action Selector */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            When condition is met:
+          </label>
+          <Dropdown
+            options={ACTIONS}
+            value={action}
+            onChange={setAction}
+          />
+        </div>
+
+        {/* Mode Tabs */}
+        <Tabs value={mode} onValueChange={(v) => setMode(v as 'simple' | 'expression')}>
+          <TabsList>
+            <TabsTrigger value="simple">
+              <Wand2 className="h-4 w-4 mr-2" />
+              Simple Mode
+            </TabsTrigger>
+            <TabsTrigger value="expression">
+              <Code className="h-4 w-4 mr-2" />
+              Expression Mode
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Simple Mode */}
+          <TabsContent value="simple" className="mt-4">
+            {availableFields.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <HelpCircle className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                <p>Add more fields to your form to create conditions.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {conditions.length > 1 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">Match</span>
+                    <div className="flex bg-gray-100 rounded-lg p-1">
+                      <button
+                        onClick={() => setCombinator('and')}
+                        className={cn(
+                          'px-3 py-1 text-sm rounded-md transition-colors',
+                          combinator === 'and' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                        )}
+                      >
+                        All conditions (AND)
+                      </button>
+                      <button
+                        onClick={() => setCombinator('or')}
+                        className={cn(
+                          'px-3 py-1 text-sm rounded-md transition-colors',
+                          combinator === 'or' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                        )}
+                      >
+                        Any condition (OR)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Condition Rows */}
+                <div className="space-y-3">
+                  {conditions.map((cond, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 p-3 rounded-lg">
+                      {index > 0 && (
+                        <span className="text-xs text-gray-500 uppercase font-medium w-10">
+                          {combinator}
+                        </span>
+                      )}
+                      <Dropdown
+                        options={fieldOptions}
+                        value={cond.fieldId}
+                        onChange={(v) => handleConditionChange(index, { fieldId: v })}
+                        className="flex-1"
+                      />
+                      <Dropdown
+                        options={OPERATORS.map((op) => ({ value: op.value, label: op.label }))}
+                        value={cond.operator}
+                        onChange={(v) => handleConditionChange(index, { operator: v })}
+                        className="w-48"
+                      />
+                      {!['notEmpty', 'empty'].includes(cond.operator) && (
+                        <Input
+                          value={cond.value}
+                          onChange={(e) => handleConditionChange(index, { value: e.target.value })}
+                          placeholder="Value"
+                          className="w-32"
+                        />
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveCondition(index)}
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddCondition}
+                  leftIcon={<Plus className="h-4 w-4" />}
+                >
+                  Add Condition
+                </Button>
+
+                {/* Generated Expression Preview */}
+                {conditions.length > 0 && (
+                  <div className="mt-4 p-3 bg-gray-100 rounded-lg">
+                    <p className="text-xs text-gray-500 mb-1">Generated Expression:</p>
+                    <code className="text-sm text-gray-700 font-mono">{expression}</code>
+                  </div>
+                )}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Expression Mode */}
+          <TabsContent value="expression" className="mt-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                FormLogic Expression
+              </label>
+              <Textarea
+                value={expression}
+                onChange={(e) => setExpression(e.target.value)}
+                placeholder="e.g., age >= 18 && country === 'US'"
+                rows={4}
+                className="font-mono text-sm"
+              />
+              {/* Available Variables */}
+              <div className="mt-2">
+                <p className="text-xs text-gray-500 mb-1">Available variables:</p>
+                <div className="flex flex-wrap gap-1">
+                  {availableFields.map((f) => {
+                    const varName = idToVar[f.id];
+                    return (
+                      <button
+                        key={f.id}
+                        onClick={() => setExpression((prev) => prev + varName)}
+                        className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors font-mono"
+                        title={f.label}
+                      >
+                        {varName}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Reference */}
+            <div className="bg-blue-50 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-blue-800 mb-2">Quick Reference</h4>
+              <div className="grid grid-cols-2 gap-2 text-xs text-blue-700">
+                <div><code>===</code> equals</div>
+                <div><code>!==</code> not equals</div>
+                <div><code>&&</code> AND</div>
+                <div><code>||</code> OR</div>
+                <div><code>isEmpty(field)</code> check empty</div>
+                <div><code>isNotEmpty(field)</code> check not empty</div>
+                <div><code>contains(arr, val)</code> array contains</div>
+                <div><code>validators.email(val)</code> validate email</div>
+              </div>
+            </div>
+
+            {/* Test Panel */}
+            <div className="border border-gray-200 rounded-lg p-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Test Expression</h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Test Context (JSON) - use variable names as keys
+                  </label>
+                  <Textarea
+                    value={testContext}
+                    onChange={(e) => setTestContext(e.target.value)}
+                    placeholder={sampleContext}
+                    rows={2}
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button
+                    size="sm"
+                    onClick={handleTest}
+                    isLoading={isTesting}
+                    leftIcon={<Play className="h-4 w-4" />}
+                  >
+                    Test
+                  </Button>
+                  {result && (
+                    <div className="flex items-center gap-2">
+                      {result.valid ? (
+                        <>
+                          <CheckCircle className="h-4 w-4 text-green-500" />
+                          <span className="text-sm text-green-700">
+                            Result: <strong>{String(result.output)}</strong>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle className="h-4 w-4 text-red-500" />
+                          <span className="text-sm text-red-700">{result.error}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+          <Button variant="ghost" onClick={handleClear}>
+            Clear Logic
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave}>
+              Save Condition
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}

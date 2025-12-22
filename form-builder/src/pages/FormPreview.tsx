@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -6,15 +6,18 @@ import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { useFormStore } from '../stores/formStore';
 import { useUIStore } from '../stores/uiStore';
+import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
 import type { FormField } from '../types/form';
 
 // Field Preview Component
-function FieldPreview({ field, value, onChange }: {
+function FieldPreview({ field, value, onChange, isRequired }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
+  isRequired?: boolean;
 }) {
+  const required = isRequired ?? field.required;
   const renderField = () => {
     switch (field.type) {
       case 'short_text':
@@ -204,7 +207,7 @@ function FieldPreview({ field, value, onChange }: {
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-2">
         {field.label}
-        {field.required && <span className="text-red-500 ml-1">*</span>}
+        {required && <span className="text-red-500 ml-1">*</span>}
       </h2>
       {field.description && field.type !== 'statement' && (
         <p className="text-gray-600 mb-6">{field.description}</p>
@@ -226,6 +229,23 @@ export default function FormPreview() {
 
   const form = formId ? getForm(formId) : undefined;
 
+  // Use conditional logic to determine field visibility
+  const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
+    form?.fields ?? [],
+    answers
+  );
+
+  // Get visible fields based on conditional logic
+  const visibleFields = useMemo(() => {
+    if (!form) return [];
+    return form.fields.filter((f) => {
+      // Always hide welcome/thank_you screens from the main flow
+      if (['welcome_screen', 'thank_you'].includes(f.type)) return false;
+      // Check conditional logic
+      return isFieldVisible(f.id);
+    });
+  }, [form, isFieldVisible]);
+
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -234,10 +254,11 @@ export default function FormPreview() {
     );
   }
 
-  const visibleFields = form.fields.filter((f) => !['welcome_screen', 'thank_you'].includes(f.type));
-  const currentField = visibleFields[currentStep];
-  const progress = visibleFields.length > 0 ? ((currentStep + 1) / visibleFields.length) * 100 : 0;
-  const isLastStep = currentStep === visibleFields.length - 1;
+  // Ensure currentStep is within bounds when fields change
+  const safeCurrentStep = Math.min(currentStep, Math.max(0, visibleFields.length - 1));
+  const currentField = visibleFields[safeCurrentStep];
+  const progress = visibleFields.length > 0 ? ((safeCurrentStep + 1) / visibleFields.length) * 100 : 0;
+  const isLastStep = safeCurrentStep === visibleFields.length - 1;
 
   const handleNext = () => {
     if (isLastStep) {
@@ -250,6 +271,11 @@ export default function FormPreview() {
 
   const handlePrev = () => {
     setCurrentStep((s) => Math.max(s - 1, 0));
+  };
+
+  // Get dynamic required status for a field
+  const getFieldRequired = (field: FormField) => {
+    return field.required || isFieldRequired(field.id);
   };
 
   const handleAnswerChange = (fieldId: string, value: unknown) => {
@@ -344,7 +370,8 @@ export default function FormPreview() {
               <div className="p-4">
                 <ProgressBar value={progress} size="sm" />
                 <p className="text-sm text-gray-500 mt-2 text-right">
-                  {currentStep + 1} of {visibleFields.length}
+                  {safeCurrentStep + 1} of {visibleFields.length}
+                  {isEvaluating && <span className="ml-2 animate-pulse">...</span>}
                 </p>
               </div>
 
@@ -363,6 +390,7 @@ export default function FormPreview() {
                       field={currentField}
                       value={answers[currentField.id]}
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
+                      isRequired={getFieldRequired(currentField)}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -372,7 +400,7 @@ export default function FormPreview() {
               <div className="p-4 flex items-center justify-between border-t border-gray-100">
                 <button
                   onClick={handlePrev}
-                  disabled={currentStep === 0}
+                  disabled={safeCurrentStep === 0}
                   className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
                 >
                   <ChevronUp className="h-6 w-6" />
@@ -406,6 +434,7 @@ export default function FormPreview() {
                       field={field}
                       value={answers[field.id]}
                       onChange={(val) => handleAnswerChange(field.id, val)}
+                      isRequired={getFieldRequired(field)}
                     />
                   </div>
                 ))}

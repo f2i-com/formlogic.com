@@ -15,6 +15,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tailwindcss/postcss": "^4.1.18",
     "clsx": "^2.1.1",
+    "formlogic-lang": "file:../formlogic-typescript",
     "framer-motion": "^12.23.26",
     "lucide-react": "^0.562.0",
     "react": "^19.2.0",

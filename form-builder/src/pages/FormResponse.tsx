@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronUp, ChevronDown, Check } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
+import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
 import type { FormField } from '../types/form';
 
@@ -14,12 +15,15 @@ function FieldResponse({
   value,
   onChange,
   primaryColor,
+  isRequired,
 }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
   primaryColor: string;
+  isRequired?: boolean;
 }) {
+  const required = isRequired ?? field.required;
   const renderField = () => {
     switch (field.type) {
       case 'short_text':
@@ -204,7 +208,7 @@ function FieldResponse({
       <div className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900 mb-3">
           {field.label}
-          {field.required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="text-red-500 ml-1">*</span>}
         </h2>
         {field.description && (
           <p className="text-lg text-gray-600">{field.description}</p>
@@ -270,6 +274,26 @@ export default function FormResponse() {
     );
   }
 
+  // Use conditional logic to determine field visibility
+  const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
+    form?.fields ?? [],
+    currentAnswers
+  );
+
+  // Get visible fields based on conditional logic
+  const visibleFields = useMemo(() => {
+    if (!form) return [];
+    return form.fields.filter((f) => {
+      if (['welcome_screen', 'thank_you'].includes(f.type)) return false;
+      return isFieldVisible(f.id);
+    });
+  }, [form, isFieldVisible]);
+
+  // Get dynamic required status for a field
+  const getFieldRequired = (field: FormField) => {
+    return field.required || isFieldRequired(field.id);
+  };
+
   if (form.settings.isClosed) {
     return (
       <div
@@ -286,10 +310,11 @@ export default function FormResponse() {
     );
   }
 
-  const visibleFields = form.fields.filter((f) => !['welcome_screen', 'thank_you'].includes(f.type));
-  const currentField = visibleFields[currentStep];
-  const progress = visibleFields.length > 0 ? ((currentStep + 1) / visibleFields.length) * 100 : 0;
-  const isLastStep = currentStep === visibleFields.length - 1;
+  // Ensure currentStep is within bounds when fields change
+  const safeCurrentStep = Math.min(currentStep, Math.max(0, visibleFields.length - 1));
+  const currentField = visibleFields[safeCurrentStep];
+  const progress = visibleFields.length > 0 ? ((safeCurrentStep + 1) / visibleFields.length) * 100 : 0;
+  const isLastStep = safeCurrentStep === visibleFields.length - 1;
 
   const handleSubmit = () => {
     const response = submitResponse();
@@ -300,7 +325,7 @@ export default function FormResponse() {
   };
 
   const handleNext = () => {
-    if (currentField?.required) {
+    if (currentField && getFieldRequired(currentField)) {
       const answer = currentAnswers[currentField.id];
       if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         alert('This field is required');
@@ -380,6 +405,7 @@ export default function FormResponse() {
               value={currentAnswers[currentField.id]}
               onChange={(val) => setAnswer(currentField.id, val)}
               primaryColor={form.theme.primaryColor}
+              isRequired={getFieldRequired(currentField)}
             />
 
             {/* OK Button */}
@@ -405,7 +431,7 @@ export default function FormResponse() {
         <div className="fixed bottom-4 right-4 flex flex-col gap-1">
           <button
             onClick={prevStep}
-            disabled={currentStep === 0}
+            disabled={safeCurrentStep === 0}
             className="p-2 bg-white rounded-lg shadow-md text-gray-600 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ChevronUp className="h-5 w-5" />
@@ -421,7 +447,8 @@ export default function FormResponse() {
 
       {/* Step Counter */}
       <div className="fixed bottom-4 left-4 text-sm text-gray-500">
-        {currentStep + 1} / {visibleFields.length}
+        {safeCurrentStep + 1} / {visibleFields.length}
+        {isEvaluating && <span className="ml-1 animate-pulse">...</span>}
       </div>
     </div>
   );
