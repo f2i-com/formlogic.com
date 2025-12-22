@@ -243,15 +243,19 @@ export function useExpressionTester() {
     async (expression: string, context: Record<string, unknown> = {}) => {
       setIsTesting(true);
 
-      // First validate syntax
-      const validation = await validateExpression(expression);
-      if (!validation.valid) {
-        setResult({ valid: false, error: validation.error });
-        setIsTesting(false);
-        return;
+      // Skip syntax validation when we have context variables, since
+      // validateExpression runs without context and would fail on undefined vars.
+      // The evaluateCondition call below will catch any actual errors.
+      if (Object.keys(context).length === 0) {
+        const validation = await validateExpression(expression);
+        if (!validation.valid) {
+          setResult({ valid: false, error: validation.error });
+          setIsTesting(false);
+          return;
+        }
       }
 
-      // Then try to evaluate
+      // Evaluate with context
       try {
         const output = await evaluateCondition(expression, context);
         setResult({ valid: true, output });

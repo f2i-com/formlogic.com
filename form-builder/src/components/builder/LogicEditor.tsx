@@ -100,7 +100,10 @@ export function LogicEditor({
   const { result, isTesting, testExpression } = useExpressionTester();
 
   // Available fields for conditions (excluding the current field)
-  const availableFields = allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+  const availableFields = useMemo(
+    () => allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type)),
+    [allFields, field.id]
+  );
 
   // Create variable name mappings
   const { toId: varToId, toVar: idToVar } = useMemo(
@@ -148,21 +151,33 @@ export function LogicEditor({
     );
   };
 
-  const handleTest = async () => {
-    // Convert variable names to field IDs before testing
-    const exprWithIds = replaceVariablesWithIds(expression, varToId);
+  const parseTestContext = (input: string): Record<string, unknown> => {
+    const trimmed = input.trim();
+    if (!trimmed || trimmed === '{}') return {};
+
     try {
-      const context = JSON.parse(testContext);
-      // Also convert context keys from variable names to field IDs
-      const contextWithIds: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(context)) {
-        const fieldId = varToId[key] || key;
-        contextWithIds[fieldId] = value;
-      }
-      await testExpression(exprWithIds, contextWithIds);
+      // First try standard JSON
+      return JSON.parse(trimmed);
     } catch {
-      await testExpression(exprWithIds, {});
+      // Try to fix JavaScript-style object literals (unquoted keys)
+      // Convert {key: "value"} to {"key": "value"}
+      const fixed = trimmed.replace(
+        /([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g,
+        '$1"$2":'
+      );
+      try {
+        return JSON.parse(fixed);
+      } catch {
+        return {};
+      }
     }
+  };
+
+  const handleTest = async () => {
+    // Test with variable names directly (don't convert to field IDs)
+    // Field IDs are UUIDs with hyphens which aren't valid JS identifiers
+    const context = parseTestContext(testContext);
+    await testExpression(expression, context);
   };
 
   const handleSave = () => {
