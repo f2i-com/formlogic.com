@@ -1,0 +1,164 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { api } from '../lib/api';
+
+interface User {
+  id: string;
+  email: string;
+  name?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+interface AuthState {
+  user: User | null;
+  token: string | null;
+  isLoading: boolean;
+  isInitialized: boolean;
+  error: string | null;
+
+  // Actions
+  initialize: () => Promise<void>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  updateProfile: (data: Partial<User>) => Promise<{ success: boolean; error?: string }>;
+  clearError: () => void;
+}
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set, get) => ({
+      user: null,
+      token: null,
+      isLoading: false,
+      isInitialized: false,
+      error: null,
+
+      initialize: async () => {
+        const state = get();
+        if (state.isInitialized) return;
+
+        set({ isLoading: true });
+
+        // Check if we have a stored token
+        const token = api.getToken();
+        if (!token) {
+          set({ isLoading: false, isInitialized: true });
+          return;
+        }
+
+        // Validate token by fetching user profile
+        try {
+          const result = await api.getMe();
+          if (result.error || !result.data) {
+            // Token is invalid, clear it
+            api.setToken(null);
+            set({ user: null, token: null, isLoading: false, isInitialized: true });
+          } else {
+            set({
+              user: result.data.user,
+              token,
+              isLoading: false,
+              isInitialized: true,
+            });
+          }
+        } catch (error) {
+          api.setToken(null);
+          set({ user: null, token: null, isLoading: false, isInitialized: true });
+        }
+      },
+
+      login: async (email: string, password: string) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const result = await api.login(email, password);
+
+          if (result.error || !result.data) {
+            set({ isLoading: false, error: result.error || 'Login failed' });
+            return { success: false, error: result.error || 'Login failed' };
+          }
+
+          set({
+            user: result.data.user,
+            token: result.data.token,
+            isLoading: false,
+            error: null,
+          });
+
+          return { success: true };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Login failed';
+          set({ isLoading: false, error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+      },
+
+      register: async (email: string, password: string, name?: string) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const result = await api.register(email, password, name);
+
+          if (result.error || !result.data) {
+            set({ isLoading: false, error: result.error || 'Registration failed' });
+            return { success: false, error: result.error || 'Registration failed' };
+          }
+
+          set({
+            user: result.data.user,
+            token: result.data.token,
+            isLoading: false,
+            error: null,
+          });
+
+          return { success: true };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Registration failed';
+          set({ isLoading: false, error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+      },
+
+      logout: () => {
+        api.logout();
+        set({ user: null, token: null, error: null });
+      },
+
+      updateProfile: async (data: Partial<User>) => {
+        set({ isLoading: true, error: null });
+
+        try {
+          const result = await api.updateProfile(data);
+
+          if (result.error || !result.data) {
+            set({ isLoading: false, error: result.error || 'Update failed' });
+            return { success: false, error: result.error || 'Update failed' };
+          }
+
+          set({
+            user: result.data.user,
+            isLoading: false,
+            error: null,
+          });
+
+          return { success: true };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Update failed';
+          set({ isLoading: false, error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+      },
+
+      clearError: () => set({ error: null }),
+    }),
+    {
+      name: 'formlogic-auth',
+      partialize: (state) => ({
+        token: state.token,
+        user: state.user,
+      }),
+    }
+  )
+);

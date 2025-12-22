@@ -1,73 +1,198 @@
-# React + TypeScript + Vite
+# FormLogic - Smart Form Builder
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A modern form builder with powerful conditional logic, real-time validation, and analytics. Build dynamic forms with an intuitive drag-and-drop interface.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Drag & Drop Builder** - Create forms visually with an intuitive interface
+- **Conditional Logic** - Show/hide fields based on user responses using FormLogic expressions
+- **Real-time Validation** - Built-in and custom validation rules
+- **Analytics Dashboard** - Track responses, completion rates, and form performance
+- **Multi-storage Support** - Works offline with localStorage, syncs to cloud when connected
+- **Responsive Design** - Forms work beautifully on all devices
 
-## React Compiler
+## Project Structure
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```
+form-builder/
+├── ui/                 # Frontend React application
+│   ├── src/            # Source code
+│   ├── public/         # Static assets
+│   ├── dist/           # Production build
+│   └── package.json    # Node dependencies
+├── backend/            # PHP Slim API
+│   ├── src/            # PHP source code
+│   ├── public/         # Web root (index.php)
+│   ├── config/         # Configuration files
+│   ├── storage/        # SQLite databases for forms
+│   └── composer.json   # PHP dependencies
+└── README.md
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Tech Stack
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+### Frontend
+- React 18 with TypeScript
+- Zustand for state management
+- Tailwind CSS for styling
+- React Router for navigation
+- Vite for build tooling
+- FormLogic expression engine for conditional logic
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### Backend
+- PHP 8.1+ with Slim 4 Framework
+- MySQL for global data (users, form metadata, analytics)
+- SQLite for per-form data (fields, responses)
+- JWT authentication
+- RESTful API
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- PHP 8.1+
+- MySQL 8.0+
+- Composer
+
+### Frontend Setup
+
+```bash
+cd ui
+
+# Install dependencies
+npm install
+
+# Copy environment file
+cp .env.example .env
+
+# Start development server
+npm run dev
 ```
+
+The frontend will be available at `http://localhost:5173`
+
+### Backend Setup
+
+```bash
+cd backend
+
+# Install dependencies
+composer install
+
+# Copy environment file
+cp .env.example .env
+
+# Edit .env with your database credentials
+# DB_HOST=localhost
+# DB_DATABASE=formlogic
+# DB_USERNAME=formlogic
+# DB_PASSWORD=your_password
+
+# Start PHP development server
+php -S localhost:8080 -t public
+```
+
+The API will be available at `http://localhost:8080`
+
+### Database Setup
+
+Create a MySQL database and user:
+
+```sql
+CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'formlogic'@'localhost' IDENTIFIED BY 'your_password';
+GRANT ALL PRIVILEGES ON formlogic.* TO 'formlogic'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+The schema is automatically created on first API request.
+
+## API Endpoints
+
+### Authentication
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - Login
+- `GET /api/auth/me` - Get current user
+- `PUT /api/auth/me` - Update profile
+
+### Forms
+- `GET /api/forms` - List all forms
+- `POST /api/forms` - Create form
+- `GET /api/forms/:id` - Get form
+- `PUT /api/forms/:id` - Update form
+- `DELETE /api/forms/:id` - Delete form
+- `POST /api/forms/:id/duplicate` - Duplicate form
+
+### Responses
+- `GET /api/forms/:id/responses` - List responses
+- `POST /api/forms/:id/responses` - Submit response (public)
+- `GET /api/forms/:id/responses/export` - Export as CSV
+
+### Analytics
+- `GET /api/forms/:id/analytics` - Get form analytics
+
+## FormLogic Expression Language
+
+FormLogic uses a custom expression language for conditional logic:
+
+```javascript
+// Simple comparisons
+age >= 18
+country === "USA"
+
+// Logical operators
+age >= 18 && hasLicense === true
+status === "active" || status === "pending"
+
+// String operations
+email.contains("@gmail.com")
+name.startsWith("Dr.")
+
+// Numeric operations
+total > 100 && discount < 50
+```
+
+## Development
+
+### Frontend Commands
+
+```bash
+npm run dev      # Start dev server
+npm run build    # Production build
+npm run lint     # Run ESLint
+npm run preview  # Preview production build
+```
+
+### Backend Commands
+
+```bash
+composer install        # Install dependencies
+composer dump-autoload  # Regenerate autoloader
+php -S localhost:8080 -t public  # Start dev server
+```
+
+## Environment Variables
+
+### Frontend (ui/.env)
+```
+VITE_API_URL=http://localhost:8080/api
+```
+
+### Backend (backend/.env)
+```
+APP_ENV=development
+APP_DEBUG=true
+DB_HOST=localhost
+DB_PORT=3306
+DB_DATABASE=formlogic
+DB_USERNAME=formlogic
+DB_PASSWORD=password
+JWT_SECRET=your-secret-key
+JWT_EXPIRY=86400
+CORS_ORIGIN=http://localhost:5173
+```
+
+## License
+
+MIT License

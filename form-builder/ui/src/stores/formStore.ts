@@ -1,0 +1,526 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { v4 as uuidv4 } from 'uuid';
+import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
+import { api } from '../lib/api';
+
+// Storage mode: 'local' for localStorage, 'api' for backend
+type StorageMode = 'local' | 'api';
+
+interface FormState {
+  forms: Form[];
+  activeFormId: string | null;
+  selectedFieldId: string | null;
+  isLoading: boolean;
+  error: string | null;
+  storageMode: StorageMode;
+  isInitialized: boolean;
+
+  // Initialization
+  initialize: () => Promise<void>;
+  setStorageMode: (mode: StorageMode) => void;
+
+  // Form actions
+  createForm: (title: string, description?: string) => Promise<Form>;
+  updateForm: (id: string, updates: Partial<Form>) => Promise<void>;
+  deleteForm: (id: string) => Promise<void>;
+  duplicateForm: (id: string) => Promise<Form | null>;
+  getForm: (id: string) => Form | undefined;
+  setActiveForm: (id: string | null) => void;
+  refreshForms: () => Promise<void>;
+
+  // Field actions
+  addField: (formId: string, field: Omit<FormField, 'id' | 'order'>) => FormField;
+  updateField: (formId: string, fieldId: string, updates: Partial<FormField>) => void;
+  deleteField: (formId: string, fieldId: string) => void;
+  reorderFields: (formId: string, fieldIds: string[]) => void;
+  setSelectedField: (fieldId: string | null) => void;
+
+  // Settings & Theme
+  updateFormSettings: (formId: string, settings: Partial<FormSettings>) => void;
+  updateFormTheme: (formId: string, theme: Partial<FormTheme>) => void;
+
+  // Sync
+  syncToApi: () => Promise<{ success: boolean; synced: number; errors: string[] }>;
+  saveFormToApi: (formId: string) => Promise<boolean>;
+}
+
+const defaultSettings: FormSettings = {
+  presentationMode: 'both',
+  defaultPresentationMode: 'typeform',
+  showProgressBar: true,
+  allowBackNavigation: true,
+  submitButtonText: 'Submit',
+  notifications: { emailNotifications: false },
+  isClosed: false,
+};
+
+const defaultTheme: FormTheme = {
+  primaryColor: '#6366f1',
+  backgroundColor: '#ffffff',
+  textColor: '#1f2937',
+  fontFamily: 'Inter',
+  borderRadius: 'medium',
+};
+
+// Debounce helper for auto-save
+const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+function debouncedSave(formId: string, saveFn: () => void, delay = 1000) {
+  if (debounceTimers[formId]) {
+    clearTimeout(debounceTimers[formId]);
+  }
+  debounceTimers[formId] = setTimeout(saveFn, delay);
+}
+
+export const useFormStore = create<FormState>()(
+  persist(
+    (set, get) => ({
+      forms: [],
+      activeFormId: null,
+      selectedFieldId: null,
+      isLoading: false,
+      error: null,
+      storageMode: 'local' as StorageMode,
+      isInitialized: false,
+
+      initialize: async () => {
+        const state = get();
+        if (state.isInitialized) return;
+
+        set({ isLoading: true, error: null });
+
+        try {
+          // Check if API is available
+          const healthResult = await api.healthCheck();
+          const apiAvailable = !healthResult.error && healthResult.data?.status === 'ok';
+
+          if (apiAvailable && state.storageMode === 'api') {
+            // Load forms from API
+            const result = await api.getForms();
+            if (!result.error && result.data) {
+              set({
+                forms: result.data.forms as Form[],
+                isLoading: false,
+                isInitialized: true,
+              });
+              return;
+            }
+          }
+
+          // Fallback to localStorage (already loaded by persist middleware)
+          set({ isLoading: false, isInitialized: true });
+        } catch (error) {
+          console.error('Failed to initialize form store:', error);
+          set({
+            error: 'Failed to load forms',
+            isLoading: false,
+            isInitialized: true,
+          });
+        }
+      },
+
+      setStorageMode: (mode: StorageMode) => {
+        set({ storageMode: mode, isInitialized: false });
+        localStorage.setItem('formlogic_storage_mode', mode);
+        get().initialize();
+      },
+
+      refreshForms: async () => {
+        const state = get();
+        if (state.storageMode !== 'api') return;
+
+        set({ isLoading: true });
+        try {
+          const result = await api.getForms();
+          if (!result.error && result.data) {
+            set({ forms: result.data.forms as Form[], isLoading: false });
+          } else {
+            set({ error: result.error || 'Failed to load forms', isLoading: false });
+          }
+        } catch (error) {
+          set({ error: 'Failed to load forms', isLoading: false });
+        }
+      },
+
+      createForm: async (title, description) => {
+        const form: Form = {
+          id: uuidv4(),
+          title,
+          description,
+          fields: [],
+          settings: { ...defaultSettings },
+          theme: { ...defaultTheme },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          status: 'draft',
+          responseCount: 0,
+        };
+
+        const state = get();
+
+        // Optimistic update
+        set((s) => ({ forms: [...s.forms, form] }));
+
+        // If using API, also create on server
+        if (state.storageMode === 'api') {
+          try {
+            const result = await api.createForm(form);
+            if (result.error) {
+              console.error('Failed to create form on server:', result.error);
+            } else if (result.data) {
+              // Update with server response (may have different ID)
+              set((s) => ({
+                forms: s.forms.map((f) =>
+                  f.id === form.id ? (result.data!.form as Form) : f
+                ),
+              }));
+              return result.data.form as Form;
+            }
+          } catch (error) {
+            console.error('Failed to create form on server:', error);
+          }
+        }
+
+        return form;
+      },
+
+      updateForm: async (id, updates) => {
+        const state = get();
+
+        // Optimistic update
+        set((s) => ({
+          forms: s.forms.map((form) =>
+            form.id === id
+              ? { ...form, ...updates, updatedAt: new Date().toISOString() }
+              : form
+          ),
+        }));
+
+        // If using API, sync to server (debounced)
+        if (state.storageMode === 'api') {
+          debouncedSave(id, async () => {
+            const form = get().forms.find((f) => f.id === id);
+            if (form) {
+              try {
+                await api.updateForm(id, form);
+              } catch (error) {
+                console.error('Failed to update form on server:', error);
+              }
+            }
+          });
+        }
+      },
+
+      deleteForm: async (id) => {
+        const state = get();
+
+        // Optimistic update
+        set((s) => ({
+          forms: s.forms.filter((form) => form.id !== id),
+          activeFormId: s.activeFormId === id ? null : s.activeFormId,
+        }));
+
+        // If using API, also delete on server
+        if (state.storageMode === 'api') {
+          try {
+            await api.deleteForm(id);
+          } catch (error) {
+            console.error('Failed to delete form on server:', error);
+          }
+        }
+      },
+
+      duplicateForm: async (id) => {
+        const state = get();
+        const form = state.forms.find((f) => f.id === id);
+        if (!form) return null;
+
+        const newForm: Form = {
+          ...form,
+          id: uuidv4(),
+          title: `${form.title} (Copy)`,
+          fields: form.fields.map((field) => ({ ...field, id: uuidv4() })),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          status: 'draft',
+          responseCount: 0,
+        };
+
+        // Optimistic update
+        set((s) => ({ forms: [...s.forms, newForm] }));
+
+        // If using API, duplicate on server
+        if (state.storageMode === 'api') {
+          try {
+            const result = await api.duplicateForm(id);
+            if (result.data) {
+              set((s) => ({
+                forms: s.forms.map((f) =>
+                  f.id === newForm.id ? (result.data!.form as Form) : f
+                ),
+              }));
+              return result.data.form as Form;
+            }
+          } catch (error) {
+            console.error('Failed to duplicate form on server:', error);
+          }
+        }
+
+        return newForm;
+      },
+
+      getForm: (id) => get().forms.find((f) => f.id === id),
+
+      setActiveForm: (id) => set({ activeFormId: id, selectedFieldId: null }),
+
+      addField: (formId, fieldData) => {
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) throw new Error('Form not found');
+
+        const field: FormField = {
+          ...fieldData,
+          id: uuidv4(),
+          order: form.fields.length,
+        };
+
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId
+              ? {
+                  ...f,
+                  fields: [...f.fields, field],
+                  updatedAt: new Date().toISOString(),
+                }
+              : f
+          ),
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { fields: updatedForm.fields });
+            }
+          });
+        }
+
+        return field;
+      },
+
+      updateField: (formId, fieldId, updates) => {
+        set((state) => ({
+          forms: state.forms.map((form) =>
+            form.id === formId
+              ? {
+                  ...form,
+                  fields: form.fields.map((field) =>
+                    field.id === fieldId ? { ...field, ...updates } : field
+                  ),
+                  updatedAt: new Date().toISOString(),
+                }
+              : form
+          ),
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { fields: updatedForm.fields });
+            }
+          });
+        }
+      },
+
+      deleteField: (formId, fieldId) => {
+        set((state) => ({
+          forms: state.forms.map((form) =>
+            form.id === formId
+              ? {
+                  ...form,
+                  fields: form.fields
+                    .filter((field) => field.id !== fieldId)
+                    .map((field, index) => ({ ...field, order: index })),
+                  updatedAt: new Date().toISOString(),
+                }
+              : form
+          ),
+          selectedFieldId:
+            state.selectedFieldId === fieldId ? null : state.selectedFieldId,
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { fields: updatedForm.fields });
+            }
+          });
+        }
+      },
+
+      reorderFields: (formId, fieldIds) => {
+        set((state) => ({
+          forms: state.forms.map((form) => {
+            if (form.id !== formId) return form;
+
+            const fieldMap = new Map(form.fields.map((f) => [f.id, f]));
+            const reorderedFields = fieldIds
+              .map((id, index) => {
+                const field = fieldMap.get(id);
+                return field ? { ...field, order: index } : null;
+              })
+              .filter((f): f is FormField => f !== null);
+
+            return {
+              ...form,
+              fields: reorderedFields,
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { fields: updatedForm.fields });
+            }
+          });
+        }
+      },
+
+      setSelectedField: (fieldId) => set({ selectedFieldId: fieldId }),
+
+      updateFormSettings: (formId, settings) => {
+        set((state) => ({
+          forms: state.forms.map((form) =>
+            form.id === formId
+              ? {
+                  ...form,
+                  settings: { ...form.settings, ...settings },
+                  updatedAt: new Date().toISOString(),
+                }
+              : form
+          ),
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { settings: updatedForm.settings });
+            }
+          });
+        }
+      },
+
+      updateFormTheme: (formId, theme) => {
+        set((state) => ({
+          forms: state.forms.map((form) =>
+            form.id === formId
+              ? {
+                  ...form,
+                  theme: { ...form.theme, ...theme },
+                  updatedAt: new Date().toISOString(),
+                }
+              : form
+          ),
+        }));
+
+        // Sync to API if in API mode
+        const currentState = get();
+        if (currentState.storageMode === 'api') {
+          debouncedSave(formId, async () => {
+            const updatedForm = get().forms.find((f) => f.id === formId);
+            if (updatedForm) {
+              await api.updateForm(formId, { theme: updatedForm.theme });
+            }
+          });
+        }
+      },
+
+      // Sync all local forms to API
+      syncToApi: async () => {
+        const state = get();
+        const errors: string[] = [];
+        let synced = 0;
+
+        for (const form of state.forms) {
+          try {
+            // Check if form exists on server
+            const existingResult = await api.getForm(form.id);
+
+            if (existingResult.error || !existingResult.data) {
+              // Create new form on server
+              const createResult = await api.createForm(form);
+              if (createResult.error) {
+                errors.push(`Failed to sync "${form.title}": ${createResult.error}`);
+              } else {
+                synced++;
+              }
+            } else {
+              // Update existing form
+              const updateResult = await api.updateForm(form.id, form);
+              if (updateResult.error) {
+                errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
+              } else {
+                synced++;
+              }
+            }
+          } catch (error) {
+            errors.push(`Error syncing "${form.title}": ${error}`);
+          }
+        }
+
+        return { success: errors.length === 0, synced, errors };
+      },
+
+      // Save a specific form to API
+      saveFormToApi: async (formId: string) => {
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) return false;
+
+        try {
+          const existingResult = await api.getForm(formId);
+
+          if (existingResult.error || !existingResult.data) {
+            const createResult = await api.createForm(form);
+            return !createResult.error;
+          } else {
+            const updateResult = await api.updateForm(formId, form);
+            return !updateResult.error;
+          }
+        } catch {
+          return false;
+        }
+      },
+    }),
+    {
+      name: 'formlogic-forms',
+      partialize: (state) => ({
+        forms: state.forms,
+        storageMode: state.storageMode,
+      }),
+      onRehydrateStorage: () => {
+        return (state) => {
+          // Restore storage mode from localStorage
+          const savedMode = localStorage.getItem('formlogic_storage_mode');
+          if (savedMode === 'api' || savedMode === 'local') {
+            state?.setStorageMode?.(savedMode);
+          }
+        };
+      },
+    }
+  )
+);
