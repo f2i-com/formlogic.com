@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
+import { toast } from './toastStore';
 
 // Generate a human-friendly field ID from a label
 function generateFieldId(label: string, existingIds: string[]): string {
@@ -137,6 +138,7 @@ export const useFormStore = create<FormState>()(
           set({ isLoading: false, isInitialized: true });
         } catch (error) {
           console.error('Failed to initialize form store:', error);
+          toast.error('Loading Error', 'Failed to load forms. Using local storage.');
           set({
             error: 'Failed to load forms',
             isLoading: false,
@@ -164,6 +166,8 @@ export const useFormStore = create<FormState>()(
             set({ error: result.error || 'Failed to load forms', isLoading: false });
           }
         } catch (error) {
+          console.error('Failed to refresh forms:', error);
+          toast.error('Refresh Failed', 'Could not refresh forms from server.');
           set({ error: 'Failed to load forms', isLoading: false });
         }
       },

@@ -163,7 +163,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
               <p className="text-sm text-gray-500">Write FormLogic code that runs on form submission</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
             <X className="h-5 w-5 text-gray-500" />
           </button>
         </div>

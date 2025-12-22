@@ -85,6 +85,7 @@ export default function FormAnalytics() {
           }
         } catch (error) {
           console.error('Failed to fetch analytics:', error);
+          toast.warning('Connection Issue', 'Using local analytics data.');
         } finally {
           setIsLoading(false);
         }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { Trash2, AlertCircle, CheckCircle, Play } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -51,7 +52,7 @@ function getValidationOptions(fieldType: FieldType) {
 }
 
 export function ValidationEditor({ rules, fieldType, onChange }: ValidationEditorProps) {
-  const [expandedRule, setExpandedRule] = useState<number | null>(null);
+  const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
   const { result, isTesting, testExpression } = useExpressionTester();
   const [testValue, setTestValue] = useState('');
 
@@ -62,7 +63,9 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
     if (!option) return;
 
     const type = TYPE_TO_VALIDATION[optionLabel] as ValidationRule['type'];
+    const ruleId = uuidv4();
     const newRule: ValidationRule = {
+      id: ruleId,
       type,
       message: `Validation failed for ${optionLabel.toLowerCase()}`,
       value: option.hasValue ? (option.valueType === 'number' ? 0 : '') : undefined,
@@ -70,20 +73,20 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
     };
 
     onChange([...rules, newRule]);
-    setExpandedRule(rules.length);
+    setExpandedRuleId(ruleId);
   };
 
-  const updateRule = (index: number, updates: Partial<ValidationRule>) => {
-    const newRules = rules.map((rule, i) =>
-      i === index ? { ...rule, ...updates } : rule
+  const updateRule = (ruleId: string, updates: Partial<ValidationRule>) => {
+    const newRules = rules.map((rule) =>
+      rule.id === ruleId ? { ...rule, ...updates } : rule
     );
     onChange(newRules);
   };
 
-  const removeRule = (index: number) => {
-    onChange(rules.filter((_, i) => i !== index));
-    if (expandedRule === index) {
-      setExpandedRule(null);
+  const removeRule = (ruleId: string) => {
+    onChange(rules.filter((rule) => rule.id !== ruleId));
+    if (expandedRuleId === ruleId) {
+      setExpandedRuleId(null);
     }
   };
 
@@ -136,18 +139,18 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
         </p>
       ) : (
         <div className="space-y-2">
-          {rules.map((rule, index) => (
+          {rules.map((rule) => (
             <div
-              key={index}
+              key={rule.id}
               className="border border-gray-200 rounded-lg overflow-hidden"
             >
               {/* Rule Header */}
               <div
                 className={cn(
                   'flex items-center justify-between p-3 bg-gray-50 cursor-pointer',
-                  expandedRule === index && 'border-b border-gray-200'
+                  expandedRuleId === rule.id && 'border-b border-gray-200'
                 )}
-                onClick={() => setExpandedRule(expandedRule === index ? null : index)}
+                onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-700">
@@ -157,9 +160,10 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                 <Button
                   variant="ghost"
                   size="sm"
+                  aria-label="Remove validation rule"
                   onClick={(e) => {
                     e.stopPropagation();
-                    removeRule(index);
+                    removeRule(rule.id);
                   }}
                 >
                   <Trash2 className="h-4 w-4 text-red-500" />
@@ -167,7 +171,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
               </div>
 
               {/* Rule Content */}
-              {expandedRule === index && (
+              {expandedRuleId === rule.id && (
                 <div className="p-4 space-y-4">
                   {/* Value Input for rules that need it */}
                   {['minLength', 'maxLength', 'min', 'max'].includes(rule.type) && (
@@ -176,7 +180,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                       type="number"
                       value={rule.value as number}
                       onChange={(e) =>
-                        updateRule(index, { value: parseInt(e.target.value) || 0 })
+                        updateRule(rule.id, { value: parseInt(e.target.value) || 0 })
                       }
                     />
                   )}
@@ -185,7 +189,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     <Input
                       label="Pattern (Regular Expression)"
                       value={rule.value as string}
-                      onChange={(e) => updateRule(index, { value: e.target.value })}
+                      onChange={(e) => updateRule(rule.id, { value: e.target.value })}
                       placeholder="^[a-zA-Z]+$"
                     />
                   )}
@@ -196,7 +200,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                         label="Custom Expression"
                         value={rule.expression || ''}
                         onChange={(e) =>
-                          updateRule(index, { expression: e.target.value })
+                          updateRule(rule.id, { expression: e.target.value })
                         }
                         placeholder={`// Return error message or null if valid
 if (value.length < 5) {
@@ -250,7 +254,7 @@ return null;`}
                   <Input
                     label="Error Message"
                     value={rule.message}
-                    onChange={(e) => updateRule(index, { message: e.target.value })}
+                    onChange={(e) => updateRule(rule.id, { message: e.target.value })}
                     placeholder="This field is invalid"
                   />
                 </div>

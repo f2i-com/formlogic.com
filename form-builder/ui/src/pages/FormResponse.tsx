@@ -409,7 +409,7 @@ function FieldResponse({
                 </div>
               )}
             </div>
-            {value && (
+            {Boolean(value) && (
               <button
                 onClick={() => {
                   const canvas = document.getElementById(signatureCanvasId) as HTMLCanvasElement;

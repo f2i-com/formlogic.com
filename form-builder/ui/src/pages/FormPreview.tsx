@@ -383,7 +383,7 @@ function FieldPreview({ field, value, onChange, isRequired }: {
                 </div>
               )}
             </div>
-            {value && (
+            {Boolean(value) && (
               <button
                 onClick={() => {
                   const canvas = document.getElementById(signatureId) as HTMLCanvasElement;

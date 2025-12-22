@@ -209,6 +209,7 @@ export function Dashboard() {
           });
         } catch (error) {
           console.error('Failed to fetch dashboard stats:', error);
+          toast.warning('Connection Issue', 'Using local data. Some stats may not be up to date.');
           setStats(localStats);
         }
       } else {

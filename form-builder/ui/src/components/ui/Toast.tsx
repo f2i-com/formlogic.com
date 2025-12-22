@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react';
 import { useToastStore, type Toast as ToastType } from '../../stores/toastStore';
 
@@ -39,13 +39,23 @@ const styles = {
 function ToastItem({ toast }: { toast: ToastType }) {
   const [isExiting, setIsExiting] = useState(false);
   const removeToast = useToastStore((state) => state.removeToast);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const Icon = icons[toast.type];
   const style = styles[toast.type];
 
-  const handleClose = () => {
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleClose = useCallback(() => {
     setIsExiting(true);
-    setTimeout(() => removeToast(toast.id), 150);
-  };
+    timeoutRef.current = setTimeout(() => removeToast(toast.id), 150);
+  }, [removeToast, toast.id]);
 
   return (
     <div
@@ -65,6 +75,7 @@ function ToastItem({ toast }: { toast: ToastType }) {
       </div>
       <button
         onClick={handleClose}
+        aria-label="Dismiss notification"
         className={`flex-shrink-0 p-1 rounded hover:bg-black/5 transition-colors ${style.icon}`}
       >
         <X className="h-4 w-4" />

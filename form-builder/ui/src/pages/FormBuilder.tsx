@@ -181,6 +181,7 @@ function SortableFieldCard({
 
         <button
           onClick={onDelete}
+          aria-label="Delete field"
           className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <Trash2 className="h-4 w-4" />
@@ -283,6 +284,7 @@ function FieldSettingsPanel({
                     <Button
                       variant="ghost"
                       size="sm"
+                      aria-label="Remove option"
                       onClick={() => {
                         const newOptions = field.properties.options?.filter((_, i) => i !== index);
                         onUpdate({ properties: { ...field.properties, options: newOptions } });

@@ -28,6 +28,7 @@ export interface FieldOption {
 }
 
 export interface ValidationRule {
+  id: string;
   type: 'required' | 'minLength' | 'maxLength' | 'min' | 'max' | 'pattern' | 'custom';
   value?: string | number;
   message: string;

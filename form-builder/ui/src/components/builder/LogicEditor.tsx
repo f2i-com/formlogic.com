@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { Code, Wand2, Play, AlertCircle, CheckCircle, Plus, Trash2, HelpCircle } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -19,6 +20,7 @@ interface LogicEditorProps {
 }
 
 interface SimpleCondition {
+  id: string;
   fieldId: string;
   operator: string;
   value: string;
@@ -137,17 +139,17 @@ export function LogicEditor({
     if (availableFields.length === 0) return;
     setConditions([
       ...conditions,
-      { fieldId: availableFields[0].id, operator: '===', value: '' },
+      { id: uuidv4(), fieldId: availableFields[0].id, operator: '===', value: '' },
     ]);
   };
 
-  const handleRemoveCondition = (index: number) => {
-    setConditions(conditions.filter((_, i) => i !== index));
+  const handleRemoveCondition = (conditionId: string) => {
+    setConditions(conditions.filter((cond) => cond.id !== conditionId));
   };
 
-  const handleConditionChange = (index: number, updates: Partial<SimpleCondition>) => {
+  const handleConditionChange = (conditionId: string, updates: Partial<SimpleCondition>) => {
     setConditions(
-      conditions.map((cond, i) => (i === index ? { ...cond, ...updates } : cond))
+      conditions.map((cond) => (cond.id === conditionId ? { ...cond, ...updates } : cond))
     );
   };
 
@@ -293,7 +295,7 @@ export function LogicEditor({
                 {/* Condition Rows */}
                 <div className="space-y-3">
                   {conditions.map((cond, index) => (
-                    <div key={index} className="flex items-center gap-2 bg-gray-50 p-3 rounded-lg">
+                    <div key={cond.id} className="flex items-center gap-2 bg-gray-50 p-3 rounded-lg">
                       {index > 0 && (
                         <span className="text-xs text-gray-500 uppercase font-medium w-10">
                           {combinator}
@@ -302,19 +304,19 @@ export function LogicEditor({
                       <Dropdown
                         options={fieldOptions}
                         value={cond.fieldId}
-                        onChange={(v) => handleConditionChange(index, { fieldId: v })}
+                        onChange={(v) => handleConditionChange(cond.id, { fieldId: v })}
                         className="flex-1"
                       />
                       <Dropdown
                         options={OPERATORS.map((op) => ({ value: op.value, label: op.label }))}
                         value={cond.operator}
-                        onChange={(v) => handleConditionChange(index, { operator: v })}
+                        onChange={(v) => handleConditionChange(cond.id, { operator: v })}
                         className="w-48"
                       />
                       {!['notEmpty', 'empty'].includes(cond.operator) && (
                         <Input
                           value={cond.value}
-                          onChange={(e) => handleConditionChange(index, { value: e.target.value })}
+                          onChange={(e) => handleConditionChange(cond.id, { value: e.target.value })}
                           placeholder="Value"
                           className="w-32"
                         />
@@ -322,7 +324,8 @@ export function LogicEditor({
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleRemoveCondition(index)}
+                        aria-label="Remove condition"
+                        onClick={() => handleRemoveCondition(cond.id)}
                       >
                         <Trash2 className="h-4 w-4 text-red-500" />
                       </Button>
