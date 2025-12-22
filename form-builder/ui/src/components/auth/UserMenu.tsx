@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
@@ -18,6 +19,7 @@ interface UserMenuProps {
 }
 
 export function UserMenu({ onOpenAuth }: UserMenuProps) {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -172,7 +174,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
             <button
               onClick={() => {
                 setIsOpen(false);
-                // Could open settings modal here
+                navigate('/settings');
               }}
               className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
             >

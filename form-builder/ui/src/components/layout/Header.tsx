@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Bell } from 'lucide-react';
 import { UserMenu } from '../auth/UserMenu';
 import { AuthModal } from '../auth/AuthModal';
 
@@ -20,11 +19,6 @@ export function Header({ title, actions }: HeaderProps) {
 
         <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
           {actions && <div className="flex items-center gap-2 overflow-x-auto">{actions}</div>}
-
-          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0">
-            <Bell className="h-5 w-5" />
-          </button>
-
           <UserMenu onOpenAuth={() => setShowAuthModal(true)} />
         </div>
       </header>
