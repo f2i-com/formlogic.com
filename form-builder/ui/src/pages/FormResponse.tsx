@@ -567,23 +567,8 @@ export default function FormResponse() {
 
   const form = formId ? getForm(formId) : undefined;
 
-  useEffect(() => {
-    if (formId) {
-      resetCurrentResponse();
-      startResponse(formId);
-    }
-    return () => resetCurrentResponse();
-  }, [formId]);
-
-  if (!form) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Form not found</p>
-      </div>
-    );
-  }
-
   // Use conditional logic to determine field visibility
+  // Note: hooks must be called before any early returns
   const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
     form?.fields ?? [],
     currentAnswers
@@ -598,10 +583,26 @@ export default function FormResponse() {
     });
   }, [form, isFieldVisible]);
 
+  useEffect(() => {
+    if (formId) {
+      resetCurrentResponse();
+      startResponse(formId);
+    }
+    return () => resetCurrentResponse();
+  }, [formId, resetCurrentResponse, startResponse]);
+
   // Get dynamic required status for a field
   const getFieldRequired = (field: FormField) => {
     return field.required || isFieldRequired(field.id);
   };
+
+  if (!form) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <p className="text-gray-500">Form not found</p>
+      </div>
+    );
+  }
 
   if (form.settings.isClosed) {
     return (
