@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ScriptRejection;
+use FormLogic\Database\SQLiteConnection;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -14,11 +15,13 @@ class ResponseController
 {
     private ResponseService $responseService;
     private FormService $formService;
+    private SQLiteConnection $sqlite;
 
-    public function __construct(ResponseService $responseService, FormService $formService)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
+        $this->sqlite = $sqlite;
     }
 
     /**
@@ -302,5 +305,96 @@ class ResponseController
     private function sanitizeFilename(string $filename): string
     {
         return preg_replace('/[^a-zA-Z0-9\-_]/', '-', $filename);
+    }
+
+    /**
+     * Download SQLite database file
+     * GET /api/forms/{formId}/export/sqlite
+     */
+    public function exportSqlite(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        // Check form exists
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found',
+            ], 404);
+        }
+
+        // Check if SQLite database exists
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'No data found for this form',
+            ], 404);
+        }
+
+        $dbPath = $this->sqlite->getFormDbPath($formId);
+        $filename = $this->sanitizeFilename($form['title']) . '.sqlite';
+
+        // Read file contents
+        $fileContents = file_get_contents($dbPath);
+
+        $response->getBody()->write($fileContents);
+
+        return $response
+            ->withHeader('Content-Type', 'application/x-sqlite3')
+            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->withHeader('Content-Length', (string)strlen($fileContents));
+    }
+
+    /**
+     * Export form data as JSON
+     * GET /api/forms/{formId}/export/json
+     */
+    public function exportJson(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        // Get form with fields
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found',
+            ], 404);
+        }
+
+        // Get all responses
+        $responses = $this->responseService->getFormResponses($formId, ['limit' => 10000]);
+
+        // Build export data
+        $exportData = [
+            'exportedAt' => date('c'),
+            'form' => [
+                'id' => $form['id'],
+                'title' => $form['title'],
+                'description' => $form['description'],
+                'status' => $form['status'],
+                'fields' => $form['fields'],
+                'settings' => $form['settings'],
+                'theme' => $form['theme'],
+                'createdAt' => $form['createdAt'],
+                'updatedAt' => $form['updatedAt'],
+            ],
+            'responses' => $responses,
+            'meta' => [
+                'totalResponses' => count($responses),
+                'version' => '1.0',
+            ],
+        ];
+
+        $filename = $this->sanitizeFilename($form['title']) . '-export.json';
+        $jsonContent = json_encode($exportData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        $response->getBody()->write($jsonContent);
+
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->withHeader('Content-Length', (string)strlen($jsonContent));
     }
 }

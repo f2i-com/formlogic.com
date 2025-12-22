@@ -88,7 +88,8 @@ $container->set(FormController::class, function (Container $c) {
 $container->set(ResponseController::class, function (Container $c) {
     return new ResponseController(
         $c->get(ResponseService::class),
-        $c->get(FormService::class)
+        $c->get(FormService::class),
+        $c->get(SQLiteConnection::class)
     );
 });
 
@@ -234,6 +235,15 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
 // Analytics routes (protected)
 $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->analytics($request, $response, $getArgs($request));
+})->add($authOptional);
+
+// Export routes (protected)
+$app->get('/api/forms/{formId}/export/sqlite', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->exportSqlite($request, $response, $getArgs($request));
+})->add($authOptional);
+
+$app->get('/api/forms/{formId}/export/json', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->exportJson($request, $response, $getArgs($request));
 })->add($authOptional);
 
 // Public form view (for embedding/sharing)

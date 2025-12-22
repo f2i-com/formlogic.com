@@ -218,6 +218,60 @@ class ApiClient {
     return response.text();
   }
 
+  // Download SQLite database file
+  async downloadSqlite(formId: string, filename: string): Promise<void> {
+    const url = `${this.baseUrl}/forms/${formId}/export/sqlite`;
+    const headers: Record<string, string> = {};
+
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to download SQLite database');
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${filename}.sqlite`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
+  // Download JSON export
+  async downloadJson(formId: string, filename: string): Promise<void> {
+    const url = `${this.baseUrl}/forms/${formId}/export/json`;
+    const headers: Record<string, string> = {};
+
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'Failed to download JSON export');
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${filename}-export.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
   // Health check
   async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string }>> {
     return this.request('/health');

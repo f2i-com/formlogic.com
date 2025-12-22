@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2 } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -116,46 +116,92 @@ export default function FormAnalytics() {
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
   const weeklyChange = localAnalytics.weeklyChange;
 
-  const handleExportCSV = async () => {
-    // Try to export from API first if in API mode
-    if (storageMode === 'api' && user) {
-      try {
-        const csv = await api.exportResponses(form.id);
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${form.title}-responses.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        return;
-      } catch (error) {
-        console.error('Failed to export from API, falling back to local:', error);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
+        setExportMenuOpen(false);
       }
     }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-    // Fall back to local responses
-    if (localResponses.length === 0) {
-      alert('No responses to export');
-      return;
+  const handleExportCSV = async () => {
+    setIsExporting(true);
+    setExportMenuOpen(false);
+    try {
+      // Try to export from API first if in API mode
+      if (storageMode === 'api' && user) {
+        try {
+          const csv = await api.exportResponses(form.id);
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${form.title}-responses.csv`;
+          a.click();
+          URL.revokeObjectURL(url);
+          return;
+        } catch (error) {
+          console.error('Failed to export from API, falling back to local:', error);
+        }
+      }
+
+      // Fall back to local responses
+      if (localResponses.length === 0) {
+        alert('No responses to export');
+        return;
+      }
+
+      const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...form.fields.map((f) => f.label)];
+      const rows = localResponses.map((r) => [
+        r.id,
+        r.submittedAt,
+        Math.round(r.completionTime / 1000),
+        ...form.fields.map((f) => JSON.stringify(r.answers[f.id] || '')),
+      ]);
+
+      const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${form.title}-responses.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
     }
+  };
 
-    const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...form.fields.map((f) => f.label)];
-    const rows = localResponses.map((r) => [
-      r.id,
-      r.submittedAt,
-      Math.round(r.completionTime / 1000),
-      ...form.fields.map((f) => JSON.stringify(r.answers[f.id] || '')),
-    ]);
+  const handleExportSqlite = async () => {
+    setIsExporting(true);
+    setExportMenuOpen(false);
+    try {
+      await api.downloadSqlite(form.id, form.title);
+    } catch (error) {
+      console.error('Failed to export SQLite:', error);
+      alert(error instanceof Error ? error.message : 'Failed to export SQLite database');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
-    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${form.title}-responses.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportJson = async () => {
+    setIsExporting(true);
+    setExportMenuOpen(false);
+    try {
+      await api.downloadJson(form.id, form.title);
+    } catch (error) {
+      console.error('Failed to export JSON:', error);
+      alert(error instanceof Error ? error.message : 'Failed to export JSON');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -168,9 +214,45 @@ export default function FormAnalytics() {
               <ArrowLeft className="h-4 w-4 mr-2" />
               Back to Builder
             </Button>
-            <Button onClick={handleExportCSV} leftIcon={<Download className="h-4 w-4" />}>
-              Export CSV
-            </Button>
+            <div className="relative" ref={exportRef}>
+              <Button
+                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                disabled={isExporting}
+              >
+                {isExporting ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4 mr-2" />
+                )}
+                Export
+                <ChevronDown className="h-4 w-4 ml-2" />
+              </Button>
+              {exportMenuOpen && (
+                <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                  <button
+                    onClick={handleExportCSV}
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4 text-purple-600" />
+                    Export CSV
+                  </button>
+                  <button
+                    onClick={handleExportJson}
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                  >
+                    <FileJson className="h-4 w-4 text-green-600" />
+                    Export JSON
+                  </button>
+                  <button
+                    onClick={handleExportSqlite}
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                  >
+                    <Database className="h-4 w-4 text-blue-600" />
+                    Download SQLite
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         }
       />

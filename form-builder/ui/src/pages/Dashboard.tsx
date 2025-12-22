@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
@@ -7,7 +7,11 @@ import {
   Plus,
   Pencil,
   BarChart3,
-  Trash2
+  Trash2,
+  Download,
+  MoreVertical,
+  Database,
+  FileJson
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -22,6 +26,132 @@ import { formatRelativeTime } from '../lib/utils';
 interface DashboardStats {
   totalResponses: number;
   avgCompletionRate: number;
+}
+
+// Dropdown Menu component for form actions
+function FormActionsDropdown({
+  formId,
+  formTitle,
+  onDelete
+}: {
+  formId: string;
+  formTitle: string;
+  onDelete: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleExportSqlite = async () => {
+    setIsExporting(true);
+    try {
+      await api.downloadSqlite(formId, formTitle);
+    } catch (error) {
+      console.error('Failed to export SQLite:', error);
+      alert(error instanceof Error ? error.message : 'Failed to export SQLite database');
+    } finally {
+      setIsExporting(false);
+      setIsOpen(false);
+    }
+  };
+
+  const handleExportJson = async () => {
+    setIsExporting(true);
+    try {
+      await api.downloadJson(formId, formTitle);
+    } catch (error) {
+      console.error('Failed to export JSON:', error);
+      alert(error instanceof Error ? error.message : 'Failed to export JSON');
+    } finally {
+      setIsExporting(false);
+      setIsOpen(false);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setIsExporting(true);
+    try {
+      const csv = await api.exportResponses(formId);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${formTitle}-responses.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export CSV:', error);
+      alert('Failed to export CSV');
+    } finally {
+      setIsExporting(false);
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isExporting}
+      >
+        {isExporting ? (
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
+        ) : (
+          <MoreVertical className="h-4 w-4" />
+        )}
+      </Button>
+      {isOpen && (
+        <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+          <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            Export
+          </div>
+          <button
+            onClick={handleExportSqlite}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+          >
+            <Database className="h-4 w-4 text-blue-600" />
+            Download SQLite
+          </button>
+          <button
+            onClick={handleExportJson}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+          >
+            <FileJson className="h-4 w-4 text-green-600" />
+            Export JSON
+          </button>
+          <button
+            onClick={handleExportCsv}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+          >
+            <Download className="h-4 w-4 text-purple-600" />
+            Export CSV
+          </button>
+          <div className="border-t border-gray-200 my-1" />
+          <button
+            onClick={() => { onDelete(); setIsOpen(false); }}
+            className="w-full px-3 py-2 text-sm text-left hover:bg-red-50 flex items-center gap-2 text-red-600"
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete Form
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Dashboard() {
@@ -205,6 +335,7 @@ export function Dashboard() {
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/builder/${form.id}`)}
+                        title="Edit form"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -212,6 +343,7 @@ export function Dashboard() {
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/preview/${form.id}`)}
+                        title="Preview form"
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -219,16 +351,15 @@ export function Dashboard() {
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/analytics/${form.id}`)}
+                        title="View analytics"
                       >
                         <BarChart3 className="h-4 w-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deleteForm(form.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
+                      <FormActionsDropdown
+                        formId={form.id}
+                        formTitle={form.title}
+                        onDelete={() => deleteForm(form.id)}
+                      />
                     </div>
                   </CardContent>
                 </Card>
