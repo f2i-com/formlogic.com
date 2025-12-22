@@ -34,11 +34,15 @@ export function Modal({
 }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const hasInitialFocusRef = useRef(false);
+  // Store onClose in a ref to avoid re-running effect when it changes
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -57,33 +61,42 @@ export function Modal({
         }
       }
     },
-    [onClose]
+    []
   );
 
   useEffect(() => {
     if (isOpen) {
-      // Store the currently focused element
-      previousFocusRef.current = document.activeElement as HTMLElement;
+      // Store the currently focused element (only on initial open)
+      if (!hasInitialFocusRef.current) {
+        previousFocusRef.current = document.activeElement as HTMLElement;
+      }
 
       document.addEventListener('keydown', handleKeyDown);
       document.body.style.overflow = 'hidden';
 
-      // Focus the first focusable element in the modal
-      requestAnimationFrame(() => {
-        if (modalRef.current) {
-          const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
-          focusableElements[0]?.focus();
-        }
-      });
+      // Focus the first focusable element in the modal (only on initial open)
+      if (!hasInitialFocusRef.current) {
+        hasInitialFocusRef.current = true;
+        requestAnimationFrame(() => {
+          if (modalRef.current) {
+            const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
+            focusableElements[0]?.focus();
+          }
+        });
+      }
+    } else {
+      // Reset the flag when modal closes
+      hasInitialFocusRef.current = false;
     }
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = '';
 
-      // Restore focus to the previously focused element
-      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+      // Restore focus to the previously focused element (only when actually closing)
+      if (!isOpen && previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
         previousFocusRef.current.focus();
+        previousFocusRef.current = null;
       }
     };
   }, [isOpen, handleKeyDown]);
