@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   evaluateCondition,
   validateWithExpression,
@@ -196,6 +196,11 @@ export function useCalculatedField(
   const [isCalculating, setIsCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Create a stable key for the dependency values
+  const dependencyKey = useMemo(() => {
+    return dependencies.map(dep => JSON.stringify(formData[dep])).join('|');
+  }, [dependencies, formData]);
+
   const calculate = useCallback(async () => {
     if (!expression) {
       setValue(null);
@@ -218,7 +223,7 @@ export function useCalculatedField(
 
   useEffect(() => {
     calculate();
-  }, [calculate, ...dependencies.map(dep => formData[dep])]);
+  }, [calculate, dependencyKey]);
 
   return {
     value,

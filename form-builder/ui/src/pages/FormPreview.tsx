@@ -89,10 +89,12 @@ function FieldPreview({ field, value, onChange, isRequired }: {
 
       case 'multiple_choice':
         return (
-          <div className="space-y-3">
+          <div className="space-y-3" role="radiogroup" aria-label={field.label}>
             {field.properties.options?.map((option, index) => (
               <button
                 key={option.id}
+                role="radio"
+                aria-checked={value === option.value}
                 onClick={() => onChange(option.value)}
                 className={cn(
                   'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all',
@@ -113,10 +115,12 @@ function FieldPreview({ field, value, onChange, isRequired }: {
       case 'checkboxes':
         const selectedValues = (value as string[]) || [];
         return (
-          <div className="space-y-3">
+          <div className="space-y-3" role="group" aria-label={field.label}>
             {field.properties.options?.map((option) => (
               <button
                 key={option.id}
+                role="checkbox"
+                aria-checked={selectedValues.includes(option.value)}
                 onClick={() => {
                   const newValues = selectedValues.includes(option.value)
                     ? selectedValues.filter((v) => v !== option.value)
@@ -255,6 +259,23 @@ function FieldPreview({ field, value, onChange, isRequired }: {
                 accept={field.properties.acceptedFileTypes?.join(',')}
                 onChange={(e) => {
                   const files = Array.from(e.target.files || []);
+                  const maxSize = field.properties.maxFileSize;
+
+                  // Validate file sizes
+                  if (maxSize) {
+                    const oversizedFiles = files.filter(f => f.size > maxSize);
+                    if (oversizedFiles.length > 0) {
+                      toast.error(
+                        'File Too Large',
+                        `${oversizedFiles[0].name} exceeds the maximum size of ${formatFileSize(maxSize)}`
+                      );
+                      const validFiles = files.filter(f => f.size <= maxSize);
+                      if (validFiles.length === 0) return;
+                      onChange(field.properties.allowMultiple ? [...uploadedFiles, ...validFiles] : validFiles);
+                      return;
+                    }
+                  }
+
                   onChange(field.properties.allowMultiple ? [...uploadedFiles, ...files] : files);
                 }}
               />

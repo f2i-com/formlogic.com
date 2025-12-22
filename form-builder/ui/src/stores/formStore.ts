@@ -92,11 +92,19 @@ const defaultTheme: FormTheme = {
 
 // Debounce helper for auto-save
 const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
 function debouncedSave(formId: string, saveFn: () => void, delay = 1000) {
   if (debounceTimers[formId]) {
     clearTimeout(debounceTimers[formId]);
   }
   debounceTimers[formId] = setTimeout(saveFn, delay);
+}
+
+function clearDebounceTimer(formId: string) {
+  if (debounceTimers[formId]) {
+    clearTimeout(debounceTimers[formId]);
+    delete debounceTimers[formId];
+  }
 }
 
 export const useFormStore = create<FormState>()(
@@ -243,6 +251,9 @@ export const useFormStore = create<FormState>()(
 
       deleteForm: async (id) => {
         const state = get();
+
+        // Clear any pending debounce timer for this form
+        clearDebounceTimer(id);
 
         // Optimistic update
         set((s) => ({
