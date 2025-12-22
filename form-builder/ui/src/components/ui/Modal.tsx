@@ -102,11 +102,11 @@ export function Modal({
   }, [isOpen, handleKeyDown]);
 
   const sizes = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-    full: 'max-w-4xl',
+    sm: 'max-w-[calc(100%-2rem)] sm:max-w-sm',
+    md: 'max-w-[calc(100%-2rem)] sm:max-w-md',
+    lg: 'max-w-[calc(100%-2rem)] sm:max-w-lg',
+    xl: 'max-w-[calc(100%-2rem)] sm:max-w-xl',
+    full: 'max-w-[calc(100%-2rem)] sm:max-w-4xl',
   };
 
   const content = (
@@ -138,10 +138,10 @@ export function Modal({
             )}
           >
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200">
-                <div>
+              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200">
+                <div className="min-w-0 flex-1 pr-2">
                   {title && (
-                    <h2 id="modal-title" className="text-lg font-semibold text-gray-900">
+                    <h2 id="modal-title" className="text-base sm:text-lg font-semibold text-gray-900 truncate">
                       {title}
                     </h2>
                   )}
@@ -153,7 +153,7 @@ export function Modal({
                   <button
                     onClick={onClose}
                     aria-label="Close modal"
-                    className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+                    className="p-2 -m-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
                   >
                     <X className="h-5 w-5" />
                   </button>

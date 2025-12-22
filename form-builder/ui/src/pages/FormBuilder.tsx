@@ -717,19 +717,20 @@ export default function FormBuilder() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
-        <div className="flex items-center gap-3">
+      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <Input
             value={form.title}
             onChange={(e) => updateForm(form.id, { title: e.target.value })}
-            className="border-none bg-transparent font-semibold text-lg focus:ring-0 p-0 w-48 md:w-auto"
+            className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-1.5">
+          {/* AI Generator - always visible */}
           <Button
             variant="outline"
             size="sm"
@@ -737,63 +738,83 @@ export default function FormBuilder() {
             title="Generate with AI"
             className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200 hover:border-purple-300"
           >
-            <Sparkles className="h-4 w-4 sm:mr-2 text-purple-600" />
-            <span className="hidden sm:inline text-purple-700">AI</span>
+            <Sparkles className="h-4 w-4 text-purple-600" />
+            <span className="hidden lg:inline ml-2 text-purple-700">AI</span>
           </Button>
+
+          {/* Settings - hidden on smallest screens */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowFormSettings(true)}
             title="Form Settings"
+            className="hidden sm:flex"
           >
-            <Settings className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Settings</span>
+            <Settings className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Settings</span>
           </Button>
+
+          {/* Theme - hidden on small screens */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowThemeEditor(true)}
             title="Theme Customization"
+            className="hidden md:flex"
           >
-            <Palette className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Theme</span>
+            <Palette className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Theme</span>
           </Button>
+
+          {/* Script - hidden on small screens */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowScriptEditor(true)}
             title="Backend Logic Script"
+            className="hidden md:flex"
           >
-            <Code2 className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Script</span>
+            <Code2 className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Script</span>
             {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)}>
-            <Eye className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Preview</span>
+
+          {/* Preview */}
+          <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview">
+            <Eye className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Preview</span>
           </Button>
+
+          {/* Share - hidden on smallest screens */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowEmbedModal(true)}
             title="Share & Embed"
+            className="hidden sm:flex"
           >
-            <Share2 className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Share</span>
+            <Share2 className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Share</span>
           </Button>
+
+          {/* Keyboard shortcuts - hidden on mobile */}
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowKeyboardShortcuts(true)}
             title="Keyboard Shortcuts (Ctrl+?)"
+            className="hidden sm:flex"
           >
             <Keyboard className="h-4 w-4" />
           </Button>
+
+          {/* Publish */}
           <Button
             size="sm"
             onClick={() => updateForm(form.id, { status: 'published' })}
           >
-            Publish
+            <span className="hidden sm:inline">Publish</span>
+            <span className="sm:hidden">Save</span>
           </Button>
         </div>
       </header>

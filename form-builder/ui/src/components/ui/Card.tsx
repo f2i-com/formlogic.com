@@ -33,7 +33,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, CardHeaderProps>(
     return (
       <div
         ref={ref}
-        className={cn('px-6 py-4 border-b border-gray-200', className)}
+        className={cn('px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200', className)}
         {...props}
       >
         {children}
@@ -51,7 +51,7 @@ interface CardContentProps extends React.HTMLAttributes<HTMLDivElement> {
 const CardContent = React.forwardRef<HTMLDivElement, CardContentProps>(
   ({ className, children, ...props }, ref) => {
     return (
-      <div ref={ref} className={cn('px-6 py-4', className)} {...props}>
+      <div ref={ref} className={cn('px-4 py-3 sm:px-6 sm:py-4', className)} {...props}>
         {children}
       </div>
     );
@@ -69,7 +69,7 @@ const CardFooter = React.forwardRef<HTMLDivElement, CardFooterProps>(
     return (
       <div
         ref={ref}
-        className={cn('px-6 py-4 border-t border-gray-200', className)}
+        className={cn('px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200', className)}
         {...props}
       >
         {children}

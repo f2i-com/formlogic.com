@@ -311,22 +311,22 @@ export function Dashboard() {
     .slice(0, 5);
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50">
       <Header title="Dashboard" />
 
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto">
         {/* Welcome Section */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+        <div className="mb-6 sm:mb-8">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-2">
             Welcome back!
           </h2>
-          <p className="text-gray-600">
+          <p className="text-sm sm:text-base text-gray-600">
             Here's an overview of your forms and responses.
           </p>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <Card>
             <CardContent className="flex items-center gap-4">
               <div className="p-3 bg-primary-100 rounded-lg">
@@ -365,10 +365,11 @@ export function Dashboard() {
         </div>
 
         {/* Recent Forms */}
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">Recent Forms</h3>
-          <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-            New Form
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
+          <h3 className="text-base sm:text-lg font-semibold text-gray-900">Recent Forms</h3>
+          <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+            <span className="hidden sm:inline">New Form</span>
+            <span className="sm:hidden">New</span>
           </Button>
         </div>
 
@@ -388,40 +389,41 @@ export function Dashboard() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2 sm:space-y-3">
             {recentForms.map((form) => {
               const responses = getResponsesByFormId(form.id);
               return (
                 <Card key={form.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="p-2 bg-gray-100 rounded-lg">
+                  <CardContent className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                      <div className="p-2 bg-gray-100 rounded-lg flex-shrink-0 hidden sm:block">
                         <FileText className="h-5 w-5 text-gray-600" />
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-medium text-gray-900">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-medium text-gray-900 truncate">
                             {form.title}
                           </h4>
                           <Badge
                             variant={form.status === 'published' ? 'success' : 'default'}
+                            size="sm"
                           >
                             {form.status}
                           </Badge>
                         </div>
-                        <p className="text-sm text-gray-500">
-                          Updated {formatRelativeTime(form.updatedAt)} • {responses.length} responses
+                        <p className="text-xs sm:text-sm text-gray-500 truncate">
+                          {formatRelativeTime(form.updatedAt)} • {responses.length} responses
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1 sm:gap-2">
+                    <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/builder/${form.id}`)}
                         title="Edit form"
-                        className="hidden sm:flex"
+                        className="hidden md:flex"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -430,7 +432,7 @@ export function Dashboard() {
                         size="sm"
                         onClick={() => navigate(`/preview/${form.id}`)}
                         title="Preview form"
-                        className="hidden sm:flex"
+                        className="hidden md:flex"
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -439,7 +441,7 @@ export function Dashboard() {
                         size="sm"
                         onClick={() => navigate(`/analytics/${form.id}`)}
                         title="View analytics"
-                        className="hidden sm:flex"
+                        className="hidden lg:flex"
                       >
                         <BarChart3 className="h-4 w-4" />
                       </Button>
@@ -448,7 +450,7 @@ export function Dashboard() {
                         size="sm"
                         onClick={() => navigate(`/responses/${form.id}`)}
                         title="View data"
-                        className="hidden sm:flex"
+                        className="hidden lg:flex"
                       >
                         <Table className="h-4 w-4" />
                       </Button>

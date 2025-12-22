@@ -292,35 +292,36 @@ export default function FormAnalytics() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50">
       <Header
         title={`${form.title} - Analytics`}
         actions={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => navigate(`/builder/${form.id}`)}>
-              <ArrowLeft className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Back to Builder</span>
+          <div className="flex gap-1 sm:gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate(`/builder/${form.id}`)} title="Back to Builder">
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Builder</span>
             </Button>
-            <Button variant="outline" onClick={() => navigate(`/responses/${form.id}`)}>
-              <Table className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">View Data</span>
+            <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)} title="View Data">
+              <Table className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Data</span>
             </Button>
-            <Button variant="outline" onClick={() => setShowEmbedModal(true)} title="Share & Embed">
-              <Share2 className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Share</span>
+            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
+              <Share2 className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Share</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
+                size="sm"
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
                 disabled={isExporting}
               >
                 {isExporting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Download className="h-4 w-4 mr-2" />
+                  <Download className="h-4 w-4" />
                 )}
-                Export
-                <ChevronDown className="h-4 w-4 ml-2" />
+                <span className="hidden sm:inline ml-2">Export</span>
+                <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
                 <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
@@ -352,59 +353,59 @@ export default function FormAnalytics() {
         }
       />
 
-      <div className="p-6 max-w-7xl mx-auto space-y-6">
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-4 sm:space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
           <Card>
-            <CardContent className="flex items-center gap-4">
-              <div className="p-3 bg-blue-100 rounded-lg">
-                <Users className="h-6 w-6 text-blue-600" />
+            <CardContent className="flex items-center gap-3">
+              <div className="p-2 sm:p-3 bg-blue-100 rounded-lg flex-shrink-0">
+                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
               </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-900">{totalResponses}</p>
-                <p className="text-sm text-gray-500">Total Responses</p>
+              <div className="min-w-0">
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">{totalResponses}</p>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">Responses</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="flex items-center gap-4">
-              <div className="p-3 bg-green-100 rounded-lg">
-                <CheckCircle className="h-6 w-6 text-green-600" />
+            <CardContent className="flex items-center gap-3">
+              <div className="p-2 sm:p-3 bg-green-100 rounded-lg flex-shrink-0">
+                <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 text-green-600" />
               </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-900">{completionRate}%</p>
-                <p className="text-sm text-gray-500">Completion Rate</p>
+              <div className="min-w-0">
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">{completionRate}%</p>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">Completion</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="flex items-center gap-4">
-              <div className="p-3 bg-purple-100 rounded-lg">
-                <Clock className="h-6 w-6 text-purple-600" />
+            <CardContent className="flex items-center gap-3">
+              <div className="p-2 sm:p-3 bg-purple-100 rounded-lg flex-shrink-0">
+                <Clock className="h-5 w-5 sm:h-6 sm:w-6 text-purple-600" />
               </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-900">
+              <div className="min-w-0">
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">
                   {avgCompletionTime > 60
-                    ? `${Math.floor(avgCompletionTime / 60)}m ${avgCompletionTime % 60}s`
+                    ? `${Math.floor(avgCompletionTime / 60)}m`
                     : `${avgCompletionTime}s`}
                 </p>
-                <p className="text-sm text-gray-500">Avg. Time</p>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">Avg. Time</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="flex items-center gap-4">
-              <div className="p-3 bg-orange-100 rounded-lg">
-                <TrendingUp className="h-6 w-6 text-orange-600" />
+            <CardContent className="flex items-center gap-3">
+              <div className="p-2 sm:p-3 bg-orange-100 rounded-lg flex-shrink-0">
+                <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-600" />
               </div>
-              <div>
-                <p className={`text-2xl font-bold ${weeklyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <div className="min-w-0">
+                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {weeklyChange >= 0 ? '+' : ''}{weeklyChange}%
                 </p>
-                <p className="text-sm text-gray-500">This Week</p>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">This Week</p>
               </div>
             </CardContent>
           </Card>
@@ -413,17 +414,17 @@ export default function FormAnalytics() {
         {/* Chart */}
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">Responses Over Time</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Responses Over Time</h2>
           </CardHeader>
           <CardContent>
-            <div className="h-64 flex items-end justify-between gap-2">
+            <div className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2">
               {dailyResponses.map((day) => (
-                <div key={day.day} className="flex-1 flex flex-col items-center gap-2">
+                <div key={day.day} className="flex-1 flex flex-col items-center gap-1 sm:gap-2">
                   <div
-                    className="w-full bg-primary-500 rounded-t-lg transition-all hover:bg-primary-600"
-                    style={{ height: `${(day.count / maxCount) * 100}%` }}
+                    className="w-full bg-primary-500 rounded-t-lg transition-all hover:bg-primary-600 min-h-[4px]"
+                    style={{ height: `${Math.max((day.count / maxCount) * 100, 2)}%` }}
                   />
-                  <span className="text-sm text-gray-500">{day.day}</span>
+                  <span className="text-xs sm:text-sm text-gray-500">{day.day.slice(0, 1)}</span>
                 </div>
               ))}
             </div>
@@ -434,34 +435,34 @@ export default function FormAnalytics() {
         {Object.keys(fieldBreakdown).length > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-primary-600" />
-              <h2 className="text-lg font-semibold text-gray-900">Field Breakdown</h2>
+              <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-600" />
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Field Breakdown</h2>
             </CardHeader>
             <CardContent>
-              <div className="space-y-8">
+              <div className="space-y-6 sm:space-y-8">
                 {Object.entries(fieldBreakdown).map(([fieldId, breakdown]) => (
                   <div key={fieldId}>
-                    <div className="flex items-center gap-2 mb-3">
+                    <div className="flex items-center gap-2 mb-2 sm:mb-3">
                       {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500" />}
-                      <h3 className="font-medium text-gray-900">{breakdown.label}</h3>
+                      <h3 className="font-medium text-gray-900 text-sm sm:text-base">{breakdown.label}</h3>
                     </div>
                     <div className="space-y-2">
                       {breakdown.data.map((item, index) => {
                         const maxPercentage = Math.max(...breakdown.data.map((d) => d.percentage), 1);
                         return (
-                          <div key={index} className="flex items-center gap-3">
-                            <div className="w-32 sm:w-40 text-sm text-gray-700 truncate" title={item.label}>
+                          <div key={index} className="flex items-center gap-2 sm:gap-3">
+                            <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-700 truncate flex-shrink-0" title={item.label}>
                               {item.label}
                             </div>
-                            <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="flex-1 h-5 sm:h-6 bg-gray-100 rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-primary-500 rounded-full transition-all"
                                 style={{ width: `${(item.percentage / maxPercentage) * 100}%` }}
                               />
                             </div>
-                            <div className="w-20 text-right">
-                              <span className="text-sm font-medium text-gray-900">{item.percentage}%</span>
-                              <span className="text-xs text-gray-500 ml-1">({item.count})</span>
+                            <div className="w-16 sm:w-20 text-right flex-shrink-0">
+                              <span className="text-xs sm:text-sm font-medium text-gray-900">{item.percentage}%</span>
+                              <span className="text-xs text-gray-500 ml-1 hidden sm:inline">({item.count})</span>
                             </div>
                           </div>
                         );

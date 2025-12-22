@@ -63,14 +63,14 @@ export function FormsList() {
     return (
       <Card className="hover:shadow-md transition-shadow">
         <CardContent>
-          <div className="flex items-start justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary-100 rounded-lg">
-                <FileText className="h-5 w-5 text-primary-600" />
+          <div className="flex items-start justify-between mb-3 gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="p-2 bg-primary-100 rounded-lg flex-shrink-0">
+                <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-primary-600" />
               </div>
-              <div>
-                <h3 className="font-medium text-gray-900">{form.title}</h3>
-                <p className="text-sm text-gray-500">
+              <div className="min-w-0">
+                <h3 className="font-medium text-gray-900 truncate">{form.title}</h3>
+                <p className="text-xs sm:text-sm text-gray-500">
                   {form.fields.length} fields
                 </p>
               </div>
@@ -158,16 +158,16 @@ export function FormsList() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-500">
-              Updated {formatRelativeTime(form.updatedAt)}
+          <div className="flex items-center justify-between text-xs sm:text-sm">
+            <span className="text-gray-500 truncate">
+              {formatRelativeTime(form.updatedAt)}
             </span>
-            <Badge variant={form.status === 'published' ? 'success' : 'default'}>
+            <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm">
               {responses.length} responses
             </Badge>
           </div>
 
-          <div className="flex gap-2 mt-4">
+          <div className="flex gap-2 mt-3 sm:mt-4">
             <Button
               variant="outline"
               size="sm"
@@ -198,31 +198,32 @@ export function FormsList() {
   );
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50">
       <Header
         title="My Forms"
         actions={
-          <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-            New Form
+          <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+            <span className="hidden sm:inline">New Form</span>
+            <span className="sm:hidden">New</span>
           </Button>
         }
       />
 
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-4 sm:p-6 max-w-7xl mx-auto">
         {/* Search */}
-        <div className="mb-6">
+        <div className="mb-4 sm:mb-6">
           <Input
             placeholder="Search forms..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search className="h-4 w-4" />}
-            className="max-w-md"
+            className="w-full sm:max-w-md"
           />
         </div>
 
         {/* Tabs */}
         <Tabs defaultValue="all">
-          <TabsList className="mb-6">
+          <TabsList className="mb-4 sm:mb-6 overflow-x-auto flex-nowrap">
             <TabsTrigger value="all">All ({filteredForms.length})</TabsTrigger>
             <TabsTrigger value="published">Published ({publishedForms.length})</TabsTrigger>
             <TabsTrigger value="draft">Drafts ({draftForms.length})</TabsTrigger>
@@ -230,7 +231,7 @@ export function FormsList() {
           </TabsList>
 
           <TabsContent value="all">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredForms.length === 0 ? (
                 <EmptyState message="No forms found. Create your first form!" />
               ) : (
@@ -240,7 +241,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="published">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {publishedForms.length === 0 ? (
                 <EmptyState message="No published forms yet." />
               ) : (
@@ -250,7 +251,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="draft">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {draftForms.length === 0 ? (
                 <EmptyState message="No draft forms." />
               ) : (
@@ -260,7 +261,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="archived">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {archivedForms.length === 0 ? (
                 <EmptyState message="No archived forms." />
               ) : (

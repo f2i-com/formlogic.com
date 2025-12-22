@@ -160,23 +160,23 @@ export function Landing() {
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
+      <section className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-full text-sm font-medium mb-6">
-            <Server className="h-4 w-4" />
+          <div className="inline-flex items-center gap-2 bg-indigo-50 text-indigo-700 px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm font-medium mb-4 sm:mb-6">
+            <Server className="h-3 w-3 sm:h-4 sm:w-4" />
             Not just another form builder
           </div>
-          <h1 className="text-5xl sm:text-6xl font-bold text-gray-900 mb-6 leading-tight">
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-4 sm:mb-6 leading-tight">
             A Form Engine for{' '}
             <span className="text-indigo-600">Real Applications</span>
           </h1>
-          <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+          <p className="text-base sm:text-xl text-gray-600 mb-6 sm:mb-8 max-w-2xl mx-auto px-2">
             Beautiful forms. Real backend logic. Full data ownership.
-            <br />
-            <span className="text-gray-900 font-medium">Built for developers who ship.</span>
+            <br className="hidden sm:block" />
+            <span className="text-gray-900 font-medium"> Built for developers who ship.</span>
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button size="lg" onClick={() => openAuth('register')}>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
+            <Button size="lg" onClick={() => openAuth('register')} className="w-full sm:w-auto">
               Start Building
               <ArrowRight className="h-5 w-5 ml-2" />
             </Button>
@@ -184,7 +184,7 @@ export function Landing() {
               href="https://github.com/f2i-com/formlogic"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium"
+              className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 font-medium py-2"
             >
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                 <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
@@ -196,36 +196,36 @@ export function Landing() {
       </section>
 
       {/* Problem/Solution Banner */}
-      <section className="py-8 px-4 sm:px-6 lg:px-8 bg-gray-900">
+      <section className="py-6 sm:py-8 px-4 sm:px-6 lg:px-8 bg-gray-900">
         <div className="max-w-6xl mx-auto">
-          <div className="grid md:grid-cols-3 gap-6 text-center">
-            <div className="p-4">
-              <p className="text-gray-400 text-sm mb-1">Typeform, Jotform, Tally</p>
-              <p className="text-white font-medium">Beautiful UX, weak backend</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 text-center">
+            <div className="p-3 sm:p-4">
+              <p className="text-gray-400 text-xs sm:text-sm mb-1">Typeform, Jotform, Tally</p>
+              <p className="text-white font-medium text-sm sm:text-base">Beautiful UX, weak backend</p>
             </div>
-            <div className="p-4">
-              <p className="text-gray-400 text-sm mb-1">Custom React forms</p>
-              <p className="text-white font-medium">Full control, slow to build</p>
+            <div className="p-3 sm:p-4">
+              <p className="text-gray-400 text-xs sm:text-sm mb-1">Custom React forms</p>
+              <p className="text-white font-medium text-sm sm:text-base">Full control, slow to build</p>
             </div>
-            <div className="p-4 bg-indigo-600 rounded-lg">
-              <p className="text-indigo-200 text-sm mb-1">FormLogic</p>
-              <p className="text-white font-medium">Both. No compromise.</p>
+            <div className="p-3 sm:p-4 bg-indigo-600 rounded-lg">
+              <p className="text-indigo-200 text-xs sm:text-sm mb-1">FormLogic</p>
+              <p className="text-white font-medium text-sm sm:text-base">Both. No compromise.</p>
             </div>
           </div>
         </div>
       </section>
 
       {/* Demo Preview */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8 bg-gray-50">
+      <section className="py-10 sm:py-16 px-4 sm:px-6 lg:px-8 bg-gray-50">
         <div className="max-w-6xl mx-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-            <div className="h-8 bg-gray-100 flex items-center gap-2 px-4 border-b border-gray-200">
-              <div className="w-3 h-3 rounded-full bg-red-400" />
-              <div className="w-3 h-3 rounded-full bg-yellow-400" />
-              <div className="w-3 h-3 rounded-full bg-green-400" />
-              <span className="text-xs text-gray-500 ml-2 font-mono">onSubmit.fl</span>
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-xl sm:shadow-2xl border border-gray-200 overflow-hidden">
+            <div className="h-7 sm:h-8 bg-gray-100 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 border-b border-gray-200">
+              <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-red-400" />
+              <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-yellow-400" />
+              <div className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-green-400" />
+              <span className="text-xs text-gray-500 ml-2 font-mono hidden sm:inline">onSubmit.fl</span>
             </div>
-            <div className="p-8 bg-gradient-to-br from-gray-900 to-gray-800">
+            <div className="p-4 sm:p-8 bg-gradient-to-br from-gray-900 to-gray-800 overflow-x-auto">
               <div className="font-mono text-sm leading-relaxed">
                 <div className="text-gray-500">// Backend script runs on every submission</div>
                 <div className="text-purple-400 mt-3">function <span className="text-blue-400">onSubmit</span><span className="text-white">(ctx) {'{'}</span></div>
@@ -262,25 +262,25 @@ export function Landing() {
       </section>
 
       {/* Key Differentiators */}
-      <section id="features" className="py-20 px-4 sm:px-6 lg:px-8">
+      <section id="features" className="py-12 sm:py-20 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
+          <div className="text-center mb-10 sm:mb-16">
+            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-3 sm:mb-4">
               What Makes This Different
             </h2>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-gray-600 max-w-2xl mx-auto px-2">
               Three things that actually matter. No fluff.
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
             {differentiators.map((item) => (
-              <div key={item.title} className="bg-white rounded-xl p-8 border border-gray-200 hover:border-indigo-200 hover:shadow-lg transition-all">
-                <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center mb-5">
-                  <item.icon className="h-6 w-6 text-indigo-600" />
+              <div key={item.title} className="bg-white rounded-xl p-5 sm:p-8 border border-gray-200 hover:border-indigo-200 hover:shadow-lg transition-all">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 bg-indigo-100 rounded-xl flex items-center justify-center mb-4 sm:mb-5">
+                  <item.icon className="h-5 w-5 sm:h-6 sm:w-6 text-indigo-600" />
                 </div>
                 <span className="text-xs font-semibold text-indigo-600 uppercase tracking-wide">{item.highlight}</span>
-                <h3 className="text-xl font-semibold text-gray-900 mt-2 mb-3">{item.title}</h3>
-                <p className="text-gray-600 leading-relaxed">{item.description}</p>
+                <h3 className="text-lg sm:text-xl font-semibold text-gray-900 mt-2 mb-2 sm:mb-3">{item.title}</h3>
+                <p className="text-sm sm:text-base text-gray-600 leading-relaxed">{item.description}</p>
               </div>
             ))}
           </div>
