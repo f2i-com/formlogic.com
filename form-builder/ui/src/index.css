@@ -36,6 +36,37 @@
     background-color: rgba(0, 0, 0, 0.2);
     border-radius: 3px;
   }
+
+  /* Toast animations */
+  .animate-slide-in {
+    animation: slide-in 0.2s ease-out forwards;
+  }
+
+  .animate-slide-out {
+    animation: slide-out 0.15s ease-in forwards;
+  }
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes slide-out {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+  }
 }
 
 @theme {

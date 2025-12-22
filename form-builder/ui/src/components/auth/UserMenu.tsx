@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import {
   User,
   LogOut,
@@ -67,12 +68,12 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     try {
       const result = await syncToApi();
       if (result.success) {
-        alert(`Successfully synced ${result.synced} forms to cloud!`);
+        toast.success('Sync Complete', `Successfully synced ${result.synced} forms to cloud`);
       } else {
-        alert(`Sync completed with errors:\n${result.errors.join('\n')}`);
+        toast.warning('Sync Completed with Errors', result.errors.join(', '));
       }
     } catch (error) {
-      alert('Failed to sync to cloud');
+      toast.error('Sync Failed', 'Failed to sync to cloud');
     } finally {
       setIsSyncing(false);
       setIsOpen(false);

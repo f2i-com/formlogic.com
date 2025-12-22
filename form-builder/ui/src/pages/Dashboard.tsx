@@ -18,6 +18,7 @@ import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useFormStore } from '../stores/formStore';
+import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
@@ -58,7 +59,7 @@ function FormActionsDropdown({
       await api.downloadSqlite(formId, formTitle);
     } catch (error) {
       console.error('Failed to export SQLite:', error);
-      alert(error instanceof Error ? error.message : 'Failed to export SQLite database');
+      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
     } finally {
       setIsExporting(false);
       setIsOpen(false);
@@ -71,7 +72,7 @@ function FormActionsDropdown({
       await api.downloadJson(formId, formTitle);
     } catch (error) {
       console.error('Failed to export JSON:', error);
-      alert(error instanceof Error ? error.message : 'Failed to export JSON');
+      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
     } finally {
       setIsExporting(false);
       setIsOpen(false);
@@ -93,7 +94,7 @@ function FormActionsDropdown({
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Failed to export CSV:', error);
-      alert('Failed to export CSV');
+      toast.error('Export Failed', 'Failed to export CSV');
     } finally {
       setIsExporting(false);
       setIsOpen(false);

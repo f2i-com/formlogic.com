@@ -4,6 +4,7 @@ import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
+import { ToastContainer } from './components/ui/Toast';
 
 // Lazy load builder and preview pages for better performance
 const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
@@ -85,6 +86,7 @@ export default function App() {
         <React.Suspense fallback={<LoadingFallback />}>
           <AppRoutes />
         </React.Suspense>
+        <ToastContainer />
       </AppInitializer>
     </BrowserRouter>
   );

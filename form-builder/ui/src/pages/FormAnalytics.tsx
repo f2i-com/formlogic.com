@@ -5,6 +5,7 @@ import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { useFormStore } from '../stores/formStore';
+import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
@@ -153,7 +154,7 @@ export default function FormAnalytics() {
 
       // Fall back to local responses
       if (localResponses.length === 0) {
-        alert('No responses to export');
+        toast.warning('No Data', 'No responses to export');
         return;
       }
 
@@ -185,7 +186,7 @@ export default function FormAnalytics() {
       await api.downloadSqlite(form.id, form.title);
     } catch (error) {
       console.error('Failed to export SQLite:', error);
-      alert(error instanceof Error ? error.message : 'Failed to export SQLite database');
+      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
     } finally {
       setIsExporting(false);
     }
@@ -198,7 +199,7 @@ export default function FormAnalytics() {
       await api.downloadJson(form.id, form.title);
     } catch (error) {
       console.error('Failed to export JSON:', error);
-      alert(error instanceof Error ? error.message : 'Failed to export JSON');
+      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
     } finally {
       setIsExporting(false);
     }

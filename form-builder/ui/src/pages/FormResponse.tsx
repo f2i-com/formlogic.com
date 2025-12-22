@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
+import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import type { FormField } from '../types/form';
 
@@ -638,7 +639,7 @@ export default function FormResponse() {
     if (currentField && getFieldRequired(currentField)) {
       const answer = currentAnswers[currentField.id];
       if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
-        alert('This field is required');
+        toast.warning('Required Field', 'Please fill in this field before continuing');
         return;
       }
     }

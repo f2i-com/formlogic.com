@@ -7,6 +7,7 @@ import { ProgressBar } from '../components/ui/ProgressBar';
 import { useFormStore } from '../stores/formStore';
 import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
+import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import type { FormField } from '../types/form';
 
@@ -536,7 +537,7 @@ export default function FormPreview() {
   const handleNext = () => {
     if (isLastStep) {
       // Submit form
-      alert('Form submitted! (This is a preview)');
+      toast.success('Preview Submitted', 'Form submitted! (This is a preview)');
     } else {
       setCurrentStep((s) => Math.min(s + 1, visibleFields.length - 1));
     }
