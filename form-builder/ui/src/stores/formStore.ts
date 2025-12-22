@@ -47,7 +47,7 @@ interface FormState {
 
 const defaultSettings: FormSettings = {
   presentationMode: 'both',
-  defaultPresentationMode: 'typeform',
+  defaultPresentationMode: 'focused',
   showProgressBar: true,
   allowBackNavigation: true,
   submitButtonText: 'Submit',

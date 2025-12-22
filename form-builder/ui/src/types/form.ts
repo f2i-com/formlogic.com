@@ -78,8 +78,8 @@ export interface NotificationSettings {
 }
 
 export interface FormSettings {
-  presentationMode: 'typeform' | 'classic' | 'both';
-  defaultPresentationMode: 'typeform' | 'classic';
+  presentationMode: 'focused' | 'classic' | 'both';
+  defaultPresentationMode: 'focused' | 'classic';
   showProgressBar: boolean;
   allowBackNavigation: boolean;
   submitButtonText: string;
@@ -127,7 +127,7 @@ export interface FormResponse {
 
 export const DEFAULT_FORM_SETTINGS: FormSettings = {
   presentationMode: 'both',
-  defaultPresentationMode: 'typeform',
+  defaultPresentationMode: 'focused',
   showProgressBar: true,
   allowBackNavigation: true,
   submitButtonText: 'Submit',

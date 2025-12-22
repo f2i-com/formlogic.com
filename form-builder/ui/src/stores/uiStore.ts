@@ -10,7 +10,7 @@ type ModalType =
   | null;
 
 type PreviewDevice = 'desktop' | 'mobile';
-type PreviewMode = 'typeform' | 'classic';
+type PreviewMode = 'focused' | 'classic';
 
 interface UIState {
   // Sidebar
@@ -58,7 +58,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Preview
   isPreviewOpen: false,
   previewDevice: 'desktop',
-  previewMode: 'typeform',
+  previewMode: 'focused',
   setPreviewOpen: (open) => set({ isPreviewOpen: open }),
   setPreviewDevice: (device) => set({ previewDevice: device }),
   setPreviewMode: (mode) => set({ previewMode: mode }),

@@ -590,13 +590,13 @@ export default function FormPreview() {
 
           <div className="flex items-center bg-gray-100 rounded-lg p-1">
             <button
-              onClick={() => setPreviewMode('typeform')}
+              onClick={() => setPreviewMode('focused')}
               className={cn(
                 'px-3 py-1.5 text-sm rounded-md transition-colors',
-                previewMode === 'typeform' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                previewMode === 'focused' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
               )}
             >
-              Typeform
+              Focused
             </button>
             <button
               onClick={() => setPreviewMode('classic')}
@@ -636,8 +636,8 @@ export default function FormPreview() {
             <div className="h-full flex items-center justify-center text-gray-500">
               <p>Add some fields to preview your form</p>
             </div>
-          ) : previewMode === 'typeform' ? (
-            /* Typeform Mode */
+          ) : previewMode === 'focused' ? (
+            /* Focused Mode */
             <div className="h-full flex flex-col">
               {/* Progress */}
               <div className="p-4">
