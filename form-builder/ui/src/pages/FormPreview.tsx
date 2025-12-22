@@ -188,21 +188,25 @@ function FieldPreview({ field, value, onChange, isRequired }: {
         const start = field.properties.scaleStart || 1;
         const end = field.properties.scaleEnd || 10;
         const scaleValue = (value as number) || null;
+        const scaleLength = end - start + 1;
         return (
           <div>
             <div className="flex justify-between text-sm text-gray-500 mb-2">
               <span>{field.properties.scaleStartLabel || start}</span>
               <span>{field.properties.scaleEndLabel || end}</span>
             </div>
-            <div className="flex gap-2">
-              {Array.from({ length: end - start + 1 }, (_, i) => {
+            <div className={cn(
+              "grid gap-2",
+              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
+            )}>
+              {Array.from({ length: scaleLength }, (_, i) => {
                 const num = start + i;
                 return (
                   <button
                     key={num}
                     onClick={() => onChange(num)}
                     className={cn(
-                      'flex-1 py-3 rounded-lg border-2 font-medium transition-all',
+                      'py-3 rounded-lg border-2 font-medium transition-all',
                       scaleValue === num
                         ? 'border-primary-500 bg-primary-500 text-white'
                         : 'border-gray-200 hover:border-gray-300'
@@ -583,13 +587,14 @@ export default function FormPreview() {
       <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate(`/builder/${form.id}`)}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Exit Preview
+            <ArrowLeft className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Exit Preview</span>
           </Button>
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center bg-gray-100 rounded-lg p-1">
+          {/* Device toggle - hidden on mobile since it's responsive anyway */}
+          <div className="hidden md:flex items-center bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setPreviewDevice('desktop')}
               className={cn(
@@ -610,11 +615,12 @@ export default function FormPreview() {
             </button>
           </div>
 
+          {/* Mode toggle - simplified on mobile */}
           <div className="flex items-center bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setPreviewMode('focused')}
               className={cn(
-                'px-3 py-1.5 text-sm rounded-md transition-colors',
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-colors',
                 previewMode === 'focused' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
               )}
             >
@@ -623,7 +629,7 @@ export default function FormPreview() {
             <button
               onClick={() => setPreviewMode('classic')}
               className={cn(
-                'px-3 py-1.5 text-sm rounded-md transition-colors',
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-colors',
                 previewMode === 'classic' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
               )}
             >
@@ -636,8 +642,8 @@ export default function FormPreview() {
             size="sm"
             onClick={() => window.open(`/form/${form.id}`, '_blank')}
           >
-            <ExternalLink className="h-4 w-4 mr-2" />
-            Open
+            <ExternalLink className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Open</span>
           </Button>
         </div>
       </header>

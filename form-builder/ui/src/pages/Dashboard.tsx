@@ -33,11 +33,17 @@ interface DashboardStats {
 function FormActionsDropdown({
   formId,
   formTitle,
-  onDelete
+  onDelete,
+  onEdit,
+  onPreview,
+  onAnalytics
 }: {
   formId: string;
   formTitle: string;
   onDelete: () => void;
+  onEdit: () => void;
+  onPreview: () => void;
+  onAnalytics: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -117,6 +123,31 @@ function FormActionsDropdown({
       </Button>
       {isOpen && (
         <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+          {/* Mobile-only quick actions */}
+          <div className="sm:hidden">
+            <button
+              onClick={() => { onEdit(); setIsOpen(false); }}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Pencil className="h-4 w-4 text-gray-600" />
+              Edit
+            </button>
+            <button
+              onClick={() => { onPreview(); setIsOpen(false); }}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Eye className="h-4 w-4 text-gray-600" />
+              Preview
+            </button>
+            <button
+              onClick={() => { onAnalytics(); setIsOpen(false); }}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+            >
+              <BarChart3 className="h-4 w-4 text-gray-600" />
+              Analytics
+            </button>
+            <div className="border-t border-gray-200 my-1" />
+          </div>
           <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
             Export
           </div>
@@ -332,12 +363,13 @@ export function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 sm:gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => navigate(`/builder/${form.id}`)}
                         title="Edit form"
+                        className="hidden sm:flex"
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -346,6 +378,7 @@ export function Dashboard() {
                         size="sm"
                         onClick={() => navigate(`/preview/${form.id}`)}
                         title="Preview form"
+                        className="hidden sm:flex"
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
@@ -354,6 +387,7 @@ export function Dashboard() {
                         size="sm"
                         onClick={() => navigate(`/analytics/${form.id}`)}
                         title="View analytics"
+                        className="hidden sm:flex"
                       >
                         <BarChart3 className="h-4 w-4" />
                       </Button>
@@ -361,6 +395,9 @@ export function Dashboard() {
                         formId={form.id}
                         formTitle={form.title}
                         onDelete={() => deleteForm(form.id)}
+                        onEdit={() => navigate(`/builder/${form.id}`)}
+                        onPreview={() => navigate(`/preview/${form.id}`)}
+                        onAnalytics={() => navigate(`/analytics/${form.id}`)}
                       />
                     </div>
                   </CardContent>

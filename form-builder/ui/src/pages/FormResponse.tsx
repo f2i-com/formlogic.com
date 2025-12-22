@@ -208,21 +208,25 @@ function FieldResponse({
         const start = field.properties.scaleStart || 1;
         const end = field.properties.scaleEnd || 10;
         const scaleValue = (value as number) || null;
+        const scaleLength = end - start + 1;
         return (
           <div>
             <div className="flex justify-between text-sm text-gray-500 mb-3">
               <span>{field.properties.scaleStartLabel || `${start}`}</span>
               <span>{field.properties.scaleEndLabel || `${end}`}</span>
             </div>
-            <div className="flex gap-2">
-              {Array.from({ length: end - start + 1 }, (_, i) => {
+            <div className={cn(
+              "grid gap-2",
+              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
+            )}>
+              {Array.from({ length: scaleLength }, (_, i) => {
                 const num = start + i;
                 return (
                   <button
                     key={num}
                     onClick={() => onChange(num)}
                     className={cn(
-                      'flex-1 py-4 rounded-lg border-2 font-bold text-lg transition-all',
+                      'py-4 rounded-lg border-2 font-bold text-lg transition-all',
                       scaleValue === num
                         ? 'text-white'
                         : 'border-gray-200 hover:border-gray-300'

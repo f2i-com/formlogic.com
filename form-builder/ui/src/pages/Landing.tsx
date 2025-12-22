@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Database, Code2, Shield, Download, ArrowRight, Check, Server, Workflow, Lock } from 'lucide-react';
+import { Database, Code2, Shield, Download, ArrowRight, Check, Server, Workflow, Lock, Menu, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { AuthModal } from '../components/auth/AuthModal';
 import { Logo, LogoWhite } from '../components/ui/Logo';
@@ -7,6 +7,7 @@ import { Logo, LogoWhite } from '../components/ui/Logo';
 export function Landing() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const openAuth = (mode: 'login' | 'register') => {
     setAuthMode(mode);
@@ -98,19 +99,64 @@ export function Landing() {
               <a href="#use-cases" className="text-gray-600 hover:text-gray-900 font-medium transition-colors">Use Cases</a>
               <a href="#pricing" className="text-gray-600 hover:text-gray-900 font-medium transition-colors">Pricing</a>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
               <button
                 onClick={() => openAuth('login')}
-                className="text-gray-600 hover:text-gray-900 font-medium transition-colors"
+                className="text-gray-600 hover:text-gray-900 font-medium transition-colors hidden sm:block"
               >
                 Sign In
               </button>
-              <Button onClick={() => openAuth('register')}>
+              <Button onClick={() => openAuth('register')} className="hidden sm:flex">
+                Get Started
+              </Button>
+              {/* Mobile menu button */}
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile menu */}
+        {mobileMenuOpen && (
+          <div className="md:hidden bg-white border-t border-gray-100 py-4 px-4 space-y-3">
+            <a
+              href="#features"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-gray-600 hover:text-gray-900 font-medium transition-colors"
+            >
+              Features
+            </a>
+            <a
+              href="#use-cases"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-gray-600 hover:text-gray-900 font-medium transition-colors"
+            >
+              Use Cases
+            </a>
+            <a
+              href="#pricing"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-gray-600 hover:text-gray-900 font-medium transition-colors"
+            >
+              Pricing
+            </a>
+            <div className="pt-3 border-t border-gray-100 flex flex-col gap-2">
+              <button
+                onClick={() => { openAuth('login'); setMobileMenuOpen(false); }}
+                className="w-full py-2 text-gray-600 hover:text-gray-900 font-medium text-left"
+              >
+                Sign In
+              </button>
+              <Button onClick={() => { openAuth('register'); setMobileMenuOpen(false); }} className="w-full">
                 Get Started
               </Button>
             </div>
           </div>
-        </div>
+        )}
       </nav>
 
       {/* Hero Section */}

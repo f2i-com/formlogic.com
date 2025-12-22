@@ -13,15 +13,15 @@ export function Header({ title, actions }: HeaderProps) {
 
   return (
     <>
-      <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
-        <div>
-          {title && <h1 className="text-xl font-semibold text-gray-900">{title}</h1>}
+      <header className="min-h-[4rem] bg-white border-b border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between px-4 sm:px-6 py-3 sm:py-0 gap-3 sm:gap-4">
+        <div className="flex-shrink-0">
+          {title && <h1 className="text-lg sm:text-xl font-semibold text-gray-900 truncate">{title}</h1>}
         </div>
 
-        <div className="flex items-center gap-4">
-          {actions}
+        <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+          {actions && <div className="flex items-center gap-2 overflow-x-auto">{actions}</div>}
 
-          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+          <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0">
             <Bell className="h-5 w-5" />
           </button>
 

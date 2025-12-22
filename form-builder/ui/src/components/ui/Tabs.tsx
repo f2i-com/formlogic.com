@@ -49,7 +49,7 @@ export function TabsList({ children, className }: TabsListProps) {
   return (
     <div
       className={cn(
-        'flex items-center gap-1 p-1 bg-gray-100 rounded-lg',
+        'flex items-center gap-1 p-1 bg-gray-100 rounded-lg overflow-x-auto',
         className
       )}
     >
@@ -83,7 +83,7 @@ export function TabsTrigger({
       onClick={() => !disabled && setActiveTab(value)}
       disabled={disabled}
       className={cn(
-        'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
+        'px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex-shrink-0 whitespace-nowrap',
         isActive
           ? 'bg-white text-gray-900 shadow-sm'
           : 'text-gray-600 hover:text-gray-900',

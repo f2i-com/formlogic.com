@@ -213,8 +213,8 @@ export default function FormAnalytics() {
         actions={
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => navigate(`/builder/${form.id}`)}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Builder
+              <ArrowLeft className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Back to Builder</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
