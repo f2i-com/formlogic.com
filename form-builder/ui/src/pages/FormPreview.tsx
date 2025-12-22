@@ -13,11 +13,12 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import type { FormField } from '../types/form';
 
 // Field Preview Component
-function FieldPreview({ field, value, onChange, isRequired }: {
+function FieldPreview({ field, value, onChange, isRequired, textColor }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
   isRequired?: boolean;
+  textColor?: string;
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -505,12 +506,15 @@ function FieldPreview({ field, value, onChange, isRequired }: {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">
+      <h2
+        className="text-2xl font-bold mb-2"
+        style={{ color: textColor }}
+      >
         {field.label}
         {required && <span className="text-red-500 ml-1">*</span>}
       </h2>
       {field.description && field.type !== 'statement' && (
-        <p className="text-gray-600 mb-6">{field.description}</p>
+        <p className="mb-6" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
       )}
       <div className="mt-6">{renderField()}</div>
     </div>
@@ -711,6 +715,7 @@ export default function FormPreview() {
                       value={answers[currentField.id]}
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
                       isRequired={getFieldRequired(currentField)}
+                      textColor={form.theme.textColor}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -755,6 +760,7 @@ export default function FormPreview() {
                       value={answers[field.id]}
                       onChange={(val) => handleAnswerChange(field.id, val)}
                       isRequired={getFieldRequired(field)}
+                      textColor={form.theme.textColor}
                     />
                   </div>
                 ))}

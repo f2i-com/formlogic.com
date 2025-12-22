@@ -16,12 +16,14 @@ function FieldResponse({
   value,
   onChange,
   primaryColor,
+  textColor,
   isRequired,
 }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
   primaryColor: string;
+  textColor?: string;
   isRequired?: boolean;
 }) {
   const required = isRequired ?? field.required;
@@ -542,12 +544,15 @@ function FieldResponse({
   return (
     <div className="w-full max-w-xl mx-auto">
       <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-3">
+        <h2
+          className="text-3xl font-bold mb-3"
+          style={{ color: textColor }}
+        >
           {field.label}
           {required && <span className="text-red-500 ml-1">*</span>}
         </h2>
         {field.description && (
-          <p className="text-lg text-gray-600">{field.description}</p>
+          <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
         )}
       </div>
       {renderField()}
@@ -556,7 +561,7 @@ function FieldResponse({
 }
 
 // Success Screen
-function SuccessScreen({ form }: { form: { title: string; theme: { primaryColor: string } } }) {
+function SuccessScreen({ form }: { form: { title: string; theme: { primaryColor: string; textColor: string } } }) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -569,8 +574,8 @@ function SuccessScreen({ form }: { form: { title: string; theme: { primaryColor:
       >
         <Check className="h-10 w-10 text-white" />
       </div>
-      <h1 className="text-4xl font-bold text-gray-900 mb-4">Thank you!</h1>
-      <p className="text-xl text-gray-600">Your response has been submitted successfully.</p>
+      <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>Thank you!</h1>
+      <p className="text-xl" style={{ color: form.theme.textColor, opacity: 0.7 }}>Your response has been submitted successfully.</p>
     </motion.div>
   );
 }
@@ -742,6 +747,7 @@ export default function FormResponse() {
               value={currentAnswers[currentField.id]}
               onChange={(val) => setAnswer(currentField.id, val)}
               primaryColor={form.theme.primaryColor}
+              textColor={form.theme.textColor}
               isRequired={getFieldRequired(currentField)}
             />
 
