@@ -5,6 +5,7 @@ import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { ToastContainer } from './components/ui/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Lazy load builder and preview pages for better performance
 const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
@@ -81,13 +82,15 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppInitializer>
-        <React.Suspense fallback={<LoadingFallback />}>
-          <AppRoutes />
-        </React.Suspense>
-        <ToastContainer />
-      </AppInitializer>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AppInitializer>
+          <React.Suspense fallback={<LoadingFallback />}>
+            <AppRoutes />
+          </React.Suspense>
+          <ToastContainer />
+        </AppInitializer>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

@@ -88,7 +88,7 @@ function registerFormModules(engine: FormLogicEngine): void {
       const value = getValue(args[0]);
       const max = getValue(args[1]);
       if (typeof value !== 'string') return falseObject;
-      if (typeof max !== 'number') return trueObject;
+      if (typeof max !== 'number') return falseObject;
       return value.length <= max ? trueObject : falseObject;
     },
 
@@ -125,7 +125,7 @@ function registerFormModules(engine: FormLogicEngine): void {
       const value = getValue(args[0]);
       const max = getValue(args[1]);
       if (typeof value !== 'number') return falseObject;
-      if (typeof max !== 'number') return trueObject;
+      if (typeof max !== 'number') return falseObject;
       return value <= max ? trueObject : falseObject;
     },
   });

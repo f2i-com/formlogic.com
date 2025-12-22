@@ -11,6 +11,7 @@ import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
 import { useFormStore } from '../../stores/formStore';
 import { Button } from '../ui/Button';
+import { Logo } from '../ui/Logo';
 
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -38,20 +39,8 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-gray-200">
-        {!sidebarCollapsed && (
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">FL</span>
-            </div>
-            <span className="font-semibold text-gray-900">FormLogic</span>
-          </div>
-        )}
-        {sidebarCollapsed && (
-          <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center mx-auto">
-            <span className="text-white font-bold text-sm">FL</span>
-          </div>
-        )}
+      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-200">
+        <Logo size="sm" showText={!sidebarCollapsed} />
       </div>
 
       {/* Create Button */}

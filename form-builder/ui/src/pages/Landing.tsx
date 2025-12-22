@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Database, Code2, Shield, Download, ArrowRight, Check, Server, Workflow, Lock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { AuthModal } from '../components/auth/AuthModal';
+import { Logo, LogoWhite } from '../components/ui/Logo';
 
 export function Landing() {
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -91,12 +92,7 @@ export function Landing() {
       <nav className="fixed top-0 left-0 right-0 bg-white/80 backdrop-blur-md border-b border-gray-100 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">FL</span>
-              </div>
-              <span className="font-semibold text-gray-900 text-lg">FormLogic</span>
-            </div>
+            <Logo size="md" />
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="text-gray-600 hover:text-gray-900 font-medium transition-colors">Features</a>
               <a href="#use-cases" className="text-gray-600 hover:text-gray-900 font-medium transition-colors">Use Cases</a>
@@ -414,12 +410,7 @@ export function Landing() {
       <footer className="py-12 px-4 sm:px-6 lg:px-8 bg-gray-950">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">FL</span>
-              </div>
-              <span className="font-semibold text-white text-lg">FormLogic</span>
-            </div>
+            <LogoWhite size="md" />
             <p className="text-gray-500 text-sm">
               A form engine for real applications.
             </p>
