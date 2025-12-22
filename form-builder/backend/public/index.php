@@ -17,6 +17,8 @@ use FormLogic\Controllers\ResponseController;
 use FormLogic\Controllers\AIController;
 use FormLogic\Middleware\CorsMiddleware;
 use FormLogic\Middleware\AuthMiddleware;
+use FormLogic\Middleware\SecurityHeadersMiddleware;
+use FormLogic\Middleware\RateLimitMiddleware;
 use FormLogic\Services\AIService;
 use FormLogic\Services\DocumentConverter;
 
@@ -171,6 +173,9 @@ $app->add(new CorsMiddleware(
     $corsSettings['allowedOrigins'] ?? null
 ));
 
+// Add security headers middleware
+$app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
+
 // Create auth middleware instances
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true);
@@ -260,55 +265,58 @@ $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container,
     $group->post('/{id}/duplicate', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FormController::class)->duplicate($request, $response, $getArgs($request));
     });
-})->add($authOptional);  // Optional auth - allows anonymous access for now
+})->add($authRequired);  // Require authentication for form management
 
-// Response routes
-$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authOptional) {
+// Create rate limiter for public endpoints (30 submissions per minute per IP)
+$submissionRateLimiter = new RateLimitMiddleware(30, 60, 'submission');
+
+// Response routes (protected - require authentication)
+$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired) {
     // List responses (requires auth)
     $group->get('', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->index($request, $response, $getArgs($request));
-    })->add($authOptional);
+    })->add($authRequired);
 
     // Export responses (requires auth)
     $group->get('/export', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->export($request, $response, $getArgs($request));
-    })->add($authOptional);
+    })->add($authRequired);
 
     // Single response operations
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->show($request, $response, $getArgs($request));
-    })->add($authOptional);
+    })->add($authRequired);
     $group->put('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->update($request, $response, $getArgs($request));
-    })->add($authOptional);
+    })->add($authRequired);
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->delete($request, $response, $getArgs($request));
-    })->add($authOptional);
+    })->add($authRequired);
 
     // Re-run script on a response (requires auth)
     $group->post('/{id}/recompute', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->recompute($request, $response, $getArgs($request));
-    })->add($authOptional);
-
-    // Submit response (public - no auth required)
-    $group->post('', function ($request, $response) use ($container, $getArgs) {
-        return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
-    });
+    })->add($authRequired);
 });
+
+// Public form submission endpoint (rate limited, no auth required)
+$app->post('/api/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
+})->add($submissionRateLimiter);
 
 // Analytics routes (protected)
 $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->analytics($request, $response, $getArgs($request));
-})->add($authOptional);
+})->add($authRequired);
 
 // Export routes (protected)
 $app->get('/api/forms/{formId}/export/sqlite', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->exportSqlite($request, $response, $getArgs($request));
-})->add($authOptional);
+})->add($authRequired);
 
 $app->get('/api/forms/{formId}/export/json', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->exportJson($request, $response, $getArgs($request));
-})->add($authOptional);
+})->add($authRequired);
 
 // Public form view (for embedding/sharing)
 $app->get('/api/public/forms/{id}', function ($request, $response) use ($container, $getArgs) {

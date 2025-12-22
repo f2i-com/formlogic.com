@@ -25,23 +25,49 @@ class ResponseController
     }
 
     /**
+     * Check if the current user owns the form
+     * Returns the form if authorized, null otherwise
+     */
+    private function authorizeFormAccess(Request $request, string $formId): ?array
+    {
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return null;
+        }
+
+        $userId = $request->getAttribute('userId');
+
+        // If no user is authenticated, deny access
+        if (!$userId) {
+            return null;
+        }
+
+        // Check ownership
+        if ($form['userId'] !== $userId) {
+            return null;
+        }
+
+        return $form;
+    }
+
+    /**
      * List all responses for a form
      * GET /api/forms/{formId}/responses
      */
     public function index(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
-        $queryParams = $request->getQueryParams();
 
-        // Check form exists
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form to view responses
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
+        $queryParams = $request->getQueryParams();
         $options = [
             'status' => $queryParams['status'] ?? null,
             'from' => $queryParams['from'] ?? null,
@@ -66,6 +92,15 @@ class ResponseController
     {
         $formId = $args['formId'];
         $responseId = $args['id'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
 
         $formResponse = $this->responseService->getResponse($formId, $responseId);
 
@@ -141,6 +176,16 @@ class ResponseController
     {
         $formId = $args['formId'];
         $responseId = $args['id'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
         $data = $request->getParsedBody();
 
         try {
@@ -171,6 +216,15 @@ class ResponseController
         $formId = $args['formId'];
         $responseId = $args['id'];
 
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
         $deleted = $this->responseService->deleteResponse($formId, $responseId);
 
         if (!$deleted) {
@@ -193,17 +247,17 @@ class ResponseController
     public function analytics(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
-        $queryParams = $request->getQueryParams();
 
-        // Check form exists
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
+        $queryParams = $request->getQueryParams();
         $options = [
             'from' => $queryParams['from'] ?? null,
             'to' => $queryParams['to'] ?? null,
@@ -222,12 +276,12 @@ class ResponseController
     {
         $formId = $args['formId'];
 
-        // Get form with fields
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
@@ -249,12 +303,12 @@ class ResponseController
         $formId = $args['formId'];
         $responseId = $args['id'];
 
-        // Check form exists
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
@@ -315,12 +369,12 @@ class ResponseController
     {
         $formId = $args['formId'];
 
-        // Check form exists
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
@@ -354,12 +408,12 @@ class ResponseController
     {
         $formId = $args['formId'];
 
-        // Get form with fields
-        $form = $this->formService->getForm($formId);
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 

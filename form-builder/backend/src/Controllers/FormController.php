@@ -18,12 +18,47 @@ class FormController
     }
 
     /**
+     * Check if the current user owns the form
+     * Returns the form if authorized, null otherwise
+     */
+    private function authorizeFormAccess(Request $request, string $formId): ?array
+    {
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return null;
+        }
+
+        $userId = $request->getAttribute('userId');
+
+        // If no user is authenticated, deny access
+        if (!$userId) {
+            return null;
+        }
+
+        // Check ownership
+        if ($form['userId'] !== $userId) {
+            return null;
+        }
+
+        return $form;
+    }
+
+    /**
      * List all forms
      * GET /api/forms
      */
     public function index(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
+
+        // Require authentication for listing forms
+        if (!$userId) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Authentication required',
+            ], 401);
+        }
+
         $queryParams = $request->getQueryParams();
 
         $options = [
@@ -47,12 +82,12 @@ class FormController
     public function show(Request $request, Response $response, array $args): Response
     {
         $formId = $args['id'];
-        $form = $this->formService->getForm($formId);
+        $form = $this->authorizeFormAccess($request, $formId);
 
         if (!$form) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Form not found',
+                'message' => 'Form not found or access denied',
             ], 404);
         }
 
@@ -66,6 +101,15 @@ class FormController
     public function create(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
+
+        // Require authentication to create forms
+        if (!$userId) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Authentication required',
+            ], 401);
+        }
+
         $data = $request->getParsedBody();
 
         if (empty($data['title'])) {
@@ -92,19 +136,29 @@ class FormController
     public function update(Request $request, Response $response, array $args): Response
     {
         $formId = $args['id'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
         $data = $request->getParsedBody();
 
         try {
-            $form = $this->formService->updateForm($formId, $data);
+            $updatedForm = $this->formService->updateForm($formId, $data);
 
-            if (!$form) {
+            if (!$updatedForm) {
                 return $this->jsonResponse($response, [
                     'error' => true,
                     'message' => 'Form not found',
                 ], 404);
             }
 
-            return $this->jsonResponse($response, ['form' => $form]);
+            return $this->jsonResponse($response, ['form' => $updatedForm]);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -120,6 +174,15 @@ class FormController
     public function delete(Request $request, Response $response, array $args): Response
     {
         $formId = $args['id'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
 
         $deleted = $this->formService->deleteForm($formId);
 
@@ -145,17 +208,34 @@ class FormController
         $formId = $args['id'];
         $userId = $request->getAttribute('userId');
 
-        try {
-            $form = $this->formService->duplicateForm($formId, $userId);
+        // Require authentication
+        if (!$userId) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Authentication required',
+            ], 401);
+        }
 
-            if (!$form) {
+        // Authorization check - user must own the form to duplicate it
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
+        try {
+            $duplicatedForm = $this->formService->duplicateForm($formId, $userId);
+
+            if (!$duplicatedForm) {
                 return $this->jsonResponse($response, [
                     'error' => true,
-                    'message' => 'Form not found',
-                ], 404);
+                    'message' => 'Failed to duplicate form',
+                ], 400);
             }
 
-            return $this->jsonResponse($response, ['form' => $form], 201);
+            return $this->jsonResponse($response, ['form' => $duplicatedForm], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, [
                 'error' => true,

@@ -72,6 +72,9 @@ class AIController
         }
     }
 
+    // Maximum file size for uploads (10MB)
+    private const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
     /**
      * Generate form from uploaded document or image
      * POST /api/ai/generate-form-from-file
@@ -87,8 +90,23 @@ class AIController
         $additionalPrompt = $body['prompt'] ?? null;
 
         if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+            $errorMessage = 'File upload failed or no file provided';
+            if ($file && $file->getError() === UPLOAD_ERR_INI_SIZE) {
+                $errorMessage = 'File exceeds maximum upload size';
+            }
             $response->getBody()->write(json_encode([
-                'error' => 'File upload failed or no file provided',
+                'error' => $errorMessage,
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+
+        // Validate file size before processing
+        $fileSize = $file->getSize();
+        if ($fileSize > self::MAX_FILE_SIZE) {
+            $response->getBody()->write(json_encode([
+                'error' => 'File too large. Maximum size is ' . (self::MAX_FILE_SIZE / 1024 / 1024) . 'MB',
+                'maxSize' => self::MAX_FILE_SIZE,
+                'actualSize' => $fileSize,
             ]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
@@ -113,9 +131,13 @@ class AIController
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
-        // Save uploaded file temporarily
-        $tempPath = sys_get_temp_dir() . '/' . uniqid('upload_') . '_' . $file->getClientFilename();
+        // Sanitize filename to prevent path traversal
+        $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($file->getClientFilename()));
+        $tempPath = sys_get_temp_dir() . '/' . uniqid('upload_', true) . '_' . $safeFilename;
+
+        // Set restrictive permissions before moving
         $file->moveTo($tempPath);
+        chmod($tempPath, 0600);
 
         try {
             // Convert document to images

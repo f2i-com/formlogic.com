@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FormLogic\Middleware;
+
+use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Http\Server\MiddlewareInterface;
+use Psr\Http\Server\RequestHandlerInterface as RequestHandler;
+
+class SecurityHeadersMiddleware implements MiddlewareInterface
+{
+    private bool $isProduction;
+
+    public function __construct(bool $isProduction = false)
+    {
+        $this->isProduction = $isProduction;
+    }
+
+    public function process(Request $request, RequestHandler $handler): Response
+    {
+        $response = $handler->handle($request);
+
+        // Prevent clickjacking
+        $response = $response->withHeader('X-Frame-Options', 'DENY');
+
+        // Prevent MIME type sniffing
+        $response = $response->withHeader('X-Content-Type-Options', 'nosniff');
+
+        // XSS Protection (legacy but still useful for older browsers)
+        $response = $response->withHeader('X-XSS-Protection', '1; mode=block');
+
+        // Referrer Policy - don't leak referrer to other origins
+        $response = $response->withHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+        // Permissions Policy - disable potentially dangerous browser features
+        $response = $response->withHeader(
+            'Permissions-Policy',
+            'geolocation=(), microphone=(), camera=(), payment=()'
+        );
+
+        // HSTS - only in production and over HTTPS
+        if ($this->isProduction) {
+            $response = $response->withHeader(
+                'Strict-Transport-Security',
+                'max-age=31536000; includeSubDomains'
+            );
+        }
+
+        // Content Security Policy - restrictive by default for API
+        // This is a basic CSP for an API; frontend would have different needs
+        $csp = implode('; ', [
+            "default-src 'none'",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+        ]);
+        $response = $response->withHeader('Content-Security-Policy', $csp);
+
+        return $response;
+    }
+}
