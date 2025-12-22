@@ -34,10 +34,20 @@ function onSubmit(ctx) {
     ctx.db.setStatus("approved");
   }
 
+  // Example: Send data to external API
+  const response = ctx.http.post("https://api.example.com/webhook", {
+    email: ctx.answers.email,
+    score: score,
+    formId: ctx.meta.formId
+  }, {
+    bearerToken: "your-api-token-here"
+  });
+
   // Return computed values (stored with response)
   return {
     score: score,
-    processedAt: ctx.utils.now()
+    processedAt: ctx.utils.now(),
+    webhookSent: response.ok
   };
 }`;
 
@@ -89,10 +99,48 @@ const DOCS = [
     description: 'Helper functions for common operations.',
     items: [
       { name: 'ctx.utils.uuid()', desc: 'Generate a random UUID' },
-      { name: 'ctx.utils.now()', desc: 'Current ISO timestamp string' },
+      { name: 'ctx.utils.now()', desc: 'Current Unix timestamp (seconds)' },
       { name: 'ctx.utils.nowMs()', desc: 'Current Unix timestamp in milliseconds' },
-      { name: 'ctx.utils.hash(str)', desc: 'SHA-256 hash of a string' },
-      { name: 'ctx.utils.formatDate(ts, fmt)', desc: 'Format a timestamp with a format string' },
+      { name: 'ctx.utils.hash(str, algo?)', desc: 'Hash a string. Algorithms: md5, sha1, sha256 (default), sha512' },
+      { name: 'ctx.utils.formatDate(ts, fmt)', desc: 'Format a timestamp with a format string (e.g., "Y-m-d H:i:s")' },
+    ],
+  },
+  {
+    title: 'HTTP Requests (ctx.http)',
+    description: 'Make HTTP requests to external APIs. Send form data to webhooks, integrate with third-party services, or sync with your own backend.',
+    items: [
+      { name: 'ctx.http.get(url, options?)', desc: 'Make a GET request' },
+      { name: 'ctx.http.post(url, data?, options?)', desc: 'Make a POST request with JSON body' },
+      { name: 'ctx.http.put(url, data?, options?)', desc: 'Make a PUT request with JSON body' },
+      { name: 'ctx.http.patch(url, data?, options?)', desc: 'Make a PATCH request with JSON body' },
+      { name: 'ctx.http.delete(url, options?)', desc: 'Make a DELETE request' },
+      { name: 'ctx.http.request(options)', desc: 'Make a custom request with full control' },
+    ],
+  },
+  {
+    title: 'HTTP Options',
+    description: 'Options object for HTTP requests.',
+    items: [
+      { name: 'bearerToken', desc: 'Bearer token for Authorization header (convenience for API auth)' },
+      { name: 'headers', desc: 'Object of custom headers { "X-Custom": "value" }' },
+      { name: 'timeout', desc: 'Request timeout in seconds (default: 10, max: 30)' },
+      { name: 'method', desc: 'HTTP method for ctx.http.request() - GET, POST, PUT, DELETE, PATCH' },
+      { name: 'url', desc: 'Request URL for ctx.http.request()' },
+      { name: 'body', desc: 'Request body for ctx.http.request()' },
+    ],
+  },
+  {
+    title: 'HTTP Response',
+    description: 'Response object returned by HTTP methods.',
+    items: [
+      { name: 'response.ok', desc: 'Boolean - true if status is 2xx' },
+      { name: 'response.status', desc: 'HTTP status code (200, 404, 500, etc.)' },
+      { name: 'response.statusText', desc: 'HTTP status text ("OK", "Not Found", etc.)' },
+      { name: 'response.headers', desc: 'Object of response headers' },
+      { name: 'response.body', desc: 'Raw response body as string' },
+      { name: 'response.data', desc: 'Parsed JSON response (null if not valid JSON)' },
+      { name: 'response.json', desc: 'Boolean - true if response was valid JSON' },
+      { name: 'response.error', desc: 'Error message if request failed' },
     ],
   },
   {
@@ -115,6 +163,45 @@ if (score >= 80) {
 
 // Return computed data
 return { score, processedAt: ctx.utils.now() };`,
+    items: [],
+  },
+  {
+    title: 'HTTP Examples',
+    description: 'Common patterns for HTTP requests.',
+    code: `// POST to webhook with Bearer token
+const res = ctx.http.post("https://api.example.com/webhooks/form", {
+  email: ctx.answers.email,
+  name: ctx.answers.name,
+  submitted_at: ctx.utils.now()
+}, {
+  bearerToken: "sk_live_abc123"
+});
+
+if (!res.ok) {
+  ctx.db.addTag("webhook-failed");
+}
+
+// GET with custom headers
+const user = ctx.http.get("https://api.example.com/users/lookup", {
+  headers: {
+    "X-API-Key": "your-api-key",
+    "X-Request-ID": ctx.utils.uuid()
+  }
+});
+
+if (user.ok && user.data) {
+  ctx.db.setField("user_id", user.data.id);
+}
+
+// Full control with request()
+const custom = ctx.http.request({
+  method: "PUT",
+  url: "https://api.example.com/records/" + ctx.meta.responseId,
+  body: { status: "received", data: ctx.answers },
+  headers: { "Content-Type": "application/json" },
+  bearerToken: "your-token",
+  timeout: 15
+});`,
     items: [],
   },
 ];
@@ -280,6 +367,20 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                       <li>Maximum 100 function call depth</li>
                       <li>Maximum 20 tags per response</li>
                       <li>Maximum 50 computed fields per response</li>
+                    </ul>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold text-gray-900 mb-3">HTTP Request Limits</h3>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                    <ul className="space-y-1">
+                      <li>Maximum 30 second timeout per request</li>
+                      <li>Default timeout is 10 seconds</li>
+                      <li>Requests to localhost/private IPs are blocked (security)</li>
+                      <li>HTTP and HTTPS protocols only</li>
+                      <li>Maximum 5 redirects followed</li>
+                      <li>SSL/TLS verification is enforced</li>
                     </ul>
                   </div>
                 </div>
