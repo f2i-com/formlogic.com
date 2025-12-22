@@ -75,6 +75,7 @@ class MySQLConnection
                 settings JSON,
                 theme JSON,
                 logic_script TEXT DEFAULT NULL,
+                logic_prompt TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 published_at TIMESTAMP NULL,
@@ -165,7 +166,10 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE forms ADD COLUMN logic_script TEXT DEFAULT NULL AFTER theme");
         }
 
-        // Add 'spam' status to response_metadata if not present
-        // (ENUM modification requires re-creating the column in MySQL, skip for now)
+        // Add logic_prompt column to forms table if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'logic_prompt'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN logic_prompt TEXT DEFAULT NULL AFTER logic_script");
+        }
     }
 }

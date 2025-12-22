@@ -101,8 +101,8 @@ class FormService
 
         // Insert into MySQL
         $stmt = $this->mysql->prepare("
-            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, created_at, updated_at)
-            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :created_at, :updated_at)
+            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, created_at, updated_at)
+            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :created_at, :updated_at)
         ");
 
         $stmt->execute([
@@ -114,6 +114,7 @@ class FormService
             'settings' => json_encode($data['settings'] ?? []),
             'theme' => json_encode($data['theme'] ?? []),
             'logic_script' => $data['logicScript'] ?? null,
+            'logic_prompt' => $data['logicPrompt'] ?? null,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
@@ -175,6 +176,11 @@ class FormService
             $params['logic_script'] = $data['logicScript'];
         }
 
+        if (array_key_exists('logicPrompt', $data)) {
+            $updates[] = "logic_prompt = :logic_prompt";
+            $params['logic_prompt'] = $data['logicPrompt'];
+        }
+
         if (!empty($updates)) {
             $updates[] = "updated_at = :updated_at";
             $params['updated_at'] = date('Y-m-d H:i:s');
@@ -229,6 +235,7 @@ class FormService
             'settings' => $original['settings'],
             'theme' => $original['theme'],
             'logicScript' => $original['logicScript'] ?? null,
+            'logicPrompt' => $original['logicPrompt'] ?? null,
             'fields' => array_map(function ($field) {
                 $field['id'] = $this->generateUuid();
                 return $field;

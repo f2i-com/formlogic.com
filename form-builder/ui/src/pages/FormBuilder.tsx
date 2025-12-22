@@ -32,7 +32,8 @@ import {
   Zap,
   ShieldCheck,
   Code2,
-  Share2
+  Share2,
+  Sparkles
 } from 'lucide-react';
 import {
   DndContext,
@@ -58,6 +59,7 @@ import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { AIFormGenerator } from '../components/builder/AIFormGenerator';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
@@ -491,6 +493,7 @@ export default function FormBuilder() {
   const navigate = useNavigate();
   const [showScriptEditor, setShowScriptEditor] = useState(false);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const [showAIGenerator, setShowAIGenerator] = useState(false);
 
   const {
     getForm,
@@ -599,6 +602,32 @@ export default function FormBuilder() {
     }
   };
 
+  const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string) => {
+    // Update form title and description
+    updateForm(form.id, {
+      title: title || form.title,
+      description: description || form.description,
+      logicPrompt: prompt,
+    });
+
+    // Add generated fields
+    fields.forEach((field, index) => {
+      addField(form.id, {
+        type: field.type,
+        label: field.label,
+        description: field.description,
+        placeholder: field.placeholder,
+        required: field.required,
+        properties: field.properties || {},
+      });
+    });
+
+    // Select the first generated field
+    if (fields.length > 0) {
+      setSelectedField(fields[0].id);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
@@ -615,6 +644,16 @@ export default function FormBuilder() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAIGenerator(true)}
+            title="Generate with AI"
+            className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200 hover:border-purple-300"
+          >
+            <Sparkles className="h-4 w-4 sm:mr-2 text-purple-600" />
+            <span className="hidden sm:inline text-purple-700">AI</span>
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -702,6 +741,16 @@ export default function FormBuilder() {
                   <p className="text-gray-500 mb-4">
                     Click a field type from the left panel to get started
                   </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-gray-400">or</span>
+                    <Button
+                      onClick={() => setShowAIGenerator(true)}
+                      className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
+                    >
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      Generate with AI
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <DndContext
@@ -778,6 +827,13 @@ export default function FormBuilder() {
         onClose={() => setShowEmbedModal(false)}
         formId={form.id}
         formTitle={form.title}
+      />
+
+      {/* AI Form Generator Modal */}
+      <AIFormGenerator
+        isOpen={showAIGenerator}
+        onClose={() => setShowAIGenerator(false)}
+        onGenerate={handleAIGenerate}
       />
     </div>
   );

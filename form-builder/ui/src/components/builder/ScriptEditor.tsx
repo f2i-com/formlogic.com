@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { X, Play, Book, AlertCircle, CheckCircle, Code2 } from 'lucide-react';
+import { X, Play, Book, AlertCircle, CheckCircle, Code2, Sparkles, Loader2, Wand2 } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 
 interface ScriptEditorProps {
   isOpen: boolean;
@@ -208,8 +210,11 @@ const custom = ctx.http.request({
 
 export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: ScriptEditorProps) {
   const [editedScript, setEditedScript] = useState(script);
-  const [activeTab, setActiveTab] = useState<'editor' | 'docs' | 'fields'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'ai' | 'docs' | 'fields'>('editor');
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -235,6 +240,78 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
       setTestResult({ success: true, message: 'Script syntax looks valid!' });
     } catch (e) {
       setTestResult({ success: false, message: `Syntax error: ${e instanceof Error ? e.message : 'Unknown error'}` });
+    }
+  };
+
+  const handleAIGenerate = async () => {
+    if (!aiPrompt.trim()) {
+      toast.error('Prompt Required', 'Please describe what you want the script to do');
+      return;
+    }
+
+    if (formFields.length === 0) {
+      toast.error('No Fields', 'Add some fields to your form first');
+      return;
+    }
+
+    setIsGenerating(true);
+    setAiExplanation(null);
+
+    try {
+      const result = await api.generateScript(aiPrompt, formFields);
+
+      if (result.error) {
+        toast.error('Generation Failed', result.error);
+        return;
+      }
+
+      if (result.data?.data) {
+        setEditedScript(result.data.data.script);
+        setAiExplanation(result.data.data.explanation);
+        setActiveTab('editor');
+        toast.success('Script Generated', 'Review the generated script in the editor');
+      }
+    } catch (error) {
+      console.error('AI script generation error:', error);
+      toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleAIImprove = async () => {
+    if (!aiPrompt.trim()) {
+      toast.error('Prompt Required', 'Please describe how you want to improve the script');
+      return;
+    }
+
+    if (!editedScript.trim()) {
+      toast.error('No Script', 'Write or generate a script first');
+      return;
+    }
+
+    setIsGenerating(true);
+    setAiExplanation(null);
+
+    try {
+      const result = await api.improveScript(editedScript, aiPrompt, formFields);
+
+      if (result.error) {
+        toast.error('Improvement Failed', result.error);
+        return;
+      }
+
+      if (result.data?.data) {
+        setEditedScript(result.data.data.script);
+        setAiExplanation(result.data.data.explanation);
+        setActiveTab('editor');
+        toast.success('Script Improved', 'Review the updated script in the editor');
+      }
+    } catch (error) {
+      console.error('AI script improvement error:', error);
+      toast.error('Improvement Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -266,6 +343,17 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
             }`}
           >
             Editor
+          </button>
+          <button
+            onClick={() => setActiveTab('ai')}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+              activeTab === 'ai'
+                ? 'border-purple-500 text-purple-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Sparkles className="h-4 w-4" />
+            AI Generate
           </button>
           <button
             onClick={() => setActiveTab('docs')}
@@ -320,6 +408,124 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                   <span className="text-sm">{testResult.message}</span>
                 </div>
               )}
+
+              {/* AI Explanation */}
+              {aiExplanation && (
+                <div className="mx-4 mb-2 p-3 rounded-lg bg-purple-50 border border-purple-200">
+                  <div className="flex items-start gap-2">
+                    <Sparkles className="h-4 w-4 text-purple-500 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-purple-800">AI Generated</p>
+                      <p className="text-sm text-purple-700 mt-1">{aiExplanation}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'ai' && (
+            <div className="h-full overflow-y-auto p-6">
+              <div className="max-w-2xl mx-auto space-y-6">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full mb-4">
+                    <Wand2 className="h-8 w-8 text-white" />
+                  </div>
+                  <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                    Generate Script with AI
+                  </h3>
+                  <p className="text-gray-600">
+                    Describe what you want your script to do, and AI will generate the code for you.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    What should the script do?
+                  </label>
+                  <textarea
+                    value={aiPrompt}
+                    onChange={(e) => setAiPrompt(e.target.value)}
+                    placeholder="Example: Reject submissions if the email is not from our company domain. Calculate a total score from the rating fields and tag high scorers. Send the data to our webhook at https://api.example.com/hook"
+                    className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleAIGenerate}
+                    disabled={isGenerating || formFields.length === 0}
+                    className="flex-1 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Generate New Script
+                      </>
+                    )}
+                  </Button>
+                  {editedScript.trim() && (
+                    <Button
+                      variant="outline"
+                      onClick={handleAIImprove}
+                      disabled={isGenerating}
+                      className="flex-1"
+                    >
+                      {isGenerating ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Improving...
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="h-4 w-4 mr-2" />
+                          Improve Existing Script
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+
+                {formFields.length === 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-amber-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-amber-800">No form fields</p>
+                        <p className="text-sm text-amber-700 mt-1">
+                          Add some fields to your form first. The AI uses your form fields to generate appropriate script logic.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Example prompts</h4>
+                  <div className="space-y-2">
+                    {[
+                      "Reject submissions if the age field is under 18",
+                      "Calculate a total score from all rating fields and tag responses as 'high-performer' if score is above 80",
+                      "Send form data to a webhook and mark as approved if successful",
+                      "Only allow business email addresses, reject personal emails like gmail or yahoo",
+                      "Auto-categorize responses based on the selected department",
+                    ].map((example, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setAiPrompt(example)}
+                        className="block w-full text-left text-sm text-gray-600 hover:text-purple-600 hover:bg-purple-50 px-3 py-2 rounded-md transition-colors"
+                      >
+                        "{example}"
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

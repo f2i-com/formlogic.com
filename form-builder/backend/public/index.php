@@ -14,8 +14,11 @@ use FormLogic\Services\FormLogicRuntime;
 use FormLogic\Controllers\AuthController;
 use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\ResponseController;
+use FormLogic\Controllers\AIController;
 use FormLogic\Middleware\CorsMiddleware;
 use FormLogic\Middleware\AuthMiddleware;
+use FormLogic\Services\AIService;
+use FormLogic\Services\DocumentConverter;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -90,6 +93,22 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(ResponseService::class),
         $c->get(FormService::class),
         $c->get(SQLiteConnection::class)
+    );
+});
+
+// Register AI services
+$container->set(AIService::class, function () {
+    return new AIService();
+});
+
+$container->set(DocumentConverter::class, function () {
+    return new DocumentConverter();
+});
+
+$container->set(AIController::class, function (Container $c) {
+    return new AIController(
+        $c->get(AIService::class),
+        $c->get(DocumentConverter::class)
     );
 });
 
@@ -169,6 +188,39 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->get('/me', [AuthController::class, 'me']);
     $group->put('/me', [AuthController::class, 'updateProfile']);
 })->add($authRequired);
+
+// AI routes
+$app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
+    // Status check (public)
+    $group->get('/status', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->status($request, $response);
+    });
+
+    // Form generation from text prompt
+    $group->post('/generate-form', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateForm($request, $response);
+    });
+
+    // Form generation from file upload (PDF, Word, image)
+    $group->post('/generate-form-from-file', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateFormFromFile($request, $response);
+    });
+
+    // Form generation from base64 images
+    $group->post('/generate-form-from-images', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateFormFromImages($request, $response);
+    });
+
+    // Script generation
+    $group->post('/generate-script', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateScript($request, $response);
+    });
+
+    // Script improvement
+    $group->post('/improve-script', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->improveScript($request, $response);
+    });
+})->add($authOptional);
 
 // Helper function to get route args
 $getArgs = function ($request) {

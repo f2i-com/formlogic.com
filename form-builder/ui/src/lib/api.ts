@@ -276,6 +276,72 @@ class ApiClient {
   async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string }>> {
     return this.request('/health');
   }
+
+  // AI endpoints
+  async getAIStatus(): Promise<ApiResponse<AIStatus>> {
+    return this.request('/ai/status');
+  }
+
+  async generateFormFromPrompt(prompt: string): Promise<ApiResponse<AIFormGenerationResult>> {
+    return this.request('/ai/generate-form', {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    });
+  }
+
+  async generateFormFromFile(file: File, prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
+    const url = `${this.baseUrl}/ai/generate-form-from-file`;
+    const formData = new FormData();
+    formData.append('file', file);
+    if (prompt) {
+      formData.append('prompt', prompt);
+    }
+
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return { error: data.error || data.message || 'An error occurred' };
+      }
+
+      return { data };
+    } catch (error) {
+      console.error('API request failed:', error);
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  async generateFormFromImages(images: string[], prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
+    return this.request('/ai/generate-form-from-images', {
+      method: 'POST',
+      body: JSON.stringify({ images, prompt }),
+    });
+  }
+
+  async generateScript(prompt: string, fields: FormField[]): Promise<ApiResponse<AIScriptGenerationResult>> {
+    return this.request('/ai/generate-script', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, fields }),
+    });
+  }
+
+  async improveScript(script: string, prompt: string, fields: FormField[]): Promise<ApiResponse<AIScriptGenerationResult>> {
+    return this.request('/ai/improve-script', {
+      method: 'POST',
+      body: JSON.stringify({ script, prompt, fields }),
+    });
+  }
 }
 
 // Types
@@ -310,8 +376,52 @@ interface FormAnalytics {
   responsesByDate: Array<{ date: string; count: number }>;
 }
 
+interface AIStatus {
+  available: boolean;
+  message: string;
+}
+
+interface AIGeneratedField {
+  id: string;
+  type: string;
+  label: string;
+  description?: string;
+  placeholder?: string;
+  required: boolean;
+  properties?: Record<string, unknown>;
+}
+
+interface AIFormGenerationResult {
+  success: boolean;
+  data: {
+    title: string;
+    description?: string;
+    fields: AIGeneratedField[];
+    suggestedScript?: string;
+  };
+  pagesProcessed?: number;
+}
+
+interface AIScriptGenerationResult {
+  success: boolean;
+  data: {
+    script: string;
+    explanation: string;
+  };
+}
+
+interface FormField {
+  id: string;
+  type: string;
+  label: string;
+  description?: string;
+  placeholder?: string;
+  required?: boolean;
+  properties?: Record<string, unknown>;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField };
