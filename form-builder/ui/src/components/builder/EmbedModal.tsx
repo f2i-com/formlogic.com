@@ -1,7 +1,9 @@
-import { useState } from 'react';
-import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2 } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
+import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
 interface EmbedModalProps {
@@ -12,12 +14,16 @@ interface EmbedModalProps {
 }
 
 type EmbedType = 'standard' | 'fullpage' | 'popup';
+type ActiveTab = 'link' | 'embed' | 'export' | 'qr';
 
 export function EmbedModal({ isOpen, onClose, formId, formTitle }: EmbedModalProps) {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('link');
   const [embedType, setEmbedType] = useState<EmbedType>('standard');
   const [width, setWidth] = useState('100%');
   const [height, setHeight] = useState('600');
   const [copied, setCopied] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const qrRef = useRef<HTMLDivElement>(null);
 
   if (!isOpen) return null;
 
@@ -61,7 +67,7 @@ function openFormPopup() {
   container.style.cssText = 'position:relative;width:90%;max-width:700px;height:80%;max-height:800px;background:white;border-radius:12px;overflow:hidden;';
 
   const closeBtn = document.createElement('button');
-  closeBtn.innerHTML = '&times;';
+  closeBtn.textContent = '\\u00D7';
   closeBtn.style.cssText = 'position:absolute;top:10px;right:10px;width:32px;height:32px;background:#f3f4f6;border:none;border-radius:50%;font-size:20px;cursor:pointer;z-index:1;';
   closeBtn.onclick = closeFormPopup;
 
@@ -94,32 +100,99 @@ function closeFormPopup() {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(type);
-      toast.success('Copied!', 'Code copied to clipboard');
+      toast.success('Copied!', 'Copied to clipboard');
       setTimeout(() => setCopied(null), 2000);
     } catch {
-      toast.error('Copy failed', 'Could not copy to clipboard. Please select and copy manually.');
+      toast.error('Copy failed', 'Could not copy to clipboard');
     }
+  };
+
+  const handleExportJson = async () => {
+    setExporting('json');
+    try {
+      await api.downloadJson(formId, formTitle.toLowerCase().replace(/\s+/g, '-'));
+      toast.success('Downloaded', 'JSON export downloaded successfully');
+    } catch (error) {
+      toast.error('Export failed', error instanceof Error ? error.message : 'Failed to export');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleExportCsv = async () => {
+    setExporting('csv');
+    try {
+      const csv = await api.exportResponses(formId);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${formTitle.toLowerCase().replace(/\s+/g, '-')}-responses.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Downloaded', 'CSV export downloaded successfully');
+    } catch (error) {
+      toast.error('Export failed', error instanceof Error ? error.message : 'Failed to export');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleDownloadQR = () => {
+    const svg = qrRef.current?.querySelector('svg');
+    if (!svg) return;
+
+    // Create a canvas to convert SVG to PNG
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const img = new Image();
+
+    img.onload = () => {
+      canvas.width = 256;
+      canvas.height = 256;
+      ctx?.drawImage(img, 0, 0, 256, 256);
+
+      const pngUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.href = pngUrl;
+      link.download = `${formTitle.toLowerCase().replace(/\s+/g, '-')}-qr.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   };
 
   const embedTypes: { id: EmbedType; label: string; description: string; icon: React.ReactNode }[] = [
     {
       id: 'standard',
-      label: 'Standard Embed',
-      description: 'Embed the form inline on your page',
+      label: 'Standard',
+      description: 'Inline embed',
       icon: <Monitor className="h-5 w-5" />,
     },
     {
       id: 'fullpage',
       label: 'Full Page',
-      description: 'Form takes up the entire page',
+      description: 'Fills entire page',
       icon: <Maximize2 className="h-5 w-5" />,
     },
     {
       id: 'popup',
-      label: 'Popup Modal',
-      description: 'Open form in a popup overlay',
+      label: 'Popup',
+      description: 'Opens in overlay',
       icon: <Smartphone className="h-5 w-5" />,
     },
+  ];
+
+  const tabs = [
+    { id: 'link' as const, label: 'Share Link', icon: <ExternalLink className="h-4 w-4" /> },
+    { id: 'embed' as const, label: 'Embed', icon: <Code className="h-4 w-4" /> },
+    { id: 'export' as const, label: 'Export', icon: <Download className="h-4 w-4" /> },
+    { id: 'qr' as const, label: 'QR Code', icon: <QrCode className="h-4 w-4" /> },
   ];
 
   return (
@@ -128,173 +201,283 @@ function closeFormPopup() {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <Code className="h-5 w-5 text-primary-600" />
+            <ExternalLink className="h-5 w-5 text-primary-600" />
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Embed Form</h2>
-              <p className="text-sm text-gray-500">Add this form to your website</p>
+              <h2 className="text-lg font-semibold text-gray-900">Share Form</h2>
+              <p className="text-sm text-gray-500">Share, embed, or export your form</p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500" />
           </button>
         </div>
 
+        {/* Tabs */}
+        <div className="flex border-b border-gray-200 px-6">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
+                activeTab === tab.id
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              )}
+            >
+              {tab.icon}
+              <span className="hidden sm:inline">{tab.label}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Direct Link */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Direct Link
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                readOnly
-                value={formUrl}
-                className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-600"
-              />
-              <Button
-                variant="outline"
-                onClick={() => handleCopy(formUrl, 'link')}
-              >
-                {copied === 'link' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => window.open(formUrl, '_blank')}
-              >
-                <ExternalLink className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          {/* Embed Type Selection */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Embed Type
-            </label>
-            <div className="grid grid-cols-3 gap-3">
-              {embedTypes.map((type) => (
-                <button
-                  key={type.id}
-                  onClick={() => setEmbedType(type.id)}
-                  className={cn(
-                    'p-4 rounded-lg border-2 text-left transition-all',
-                    embedType === type.id
-                      ? 'border-primary-500 bg-primary-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  )}
-                >
-                  <div className={cn(
-                    'mb-2',
-                    embedType === type.id ? 'text-primary-600' : 'text-gray-400'
-                  )}>
-                    {type.icon}
-                  </div>
-                  <p className="font-medium text-gray-900 text-sm">{type.label}</p>
-                  <p className="text-xs text-gray-500 mt-1">{type.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Size Options (only for standard embed) */}
-          {embedType === 'standard' && (
-            <div className="grid grid-cols-2 gap-4">
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Share Link Tab */}
+          {activeTab === 'link' && (
+            <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Width
+                  Direct Link
                 </label>
-                <select
-                  value={width}
-                  onChange={(e) => setWidth(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="100%">100% (Full width)</option>
-                  <option value="800px">800px</option>
-                  <option value="600px">600px</option>
-                  <option value="500px">500px</option>
-                </select>
+                <p className="text-sm text-gray-500 mb-3">
+                  Share this link with anyone to let them fill out your form
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={formUrl}
+                    className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-600"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => handleCopy(formUrl, 'link')}
+                  >
+                    {copied === 'link' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => window.open(formUrl, '_blank')}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Height
-                </label>
-                <select
-                  value={height}
-                  onChange={(e) => setHeight(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="400">400px</option>
-                  <option value="500">500px</option>
-                  <option value="600">600px (Recommended)</option>
-                  <option value="700">700px</option>
-                  <option value="800">800px</option>
-                </select>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Quick Preview</h4>
+                <div className="bg-white rounded border border-gray-200 p-4 flex items-center justify-center">
+                  <div ref={qrRef} className="inline-block">
+                    <QRCodeSVG
+                      value={formUrl}
+                      size={120}
+                      level="M"
+                      includeMargin
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2 text-center">
+                  Scan to open form on mobile
+                </p>
               </div>
             </div>
           )}
 
-          {/* Embed Code */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Embed Code
-              </label>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleCopy(getEmbedCode(), 'embed')}
-              >
-                {copied === 'embed' ? (
-                  <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy Code
-                  </>
-                )}
-              </Button>
-            </div>
-            <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto max-h-64 overflow-y-auto">
-              <code>{getEmbedCode()}</code>
-            </pre>
-          </div>
+          {/* Embed Tab */}
+          {activeTab === 'embed' && (
+            <div className="space-y-6">
+              {/* Embed Type Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Embed Type
+                </label>
+                <div className="grid grid-cols-3 gap-3">
+                  {embedTypes.map((type) => (
+                    <button
+                      key={type.id}
+                      onClick={() => setEmbedType(type.id)}
+                      className={cn(
+                        'p-3 rounded-lg border-2 text-left transition-all',
+                        embedType === type.id
+                          ? 'border-primary-500 bg-primary-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      )}
+                    >
+                      <div className={cn(
+                        'mb-1',
+                        embedType === type.id ? 'text-primary-600' : 'text-gray-400'
+                      )}>
+                        {type.icon}
+                      </div>
+                      <p className="font-medium text-gray-900 text-sm">{type.label}</p>
+                      <p className="text-xs text-gray-500">{type.description}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          {/* Instructions */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h3 className="font-medium text-blue-900 mb-2">How to use</h3>
-            <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
+              {/* Size Options (only for standard embed) */}
               {embedType === 'standard' && (
-                <>
-                  <li>Copy the embed code above</li>
-                  <li>Paste it into your HTML where you want the form to appear</li>
-                  <li>Adjust width and height as needed</li>
-                </>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Width
+                    </label>
+                    <select
+                      value={width}
+                      onChange={(e) => setWidth(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="100%">100% (Full width)</option>
+                      <option value="800px">800px</option>
+                      <option value="600px">600px</option>
+                      <option value="500px">500px</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Height
+                    </label>
+                    <select
+                      value={height}
+                      onChange={(e) => setHeight(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="400">400px</option>
+                      <option value="500">500px</option>
+                      <option value="600">600px (Recommended)</option>
+                      <option value="700">700px</option>
+                      <option value="800">800px</option>
+                    </select>
+                  </div>
+                </div>
               )}
-              {embedType === 'fullpage' && (
-                <>
-                  <li>Copy the embed code above</li>
-                  <li>Create a new HTML page or use an existing one</li>
-                  <li>Paste the code to make the form fill the entire page</li>
-                </>
-              )}
-              {embedType === 'popup' && (
-                <>
-                  <li>Copy the entire code above</li>
-                  <li>Add the button HTML where you want the trigger</li>
-                  <li>Add the script before the closing &lt;/body&gt; tag</li>
-                  <li>Customize the button text and styling as needed</li>
-                </>
-              )}
-            </ol>
-          </div>
+
+              {/* Embed Code */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Embed Code
+                  </label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleCopy(getEmbedCode(), 'embed')}
+                  >
+                    {copied === 'embed' ? (
+                      <>
+                        <Check className="h-4 w-4 mr-2" />
+                        Copied!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4 mr-2" />
+                        Copy Code
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto max-h-48 overflow-y-auto">
+                  <code>{getEmbedCode()}</code>
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Export Tab */}
+          {activeTab === 'export' && (
+            <div className="space-y-6">
+              <p className="text-sm text-gray-600">
+                Download your form schema or response data in various formats
+              </p>
+
+              <div className="grid grid-cols-2 gap-4">
+                <button
+                  onClick={handleExportJson}
+                  disabled={exporting === 'json'}
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 rounded-xl border-2 border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition-all group"
+                >
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mb-3 group-hover:bg-blue-200 transition-colors">
+                    <FileJson className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <span className="font-medium text-gray-900">JSON Schema</span>
+                  <span className="text-xs text-gray-500 mt-1">Form structure + responses</span>
+                  {exporting === 'json' && (
+                    <span className="text-xs text-primary-600 mt-2">Downloading...</span>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleExportCsv}
+                  disabled={exporting === 'csv'}
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 rounded-xl border-2 border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition-all group"
+                >
+                  <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
+                    <FileSpreadsheet className="h-6 w-6 text-green-600" />
+                  </div>
+                  <span className="font-medium text-gray-900">CSV Data</span>
+                  <span className="text-xs text-gray-500 mt-1">Responses spreadsheet</span>
+                  {exporting === 'csv' && (
+                    <span className="text-xs text-primary-600 mt-2">Downloading...</span>
+                  )}
+                </button>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-blue-900 mb-1">Need more export options?</h4>
+                <p className="text-sm text-blue-700">
+                  Visit the Analytics page for SQLite database exports and detailed response data.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* QR Code Tab */}
+          {activeTab === 'qr' && (
+            <div className="space-y-6">
+              <div className="flex flex-col items-center">
+                <div className="bg-white p-6 rounded-xl border-2 border-gray-200 inline-block" ref={qrRef}>
+                  <QRCodeSVG
+                    value={formUrl}
+                    size={200}
+                    level="H"
+                    includeMargin
+                    imageSettings={{
+                      src: '',
+                      height: 0,
+                      width: 0,
+                      excavate: false,
+                    }}
+                  />
+                </div>
+                <p className="text-sm text-gray-600 mt-4 text-center">
+                  Scan this QR code to open the form on any device
+                </p>
+              </div>
+
+              <div className="flex justify-center">
+                <Button onClick={handleDownloadQR} variant="outline">
+                  <Download className="h-4 w-4 mr-2" />
+                  Download QR Code
+                </Button>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Uses for QR codes</h4>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  <li>Print on flyers, posters, or business cards</li>
+                  <li>Add to presentations or documents</li>
+                  <li>Display at events or conferences</li>
+                  <li>Include in email signatures</li>
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

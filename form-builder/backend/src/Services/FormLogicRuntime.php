@@ -328,14 +328,22 @@ class FormLogicRuntime
             return $this->httpErrorResponse('Invalid URL format');
         }
 
-        // Security: Block private IP ranges and localhost
-        $host = parse_url($url, PHP_URL_HOST);
-        if ($host === false || $host === null) {
+        // Parse URL components
+        $parsedUrl = parse_url($url);
+        $host = $parsedUrl['host'] ?? null;
+        $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
+
+        if ($host === null) {
             return $this->httpErrorResponse('Invalid URL');
         }
-        if ($this->isPrivateHost($host)) {
+
+        // Security: Block private IP ranges, localhost, and perform DNS pinning
+        $hostCheck = $this->checkHostSecurity($host);
+        if ($hostCheck['isPrivate']) {
             return $this->httpErrorResponse('Requests to private/local addresses are not allowed');
         }
+
+        $resolvedIp = $hostCheck['resolvedIp'];
 
         // Build headers
         $headers = ['Accept: application/json'];
@@ -385,11 +393,11 @@ class FormLogicRuntime
         // Execute request with cURL
         $ch = curl_init();
 
-        curl_setopt_array($ch, [
+        $curlOptions = [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_FOLLOWLOCATION => false, // Disable auto-follow to validate redirects
+            CURLOPT_MAXREDIRS => 0,
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_CONNECTTIMEOUT => 5,
             CURLOPT_HTTPHEADER => $headers,
@@ -398,9 +406,16 @@ class FormLogicRuntime
             // Security settings
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            // Prevent SSRF via redirects
+            // Prevent SSRF via redirects (keeping as defense-in-depth)
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
-        ]);
+        ];
+
+        // DNS pinning: Force cURL to use our pre-resolved IP to prevent DNS rebinding
+        if ($resolvedIp !== null) {
+            $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
+        }
+
+        curl_setopt_array($ch, $curlOptions);
 
         if ($bodyString !== null && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
             curl_setopt($ch, CURLOPT_POSTFIELDS, $bodyString);
@@ -411,12 +426,63 @@ class FormLogicRuntime
         $errno = curl_errno($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+        $redirectUrl = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
 
         curl_close($ch);
 
         // Handle cURL errors
         if ($errno !== 0) {
             return $this->httpErrorResponse("Request failed: {$error}");
+        }
+
+        // Handle redirects securely (validate each redirect URL)
+        $redirectCount = 0;
+        $maxRedirects = 5;
+        while ($httpCode >= 300 && $httpCode < 400 && !empty($redirectUrl) && $redirectCount < $maxRedirects) {
+            $redirectCount++;
+
+            // Validate redirect URL
+            if (!filter_var($redirectUrl, FILTER_VALIDATE_URL)) {
+                return $this->httpErrorResponse('Invalid redirect URL');
+            }
+
+            // Check redirect host for SSRF
+            $redirectParsed = parse_url($redirectUrl);
+            $redirectHost = $redirectParsed['host'] ?? null;
+            if ($redirectHost === null) {
+                return $this->httpErrorResponse('Invalid redirect URL');
+            }
+
+            $redirectCheck = $this->checkHostSecurity($redirectHost);
+            if ($redirectCheck['isPrivate']) {
+                return $this->httpErrorResponse('Redirect to private/local address blocked');
+            }
+
+            // Follow the redirect with DNS pinning
+            $redirectPort = $redirectParsed['port'] ?? (($redirectParsed['scheme'] ?? 'https') === 'https' ? 443 : 80);
+            $ch = curl_init();
+            $curlOptions[CURLOPT_URL] = $redirectUrl;
+            if ($redirectCheck['resolvedIp'] !== null) {
+                $curlOptions[CURLOPT_RESOLVE] = ["{$redirectHost}:{$redirectPort}:{$redirectCheck['resolvedIp']}"];
+            }
+            curl_setopt_array($ch, $curlOptions);
+
+            $response = curl_exec($ch);
+            $error = curl_error($ch);
+            $errno = curl_errno($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+            $redirectUrl = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+
+            curl_close($ch);
+
+            if ($errno !== 0) {
+                return $this->httpErrorResponse("Request failed: {$error}");
+            }
+        }
+
+        if ($redirectCount >= $maxRedirects) {
+            return $this->httpErrorResponse('Too many redirects');
         }
 
         // Parse response
@@ -458,29 +524,143 @@ class FormLogicRuntime
 
     /**
      * Check if a host is private/local (SSRF protection)
+     * Returns [isPrivate: bool, resolvedIp: string|null]
      */
-    private function isPrivateHost(string $host): bool
+    private function checkHostSecurity(string $host): array
     {
-        // Check for localhost variants
         $host = strtolower($host);
-        if (in_array($host, ['localhost', '127.0.0.1', '::1', '0.0.0.0'], true)) {
-            return true;
+
+        // Check for localhost variants
+        $localhostPatterns = [
+            'localhost',
+            '127.0.0.1',
+            '::1',
+            '0.0.0.0',
+            '0',
+            '[::1]',
+            '[::ffff:127.0.0.1]',
+            'localhost.localdomain',
+            '127.0.0.1.nip.io', // Common DNS rebinding service
+        ];
+
+        foreach ($localhostPatterns as $pattern) {
+            if ($host === $pattern || str_ends_with($host, '.' . $pattern)) {
+                return ['isPrivate' => true, 'resolvedIp' => null];
+            }
         }
 
-        // Resolve hostname to IP
-        $ip = gethostbyname($host);
-        if ($ip === $host) {
-            // Could not resolve, allow (might be external)
+        // Block numeric localhost variants (127.x.x.x in various formats)
+        // Decimal: 2130706433 = 127.0.0.1
+        // Octal: 0177.0.0.1
+        // Hex: 0x7f.0.0.1
+        if (preg_match('/^(0x7f|0177|2130\d+)/i', $host)) {
+            return ['isPrivate' => true, 'resolvedIp' => null];
+        }
+
+        // Resolve hostname to IP addresses (both IPv4 and IPv6)
+        $resolvedIp = null;
+
+        // Try to get all IP addresses for the host
+        $records = @dns_get_record($host, DNS_A | DNS_AAAA);
+        if ($records === false || empty($records)) {
+            // Fall back to gethostbyname for IPv4 only
+            $ip = gethostbyname($host);
+            if ($ip !== $host) {
+                $resolvedIp = $ip;
+                if ($this->isPrivateIp($ip)) {
+                    return ['isPrivate' => true, 'resolvedIp' => null];
+                }
+            }
+            // Could not resolve - block to be safe (prevents DNS rebinding via no-resolve-then-resolve)
+            if ($resolvedIp === null) {
+                return ['isPrivate' => true, 'resolvedIp' => null];
+            }
+        } else {
+            // Check all returned IP addresses
+            foreach ($records as $record) {
+                $ip = $record['ip'] ?? $record['ipv6'] ?? null;
+                if ($ip !== null) {
+                    if ($this->isPrivateIp($ip)) {
+                        return ['isPrivate' => true, 'resolvedIp' => null];
+                    }
+                    // Use the first valid IP for DNS pinning
+                    if ($resolvedIp === null) {
+                        $resolvedIp = $ip;
+                    }
+                }
+            }
+        }
+
+        return ['isPrivate' => false, 'resolvedIp' => $resolvedIp];
+    }
+
+    /**
+     * Check if an IP address is private/reserved
+     */
+    private function isPrivateIp(string $ip): bool
+    {
+        // Check IPv4
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            // Use built-in filter for private and reserved ranges
+            $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+            if (filter_var($ip, FILTER_VALIDATE_IP, $flags) === false) {
+                return true;
+            }
             return false;
         }
 
-        // Check for private IP ranges
-        $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
-        if (filter_var($ip, FILTER_VALIDATE_IP, $flags) === false) {
-            return true;
+        // Check IPv6
+        if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            // Normalize IPv6 address
+            $ip = strtolower($ip);
+
+            // Remove brackets if present
+            $ip = trim($ip, '[]');
+
+            // Check for loopback (::1)
+            if ($ip === '::1' || $ip === '0000:0000:0000:0000:0000:0000:0000:0001') {
+                return true;
+            }
+
+            // Check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $matches)) {
+                return $this->isPrivateIp($matches[1]);
+            }
+
+            // Expand IPv6 for checking
+            $expanded = @inet_pton($ip);
+            if ($expanded === false) {
+                return true; // Invalid IP, block it
+            }
+            $hex = bin2hex($expanded);
+
+            // Link-local (fe80::/10)
+            if (str_starts_with($hex, 'fe8') || str_starts_with($hex, 'fe9') ||
+                str_starts_with($hex, 'fea') || str_starts_with($hex, 'feb')) {
+                return true;
+            }
+
+            // Unique local (fc00::/7 - includes fd00::/8)
+            if (str_starts_with($hex, 'fc') || str_starts_with($hex, 'fd')) {
+                return true;
+            }
+
+            // Site-local (deprecated, fec0::/10)
+            if (str_starts_with($hex, 'fec') || str_starts_with($hex, 'fed') ||
+                str_starts_with($hex, 'fee') || str_starts_with($hex, 'fef')) {
+                return true;
+            }
+
+            // Unspecified (::)
+            if ($hex === '00000000000000000000000000000000') {
+                return true;
+            }
+
+            return false;
         }
 
-        return false;
+        // Invalid IP format
+        return true;
     }
 
     /**

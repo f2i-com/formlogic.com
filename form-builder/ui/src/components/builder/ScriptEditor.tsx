@@ -228,18 +228,62 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   };
 
   const handleTest = () => {
-    // Basic syntax check
+    // Basic structure validation without executing code
+    // We avoid new Function() as it evaluates user code which is a security risk
     try {
       // Check if it has onSubmit function
       if (!editedScript.includes('function onSubmit')) {
         setTestResult({ success: false, message: 'Script must contain a function named "onSubmit"' });
         return;
       }
-      // Try to parse as JavaScript (basic check)
-      new Function(editedScript);
-      setTestResult({ success: true, message: 'Script syntax looks valid!' });
+
+      // Check for basic syntax issues using pattern matching
+      // Note: Real validation happens server-side in the FormLogic runtime
+
+      // Check for unmatched braces
+      const openBraces = (editedScript.match(/\{/g) || []).length;
+      const closeBraces = (editedScript.match(/\}/g) || []).length;
+      if (openBraces !== closeBraces) {
+        setTestResult({ success: false, message: 'Mismatched braces: check your { and }' });
+        return;
+      }
+
+      // Check for unmatched parentheses
+      const openParens = (editedScript.match(/\(/g) || []).length;
+      const closeParens = (editedScript.match(/\)/g) || []).length;
+      if (openParens !== closeParens) {
+        setTestResult({ success: false, message: 'Mismatched parentheses: check your ( and )' });
+        return;
+      }
+
+      // Check for unmatched brackets
+      const openBrackets = (editedScript.match(/\[/g) || []).length;
+      const closeBrackets = (editedScript.match(/\]/g) || []).length;
+      if (openBrackets !== closeBrackets) {
+        setTestResult({ success: false, message: 'Mismatched brackets: check your [ and ]' });
+        return;
+      }
+
+      // Check for unterminated strings (basic check)
+      const singleQuotes = (editedScript.match(/(?<!\\)'/g) || []).length;
+      const doubleQuotes = (editedScript.match(/(?<!\\)"/g) || []).length;
+      if (singleQuotes % 2 !== 0) {
+        setTestResult({ success: false, message: 'Unterminated string: check your single quotes' });
+        return;
+      }
+      if (doubleQuotes % 2 !== 0) {
+        setTestResult({ success: false, message: 'Unterminated string: check your double quotes' });
+        return;
+      }
+
+      // Check for common syntax issues
+      if (/\bfunction\s*\(/.test(editedScript) && !/\bfunction\s+\w+\s*\(/.test(editedScript) && !/=\s*function\s*\(/.test(editedScript)) {
+        // Anonymous function not assigned - might be an error but could be valid in some contexts
+      }
+
+      setTestResult({ success: true, message: 'Basic structure looks valid! Full validation occurs when the script runs.' });
     } catch (e) {
-      setTestResult({ success: false, message: `Syntax error: ${e instanceof Error ? e.message : 'Unknown error'}` });
+      setTestResult({ success: false, message: `Validation error: ${e instanceof Error ? e.message : 'Unknown error'}` });
     }
   };
 

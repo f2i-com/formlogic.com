@@ -19,6 +19,7 @@ use FormLogic\Middleware\CorsMiddleware;
 use FormLogic\Middleware\AuthMiddleware;
 use FormLogic\Middleware\SecurityHeadersMiddleware;
 use FormLogic\Middleware\RateLimitMiddleware;
+use FormLogic\Middleware\BodySizeLimitMiddleware;
 use FormLogic\Services\AIService;
 use FormLogic\Services\DocumentConverter;
 
@@ -176,6 +177,10 @@ $app->add(new CorsMiddleware(
 
 // Add security headers middleware
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
+
+// Add global body size limit (uses configured upload size as max, since that's the largest we accept)
+$maxBodySize = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1024);
+$app->add(new BodySizeLimitMiddleware($maxBodySize));
 
 // Create auth middleware instances
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false);

@@ -33,7 +33,8 @@ import {
   ShieldCheck,
   Code2,
   Share2,
-  Sparkles
+  Sparkles,
+  Palette
 } from 'lucide-react';
 import {
   DndContext,
@@ -60,6 +61,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs'
 import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
+import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
@@ -494,6 +496,7 @@ export default function FormBuilder() {
   const [showScriptEditor, setShowScriptEditor] = useState(false);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showAIGenerator, setShowAIGenerator] = useState(false);
+  const [showThemeEditor, setShowThemeEditor] = useState(false);
 
   const {
     getForm,
@@ -653,6 +656,15 @@ export default function FormBuilder() {
           >
             <Sparkles className="h-4 w-4 sm:mr-2 text-purple-600" />
             <span className="hidden sm:inline text-purple-700">AI</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowThemeEditor(true)}
+            title="Theme Customization"
+          >
+            <Palette className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Theme</span>
           </Button>
           <Button
             variant="outline"
@@ -834,6 +846,14 @@ export default function FormBuilder() {
         isOpen={showAIGenerator}
         onClose={() => setShowAIGenerator(false)}
         onGenerate={handleAIGenerate}
+      />
+
+      {/* Theme Editor Modal */}
+      <ThemeEditor
+        isOpen={showThemeEditor}
+        onClose={() => setShowThemeEditor(false)}
+        theme={form.theme}
+        onSave={(theme) => updateForm(form.id, { theme })}
       />
     </div>
   );

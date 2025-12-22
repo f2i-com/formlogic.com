@@ -14,6 +14,7 @@ class DocumentConverter
     private int $maxPages;
     private int $imageDpi;
     private int $maxImageWidth;
+    private int $commandTimeoutSeconds;
 
     public function __construct()
     {
@@ -21,10 +22,39 @@ class DocumentConverter
         $this->maxPages = 10; // Limit pages to process
         $this->imageDpi = 150; // DPI for PDF conversion
         $this->maxImageWidth = 1920; // Max width for images
+        $this->commandTimeoutSeconds = 60; // Maximum time for any command
 
         if (!is_dir($this->tempDir)) {
             mkdir($this->tempDir, 0755, true);
         }
+    }
+
+    /**
+     * Execute a command with timeout protection
+     *
+     * @param string $command The command to execute
+     * @return array{output: array, returnCode: int}
+     */
+    private function executeWithTimeout(string $command): array
+    {
+        // Wrap command with timeout to prevent hanging
+        // Using 'timeout' command which is available on Linux
+        $timeoutCommand = sprintf(
+            'timeout --signal=KILL %d %s',
+            $this->commandTimeoutSeconds,
+            $command
+        );
+
+        $output = [];
+        $returnCode = 0;
+        exec($timeoutCommand, $output, $returnCode);
+
+        // Return code 137 means killed by SIGKILL (timeout exceeded)
+        if ($returnCode === 137) {
+            throw new \Exception('Document conversion timed out. The file may be too complex or corrupted.');
+        }
+
+        return ['output' => $output, 'returnCode' => $returnCode];
     }
 
     /**
@@ -85,7 +115,8 @@ class DocumentConverter
                 escapeshellarg($pdfPath),
                 escapeshellarg($outputBase)
             );
-            exec($command, $output, $returnCode);
+            $result = $this->executeWithTimeout($command);
+            $returnCode = $result['returnCode'];
 
             // Find generated files
             $files = glob($outputBase . '-*.png');
@@ -104,7 +135,8 @@ class DocumentConverter
                 $this->maxPages - 1,
                 escapeshellarg(str_replace('%d', '%03d', $outputPattern))
             );
-            exec($command, $output, $returnCode);
+            $result = $this->executeWithTimeout($command);
+            $returnCode = $result['returnCode'];
 
             // Find generated files
             for ($i = 0; $i < $this->maxPages; $i++) {
@@ -124,7 +156,8 @@ class DocumentConverter
                 escapeshellarg($outputPattern),
                 escapeshellarg($pdfPath)
             );
-            exec($command, $output, $returnCode);
+            $result = $this->executeWithTimeout($command);
+            $returnCode = $result['returnCode'];
 
             // Find generated files
             for ($i = 1; $i <= $this->maxPages; $i++) {
@@ -165,7 +198,7 @@ class DocumentConverter
             escapeshellarg($pdfDir),
             escapeshellarg($wordPath)
         );
-        exec($command, $output, $returnCode);
+        $this->executeWithTimeout($command);
 
         // Find the generated PDF
         $baseName = pathinfo($wordPath, PATHINFO_FILENAME);
