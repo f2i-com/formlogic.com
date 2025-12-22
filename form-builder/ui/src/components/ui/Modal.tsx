@@ -37,7 +37,11 @@ export function Modal({
   const hasInitialFocusRef = useRef(false);
   // Store onClose in a ref to avoid re-running effect when it changes
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+
+  // Update ref in effect to avoid updating during render
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {

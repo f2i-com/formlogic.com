@@ -193,7 +193,7 @@ export function FormResponses() {
       }
       toast.success('Response updated', 'Changes saved successfully');
       setIsEditModalOpen(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to save', 'An error occurred while saving');
     } finally {
       setIsSaving(false);
@@ -224,7 +224,7 @@ export function FormResponses() {
       setResponses((prev) => prev.filter((r) => r.id !== selectedResponse.id));
       toast.success('Response deleted', 'The response has been removed');
       setIsDeleteModalOpen(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete', 'An error occurred');
     }
   };
@@ -801,7 +801,7 @@ function renderEditField(
         </select>
       );
 
-    case 'checkboxes':
+    case 'checkboxes': {
       const selectedValues = Array.isArray(currentValue) ? currentValue : [];
       return (
         <div className="space-y-2">
@@ -824,6 +824,7 @@ function renderEditField(
           ))}
         </div>
       );
+    }
 
     default:
       return (

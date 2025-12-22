@@ -131,7 +131,7 @@ function FieldResponse({
           </div>
         );
 
-      case 'checkboxes':
+      case 'checkboxes': {
         const selectedValues = (value as string[]) || [];
         return (
           <div className="space-y-3" role="group" aria-label={field.label}>
@@ -168,6 +168,7 @@ function FieldResponse({
             ))}
           </div>
         );
+      }
 
       case 'dropdown':
         return (
@@ -186,7 +187,7 @@ function FieldResponse({
           </select>
         );
 
-      case 'rating':
+      case 'rating': {
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
@@ -205,8 +206,9 @@ function FieldResponse({
             ))}
           </div>
         );
+      }
 
-      case 'scale':
+      case 'scale': {
         const start = field.properties.scaleStart || 1;
         const end = field.properties.scaleEnd || 10;
         const scaleValue = (value as number) || null;
@@ -242,11 +244,12 @@ function FieldResponse({
             </div>
           </div>
         );
+      }
 
       case 'statement':
         return null;
 
-      case 'file_upload':
+      case 'file_upload': {
         const uploadedFiles = (value as File[]) || [];
         const formatFileSize = (bytes: number) => {
           if (bytes < 1024) return bytes + ' B';
@@ -342,8 +345,9 @@ function FieldResponse({
             )}
           </div>
         );
+      }
 
-      case 'signature':
+      case 'signature': {
         const signatureCanvasId = `signature-canvas-${field.id}`;
         return (
           <div className="space-y-4">
@@ -457,8 +461,9 @@ function FieldResponse({
             )}
           </div>
         );
+      }
 
-      case 'payment':
+      case 'payment': {
         const paymentAmount = field.properties.min || 0;
         const paymentCurrency = field.properties.currency || 'USD';
         return (
@@ -520,6 +525,7 @@ function FieldResponse({
             </p>
           </div>
         );
+      }
 
       case 'calculated':
         return (

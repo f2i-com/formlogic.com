@@ -74,7 +74,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
       } else {
         toast.warning('Sync Completed with Errors', result.errors.join(', '));
       }
-    } catch (error) {
+    } catch {
       toast.error('Sync Failed', 'Failed to sync to cloud');
     } finally {
       setIsSyncing(false);

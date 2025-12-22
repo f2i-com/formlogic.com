@@ -25,6 +25,16 @@ import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import type { Form } from '../types/form';
 
+// Empty state component - defined outside to avoid re-creation during render
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="col-span-full py-12 text-center">
+      <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+      <p className="text-gray-500">{message}</p>
+    </div>
+  );
+}
+
 export function FormsList() {
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
@@ -189,13 +199,6 @@ export function FormsList() {
       </Card>
     );
   };
-
-  const EmptyState = ({ message }: { message: string }) => (
-    <div className="col-span-full py-12 text-center">
-      <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-      <p className="text-gray-500">{message}</p>
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-gray-50">

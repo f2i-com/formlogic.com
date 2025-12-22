@@ -56,7 +56,7 @@ export function useConditionalLogic(
         if (field.required && visible.has(field.id)) {
           required.add(field.id);
         }
-      } catch (error) {
+      } catch {
         // On error, show the field
         visible.add(field.id);
         if (field.required) required.add(field.id);

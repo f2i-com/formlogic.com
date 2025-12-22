@@ -96,34 +96,28 @@ export default function FormAnalytics() {
     fetchAnalytics();
   }, [formId, storageMode, user]);
 
-  if (!form) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">Form not found</p>
-      </div>
-    );
-  }
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
-  const totalResponses = analytics?.totalResponses ?? localAnalytics.totalResponses;
-  const completionRate = analytics?.completionRate ?? localAnalytics.completionRate;
-  const avgCompletionTime = Math.round((analytics?.averageCompletionTime ?? localAnalytics.averageCompletionTime) / 1000);
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
-  // Process daily responses for chart
-  const dailyResponses: DailyResponse[] = analytics?.responsesByDate
-    ? analytics.responsesByDate.slice(-7).map(item => ({
-        day: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
-        count: item.count,
-      }))
-    : localAnalytics.dailyResponses;
-
-  const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
-  const weeklyChange = localAnalytics.weeklyChange;
+  const formFields = form?.fields ?? [];
 
   // Calculate field breakdown statistics
   const fieldBreakdown = useMemo(() => {
     const breakdown: Record<string, { type: string; label: string; data: { label: string; count: number; percentage: number }[] }> = {};
 
-    form.fields.forEach((field) => {
+    formFields.forEach((field) => {
       // Only analyze rating, scale, dropdown, multiple_choice, and checkboxes fields
       if (!['rating', 'scale', 'dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
         return;
@@ -200,22 +194,30 @@ export default function FormAnalytics() {
     });
 
     return breakdown;
-  }, [form.fields, localResponses]);
+  }, [formFields, localResponses]);
 
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [showEmbedModal, setShowEmbedModal] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
+  if (!form) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-gray-500">Form not found</p>
+      </div>
+    );
+  }
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setExportMenuOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  const totalResponses = analytics?.totalResponses ?? localAnalytics.totalResponses;
+  const completionRate = analytics?.completionRate ?? localAnalytics.completionRate;
+  const avgCompletionTime = Math.round((analytics?.averageCompletionTime ?? localAnalytics.averageCompletionTime) / 1000);
+
+  // Process daily responses for chart
+  const dailyResponses: DailyResponse[] = analytics?.responsesByDate
+    ? analytics.responsesByDate.slice(-7).map(item => ({
+        day: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
+        count: item.count,
+      }))
+    : localAnalytics.dailyResponses;
+
+  const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
+  const weeklyChange = localAnalytics.weeklyChange;
 
   const handleExportCSV = async () => {
     setIsExporting(true);

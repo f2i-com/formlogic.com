@@ -139,7 +139,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         order: index,
         properties: field.properties || {},
         validation: [],
-        conditionalLogic: null,
+        conditionalLogic: undefined,
       }));
 
       toast.success('Form Generated', `Created ${formFields.length} fields`);

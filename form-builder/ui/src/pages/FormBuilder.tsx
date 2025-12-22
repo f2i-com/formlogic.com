@@ -527,25 +527,14 @@ export default function FormBuilder() {
     })
   );
 
-  useEffect(() => {
-    if (!form && formId) {
-      navigate('/forms');
-    }
-  }, [form, formId, navigate]);
-
-  if (!form) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">Form not found</p>
-      </div>
-    );
-  }
-
-  const selectedField = form.fields.find((f) => f.id === selectedFieldId);
-  const selectedFieldIndex = form.fields.findIndex((f) => f.id === selectedFieldId);
+  const selectedField = form?.fields.find((f) => f.id === selectedFieldId);
+  const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
+  const formFields = form?.fields ?? [];
 
   // Add field handler (defined first for use in shortcuts)
   const handleAddField = useCallback((type: FieldType) => {
+    if (!form) return;
+
     const defaultLabels: Partial<Record<FieldType, string>> = {
       short_text: 'Your answer',
       long_text: 'Your thoughts',
@@ -591,60 +580,60 @@ export default function FormBuilder() {
     });
 
     setSelectedField(field.id);
-  }, [form.id, addField, setSelectedField]);
+  }, [form, addField, setSelectedField]);
 
   // Keyboard shortcuts
   const handleSave = useCallback(() => {
+    if (!form) return;
     updateForm(form.id, { status: form.status });
     toast.success('Saved', 'Form saved successfully');
-  }, [form.id, form.status, updateForm]);
+  }, [form, updateForm]);
 
   const handlePreview = useCallback(() => {
+    if (!form) return;
     navigate(`/preview/${form.id}`);
-  }, [form.id, navigate]);
+  }, [form, navigate]);
 
   const handleDeleteSelected = useCallback(() => {
-    if (selectedFieldId) {
-      deleteField(form.id, selectedFieldId);
-      toast.success('Deleted', 'Field deleted');
-    }
-  }, [form.id, selectedFieldId, deleteField]);
+    if (!form || !selectedFieldId) return;
+    deleteField(form.id, selectedFieldId);
+    toast.success('Deleted', 'Field deleted');
+  }, [form, selectedFieldId, deleteField]);
 
   const handleDuplicateSelected = useCallback(() => {
-    if (selectedFieldId && duplicateField) {
-      duplicateField(form.id, selectedFieldId);
-      toast.success('Duplicated', 'Field duplicated');
-    }
-  }, [form.id, selectedFieldId, duplicateField]);
+    if (!form || !selectedFieldId || !duplicateField) return;
+    duplicateField(form.id, selectedFieldId);
+    toast.success('Duplicated', 'Field duplicated');
+  }, [form, selectedFieldId, duplicateField]);
 
   const handleNavigateFields = useCallback((direction: 'up' | 'down') => {
-    if (form.fields.length === 0) return;
+    if (formFields.length === 0) return;
 
     if (!selectedFieldId) {
-      setSelectedField(form.fields[0].id);
+      setSelectedField(formFields[0].id);
       return;
     }
 
     const newIndex = direction === 'up'
       ? Math.max(0, selectedFieldIndex - 1)
-      : Math.min(form.fields.length - 1, selectedFieldIndex + 1);
+      : Math.min(formFields.length - 1, selectedFieldIndex + 1);
 
-    setSelectedField(form.fields[newIndex].id);
-  }, [form.fields, selectedFieldId, selectedFieldIndex, setSelectedField]);
+    setSelectedField(formFields[newIndex].id);
+  }, [formFields, selectedFieldId, selectedFieldIndex, setSelectedField]);
 
   const handleMoveField = useCallback((direction: 'up' | 'down') => {
-    if (!selectedFieldId || form.fields.length < 2) return;
+    if (!form || !selectedFieldId || formFields.length < 2) return;
 
     const newIndex = direction === 'up'
       ? Math.max(0, selectedFieldIndex - 1)
-      : Math.min(form.fields.length - 1, selectedFieldIndex + 1);
+      : Math.min(formFields.length - 1, selectedFieldIndex + 1);
 
     if (newIndex !== selectedFieldIndex) {
-      const newOrder = [...form.fields.map(f => f.id)];
+      const newOrder = [...formFields.map(f => f.id)];
       [newOrder[selectedFieldIndex], newOrder[newIndex]] = [newOrder[newIndex], newOrder[selectedFieldIndex]];
       reorderFields(form.id, newOrder);
     }
-  }, [form.id, form.fields, selectedFieldId, selectedFieldIndex, reorderFields]);
+  }, [form, formFields, selectedFieldId, selectedFieldIndex, reorderFields]);
 
   const shortcuts: KeyboardShortcut[] = useMemo(() => [
     { key: 's', ctrl: true, description: 'Save form', action: handleSave },
@@ -666,6 +655,20 @@ export default function FormBuilder() {
   ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
 
   useKeyboardShortcuts({ shortcuts });
+
+  useEffect(() => {
+    if (!form && formId) {
+      navigate('/forms');
+    }
+  }, [form, formId, navigate]);
+
+  if (!form) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-gray-500">Form not found</p>
+      </div>
+    );
+  }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -697,7 +700,7 @@ export default function FormBuilder() {
     });
 
     // Add generated fields
-    fields.forEach((field, index) => {
+    fields.forEach((field) => {
       addField(form.id, {
         type: field.type,
         label: field.label,

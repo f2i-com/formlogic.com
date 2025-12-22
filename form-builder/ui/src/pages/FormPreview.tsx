@@ -114,7 +114,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
           </div>
         );
 
-      case 'checkboxes':
+      case 'checkboxes': {
         const selectedValues = (value as string[]) || [];
         return (
           <div className="space-y-3" role="group" aria-label={field.label}>
@@ -149,6 +149,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             ))}
           </div>
         );
+      }
 
       case 'dropdown':
         return (
@@ -166,7 +167,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
           </select>
         );
 
-      case 'rating':
+      case 'rating': {
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
@@ -185,8 +186,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             ))}
           </div>
         );
+      }
 
-      case 'scale':
+      case 'scale': {
         const start = field.properties.scaleStart || 1;
         const end = field.properties.scaleEnd || 10;
         const scaleValue = (value as number) || null;
@@ -221,13 +223,14 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             </div>
           </div>
         );
+      }
 
       case 'statement':
         return (
           <p className="text-lg text-gray-600">{field.description || 'Statement content'}</p>
         );
 
-      case 'file_upload':
+      case 'file_upload': {
         const uploadedFiles = (value as File[]) || [];
         const formatFileSize = (bytes: number) => {
           if (bytes < 1024) return bytes + ' B';
@@ -313,8 +316,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             )}
           </div>
         );
+      }
 
-      case 'signature':
+      case 'signature': {
         const signatureId = `signature-${field.id}`;
         return (
           <div className="space-y-3">
@@ -430,8 +434,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             )}
           </div>
         );
+      }
 
-      case 'payment':
+      case 'payment': {
         const amount = field.properties.min || 0;
         const currency = field.properties.currency || 'USD';
         return (
@@ -481,6 +486,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             </p>
           </div>
         );
+      }
 
       case 'calculated':
         return (

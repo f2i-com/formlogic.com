@@ -63,7 +63,7 @@ export const useAuthStore = create<AuthState>()(
               isInitialized: true,
             });
           }
-        } catch (error) {
+        } catch {
           api.setToken(null);
           set({ user: null, token: null, isLoading: false, isInitialized: true });
         }
