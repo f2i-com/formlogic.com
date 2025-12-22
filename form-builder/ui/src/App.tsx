@@ -12,6 +12,7 @@ const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
 const FormPreview = React.lazy(() => import('./pages/FormPreview'));
 const FormAnalytics = React.lazy(() => import('./pages/FormAnalytics'));
 const FormResponse = React.lazy(() => import('./pages/FormResponse'));
+const FormResponses = React.lazy(() => import('./pages/FormResponses'));
 
 function LoadingFallback() {
   return (
@@ -66,6 +67,7 @@ function AppRoutes() {
         <Route path="/forms" element={<FormsList />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
+        <Route path="/responses/:formId" element={<FormResponses />} />
       </Route>
 
       {/* Builder route (full screen, no sidebar) */}

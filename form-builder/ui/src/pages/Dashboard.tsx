@@ -11,7 +11,8 @@ import {
   Download,
   MoreVertical,
   Database,
-  FileJson
+  FileJson,
+  Table
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -36,7 +37,8 @@ function FormActionsDropdown({
   onDelete,
   onEdit,
   onPreview,
-  onAnalytics
+  onAnalytics,
+  onViewData
 }: {
   formId: string;
   formTitle: string;
@@ -44,6 +46,7 @@ function FormActionsDropdown({
   onEdit: () => void;
   onPreview: () => void;
   onAnalytics: () => void;
+  onViewData: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -145,6 +148,13 @@ function FormActionsDropdown({
             >
               <BarChart3 className="h-4 w-4 text-gray-600" />
               Analytics
+            </button>
+            <button
+              onClick={() => { onViewData(); setIsOpen(false); }}
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+            >
+              <Table className="h-4 w-4 text-gray-600" />
+              View Data
             </button>
             <div className="border-t border-gray-200 my-1" />
           </div>
@@ -391,6 +401,15 @@ export function Dashboard() {
                       >
                         <BarChart3 className="h-4 w-4" />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(`/responses/${form.id}`)}
+                        title="View data"
+                        className="hidden sm:flex"
+                      >
+                        <Table className="h-4 w-4" />
+                      </Button>
                       <FormActionsDropdown
                         formId={form.id}
                         formTitle={form.title}
@@ -398,6 +417,7 @@ export function Dashboard() {
                         onEdit={() => navigate(`/builder/${form.id}`)}
                         onPreview={() => navigate(`/preview/${form.id}`)}
                         onAnalytics={() => navigate(`/analytics/${form.id}`)}
+                        onViewData={() => navigate(`/responses/${form.id}`)}
                       />
                     </div>
                   </CardContent>

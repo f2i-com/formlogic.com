@@ -9,7 +9,8 @@ import {
   Eye,
   BarChart3,
   Copy,
-  Trash2
+  Trash2,
+  Table
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -113,6 +114,15 @@ export function FormsList() {
                       className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                     >
                       <BarChart3 className="h-4 w-4" /> Analytics
+                    </button>
+                    <button
+                      onClick={() => {
+                        navigate(`/responses/${form.id}`);
+                        setActiveMenu(null);
+                      }}
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <Table className="h-4 w-4" /> View Data
                     </button>
                     <button
                       onClick={() => handleDuplicate(form.id)}

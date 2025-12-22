@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -215,6 +215,10 @@ export default function FormAnalytics() {
             <Button variant="outline" onClick={() => navigate(`/builder/${form.id}`)}>
               <ArrowLeft className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Back to Builder</span>
+            </Button>
+            <Button variant="outline" onClick={() => navigate(`/responses/${form.id}`)}>
+              <Table className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">View Data</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
