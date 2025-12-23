@@ -8,6 +8,7 @@ use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -16,12 +17,14 @@ class ResponseController
     private ResponseService $responseService;
     private FormService $formService;
     private SQLiteConnection $sqlite;
+    private IpResolver $ipResolver;
 
     public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
         $this->sqlite = $sqlite;
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     /**
@@ -355,25 +358,19 @@ class ResponseController
     }
 
     /**
-     * Get client IP address from request
+     * Get client IP address from request securely.
+     *
+     * Uses IpResolver which only trusts X-Forwarded-For headers when the
+     * request comes from a configured trusted proxy. This prevents IP spoofing
+     * attacks where attackers send fake X-Forwarded-For headers.
+     *
+     * To configure trusted proxies, set the TRUSTED_PROXIES environment variable
+     * to a comma-separated list of IP addresses or CIDR ranges.
+     * Example: TRUSTED_PROXIES=10.0.0.0/8,172.16.0.1
      */
     private function getClientIp(Request $request): string
     {
-        $serverParams = $request->getServerParams();
-
-        // Check common proxy headers
-        $headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP'];
-        foreach ($headers as $header) {
-            if (!empty($serverParams[$header])) {
-                $ips = explode(',', $serverParams[$header]);
-                $ip = trim($ips[0]);
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
-                }
-            }
-        }
-
-        return $serverParams['REMOTE_ADDR'] ?? '127.0.0.1';
+        return $this->ipResolver->getClientIp($request);
     }
 
     /**

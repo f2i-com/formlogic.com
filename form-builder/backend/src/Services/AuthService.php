@@ -20,12 +20,16 @@ class AuthService
     // For production with multiple servers, use Redis or database
     private static array $loginAttempts = [];
 
+    // Separate tracking for email-only rate limiting (protects against distributed attacks)
+    private static array $emailAttempts = [];
+
     public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [])
     {
         $this->mysql = $mysql->getConnection();
         $this->jwtConfig = $jwtConfig;
         $this->rateLimitConfig = array_merge([
-            'maxAttempts' => 5,
+            'maxAttempts' => 5,           // Max attempts per IP+email combo
+            'maxEmailAttempts' => 10,     // Max attempts per email (across all IPs)
             'decayMinutes' => 15,
         ], $rateLimitConfig);
     }
@@ -71,17 +75,34 @@ class AuthService
     }
 
     /**
-     * Login a user with brute-force protection
+     * Login a user with brute-force protection.
+     *
+     * Implements dual rate limiting:
+     * 1. Per IP+email combo - prevents single-source attacks
+     * 2. Per email only - prevents distributed attacks targeting specific accounts
+     *
+     * This ensures that even if attackers spoof IPs or use a botnet,
+     * they cannot brute-force a specific account indefinitely.
      */
     public function login(string $email, string $password, ?string $ipAddress = null): array
     {
         $rateLimitKey = $this->getRateLimitKey($email, $ipAddress);
+        $emailKey = $this->getEmailRateLimitKey($email);
 
-        // Check rate limit
+        // Check per-IP+email rate limit
         if ($this->isRateLimited($rateLimitKey)) {
             $remainingSeconds = $this->getRateLimitRemainingSeconds($rateLimitKey);
             throw new \Exception(
                 "Too many login attempts. Please try again in " .
+                ceil($remainingSeconds / 60) . " minute(s)."
+            );
+        }
+
+        // Check per-email rate limit (protects against distributed attacks)
+        if ($this->isEmailRateLimited($emailKey)) {
+            $remainingSeconds = $this->getEmailRateLimitRemainingSeconds($emailKey);
+            throw new \Exception(
+                "Too many login attempts for this account. Please try again in " .
                 ceil($remainingSeconds / 60) . " minute(s)."
             );
         }
@@ -91,17 +112,18 @@ class AuthService
         $row = $stmt->fetch();
 
         if (!$row) {
-            $this->recordFailedLogin($rateLimitKey);
+            $this->recordFailedLogin($rateLimitKey, $emailKey);
             throw new \Exception('Invalid email or password');
         }
 
         if (!password_verify($password, $row['password_hash'])) {
-            $this->recordFailedLogin($rateLimitKey);
+            $this->recordFailedLogin($rateLimitKey, $emailKey);
             throw new \Exception('Invalid email or password');
         }
 
-        // Clear rate limit on successful login
+        // Clear rate limits on successful login
         $this->clearRateLimit($rateLimitKey);
+        $this->clearEmailRateLimit($emailKey);
 
         $user = User::fromArray($row);
         $token = $this->generateToken($user);
@@ -122,7 +144,15 @@ class AuthService
     }
 
     /**
-     * Check if a rate limit key is currently rate limited
+     * Get rate limit key for email-only limiting (protects against distributed attacks)
+     */
+    private function getEmailRateLimitKey(string $email): string
+    {
+        return hash('sha256', 'email_only|' . strtolower($email));
+    }
+
+    /**
+     * Check if a rate limit key is currently rate limited (IP+email combo)
      */
     private function isRateLimited(string $key): bool
     {
@@ -133,7 +163,18 @@ class AuthService
     }
 
     /**
-     * Get remaining seconds until rate limit expires
+     * Check if an email is rate limited (across all IPs)
+     */
+    private function isEmailRateLimited(string $emailKey): bool
+    {
+        $this->cleanupExpiredEmailAttempts($emailKey);
+
+        $attempts = self::$emailAttempts[$emailKey] ?? [];
+        return count($attempts) >= $this->rateLimitConfig['maxEmailAttempts'];
+    }
+
+    /**
+     * Get remaining seconds until rate limit expires (IP+email combo)
      */
     private function getRateLimitRemainingSeconds(string $key): int
     {
@@ -148,14 +189,38 @@ class AuthService
     }
 
     /**
-     * Record a failed login attempt
+     * Get remaining seconds until email rate limit expires
      */
-    private function recordFailedLogin(string $key): void
+    private function getEmailRateLimitRemainingSeconds(string $emailKey): int
     {
+        $attempts = self::$emailAttempts[$emailKey] ?? [];
+        if (empty($attempts)) {
+            return 0;
+        }
+
+        $oldestAttempt = min($attempts);
+        $expiresAt = $oldestAttempt + ($this->rateLimitConfig['decayMinutes'] * 60);
+        return max(0, $expiresAt - time());
+    }
+
+    /**
+     * Record a failed login attempt for both IP+email and email-only tracking
+     */
+    private function recordFailedLogin(string $key, string $emailKey): void
+    {
+        $now = time();
+
+        // Record IP+email attempt
         if (!isset(self::$loginAttempts[$key])) {
             self::$loginAttempts[$key] = [];
         }
-        self::$loginAttempts[$key][] = time();
+        self::$loginAttempts[$key][] = $now;
+
+        // Record email-only attempt
+        if (!isset(self::$emailAttempts[$emailKey])) {
+            self::$emailAttempts[$emailKey] = [];
+        }
+        self::$emailAttempts[$emailKey][] = $now;
     }
 
     /**
@@ -167,7 +232,15 @@ class AuthService
     }
 
     /**
-     * Clean up expired login attempts
+     * Clear email rate limit (on successful login)
+     */
+    private function clearEmailRateLimit(string $emailKey): void
+    {
+        unset(self::$emailAttempts[$emailKey]);
+    }
+
+    /**
+     * Clean up expired login attempts (IP+email combo)
      */
     private function cleanupExpiredAttempts(string $key): void
     {
@@ -183,6 +256,26 @@ class AuthService
 
         if (empty(self::$loginAttempts[$key])) {
             unset(self::$loginAttempts[$key]);
+        }
+    }
+
+    /**
+     * Clean up expired email attempts
+     */
+    private function cleanupExpiredEmailAttempts(string $emailKey): void
+    {
+        if (!isset(self::$emailAttempts[$emailKey])) {
+            return;
+        }
+
+        $cutoff = time() - ($this->rateLimitConfig['decayMinutes'] * 60);
+        self::$emailAttempts[$emailKey] = array_filter(
+            self::$emailAttempts[$emailKey],
+            fn($timestamp) => $timestamp > $cutoff
+        );
+
+        if (empty(self::$emailAttempts[$emailKey])) {
+            unset(self::$emailAttempts[$emailKey]);
         }
     }
 

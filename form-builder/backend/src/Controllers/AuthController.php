@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\AuthService;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 class AuthController
 {
     private AuthService $authService;
+    private IpResolver $ipResolver;
 
     public function __construct(AuthService $authService)
     {
         $this->authService = $authService;
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     /**
@@ -94,28 +97,20 @@ class AuthController
     }
 
     /**
-     * Get client IP address from request
+     * Get client IP address from request securely.
+     *
+     * Uses IpResolver which only trusts X-Forwarded-For headers when the
+     * request comes from a configured trusted proxy. This prevents IP spoofing
+     * attacks where attackers send fake X-Forwarded-For headers to bypass
+     * rate limiting.
+     *
+     * To configure trusted proxies, set the TRUSTED_PROXIES environment variable
+     * to a comma-separated list of IP addresses or CIDR ranges.
+     * Example: TRUSTED_PROXIES=10.0.0.0/8,172.16.0.1
      */
     private function getClientIp(Request $request): string
     {
-        // Check for forwarded IP (behind proxy/load balancer)
-        $serverParams = $request->getServerParams();
-
-        // Check common proxy headers
-        $headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP'];
-        foreach ($headers as $header) {
-            if (!empty($serverParams[$header])) {
-                // X-Forwarded-For may contain multiple IPs, get the first one
-                $ips = explode(',', $serverParams[$header]);
-                $ip = trim($ips[0]);
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    return $ip;
-                }
-            }
-        }
-
-        // Fall back to direct connection IP
-        return $serverParams['REMOTE_ADDR'] ?? '127.0.0.1';
+        return $this->ipResolver->getClientIp($request);
     }
 
     /**
