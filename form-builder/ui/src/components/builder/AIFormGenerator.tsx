@@ -172,19 +172,22 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       <div className="absolute inset-0 bg-black/50" onClick={resetAndClose} />
       <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-purple-500 to-blue-500 rounded-lg">
-              <Sparkles className="h-5 w-5 text-white" />
+        <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-purple-50/50 via-violet-50/30 to-blue-50/50">
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-blue-400 rounded-xl blur-md opacity-40" />
+              <div className="relative p-3 bg-gradient-to-br from-purple-500 via-violet-500 to-blue-500 rounded-xl shadow-lg">
+                <Sparkles className="h-6 w-6 text-white" />
+              </div>
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-gray-900">Create with AI</h2>
+              <h2 className="text-xl font-bold text-gray-900">Create with AI</h2>
               <p className="text-sm text-gray-500">Generate form fields automatically</p>
             </div>
           </div>
           <button
             onClick={resetAndClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 hover:bg-white/80 rounded-lg transition-colors"
           >
             <X className="h-5 w-5 text-gray-500" />
           </button>
@@ -204,38 +207,38 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         )}
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-6">
+        <div className="flex border-b border-gray-200 px-6 bg-gray-50/50">
           <button
             onClick={() => setActiveTab('prompt')}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
               activeTab === 'prompt'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-purple-500 text-purple-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50/50'
             }`}
           >
-            <Wand2 className="h-4 w-4" />
+            <Wand2 className={`h-4 w-4 ${activeTab === 'prompt' ? 'text-purple-500' : ''}`} />
             Text Prompt
           </button>
           <button
             onClick={() => setActiveTab('document')}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
               activeTab === 'document'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-purple-500 text-purple-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50/50'
             }`}
           >
-            <FileText className="h-4 w-4" />
+            <FileText className={`h-4 w-4 ${activeTab === 'document' ? 'text-purple-500' : ''}`} />
             Upload Document
           </button>
           <button
             onClick={() => setActiveTab('image')}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-all ${
               activeTab === 'image'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-purple-500 text-purple-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50/50'
             }`}
           >
-            <Image className="h-4 w-4" />
+            <Image className={`h-4 w-4 ${activeTab === 'image' ? 'text-purple-500' : ''}`} />
             Upload Photo
           </button>
         </div>
@@ -243,47 +246,67 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
           {activeTab === 'prompt' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+                  <Sparkles className="h-4 w-4 text-purple-500" />
                   Describe your form
                 </label>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="Example: Create a customer feedback form with ratings for service quality, product satisfaction, and a text area for additional comments. Include fields for name and email."
-                  className="w-full h-40 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                  className="w-full h-40 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white resize-none transition-all text-gray-700 placeholder:text-gray-400"
                 />
               </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">Tips for better results</h4>
-                <ul className="text-sm text-gray-600 space-y-1">
-                  <li>• Be specific about field types (email, phone, dropdown, etc.)</li>
-                  <li>• Mention which fields should be required</li>
-                  <li>• Include any specific validation needs</li>
-                  <li>• Describe the purpose of your form</li>
+              <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-5 border border-purple-100">
+                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-purple-100 rounded-full flex items-center justify-center text-xs">?</span>
+                  Tips for better results
+                </h4>
+                <ul className="text-sm text-gray-600 space-y-2">
+                  <li className="flex items-start gap-2">
+                    <span className="text-purple-400 mt-1">•</span>
+                    <span>Be specific about field types (email, phone, dropdown, etc.)</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-purple-400 mt-1">•</span>
+                    <span>Mention which fields should be required</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-purple-400 mt-1">•</span>
+                    <span>Include any specific validation needs</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-purple-400 mt-1">•</span>
+                    <span>Describe the purpose of your form</span>
+                  </li>
                 </ul>
               </div>
             </div>
           )}
 
           {activeTab === 'document' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div
                 onDrop={(e) => handleDrop(e, 'document')}
                 onDragOver={(e) => e.preventDefault()}
-                className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                  selectedFile ? 'border-primary-300 bg-primary-50' : 'border-gray-300 hover:border-gray-400'
+                className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                  selectedFile
+                    ? 'border-purple-300 bg-gradient-to-b from-purple-50 to-white'
+                    : 'border-gray-300 hover:border-purple-300 hover:bg-purple-50/30'
                 }`}
               >
                 {selectedFile ? (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     {previewUrl ? (
-                      <img src={previewUrl} alt="Preview" className="max-h-40 mx-auto rounded-lg" />
+                      <img src={previewUrl} alt="Preview" className="max-h-40 mx-auto rounded-lg shadow-md" />
                     ) : (
-                      <FileText className="h-12 w-12 mx-auto text-primary-500" />
+                      <div className="w-16 h-16 mx-auto bg-gradient-to-br from-purple-100 to-blue-100 rounded-xl flex items-center justify-center">
+                        <FileText className="h-8 w-8 text-purple-500" />
+                      </div>
                     )}
-                    <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
+                    <p className="text-sm font-semibold text-gray-900">{selectedFile.name}</p>
                     <p className="text-xs text-gray-500">
                       {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
                     </p>
@@ -297,18 +320,21 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
                           setPreviewUrl(null);
                         }
                       }}
+                      className="border-gray-300"
                     >
-                      Remove
+                      Remove File
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <Upload className="h-12 w-12 mx-auto text-gray-400" />
+                  <div className="space-y-4">
+                    <div className="w-16 h-16 mx-auto bg-gradient-to-br from-gray-100 to-gray-50 rounded-xl flex items-center justify-center">
+                      <Upload className="h-8 w-8 text-gray-400" />
+                    </div>
                     <div>
                       <p className="text-gray-600">Drag and drop a file here, or</p>
                       <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="text-primary-600 font-medium hover:text-primary-700"
+                        className="text-purple-600 font-semibold hover:text-purple-700 transition-colors"
                       >
                         browse to upload
                       </button>
@@ -326,32 +352,34 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-800 mb-2">
                   Additional instructions (optional)
                 </label>
                 <textarea
                   value={additionalPrompt}
                   onChange={(e) => setAdditionalPrompt(e.target.value)}
                   placeholder="Any specific instructions for how to interpret the document..."
-                  className="w-full h-24 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                  className="w-full h-24 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white resize-none transition-all"
                 />
               </div>
             </div>
           )}
 
           {activeTab === 'image' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div
                 onDrop={(e) => handleDrop(e, 'image')}
                 onDragOver={(e) => e.preventDefault()}
-                className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-                  selectedFile ? 'border-primary-300 bg-primary-50' : 'border-gray-300 hover:border-gray-400'
+                className={`border-2 border-dashed rounded-xl p-8 text-center transition-all ${
+                  selectedFile
+                    ? 'border-purple-300 bg-gradient-to-b from-purple-50 to-white'
+                    : 'border-gray-300 hover:border-purple-300 hover:bg-purple-50/30'
                 }`}
               >
                 {selectedFile && previewUrl ? (
-                  <div className="space-y-3">
-                    <img src={previewUrl} alt="Preview" className="max-h-48 mx-auto rounded-lg shadow-md" />
-                    <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
+                  <div className="space-y-4">
+                    <img src={previewUrl} alt="Preview" className="max-h-48 mx-auto rounded-xl shadow-lg" />
+                    <p className="text-sm font-semibold text-gray-900">{selectedFile.name}</p>
                     <Button
                       variant="outline"
                       size="sm"
@@ -362,18 +390,21 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
                           setPreviewUrl(null);
                         }
                       }}
+                      className="border-gray-300"
                     >
-                      Remove
+                      Remove Image
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <Image className="h-12 w-12 mx-auto text-gray-400" />
+                  <div className="space-y-4">
+                    <div className="w-16 h-16 mx-auto bg-gradient-to-br from-gray-100 to-gray-50 rounded-xl flex items-center justify-center">
+                      <Image className="h-8 w-8 text-gray-400" />
+                    </div>
                     <div>
                       <p className="text-gray-600">Take a photo of a paper form or</p>
                       <button
                         onClick={() => imageInputRef.current?.click()}
-                        className="text-primary-600 font-medium hover:text-primary-700"
+                        className="text-purple-600 font-semibold hover:text-purple-700 transition-colors"
                       >
                         upload an image
                       </button>
@@ -391,24 +422,39 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-800 mb-2">
                   Additional instructions (optional)
                 </label>
                 <textarea
                   value={additionalPrompt}
                   onChange={(e) => setAdditionalPrompt(e.target.value)}
                   placeholder="Any specific instructions for how to interpret the form image..."
-                  className="w-full h-24 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                  className="w-full h-24 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white resize-none transition-all"
                 />
               </div>
 
-              <div className="bg-blue-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-blue-800 mb-2">Best practices for form photos</h4>
-                <ul className="text-sm text-blue-700 space-y-1">
-                  <li>• Ensure good lighting and clear focus</li>
-                  <li>• Capture the entire form in frame</li>
-                  <li>• Avoid glare and shadows</li>
-                  <li>• Use a flat surface for best results</li>
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-100">
+                <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center text-xs text-blue-600">i</span>
+                  Best practices for form photos
+                </h4>
+                <ul className="text-sm text-gray-600 space-y-2">
+                  <li className="flex items-start gap-2">
+                    <span className="text-blue-400 mt-1">•</span>
+                    <span>Ensure good lighting and clear focus</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-blue-400 mt-1">•</span>
+                    <span>Capture the entire form in frame</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-blue-400 mt-1">•</span>
+                    <span>Avoid glare and shadows</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-blue-400 mt-1">•</span>
+                    <span>Use a flat surface for best results</span>
+                  </li>
                 </ul>
               </div>
             </div>
@@ -416,13 +462,14 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
-          <Button variant="outline" onClick={resetAndClose}>
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+          <Button variant="outline" onClick={resetAndClose} className="border-gray-300">
             Cancel
           </Button>
           <Button
             onClick={handleGenerate}
             disabled={isGenerating || isAvailable === false}
+            className="bg-gradient-to-r from-purple-600 via-violet-600 to-blue-600 hover:from-purple-700 hover:via-violet-700 hover:to-blue-700 shadow-md shadow-purple-500/20 hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 px-6"
           >
             {isGenerating ? (
               <>

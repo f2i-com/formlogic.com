@@ -363,59 +363,62 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <Code2 className="h-5 w-5 text-primary-600" />
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
+              <Code2 className="h-5 w-5 text-white" />
+            </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Backend Logic Script</h2>
-              <p className="text-sm text-gray-500">Write FormLogic code that runs on form submission</p>
+              <p className="text-sm text-gray-500">Write code that runs when forms are submitted</p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors">
             <X className="h-5 w-5 text-gray-500" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-6">
+        <div className="flex border-b border-gray-200 px-6 bg-gray-50/50">
           <button
             onClick={() => setActiveTab('editor')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
               activeTab === 'editor'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-primary-500 text-primary-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
             }`}
           >
+            <Code2 className="h-4 w-4" />
             Editor
           </button>
           <button
             onClick={() => setActiveTab('ai')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors flex items-center gap-1 ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
               activeTab === 'ai'
-                ? 'border-purple-500 text-purple-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-purple-500 text-purple-600 bg-gradient-to-t from-purple-50 to-white'
+                : 'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50/50'
             }`}
           >
-            <Sparkles className="h-4 w-4" />
-            AI Generate
+            <Sparkles className={`h-4 w-4 ${activeTab === 'ai' ? 'text-purple-500' : ''}`} />
+            <span className={activeTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent font-semibold' : ''}>AI Generate</span>
           </button>
           <button
             onClick={() => setActiveTab('docs')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
               activeTab === 'docs'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-primary-500 text-primary-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
             }`}
           >
-            <Book className="h-4 w-4 inline mr-1" />
+            <Book className="h-4 w-4" />
             API Reference
           </button>
           <button
             onClick={() => setActiveTab('fields')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
               activeTab === 'fields'
-                ? 'border-primary-500 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                ? 'border-primary-500 text-primary-600 bg-white'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
             }`}
           >
             Form Fields
@@ -455,12 +458,14 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* AI Explanation */}
               {aiExplanation && (
-                <div className="mx-4 mb-2 p-3 rounded-lg bg-purple-50 border border-purple-200">
-                  <div className="flex items-start gap-2">
-                    <Sparkles className="h-4 w-4 text-purple-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-purple-800">AI Generated</p>
-                      <p className="text-sm text-purple-700 mt-1">{aiExplanation}</p>
+                <div className="mx-4 mb-2 p-4 rounded-xl bg-gradient-to-r from-purple-50 via-violet-50 to-blue-50 border border-purple-200/60 shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-500 rounded-lg flex items-center justify-center">
+                      <Sparkles className="h-4 w-4 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-purple-900">AI Generated Script</p>
+                      <p className="text-sm text-purple-700/90 mt-1 leading-relaxed">{aiExplanation}</p>
                     </div>
                   </div>
                 </div>
@@ -469,78 +474,89 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
           )}
 
           {activeTab === 'ai' && (
-            <div className="h-full overflow-y-auto p-6">
-              <div className="max-w-2xl mx-auto space-y-6">
-                <div className="text-center">
-                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full mb-4">
-                    <Wand2 className="h-8 w-8 text-white" />
+            <div className="h-full overflow-y-auto p-6 bg-gradient-to-b from-slate-50 to-white">
+              <div className="max-w-2xl mx-auto space-y-8">
+                {/* Hero Section */}
+                <div className="text-center pt-4">
+                  <div className="relative inline-block">
+                    <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-blue-400 rounded-2xl blur-xl opacity-30 animate-pulse" />
+                    <div className="relative inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-purple-500 via-violet-500 to-blue-500 rounded-2xl shadow-lg mb-5">
+                      <Wand2 className="h-10 w-10 text-white" />
+                    </div>
                   </div>
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-3">
                     Generate Script with AI
                   </h3>
-                  <p className="text-gray-600">
-                    Describe what you want your script to do, and AI will generate the code for you.
+                  <p className="text-gray-500 max-w-md mx-auto">
+                    Describe your logic in plain English and let AI write the code for you.
                   </p>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    What should the script do?
-                  </label>
-                  <textarea
-                    value={aiPrompt}
-                    onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="Example: Reject submissions if the email is not from our company domain. Calculate a total score from the rating fields and tag high scorers. Send the data to our webhook at https://api.example.com/hook"
-                    className="w-full h-32 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-                  />
-                </div>
+                {/* Main Input Card */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-5">
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+                      <Sparkles className="h-4 w-4 text-purple-500" />
+                      What should the script do?
+                    </label>
+                    <textarea
+                      value={aiPrompt}
+                      onChange={(e) => setAiPrompt(e.target.value)}
+                      placeholder="Example: Reject submissions if the email is not from our company domain. Calculate a total score from the rating fields and tag high scorers..."
+                      className="w-full h-36 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white resize-none transition-all text-gray-700 placeholder:text-gray-400"
+                    />
+                  </div>
 
-                <div className="flex gap-3">
-                  <Button
-                    onClick={handleAIGenerate}
-                    disabled={isGenerating || formFields.length === 0}
-                    className="flex-1 bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
-                  >
-                    {isGenerating ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        Generate New Script
-                      </>
-                    )}
-                  </Button>
-                  {editedScript.trim() && (
+                  <div className="flex gap-3">
                     <Button
-                      variant="outline"
-                      onClick={handleAIImprove}
-                      disabled={isGenerating}
-                      className="flex-1"
+                      onClick={handleAIGenerate}
+                      disabled={isGenerating || formFields.length === 0}
+                      className="flex-1 bg-gradient-to-r from-purple-600 via-violet-600 to-blue-600 hover:from-purple-700 hover:via-violet-700 hover:to-blue-700 shadow-md shadow-purple-500/20 hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200"
                     >
                       {isGenerating ? (
                         <>
                           <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          Improving...
+                          Generating...
                         </>
                       ) : (
                         <>
-                          <Wand2 className="h-4 w-4 mr-2" />
-                          Improve Existing Script
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          Generate New Script
                         </>
                       )}
                     </Button>
-                  )}
+                    {editedScript.trim() && (
+                      <Button
+                        variant="outline"
+                        onClick={handleAIImprove}
+                        disabled={isGenerating}
+                        className="flex-1 border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300"
+                      >
+                        {isGenerating ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Improving...
+                          </>
+                        ) : (
+                          <>
+                            <Wand2 className="h-4 w-4 mr-2" />
+                            Improve Existing Script
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
+                {/* Warning for no fields */}
                 {formFields.length === 0 && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="h-5 w-5 text-amber-500 mt-0.5" />
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/70 rounded-xl p-5 shadow-sm">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0 w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                        <AlertCircle className="h-5 w-5 text-amber-600" />
+                      </div>
                       <div>
-                        <p className="text-sm font-medium text-amber-800">No form fields</p>
+                        <p className="text-sm font-semibold text-amber-900">No form fields found</p>
                         <p className="text-sm text-amber-700 mt-1">
                           Add some fields to your form first. The AI uses your form fields to generate appropriate script logic.
                         </p>
@@ -549,22 +565,30 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                   </div>
                 )}
 
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">Example prompts</h4>
-                  <div className="space-y-2">
+                {/* Example Prompts Section */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="px-5 py-4 bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100">
+                    <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                      <span className="w-2 h-2 bg-purple-500 rounded-full" />
+                      Example Prompts
+                    </h4>
+                    <p className="text-xs text-gray-500 mt-1">Click any example to use it</p>
+                  </div>
+                  <div className="p-2">
                     {[
-                      "Reject submissions if the age field is under 18",
-                      "Calculate a total score from all rating fields and tag responses as 'high-performer' if score is above 80",
-                      "Send form data to a webhook and mark as approved if successful",
-                      "Only allow business email addresses, reject personal emails like gmail or yahoo",
-                      "Auto-categorize responses based on the selected department",
+                      { text: "Reject submissions if the age field is under 18", icon: "🔒" },
+                      { text: "Calculate a total score from all rating fields and tag responses as 'high-performer' if score is above 80", icon: "📊" },
+                      { text: "Send form data to a webhook and mark as approved if successful", icon: "🔗" },
+                      { text: "Only allow business email addresses, reject personal emails like gmail or yahoo", icon: "📧" },
+                      { text: "Auto-categorize responses based on the selected department", icon: "🏷️" },
                     ].map((example, i) => (
                       <button
                         key={i}
-                        onClick={() => setAiPrompt(example)}
-                        className="block w-full text-left text-sm text-gray-600 hover:text-purple-600 hover:bg-purple-50 px-3 py-2 rounded-md transition-colors"
+                        onClick={() => setAiPrompt(example.text)}
+                        className="w-full flex items-start gap-3 text-left text-sm text-gray-600 hover:text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-violet-50 px-4 py-3 rounded-lg transition-all duration-150 group"
                       >
-                        "{example}"
+                        <span className="text-base opacity-60 group-hover:opacity-100 transition-opacity">{example.icon}</span>
+                        <span className="flex-1">{example.text}</span>
                       </button>
                     ))}
                   </div>

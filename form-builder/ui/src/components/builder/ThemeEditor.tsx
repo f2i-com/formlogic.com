@@ -208,9 +208,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <Palette className="h-5 w-5 text-primary-600" />
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
+              <Palette className="h-5 w-5 text-white" />
+            </div>
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Theme Customization</h2>
               <p className="text-sm text-gray-500">Customize your form's appearance</p>
@@ -218,7 +220,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500" />
