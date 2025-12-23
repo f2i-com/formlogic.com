@@ -444,7 +444,8 @@ class ResponseService
                 }
                 $avgTime = $timeCount > 0 ? $totalTime / $timeCount : 0;
             } catch (\Exception $e) {
-                // Ignore - avgTime will remain 0
+                // Log but continue - avgTime will remain 0
+                error_log('Analytics avgTime calculation error for form ' . $formId . ': ' . $e->getMessage());
             }
 
             // Responses by date (last 30 days)
@@ -465,7 +466,8 @@ class ResponseService
                     ];
                 }
             } catch (\Exception $e) {
-                // Ignore - responsesByDate will remain empty
+                // Log but continue - responsesByDate will remain empty
+                error_log('Analytics responsesByDate error for form ' . $formId . ': ' . $e->getMessage());
             }
 
             // Get aggregate stats from MySQL
@@ -625,7 +627,8 @@ class ResponseService
                 $computed[$field['field_name']] = json_last_error() === JSON_ERROR_NONE ? $decoded : $value;
             }
         } catch (\PDOException $e) {
-            // Table may not exist yet, ignore
+            // Table may not exist yet - log at debug level
+            error_log('Computed fields table not ready for response ' . $responseId . ': ' . $e->getMessage());
         }
 
         // Get tags
@@ -637,7 +640,8 @@ class ResponseService
                 $tags[] = $tagRow['tag'];
             }
         } catch (\PDOException $e) {
-            // Table may not exist yet, ignore
+            // Table may not exist yet - log at debug level
+            error_log('Tags table not ready for response ' . $responseId . ': ' . $e->getMessage());
         }
 
         return [
