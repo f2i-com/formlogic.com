@@ -593,16 +593,25 @@ class ResponseController
 
         $dbPath = $this->sqlite->getFormDbPath($formId);
         $filename = $this->sanitizeFilename($form['title']) . '.sqlite';
+        $fileSize = filesize($dbPath);
 
-        // Read file contents
-        $fileContents = file_get_contents($dbPath);
+        // Stream file contents to avoid memory exhaustion for large files
+        $stream = fopen($dbPath, 'rb');
+        if ($stream === false) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Failed to read database file',
+            ], 500);
+        }
 
-        $response->getBody()->write($fileContents);
+        // Create a PSR-7 stream from the file handle
+        $body = new \Slim\Psr7\Stream($stream);
 
         return $response
+            ->withBody($body)
             ->withHeader('Content-Type', 'application/x-sqlite3')
             ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
-            ->withHeader('Content-Length', (string)strlen($fileContents));
+            ->withHeader('Content-Length', (string)$fileSize);
     }
 
     /**

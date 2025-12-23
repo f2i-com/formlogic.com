@@ -35,35 +35,40 @@ class AuthService
     }
 
     /**
-     * Register a new user
+     * Register a new user.
+     *
+     * Uses INSERT with duplicate key handling to prevent TOCTOU race conditions
+     * where two concurrent registrations with the same email could both succeed
+     * if we only checked for existence before inserting.
      */
     public function register(string $email, string $password, ?string $name = null): array
     {
-        // Check if email already exists
-        $stmt = $this->mysql->prepare("SELECT id FROM users WHERE email = :email");
-        $stmt->execute(['email' => $email]);
-
-        if ($stmt->fetch()) {
-            throw new \Exception('Email already registered');
-        }
-
         $userId = $this->generateUuid();
         $passwordHash = password_hash($password, PASSWORD_BCRYPT);
         $now = date('Y-m-d H:i:s');
 
-        $stmt = $this->mysql->prepare("
-            INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
-            VALUES (:id, :email, :password_hash, :name, :created_at, :updated_at)
-        ");
+        try {
+            $stmt = $this->mysql->prepare("
+                INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
+                VALUES (:id, :email, :password_hash, :name, :created_at, :updated_at)
+            ");
 
-        $stmt->execute([
-            'id' => $userId,
-            'email' => $email,
-            'password_hash' => $passwordHash,
-            'name' => $name,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            $stmt->execute([
+                'id' => $userId,
+                'email' => $email,
+                'password_hash' => $passwordHash,
+                'name' => $name,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        } catch (\PDOException $e) {
+            // Check for duplicate key error (MySQL error code 1062, SQLSTATE 23000)
+            if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
+                throw new \Exception('Email already registered');
+            }
+            // Re-throw other database errors
+            throw $e;
+        }
 
         $user = $this->getUserById($userId);
         $token = $this->generateToken($user);

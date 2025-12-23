@@ -69,13 +69,27 @@ class AIService
         ];
 
         foreach ($images as $image) {
-            if (str_starts_with($image, 'http')) {
+            if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://')) {
+                // Validate URL to prevent SSRF attacks
+                $validatedUrl = $this->validateImageUrl($image);
+                if ($validatedUrl === null) {
+                    throw new \Exception('Invalid image URL: must be a valid HTTPS URL');
+                }
+                $content[] = [
+                    'type' => 'image_url',
+                    'image_url' => ['url' => $validatedUrl]
+                ];
+            } elseif (str_starts_with($image, 'data:')) {
+                // Already a data URL, validate it's an image type
+                if (!preg_match('/^data:image\/(jpeg|png|gif|webp);base64,/', $image)) {
+                    throw new \Exception('Invalid data URL: must be a valid image data URL');
+                }
                 $content[] = [
                     'type' => 'image_url',
                     'image_url' => ['url' => $image]
                 ];
             } else {
-                // Assume base64
+                // Assume base64 (raw base64 without data: prefix)
                 $mimeType = $this->detectImageMimeType($image);
                 $content[] = [
                     'type' => 'image_url',
@@ -451,6 +465,67 @@ PROMPT;
                 throw new \Exception('Unsafe script: ' . $message);
             }
         }
+    }
+
+    /**
+     * Validate an image URL to prevent SSRF and other attacks.
+     * Only allows HTTPS URLs with valid hostnames.
+     *
+     * @param string $url The URL to validate
+     * @return string|null The validated URL or null if invalid
+     */
+    private function validateImageUrl(string $url): ?string
+    {
+        // Parse the URL
+        $parsed = parse_url($url);
+        if ($parsed === false || !isset($parsed['host'])) {
+            return null;
+        }
+
+        // Only allow HTTPS (or HTTP in development)
+        $allowedSchemes = ['https'];
+        if (($_ENV['APP_ENV'] ?? 'development') !== 'production') {
+            $allowedSchemes[] = 'http';
+        }
+
+        if (!isset($parsed['scheme']) || !in_array(strtolower($parsed['scheme']), $allowedSchemes, true)) {
+            return null;
+        }
+
+        $host = strtolower($parsed['host']);
+
+        // Block localhost and private IP ranges
+        $blockedHosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1'];
+        if (in_array($host, $blockedHosts, true)) {
+            return null;
+        }
+
+        // Check if it's an IP address and block private ranges
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            // Block private and reserved IP ranges
+            if (!filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return null;
+            }
+        }
+
+        // Block common internal hostnames
+        $internalPatterns = [
+            '/\.local$/',
+            '/\.internal$/',
+            '/\.localhost$/',
+            '/^10\.\d+\.\d+\.\d+$/',
+            '/^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/',
+            '/^192\.168\.\d+\.\d+$/',
+        ];
+
+        foreach ($internalPatterns as $pattern) {
+            if (preg_match($pattern, $host)) {
+                return null;
+            }
+        }
+
+        // Return the validated URL
+        return $url;
     }
 
     /**

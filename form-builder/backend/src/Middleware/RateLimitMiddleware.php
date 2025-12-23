@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Middleware;
 
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
@@ -19,6 +20,7 @@ class RateLimitMiddleware implements MiddlewareInterface
     private int $maxRequests;
     private int $windowSeconds;
     private string $keyPrefix;
+    private IpResolver $ipResolver;
 
     // In-memory storage (per-process, resets on restart)
     private static array $requests = [];
@@ -33,6 +35,7 @@ class RateLimitMiddleware implements MiddlewareInterface
         $this->maxRequests = $maxRequests;
         $this->windowSeconds = $windowSeconds;
         $this->keyPrefix = $keyPrefix;
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -79,28 +82,13 @@ class RateLimitMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Get a unique key for this client based on IP address
+     * Get a unique key for this client based on IP address.
+     * Uses IpResolver which only trusts X-Forwarded-For from configured trusted proxies,
+     * preventing IP spoofing attacks that could bypass rate limiting.
      */
     private function getClientKey(Request $request): string
     {
-        $serverParams = $request->getServerParams();
-
-        // Check common proxy headers
-        $ip = null;
-        $headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP'];
-        foreach ($headers as $header) {
-            if (!empty($serverParams[$header])) {
-                $ips = explode(',', $serverParams[$header]);
-                $ip = trim($ips[0]);
-                if (filter_var($ip, FILTER_VALIDATE_IP)) {
-                    break;
-                }
-                $ip = null;
-            }
-        }
-
-        $ip = $ip ?? $serverParams['REMOTE_ADDR'] ?? '127.0.0.1';
-
+        $ip = $this->ipResolver->getClientIp($request);
         return $this->keyPrefix . ':' . hash('sha256', $ip);
     }
 
