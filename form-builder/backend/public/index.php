@@ -86,7 +86,12 @@ $container->set(ResponseService::class, function (Container $c) {
 
 // Register controllers
 $container->set(AuthController::class, function (Container $c) {
-    return new AuthController($c->get(AuthService::class));
+    $settings = $c->get('settings');
+    return new AuthController(
+        $c->get(AuthService::class),
+        $settings['cookie'] ?? [],
+        $settings['jwt']['expiry'] ?? 86400
+    );
 });
 
 $container->set(FormController::class, function (Container $c) {
@@ -183,8 +188,9 @@ $maxBodySize = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1
 $app->add(new BodySizeLimitMiddleware($maxBodySize));
 
 // Create auth middleware instances
-$authRequired = new AuthMiddleware($container->get(AuthService::class), false);
-$authOptional = new AuthMiddleware($container->get(AuthService::class), true);
+$cookieName = $settings['settings']['cookie']['name'] ?? 'formlogic_auth';
+$authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName);
+$authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName);
 
 // Routes
 $app->options('/{routes:.+}', function ($request, $response) {
@@ -204,6 +210,7 @@ $app->get('/api/health', function ($request, $response) {
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
+    $group->post('/logout', [AuthController::class, 'logout']);
 });
 
 // Auth routes (protected)

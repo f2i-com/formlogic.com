@@ -13,29 +13,28 @@ interface ApiResponse<T> {
 
 class ApiClient {
   private baseUrl: string;
-  private token: string | null = null;
+  // Track authentication state without storing the token (it's in HttpOnly cookie)
+  private _isAuthenticated: boolean = false;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    // Load token from localStorage
-    this.token = localStorage.getItem('formlogic_token');
+    // Check if we have a session by trying to fetch user profile
+    // This will be done lazily on first authenticated request
   }
 
-  setToken(token: string | null): void {
-    this.token = token;
-    if (token) {
-      localStorage.setItem('formlogic_token', token);
-    } else {
-      localStorage.removeItem('formlogic_token');
-    }
+  /**
+   * Mark the client as authenticated (called after successful login/register)
+   */
+  setAuthenticated(authenticated: boolean): void {
+    this._isAuthenticated = authenticated;
   }
 
-  getToken(): string | null {
-    return this.token;
-  }
-
+  /**
+   * Check if user appears to be authenticated
+   * Note: This is a client-side hint only. The actual auth check happens server-side via the HttpOnly cookie.
+   */
   isAuthenticated(): boolean {
-    return !!this.token;
+    return this._isAuthenticated;
   }
 
   private async request<T>(
@@ -49,19 +48,21 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
     try {
       const response = await fetch(url, {
         ...options,
         headers,
+        // Include cookies in requests for HttpOnly cookie authentication
+        credentials: 'include',
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        // If we get a 401, update auth state
+        if (response.status === 401) {
+          this._isAuthenticated = false;
+        }
         return { error: data.message || 'An error occurred' };
       }
 
@@ -73,38 +74,45 @@ class ApiClient {
   }
 
   // Auth endpoints
-  async register(email: string, password: string, name?: string): Promise<ApiResponse<{ user: User; token: string }>> {
-    const result = await this.request<{ user: User; token: string }>('/auth/register', {
+  async register(email: string, password: string, name?: string): Promise<ApiResponse<{ user: User }>> {
+    const result = await this.request<{ user: User }>('/auth/register', {
       method: 'POST',
       body: JSON.stringify({ email, password, name }),
     });
 
-    if (result.data?.token) {
-      this.setToken(result.data.token);
+    if (result.data?.user) {
+      this.setAuthenticated(true);
     }
 
     return result;
   }
 
-  async login(email: string, password: string): Promise<ApiResponse<{ user: User; token: string }>> {
-    const result = await this.request<{ user: User; token: string }>('/auth/login', {
+  async login(email: string, password: string): Promise<ApiResponse<{ user: User }>> {
+    const result = await this.request<{ user: User }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
 
-    if (result.data?.token) {
-      this.setToken(result.data.token);
+    if (result.data?.user) {
+      this.setAuthenticated(true);
     }
 
     return result;
   }
 
-  async logout(): Promise<void> {
-    this.setToken(null);
+  async logout(): Promise<ApiResponse<{ message: string }>> {
+    const result = await this.request<{ message: string }>('/auth/logout', {
+      method: 'POST',
+    });
+    this.setAuthenticated(false);
+    return result;
   }
 
   async getMe(): Promise<ApiResponse<{ user: User }>> {
-    return this.request('/auth/me');
+    const result = await this.request<{ user: User }>('/auth/me');
+    // Update auth state based on response
+    this.setAuthenticated(!!result.data?.user);
+    return result;
   }
 
   async updateProfile(data: Partial<User>): Promise<ApiResponse<{ user: User }>> {
@@ -208,26 +216,14 @@ class ApiClient {
   // Export
   async exportResponses(formId: string): Promise<string> {
     const url = `${this.baseUrl}/forms/${formId}/responses/export`;
-    const headers: Record<string, string> = {};
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { credentials: 'include' });
     return response.text();
   }
 
   // Download SQLite database file
   async downloadSqlite(formId: string, filename: string): Promise<void> {
     const url = `${this.baseUrl}/forms/${formId}/export/sqlite`;
-    const headers: Record<string, string> = {};
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
       const error = await response.json();
@@ -248,13 +244,7 @@ class ApiClient {
   // Download JSON export
   async downloadJson(formId: string, filename: string): Promise<void> {
     const url = `${this.baseUrl}/forms/${formId}/export/json`;
-    const headers: Record<string, string> = {};
-
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
-    const response = await fetch(url, { headers });
+    const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
       const error = await response.json();
@@ -297,21 +287,20 @@ class ApiClient {
       formData.append('prompt', prompt);
     }
 
-    const headers: Record<string, string> = {};
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
-
     try {
       const response = await fetch(url, {
         method: 'POST',
-        headers,
         body: formData,
+        // Include cookies for HttpOnly cookie authentication
+        credentials: 'include',
       });
 
       const data = await response.json();
 
       if (!response.ok) {
+        if (response.status === 401) {
+          this._isAuthenticated = false;
+        }
         return { error: data.error || data.message || 'An error occurred' };
       }
 

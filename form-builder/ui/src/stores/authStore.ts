@@ -12,7 +12,6 @@ interface User {
 
 interface AuthState {
   user: User | null;
-  token: string | null;
   isLoading: boolean;
   isInitialized: boolean;
   error: string | null;
@@ -21,7 +20,7 @@ interface AuthState {
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
+  logout: () => Promise<void>;
   updateProfile: (data: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   clearError: () => void;
 }
@@ -30,7 +29,6 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       user: null,
-      token: null,
       isLoading: false,
       isInitialized: false,
       error: null,
@@ -41,31 +39,22 @@ export const useAuthStore = create<AuthState>()(
 
         set({ isLoading: true });
 
-        // Check if we have a stored token
-        const token = api.getToken();
-        if (!token) {
-          set({ isLoading: false, isInitialized: true });
-          return;
-        }
-
-        // Validate token by fetching user profile
+        // Check if we have a valid session by calling getMe()
+        // The HttpOnly cookie will be sent automatically
         try {
           const result = await api.getMe();
           if (result.error || !result.data) {
-            // Token is invalid, clear it
-            api.setToken(null);
-            set({ user: null, token: null, isLoading: false, isInitialized: true });
+            // No valid session
+            set({ user: null, isLoading: false, isInitialized: true });
           } else {
             set({
               user: result.data.user,
-              token,
               isLoading: false,
               isInitialized: true,
             });
           }
         } catch {
-          api.setToken(null);
-          set({ user: null, token: null, isLoading: false, isInitialized: true });
+          set({ user: null, isLoading: false, isInitialized: true });
         }
       },
 
@@ -82,7 +71,6 @@ export const useAuthStore = create<AuthState>()(
 
           set({
             user: result.data.user,
-            token: result.data.token,
             isLoading: false,
             error: null,
           });
@@ -108,7 +96,6 @@ export const useAuthStore = create<AuthState>()(
 
           set({
             user: result.data.user,
-            token: result.data.token,
             isLoading: false,
             error: null,
           });
@@ -121,9 +108,14 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      logout: () => {
-        api.logout();
-        set({ user: null, token: null, error: null });
+      logout: async () => {
+        try {
+          // Call the logout endpoint to clear the HttpOnly cookie
+          await api.logout();
+        } catch {
+          // Even if the API call fails, clear local state
+        }
+        set({ user: null, error: null });
       },
 
       updateProfile: async (data: Partial<User>) => {
@@ -155,8 +147,8 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'formlogic-auth',
+      // Only persist user data for UI convenience (not for auth - that's handled by HttpOnly cookie)
       partialize: (state) => ({
-        token: state.token,
         user: state.user,
       }),
     }

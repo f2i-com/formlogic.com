@@ -55,6 +55,16 @@ return [
             'audience' => $_ENV['JWT_AUDIENCE'] ?? 'formlogic-api',
         ],
 
+        // Cookie settings for secure authentication
+        'cookie' => [
+            'name' => 'formlogic_auth',
+            'httpOnly' => true,
+            'secure' => $isProduction, // HTTPS only in production
+            'sameSite' => 'Lax', // Provides CSRF protection while allowing normal navigation
+            'path' => '/',
+            'domain' => $_ENV['COOKIE_DOMAIN'] ?? '', // Empty = current domain only
+        ],
+
         'sqlite' => [
             'storage_path' => __DIR__ . '/../' . ($_ENV['SQLITE_STORAGE_PATH'] ?? 'storage/forms'),
         ],

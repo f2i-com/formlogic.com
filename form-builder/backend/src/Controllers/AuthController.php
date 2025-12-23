@@ -13,11 +13,22 @@ class AuthController
 {
     private AuthService $authService;
     private IpResolver $ipResolver;
+    private array $cookieConfig;
+    private int $jwtExpiry;
 
-    public function __construct(AuthService $authService)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400)
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
+        $this->cookieConfig = array_merge([
+            'name' => 'formlogic_auth',
+            'httpOnly' => true,
+            'secure' => false,
+            'sameSite' => 'Lax',
+            'path' => '/',
+            'domain' => '',
+        ], $cookieConfig);
+        $this->jwtExpiry = $jwtExpiry;
     }
 
     /**
@@ -56,7 +67,13 @@ class AuthController
                 $data['name'] ?? null
             );
 
-            return $this->jsonResponse($response, $result, 201);
+            // Set HttpOnly cookie with the token
+            $response = $this->setAuthCookie($response, $result['token']);
+
+            // Return user data without token (token is in cookie)
+            return $this->jsonResponse($response, [
+                'user' => $result['user'],
+            ], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -85,7 +102,14 @@ class AuthController
 
         try {
             $result = $this->authService->login($data['email'], $data['password'], $ipAddress);
-            return $this->jsonResponse($response, $result);
+
+            // Set HttpOnly cookie with the token
+            $response = $this->setAuthCookie($response, $result['token']);
+
+            // Return user data without token (token is in cookie)
+            return $this->jsonResponse($response, [
+                'user' => $result['user'],
+            ]);
         } catch (\Exception $e) {
             // Check if this is a rate limit error (429 Too Many Requests)
             $statusCode = str_contains($e->getMessage(), 'Too many login attempts') ? 429 : 401;
@@ -160,6 +184,69 @@ class AuthController
                 'message' => $e->getMessage(),
             ], 400);
         }
+    }
+
+    /**
+     * Logout user
+     * POST /api/auth/logout
+     */
+    public function logout(Request $request, Response $response): Response
+    {
+        // Clear the auth cookie by setting it to expire in the past
+        $response = $this->clearAuthCookie($response);
+
+        return $this->jsonResponse($response, [
+            'message' => 'Logged out successfully',
+        ]);
+    }
+
+    /**
+     * Set the authentication cookie with the JWT token
+     */
+    private function setAuthCookie(Response $response, string $token): Response
+    {
+        $cookieParts = [
+            $this->cookieConfig['name'] . '=' . urlencode($token),
+            'Path=' . $this->cookieConfig['path'],
+            'HttpOnly',
+            'SameSite=' . $this->cookieConfig['sameSite'],
+            'Max-Age=' . $this->jwtExpiry,
+        ];
+
+        if ($this->cookieConfig['secure']) {
+            $cookieParts[] = 'Secure';
+        }
+
+        if (!empty($this->cookieConfig['domain'])) {
+            $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
+        }
+
+        return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+    }
+
+    /**
+     * Clear the authentication cookie
+     */
+    private function clearAuthCookie(Response $response): Response
+    {
+        $cookieParts = [
+            $this->cookieConfig['name'] . '=',
+            'Path=' . $this->cookieConfig['path'],
+            'HttpOnly',
+            'SameSite=' . $this->cookieConfig['sameSite'],
+            'Max-Age=0',
+            'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        ];
+
+        if ($this->cookieConfig['secure']) {
+            $cookieParts[] = 'Secure';
+        }
+
+        if (!empty($this->cookieConfig['domain'])) {
+            $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
+        }
+
+        return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
     }
 
     /**
