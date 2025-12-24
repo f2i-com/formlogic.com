@@ -217,6 +217,12 @@ class ApiClient {
   async exportResponses(formId: string): Promise<string> {
     const url = `${this.baseUrl}/forms/${formId}/responses/export`;
     const response = await fetch(url, { credentials: 'include' });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || 'Failed to export responses');
+    }
+
     return response.text();
   }
 

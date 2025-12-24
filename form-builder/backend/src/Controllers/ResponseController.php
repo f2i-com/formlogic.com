@@ -304,15 +304,17 @@ class ResponseController
                 break;
 
             case 'rating':
-                $maxStars = $field['properties']['maxStars'] ?? 5;
+                $properties = $field['properties'] ?? [];
+                $maxStars = $properties['maxStars'] ?? 5;
                 if (!is_numeric($value) || $value < 1 || $value > $maxStars) {
                     return "Rating must be between 1 and {$maxStars}";
                 }
                 break;
 
             case 'scale':
-                $min = $field['properties']['scaleStart'] ?? 1;
-                $max = $field['properties']['scaleEnd'] ?? 10;
+                $properties = $field['properties'] ?? [];
+                $min = $properties['scaleStart'] ?? 1;
+                $max = $properties['scaleEnd'] ?? 10;
                 if (!is_numeric($value) || $value < $min || $value > $max) {
                     return "Value must be between {$min} and {$max}";
                 }
@@ -321,7 +323,8 @@ class ResponseController
             case 'dropdown':
             case 'multiple_choice':
                 // Validate against allowed options
-                $options = $field['properties']['options'] ?? [];
+                $properties = $field['properties'] ?? [];
+                $options = $properties['options'] ?? [];
                 $allowedValues = array_column($options, 'value');
                 if (!in_array($value, $allowedValues, true)) {
                     return 'Invalid selection';
@@ -333,7 +336,8 @@ class ResponseController
                 if (!is_array($value)) {
                     return 'Invalid selection format';
                 }
-                $options = $field['properties']['options'] ?? [];
+                $properties = $field['properties'] ?? [];
+                $options = $properties['options'] ?? [];
                 $allowedValues = array_column($options, 'value');
                 foreach ($value as $selected) {
                     if (!in_array($selected, $allowedValues, true)) {
@@ -593,14 +597,29 @@ class ResponseController
 
         $dbPath = $this->sqlite->getFormDbPath($formId);
         $filename = $this->sanitizeFilename($form['title']) . '.sqlite';
+
+        // Verify file exists and get size
+        if (!is_file($dbPath)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Database file not found',
+            ], 404);
+        }
+
         $fileSize = filesize($dbPath);
+        if ($fileSize === false) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Failed to read database file size',
+            ], 500);
+        }
 
         // Stream file contents to avoid memory exhaustion for large files
         $stream = fopen($dbPath, 'rb');
         if ($stream === false) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Failed to read database file',
+                'message' => 'Failed to open database file',
             ], 500);
         }
 
