@@ -7,6 +7,7 @@ import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
 import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ThemeManager } from './components/ui/ThemeManager';
 
 // Lazy load pages for better performance
 const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
@@ -107,6 +108,7 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <AppInitializer>
+          <ThemeManager />
           <React.Suspense fallback={<LoadingFallback />}>
             <AppRoutes />
           </React.Suspense>

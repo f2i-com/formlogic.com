@@ -16,7 +16,10 @@ import {
   LayoutGrid,
   ArrowLeft,
   Shield,
+  Palette,
+  Check,
 } from 'lucide-react';
+import { useUIStore } from '../stores/uiStore';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -209,6 +212,59 @@ export function Settings() {
                   checked={preferences.weeklyDigest}
                   onChange={(checked) => handlePreferenceChange('weeklyDigest', checked)}
                 />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Appearance Settings */}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Palette}
+              title="Appearance"
+              description="Customize the look and feel of your workspace"
+              iconBg="bg-pink-500/10"
+              iconColor="text-pink-400"
+            />
+            <div className="space-y-4 ml-0 sm:ml-14">
+              <div>
+                <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
+                  Accent Color
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                  {[
+                    { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo' },
+                    { id: 'lime', color: 'bg-lime-500', label: 'Lime' },
+                    { id: 'rose', color: 'bg-rose-500', label: 'Rose' },
+                    { id: 'orange', color: 'bg-orange-500', label: 'Orange' },
+                    { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan' },
+                    { id: 'violet', color: 'bg-violet-500', label: 'Violet' },
+                  ].map((theme) => {
+                    const isSelected = useUIStore(state => state.themeColor) === theme.id;
+                    return (
+                      <button
+                        key={theme.id}
+                        onClick={() => {
+                          useUIStore.getState().setThemeColor(theme.id as any);
+                          toast.success('Theme Updated', `Accent color changed to ${theme.label}`);
+                        }}
+                        className={`group relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-200 ${isSelected
+                          ? 'border-primary-500 bg-primary-500/5 ring-1 ring-primary-500/50'
+                          : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                          }`}
+                      >
+                        <div className={`w-8 h-8 rounded-full ${theme.color} shadow-sm flex items-center justify-center`}>
+                          {isSelected && <Check className="w-4 h-4 text-white" />}
+                        </div>
+                        <span className={`text-xs font-medium ${isSelected ? 'text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-slate-400'
+                          }`}>
+                          {theme.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </CardContent>

@@ -33,13 +33,13 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 h-full bg-white dark:bg-slate-900/80 backdrop-blur-md border-r border-gray-200 dark:border-slate-800 z-40',
+        'fixed left-0 top-0 h-full bg-white dark:bg-slate-900/50 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 z-40',
         'flex flex-col transition-all duration-300 shadow-xl',
         sidebarCollapsed ? 'w-16' : 'w-64'
       )}
     >
       {/* Logo */}
-      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-slate-900/50">
+      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
         <Logo size="sm" showText={!sidebarCollapsed} />
       </div>
 
@@ -93,7 +93,7 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse Button */}
-      <div className="p-3 border-t border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-slate-900/30">
+      <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
         <button
           onClick={toggleSidebar}
           className={cn(

@@ -96,7 +96,7 @@ function QuickActionButton({
       onClick={onClick}
       className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition-all duration-200 hover:-translate-y-0.5 ${primary
         ? 'bg-primary-600 border-primary-500 text-white hover:bg-primary-500 shadow-lg shadow-primary-500/20'
-        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800'
+        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50'
         }`}
     >
       <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-500'}`} />

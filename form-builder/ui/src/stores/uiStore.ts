@@ -44,8 +44,10 @@ interface UIState {
 
   // Theme
   theme: 'light' | 'dark';
+  themeColor: 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet';
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
+  setThemeColor: (color: 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet') => void;
 }
 
 import { persist } from 'zustand/middleware';
@@ -84,12 +86,18 @@ export const useUIStore = create<UIState>()(
 
       // Theme
       theme: 'dark',
+      themeColor: 'indigo',
       toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
       setTheme: (theme) => set({ theme }),
+      setThemeColor: (color) => set({ themeColor: color }),
     }),
     {
       name: 'formlogic-ui-storage',
-      partialize: (state) => ({ theme: state.theme, sidebarCollapsed: state.sidebarCollapsed }),
+      partialize: (state) => ({
+        theme: state.theme,
+        themeColor: state.themeColor,
+        sidebarCollapsed: state.sidebarCollapsed
+      }),
     }
   )
 );

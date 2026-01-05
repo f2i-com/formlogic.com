@@ -45,9 +45,9 @@ export function Login() {
   const displayError = localError || error;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex">
+    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex">
       {/* Left panel - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-900 to-slate-900 p-12 flex-col justify-between relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-900 to-slate-900 dark:from-slate-900/80 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
         <div className="absolute inset-0 bg-grid-white/[0.02] bg-[length:50px_50px]" />
         <div className="relative z-10">
           <Link to="/">
@@ -68,7 +68,7 @@ export function Login() {
       </div>
 
       {/* Right panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8 bg-white/0 dark:bg-slate-900/40 backdrop-blur-sm">
         <div className="w-full max-w-md">
           <div className="lg:hidden mb-8">
             <Link to="/">
