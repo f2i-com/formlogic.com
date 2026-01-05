@@ -12,8 +12,8 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={cn(
-          'bg-white rounded-xl border border-gray-200/80 shadow-sm',
-          hover && 'transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-gray-300/80',
+          'bg-white dark:bg-slate-900/50 backdrop-blur-md border border-gray-100 dark:border-slate-800/80 rounded-xl shadow-sm',
+          hover && 'transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-primary-500/30 dark:hover:shadow-primary-500/5',
           className
         )}
         {...props}
@@ -36,7 +36,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, CardHeaderProps>(
       <div
         ref={ref}
         className={cn(
-          'px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50/30',
+          'px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5',
           className
         )}
         {...props}
@@ -75,7 +75,7 @@ const CardFooter = React.forwardRef<HTMLDivElement, CardFooterProps>(
       <div
         ref={ref}
         className={cn(
-          'px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-100 bg-gray-50/30',
+          'px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5',
           className
         )}
         {...props}

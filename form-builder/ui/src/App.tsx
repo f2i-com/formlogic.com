@@ -4,6 +4,7 @@ import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
+import { useUIStore } from './stores/uiStore';
 import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -18,7 +19,7 @@ const Signup = React.lazy(() => import('./pages/Signup').then(m => ({ default: m
 
 function LoadingFallback() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
     </div>
   );
@@ -28,6 +29,16 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
   const initializeAuth = useAuthStore((state) => state.initialize);
   const initializeForms = useFormStore((state) => state.initialize);
   const isAuthInitialized = useAuthStore((state) => state.isInitialized);
+  const theme = useUIStore((state) => state.theme);
+
+  useEffect(() => {
+    // Sync theme with HTML document
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
 
   useEffect(() => {
     // Initialize auth first, then forms
@@ -37,7 +48,6 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
       })
       .catch((error) => {
         console.error('Failed to initialize app:', error);
-        // Continue with forms initialization even if auth fails
         initializeForms();
       });
   }, [initializeAuth, initializeForms]);

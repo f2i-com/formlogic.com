@@ -48,7 +48,7 @@ export function Dropdown({
   return (
     <div className={cn('w-full', className)} ref={dropdownRef}>
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
           {label}
         </label>
       )}
@@ -58,13 +58,14 @@ export function Dropdown({
           onClick={() => !disabled && setIsOpen(!isOpen)}
           className={cn(
             'w-full flex items-center justify-between gap-2 px-3 py-2',
-            'bg-white border border-gray-300 rounded-lg text-left',
+            'bg-white dark:bg-slate-900/50 border border-gray-300 dark:border-slate-700 rounded-lg text-left',
+            'text-gray-900 dark:text-white',
             'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent',
-            disabled && 'bg-gray-50 cursor-not-allowed opacity-50',
+            disabled && 'bg-gray-50 dark:bg-slate-800/50 cursor-not-allowed opacity-50',
             error && 'border-red-500'
           )}
         >
-          <span className={cn(!selectedOption && 'text-gray-400')}>
+          <span className={cn(!selectedOption && 'text-gray-400 dark:text-slate-500')}>
             {selectedOption ? (
               <span className="flex items-center gap-2">
                 {selectedOption.icon}
@@ -76,14 +77,14 @@ export function Dropdown({
           </span>
           <ChevronDown
             className={cn(
-              'h-4 w-4 text-gray-400 transition-transform',
+              'h-4 w-4 text-gray-400 dark:text-slate-500 transition-transform',
               isOpen && 'rotate-180'
             )}
           />
         </button>
 
         {isOpen && (
-          <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+          <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto">
             {options.map((option) => (
               <button
                 key={option.value}
@@ -94,8 +95,9 @@ export function Dropdown({
                 }}
                 className={cn(
                   'w-full flex items-center gap-2 px-3 py-2 text-left',
-                  'hover:bg-gray-50 transition-colors',
-                  option.value === value && 'bg-primary-50 text-primary-700'
+                  'hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors',
+                  'text-gray-900 dark:text-slate-200',
+                  option.value === value && 'bg-primary-50 dark:bg-primary-900/10 text-primary-700 dark:text-primary-400'
                 )}
               >
                 {option.icon}

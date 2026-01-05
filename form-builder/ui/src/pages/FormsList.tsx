@@ -69,12 +69,12 @@ export function FormsList() {
         <CardContent>
           <div className="flex items-start justify-between mb-3 gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="p-2 bg-primary-100 rounded-lg flex-shrink-0">
-                <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-primary-600" />
+              <div className="p-2 bg-indigo-50 dark:bg-primary-500/10 rounded-lg flex-shrink-0">
+                <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
               </div>
               <div className="min-w-0">
-                <h3 className="font-medium text-gray-900 truncate">{form.title}</h3>
-                <p className="text-xs sm:text-sm text-gray-500">
+                <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title}</h3>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
                   {form.fields.length} fields
                 </p>
               </div>
@@ -94,13 +94,13 @@ export function FormsList() {
                     className="fixed inset-0 z-10"
                     onClick={() => setActiveMenu(null)}
                   />
-                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-1">
+                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 z-20 py-1 ring-1 ring-black/5 dark:ring-white/5">
                     <button
                       onClick={() => {
                         navigate(`/builder/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <Pencil className="h-4 w-4" /> Edit
                     </button>
@@ -109,7 +109,7 @@ export function FormsList() {
                         navigate(`/preview/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <Eye className="h-4 w-4" /> Preview
                     </button>
@@ -118,7 +118,7 @@ export function FormsList() {
                         navigate(`/analytics/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <BarChart3 className="h-4 w-4" /> Analytics
                     </button>
@@ -127,13 +127,13 @@ export function FormsList() {
                         navigate(`/responses/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <Table className="h-4 w-4" /> View Data
                     </button>
                     <button
                       onClick={() => handleDuplicate(form.id)}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <Copy className="h-4 w-4" /> Duplicate
                     </button>
@@ -142,17 +142,17 @@ export function FormsList() {
                         setEmbedModalForm({ id: form.id, title: form.title });
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
                     >
                       <Share2 className="h-4 w-4" /> Share & Embed
                     </button>
-                    <hr className="my-1" />
+                    <hr className="my-1 border-gray-100 dark:border-slate-800" />
                     <button
                       onClick={() => {
                         deleteForm(form.id);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
                     >
                       <Trash2 className="h-4 w-4" /> Delete
                     </button>
@@ -163,7 +163,7 @@ export function FormsList() {
           </div>
 
           <div className="flex items-center justify-between text-xs sm:text-sm">
-            <span className="text-gray-500 truncate">
+            <span className="text-slate-500 truncate">
               {formatRelativeTime(form.updatedAt)}
             </span>
             <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm">
@@ -195,7 +195,7 @@ export function FormsList() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       <Header
         title="My Forms"
         actions={

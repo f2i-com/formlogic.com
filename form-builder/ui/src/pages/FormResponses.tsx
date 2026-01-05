@@ -48,12 +48,14 @@ function StatCard({
   value,
   iconBg,
   iconColor,
+  textColor,
 }: {
   icon: React.ElementType;
   label: string;
   value: string | number;
   iconBg: string;
   iconColor: string;
+  textColor?: string;
 }) {
   return (
     <Card className="hover:shadow-md transition-shadow">
@@ -63,8 +65,8 @@ function StatCard({
             <Icon className={cn('h-5 w-5', iconColor)} />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-900">{value}</p>
-            <p className="text-sm text-gray-500">{label}</p>
+            <p className={cn("text-2xl font-bold", textColor || "text-gray-900 dark:text-white")}>{value}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-500">{label}</p>
           </div>
         </div>
       </CardContent>
@@ -338,7 +340,7 @@ export function FormResponses() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
         <Spinner size="lg" />
       </div>
     );
@@ -346,7 +348,7 @@ export function FormResponses() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
         <EmptyState
           icon={Inbox}
           title="Form not found"
@@ -358,7 +360,7 @@ export function FormResponses() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 transition-colors">
       <Header
         title={`${form.title} - Responses`}
         actions={
@@ -386,29 +388,33 @@ export function FormResponses() {
             icon={Users}
             label="Total Responses"
             value={stats.total}
-            iconBg="bg-indigo-100"
-            iconColor="text-indigo-600"
+            iconBg="bg-indigo-500/10"
+            iconColor="text-indigo-500"
+            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={CalendarDays}
             label="This Week"
             value={stats.thisWeek}
-            iconBg="bg-green-100"
-            iconColor="text-green-600"
+            iconBg="bg-green-500/10"
+            iconColor="text-green-500"
+            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={Calendar}
             label="Today"
             value={stats.todayCount}
-            iconBg="bg-blue-100"
-            iconColor="text-blue-600"
+            iconBg="bg-blue-500/10"
+            iconColor="text-blue-500"
+            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={Timer}
             label="Avg. Time"
             value={formatDuration(stats.avgTime)}
-            iconBg="bg-amber-100"
-            iconColor="text-amber-600"
+            iconBg="bg-amber-500/10"
+            iconColor="text-amber-500"
+            textColor="text-gray-900 dark:text-white"
           />
         </div>
 
@@ -418,14 +424,13 @@ export function FormResponses() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
               <input
-                type="text"
                 placeholder="Search responses..."
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
+                className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
             </div>
           </div>
@@ -435,8 +440,8 @@ export function FormResponses() {
               className={cn(
                 'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
                 sortField === 'submittedAt'
-                  ? 'bg-primary-50 border-primary-300 text-primary-700 shadow-sm'
-                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                  ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
               )}
             >
               <Calendar className="h-4 w-4" />
@@ -447,8 +452,8 @@ export function FormResponses() {
               className={cn(
                 'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
                 sortField === 'completionTime'
-                  ? 'bg-primary-50 border-primary-300 text-primary-700 shadow-sm'
-                  : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                  ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-white shadow-sm'
+                  : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
               )}
             >
               <Clock className="h-4 w-4" />
@@ -470,68 +475,68 @@ export function FormResponses() {
             </CardContent>
           </Card>
         ) : (
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden bg-white dark:bg-slate-900/50 border-gray-200 dark:border-slate-800">
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className="bg-gray-50/50 dark:bg-slate-900/50 border-b border-gray-200 dark:border-slate-800">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
                       Date
                     </th>
                     {displayFields.map((field) => (
                       <th
                         key={field.id}
-                        className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell"
+                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hidden sm:table-cell"
                         title={field.label}
                       >
                         <span className="truncate block max-w-[150px]">{field.label}</span>
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
                       Time
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 bg-white">
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/20">
                   {paginatedResponses.map((response) => (
-                    <tr key={response.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <tr key={response.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {formatDate(response.submittedAt)}
                       </td>
                       {displayFields.map((field) => (
                         <td
                           key={field.id}
-                          className="px-4 py-4 text-sm text-gray-600 max-w-[200px] truncate hidden sm:table-cell"
+                          className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 max-w-[200px] truncate hidden sm:table-cell"
                           title={formatValue(response.answers[field.id])}
                         >
                           {formatValue(response.answers[field.id])}
                         </td>
                       ))}
-                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
                         {formatDuration(response.completionTime || 0)}
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-right">
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={() => handleView(response)}
-                            className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
                             title="View details"
                           >
                             <Eye className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleEdit(response)}
-                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors"
                             title="Edit response"
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteConfirm(response)}
-                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
                             title="Delete response"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -546,11 +551,11 @@ export function FormResponses() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-                <p className="text-sm text-gray-600">
-                  Showing <span className="font-medium">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
-                  <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, filteredResponses.length)}</span> of{' '}
-                  <span className="font-medium">{filteredResponses.length}</span> responses
+              <div className="px-4 py-3 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between">
+                <p className="text-sm text-gray-500 dark:text-slate-500">
+                  Showing <span className="font-medium text-gray-900 dark:text-white">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
+                  <span className="font-medium text-gray-900 dark:text-white">{Math.min(currentPage * ITEMS_PER_PAGE, filteredResponses.length)}</span> of{' '}
+                  <span className="font-medium text-gray-900 dark:text-white">{filteredResponses.length}</span> responses
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -561,7 +566,7 @@ export function FormResponses() {
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <span className="px-3 py-1.5 text-sm text-gray-700 font-medium bg-white border border-gray-300 rounded-lg">
+                  <span className="px-3 py-1.5 text-sm text-gray-600 dark:text-slate-300 font-medium bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg">
                     {currentPage} / {totalPages}
                   </span>
                   <Button
@@ -593,35 +598,35 @@ export function FormResponses() {
               {form.fields
                 .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
                 .map((field) => (
-                  <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0 last:pb-0">
-                    <p className="text-sm font-medium text-gray-500 mb-1">{field.label}</p>
-                    <p className="text-gray-900">
+                  <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
+                    <p className="text-sm font-medium text-gray-500 dark:text-slate-500 mb-1">{field.label}</p>
+                    <p className="text-gray-900 dark:text-white">
                       {formatValue(selectedResponse.answers[field.id]) || (
-                        <span className="text-gray-400 italic">No answer</span>
+                        <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                       )}
                     </p>
                   </div>
                 ))}
               {/* Metadata */}
-              <div className="pt-4 border-t border-gray-200">
-                <h3 className="text-sm font-medium text-gray-500 mb-3">Metadata</h3>
+              <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
+                <h3 className="text-sm font-medium text-gray-500 dark:text-slate-500 mb-3">Metadata</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-gray-500">Response ID</p>
-                    <p className="text-gray-900 font-mono text-xs bg-gray-100 px-2 py-1 rounded mt-1">
+                    <p className="text-gray-500 dark:text-slate-500">Response ID</p>
+                    <p className="text-gray-700 dark:text-slate-300 font-mono text-xs bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded mt-1">
                       {selectedResponse.id}
                     </p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Completion Time</p>
-                    <p className="text-gray-900 mt-1">
+                    <p className="text-gray-500 dark:text-slate-500">Completion Time</p>
+                    <p className="text-gray-900 dark:text-white mt-1">
                       {formatDuration(selectedResponse.completionTime || 0)}
                     </p>
                   </div>
                   {selectedResponse.metadata?.userAgent && (
                     <div className="col-span-2">
-                      <p className="text-gray-500">User Agent</p>
-                      <p className="text-gray-900 text-xs truncate mt-1">
+                      <p className="text-gray-500 dark:text-slate-500">User Agent</p>
+                      <p className="text-gray-900 dark:text-white text-xs truncate mt-1">
                         {selectedResponse.metadata.userAgent}
                       </p>
                     </div>
@@ -629,7 +634,7 @@ export function FormResponses() {
                 </div>
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsViewModalOpen(false)}>
                 Close
               </Button>
@@ -662,7 +667,7 @@ export function FormResponses() {
                 .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
                 .map((field) => (
                   <div key={field.id}>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">
                       {field.label}
                     </label>
                     {renderEditField(field, editedAnswers[field.id], (value) =>
@@ -671,7 +676,7 @@ export function FormResponses() {
                   </div>
                 ))}
             </div>
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+            <div className="px-6 py-4 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
                 Cancel
               </Button>
@@ -697,11 +702,11 @@ export function FormResponses() {
               <AlertTriangle className="h-6 w-6 text-red-600" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Delete Response</h2>
-              <p className="text-sm text-gray-500">This action cannot be undone</p>
+              <h2 className="text-lg font-semibold text-white">Delete Response</h2>
+              <p className="text-sm text-slate-500">This action cannot be undone</p>
             </div>
           </div>
-          <p className="text-gray-600 mb-6">
+          <p className="text-slate-400 mb-6">
             Are you sure you want to delete this response? All data associated with this
             submission will be permanently removed.
           </p>
@@ -735,7 +740,7 @@ function renderEditField(
   onChange: (value: unknown) => void
 ) {
   const currentValue = value ?? '';
-  const inputClasses = "w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors";
+  const inputClasses = "w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-white";
 
   switch (field.type) {
     case 'short_text':

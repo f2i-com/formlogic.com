@@ -17,7 +17,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         {label && (
           <label
             htmlFor={textareaId}
-            className="block text-sm font-medium text-gray-700 mb-1.5"
+            className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5"
           >
             {label}
           </label>
@@ -26,12 +26,12 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           ref={ref}
           id={textareaId}
           className={cn(
-            'block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5',
-            'text-gray-900 placeholder:text-gray-400',
+            'block w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 px-3 py-2.5',
+            'text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500',
             'transition-all duration-150 ease-in-out',
             'focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
-            'hover:border-gray-400',
-            'disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed disabled:hover:border-gray-300',
+            'hover:border-gray-400 dark:hover:border-slate-600',
+            'disabled:bg-gray-50 dark:disabled:bg-slate-800/50 disabled:text-gray-500 dark:disabled:text-slate-500 disabled:cursor-not-allowed disabled:hover:border-gray-300 dark:disabled:hover:border-slate-700',
             'resize-y min-h-[80px]',
             error && 'border-red-400 focus:ring-red-500/20 focus:border-red-500 hover:border-red-400',
             className

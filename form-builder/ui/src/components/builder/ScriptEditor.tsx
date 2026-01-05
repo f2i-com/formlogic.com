@@ -360,73 +360,69 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
               <Code2 className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Backend Logic Script</h2>
-              <p className="text-sm text-gray-500">Write code that runs when forms are submitted</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Backend Logic Script</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Write code that runs when forms are submitted</p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors">
-            <X className="h-5 w-5 text-gray-500" />
+          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors">
+            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-6 bg-gray-50/50">
+        <div className="flex border-b border-gray-200 dark:border-slate-800 px-6 bg-gray-50/50 dark:bg-slate-900/50">
           <button
             onClick={() => setActiveTab('editor')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
-              activeTab === 'editor'
-                ? 'border-primary-500 text-primary-600 bg-white'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${activeTab === 'editor'
+                ? 'border-primary-500 text-primary-600 dark:text-primary-400 bg-white dark:bg-slate-800/50'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:bg-gray-100/50 dark:hover:bg-slate-800/50'
+              }`}
           >
             <Code2 className="h-4 w-4" />
             Editor
           </button>
           <button
             onClick={() => setActiveTab('ai')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
-              activeTab === 'ai'
-                ? 'border-purple-500 text-purple-600 bg-gradient-to-t from-purple-50 to-white'
-                : 'border-transparent text-gray-500 hover:text-purple-600 hover:bg-purple-50/50'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${activeTab === 'ai'
+                ? 'border-purple-500 text-purple-600 dark:text-purple-400 bg-gradient-to-t from-purple-50 to-white dark:from-purple-900/20 dark:to-slate-800/50'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50/50 dark:hover:bg-purple-900/20'
+              }`}
           >
-            <Sparkles className={`h-4 w-4 ${activeTab === 'ai' ? 'text-purple-500' : ''}`} />
-            <span className={activeTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent font-semibold' : ''}>AI Generate</span>
+            <Sparkles className={`h-4 w-4 ${activeTab === 'ai' ? 'text-purple-500 dark:text-purple-400' : ''}`} />
+            <span className={activeTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-blue-600 dark:from-purple-400 dark:to-blue-400 bg-clip-text text-transparent font-semibold' : ''}>AI Generate</span>
           </button>
           <button
             onClick={() => setActiveTab('docs')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
-              activeTab === 'docs'
-                ? 'border-primary-500 text-primary-600 bg-white'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${activeTab === 'docs'
+                ? 'border-primary-500 text-primary-600 dark:text-primary-400 bg-white dark:bg-slate-800/50'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:bg-gray-100/50 dark:hover:bg-slate-800/50'
+              }`}
           >
             <Book className="h-4 w-4" />
             API Reference
           </button>
           <button
             onClick={() => setActiveTab('fields')}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${
-              activeTab === 'fields'
-                ? 'border-primary-500 text-primary-600 bg-white'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100/50'
-            }`}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-all flex items-center gap-2 ${activeTab === 'fields'
+                ? 'border-primary-500 text-primary-600 dark:text-primary-400 bg-white dark:bg-slate-800/50'
+                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:bg-gray-100/50 dark:hover:bg-slate-800/50'
+              }`}
           >
             Form Fields
           </button>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden bg-white dark:bg-slate-900">
           {activeTab === 'editor' && (
             <div className="h-full flex flex-col">
               <div className="flex-1 p-4">
@@ -436,7 +432,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                     setEditedScript(e.target.value);
                     setTestResult(null);
                   }}
-                  className="w-full h-full font-mono text-sm bg-gray-900 text-gray-100 p-4 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="w-full h-full font-mono text-sm bg-gray-900 text-gray-100 p-4 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 border border-gray-800"
                   placeholder="// Write your FormLogic script here..."
                   spellCheck={false}
                 />
@@ -444,9 +440,10 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* Test Result */}
               {testResult && (
-                <div className={`mx-4 mb-2 p-3 rounded-lg flex items-center gap-2 ${
-                  testResult.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                }`}>
+                <div className={`mx-4 mb-2 p-3 rounded-lg flex items-center gap-2 ${testResult.success
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                  }`}>
                   {testResult.success ? (
                     <CheckCircle className="h-4 w-4" />
                   ) : (
@@ -458,14 +455,14 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* AI Explanation */}
               {aiExplanation && (
-                <div className="mx-4 mb-2 p-4 rounded-xl bg-gradient-to-r from-purple-50 via-violet-50 to-blue-50 border border-purple-200/60 shadow-sm">
+                <div className="mx-4 mb-2 p-4 rounded-xl bg-gradient-to-r from-purple-50 via-violet-50 to-blue-50 dark:from-purple-900/10 dark:via-violet-900/10 dark:to-blue-900/10 border border-purple-200/60 dark:border-purple-500/20 shadow-sm">
                   <div className="flex items-start gap-3">
                     <div className="flex-shrink-0 w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-500 rounded-lg flex items-center justify-center">
                       <Sparkles className="h-4 w-4 text-white" />
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm font-semibold text-purple-900">AI Generated Script</p>
-                      <p className="text-sm text-purple-700/90 mt-1 leading-relaxed">{aiExplanation}</p>
+                      <p className="text-sm font-semibold text-purple-900 dark:text-purple-300">AI Generated Script</p>
+                      <p className="text-sm text-purple-700/90 dark:text-purple-400/90 mt-1 leading-relaxed">{aiExplanation}</p>
                     </div>
                   </div>
                 </div>
@@ -474,7 +471,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
           )}
 
           {activeTab === 'ai' && (
-            <div className="h-full overflow-y-auto p-6 bg-gradient-to-b from-slate-50 to-white">
+            <div className="h-full overflow-y-auto p-6 bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-950">
               <div className="max-w-2xl mx-auto space-y-8">
                 {/* Hero Section */}
                 <div className="text-center pt-4">
@@ -484,18 +481,18 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                       <Wand2 className="h-10 w-10 text-white" />
                     </div>
                   </div>
-                  <h3 className="text-2xl font-bold text-gray-900 mb-3">
+                  <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">
                     Generate Script with AI
                   </h3>
-                  <p className="text-gray-500 max-w-md mx-auto">
+                  <p className="text-gray-500 dark:text-slate-400 max-w-md mx-auto">
                     Describe your logic in plain English and let AI write the code for you.
                   </p>
                 </div>
 
                 {/* Main Input Card */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-5">
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 p-6 space-y-5">
                   <div>
-                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-slate-200 mb-3">
                       <Sparkles className="h-4 w-4 text-purple-500" />
                       What should the script do?
                     </label>
@@ -503,7 +500,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                       value={aiPrompt}
                       onChange={(e) => setAiPrompt(e.target.value)}
                       placeholder="Example: Reject submissions if the email is not from our company domain. Calculate a total score from the rating fields and tag high scorers..."
-                      className="w-full h-36 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white resize-none transition-all text-gray-700 placeholder:text-gray-400"
+                      className="w-full h-36 px-4 py-3 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-300 focus:bg-white dark:focus:bg-slate-900 resize-none transition-all text-gray-700 dark:text-slate-300 placeholder:text-gray-400 dark:placeholder:text-slate-600"
                     />
                   </div>
 
@@ -511,7 +508,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                     <Button
                       onClick={handleAIGenerate}
                       disabled={isGenerating || formFields.length === 0}
-                      className="flex-1 bg-gradient-to-r from-purple-600 via-violet-600 to-blue-600 hover:from-purple-700 hover:via-violet-700 hover:to-blue-700 shadow-md shadow-purple-500/20 hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200"
+                      className="flex-1 bg-gradient-to-r from-purple-600 via-violet-600 to-blue-600 hover:from-purple-700 hover:via-violet-700 hover:to-blue-700 shadow-md shadow-purple-500/20 hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-200 text-white border-0"
                     >
                       {isGenerating ? (
                         <>
@@ -530,7 +527,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                         variant="outline"
                         onClick={handleAIImprove}
                         disabled={isGenerating}
-                        className="flex-1 border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300"
+                        className="flex-1 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-300 dark:hover:border-purple-700"
                       >
                         {isGenerating ? (
                           <>
@@ -550,14 +547,14 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
                 {/* Warning for no fields */}
                 {formFields.length === 0 && (
-                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/70 rounded-xl p-5 shadow-sm">
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/10 dark:to-orange-900/10 border border-amber-200/70 dark:border-amber-700/50 rounded-xl p-5 shadow-sm">
                     <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0 w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
-                        <AlertCircle className="h-5 w-5 text-amber-600" />
+                      <div className="flex-shrink-0 w-10 h-10 bg-amber-100 dark:bg-amber-900/30 rounded-lg flex items-center justify-center">
+                        <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-500" />
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-amber-900">No form fields found</p>
-                        <p className="text-sm text-amber-700 mt-1">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-400">No form fields found</p>
+                        <p className="text-sm text-amber-700 dark:text-amber-500/80 mt-1">
                           Add some fields to your form first. The AI uses your form fields to generate appropriate script logic.
                         </p>
                       </div>
@@ -566,13 +563,13 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                 )}
 
                 {/* Example Prompts Section */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="px-5 py-4 bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100">
-                    <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 overflow-hidden">
+                  <div className="px-5 py-4 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-800 dark:to-slate-800/50 border-b border-gray-100 dark:border-slate-700">
+                    <h4 className="text-sm font-semibold text-gray-800 dark:text-slate-200 flex items-center gap-2">
                       <span className="w-2 h-2 bg-purple-500 rounded-full" />
                       Example Prompts
                     </h4>
-                    <p className="text-xs text-gray-500 mt-1">Click any example to use it</p>
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">Click any example to use it</p>
                   </div>
                   <div className="p-2">
                     {[
@@ -585,7 +582,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                       <button
                         key={i}
                         onClick={() => setAiPrompt(example.text)}
-                        className="w-full flex items-start gap-3 text-left text-sm text-gray-600 hover:text-purple-700 hover:bg-gradient-to-r hover:from-purple-50 hover:to-violet-50 px-4 py-3 rounded-lg transition-all duration-150 group"
+                        className="w-full flex items-start gap-3 text-left text-sm text-gray-600 dark:text-slate-300 hover:text-purple-700 dark:hover:text-purple-400 hover:bg-gradient-to-r hover:from-purple-50 hover:to-violet-50 dark:hover:from-purple-900/20 dark:hover:to-violet-900/20 px-4 py-3 rounded-lg transition-all duration-150 group"
                       >
                         <span className="text-base opacity-60 group-hover:opacity-100 transition-opacity">{example.icon}</span>
                         <span className="flex-1">{example.text}</span>
@@ -598,29 +595,29 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
           )}
 
           {activeTab === 'docs' && (
-            <div className="h-full overflow-y-auto p-6">
+            <div className="h-full overflow-y-auto p-6 bg-white dark:bg-slate-900">
               <div className="max-w-3xl space-y-6">
                 {DOCS.map((section) => (
                   <div key={section.title}>
-                    <h3 className="font-semibold text-gray-900 mb-2">{section.title}</h3>
+                    <h3 className="font-semibold text-gray-900 dark:text-white mb-2">{section.title}</h3>
                     {section.description && (
-                      <p className="text-sm text-gray-600 mb-3">{section.description}</p>
+                      <p className="text-sm text-gray-600 dark:text-slate-400 mb-3">{section.description}</p>
                     )}
                     {section.code && (
-                      <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm font-mono overflow-x-auto mb-3">
+                      <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm font-mono overflow-x-auto mb-3 border border-gray-800">
                         {section.code}
                       </pre>
                     )}
                     {section.items.length > 0 && (
-                      <div className="bg-gray-50 rounded-lg overflow-hidden">
+                      <div className="bg-gray-50 dark:bg-slate-800 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
                         <table className="w-full text-sm">
                           <tbody>
                             {section.items.map((item, i) => (
-                              <tr key={item.name} className={i > 0 ? 'border-t border-gray-200' : ''}>
-                                <td className="px-4 py-2 font-mono text-primary-600 whitespace-nowrap align-top">
+                              <tr key={item.name} className={i > 0 ? 'border-t border-gray-200 dark:border-slate-700' : ''}>
+                                <td className="px-4 py-2 font-mono text-primary-600 dark:text-primary-400 whitespace-nowrap align-top">
                                   {item.name}
                                 </td>
-                                <td className="px-4 py-2 text-gray-600">
+                                <td className="px-4 py-2 text-gray-600 dark:text-slate-400">
                                   {item.desc}
                                 </td>
                               </tr>
@@ -633,8 +630,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                 ))}
 
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-3">Execution Limits</h3>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-3">Execution Limits</h3>
+                  <div className="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/20 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-400">
                     <ul className="space-y-1">
                       <li>Maximum 50,000 instructions per execution</li>
                       <li>Maximum 2 second wall-clock time</li>
@@ -646,8 +643,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                 </div>
 
                 <div>
-                  <h3 className="font-semibold text-gray-900 mb-3">HTTP Request Limits</h3>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-3">HTTP Request Limits</h3>
+                  <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/20 rounded-lg p-4 text-sm text-blue-800 dark:text-blue-400">
                     <ul className="space-y-1">
                       <li>Maximum 30 second timeout per request</li>
                       <li>Default timeout is 10 seconds</li>
@@ -663,35 +660,35 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
           )}
 
           {activeTab === 'fields' && (
-            <div className="h-full overflow-y-auto p-6">
+            <div className="h-full overflow-y-auto p-6 bg-white dark:bg-slate-900">
               <div className="max-w-3xl">
-                <p className="text-sm text-gray-600 mb-4">
-                  Access these fields in your script via <code className="bg-gray-100 px-1 rounded">ctx.answers.fieldId</code>
+                <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
+                  Access these fields in your script via <code className="bg-gray-100 dark:bg-slate-800 px-1 rounded text-gray-800 dark:text-slate-200">ctx.answers.fieldId</code>
                 </p>
                 {formFields.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
+                  <div className="text-center py-8 text-gray-500 dark:text-slate-500">
                     No fields added to the form yet
                   </div>
                 ) : (
-                  <div className="bg-gray-50 rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 dark:bg-slate-800 rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
                     <table className="w-full text-sm">
-                      <thead className="bg-gray-100">
+                      <thead className="bg-gray-100 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
                         <tr>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700">Field ID</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700">Label</th>
-                          <th className="px-4 py-2 text-left font-medium text-gray-700">Type</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Field ID</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Label</th>
+                          <th className="px-4 py-2 text-left font-medium text-gray-700 dark:text-slate-300">Type</th>
                         </tr>
                       </thead>
                       <tbody>
                         {formFields.map((field, i) => (
-                          <tr key={field.id} className={i > 0 ? 'border-t border-gray-200' : ''}>
-                            <td className="px-4 py-2 font-mono text-primary-600">
+                          <tr key={field.id} className={i > 0 ? 'border-t border-gray-200 dark:border-slate-700' : ''}>
+                            <td className="px-4 py-2 font-mono text-primary-600 dark:text-primary-400">
                               {field.id}
                             </td>
-                            <td className="px-4 py-2 text-gray-900">
+                            <td className="px-4 py-2 text-gray-900 dark:text-slate-300">
                               {field.label}
                             </td>
-                            <td className="px-4 py-2 text-gray-500">
+                            <td className="px-4 py-2 text-gray-500 dark:text-slate-400">
                               {field.type}
                             </td>
                           </tr>
@@ -706,7 +703,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
+        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handleInsertExample}>
               Insert Example

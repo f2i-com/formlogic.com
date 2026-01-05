@@ -64,12 +64,15 @@ export function Signup() {
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex">
       {/* Left panel - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-600 to-indigo-800 p-12 flex-col justify-between">
-        <Link to="/">
-          <LogoWhite size="lg" />
-        </Link>
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-900 to-slate-900 p-12 flex-col justify-between relative overflow-hidden">
+        <div className="absolute inset-0 bg-grid-white/[0.02] bg-[length:50px_50px]" />
+        <div className="relative z-10">
+          <Link to="/">
+            <LogoWhite size="lg" />
+          </Link>
+        </div>
         <div>
           <h1 className="text-4xl font-bold text-white mb-4">
             Start building smarter forms
@@ -86,7 +89,7 @@ export function Signup() {
             ))}
           </ul>
         </div>
-        <p className="text-indigo-300 text-sm">
+        <p className="text-indigo-300 text-sm relative z-10">
           No credit card required. Get started in seconds.
         </p>
       </div>
@@ -100,17 +103,17 @@ export function Signup() {
             </Link>
           </div>
 
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Create your account</h2>
-          <p className="text-gray-600 mb-8">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Create your account</h2>
+          <p className="text-gray-600 dark:text-slate-400 mb-8">
             Already have an account?{' '}
-            <Link to="/login" className="text-indigo-600 hover:text-indigo-700 font-medium">
+            <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-medium">
               Sign in
             </Link>
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {displayError && (
-              <div className="flex items-center gap-2 p-3 text-sm text-red-700 bg-red-50 rounded-lg border border-red-200">
+              <div className="flex items-center gap-2 p-3 text-sm text-red-400 bg-red-500/10 rounded-lg border border-red-500/20">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{displayError}</span>
               </div>
@@ -164,8 +167,8 @@ export function Signup() {
             </Button>
           </form>
 
-          <p className="mt-8 text-center text-sm text-gray-500">
-            <Link to="/" className="text-gray-600 hover:text-gray-900">
+          <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">
+            <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">
               &larr; Back to home
             </Link>
           </p>

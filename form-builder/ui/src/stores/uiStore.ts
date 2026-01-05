@@ -41,35 +41,55 @@ interface UIState {
   setIsMobile: (isMobile: boolean) => void;
   mobilePanel: 'palette' | 'canvas' | 'settings';
   setMobilePanel: (panel: 'palette' | 'canvas' | 'settings') => void;
+
+  // Theme
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
+  setTheme: (theme: 'light' | 'dark') => void;
 }
 
-export const useUIStore = create<UIState>((set) => ({
-  // Sidebar
-  sidebarCollapsed: false,
-  toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+import { persist } from 'zustand/middleware';
 
-  // Modal
-  activeModal: null,
-  modalData: {},
-  openModal: (modal, data = {}) => set({ activeModal: modal, modalData: data }),
-  closeModal: () => set({ activeModal: null, modalData: {} }),
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      // Sidebar
+      sidebarCollapsed: false,
+      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 
-  // Preview
-  isPreviewOpen: false,
-  previewDevice: 'desktop',
-  previewMode: 'focused',
-  setPreviewOpen: (open) => set({ isPreviewOpen: open }),
-  setPreviewDevice: (device) => set({ previewDevice: device }),
-  setPreviewMode: (mode) => set({ previewMode: mode }),
+      // Modal
+      activeModal: null,
+      modalData: {},
+      openModal: (modal, data = {}) => set({ activeModal: modal, modalData: data }),
+      closeModal: () => set({ activeModal: null, modalData: {} }),
 
-  // Builder
-  builderTab: 'fields',
-  setBuilderTab: (tab) => set({ builderTab: tab }),
+      // Preview
+      isPreviewOpen: false,
+      previewDevice: 'desktop',
+      previewMode: 'focused',
+      setPreviewOpen: (open) => set({ isPreviewOpen: open }),
+      setPreviewDevice: (device) => set({ previewDevice: device }),
+      setPreviewMode: (mode) => set({ previewMode: mode }),
 
-  // Mobile
-  isMobile: false,
-  setIsMobile: (isMobile) => set({ isMobile }),
-  mobilePanel: 'canvas',
-  setMobilePanel: (panel) => set({ mobilePanel: panel }),
-}));
+      // Builder
+      builderTab: 'fields',
+      setBuilderTab: (tab) => set({ builderTab: tab }),
+
+      // Mobile
+      isMobile: false,
+      setIsMobile: (isMobile) => set({ isMobile }),
+      mobilePanel: 'canvas',
+      setMobilePanel: (panel) => set({ mobilePanel: panel }),
+
+      // Theme
+      theme: 'dark',
+      toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
+      setTheme: (theme) => set({ theme }),
+    }),
+    {
+      name: 'formlogic-ui-storage',
+      partialize: (state) => ({ theme: state.theme, sidebarCollapsed: state.sidebarCollapsed }),
+    }
+  )
+);

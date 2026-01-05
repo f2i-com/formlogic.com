@@ -93,17 +93,17 @@ export function CalculatedFieldEditor({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <Calculator className="h-5 w-5 text-primary-600" />
-        <h4 className="text-sm font-medium text-gray-700">Calculated Field</h4>
+        <Calculator className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+        <h4 className="text-sm font-medium text-gray-700 dark:text-slate-200">Calculated Field</h4>
       </div>
 
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-gray-500 dark:text-slate-400">
         This field's value will be automatically calculated based on other fields.
       </p>
 
       {/* Available Fields */}
       <div>
-        <p className="text-xs text-gray-500 mb-2">Click to insert variable:</p>
+        <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">Click to insert variable:</p>
         <div className="flex flex-wrap gap-1">
           {availableFields.map((field) => {
             const varName = idToVar[field.id];
@@ -111,7 +111,7 @@ export function CalculatedFieldEditor({
               <button
                 key={field.id}
                 onClick={() => insertFieldReference(field.id)}
-                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200 rounded transition-colors font-mono"
+                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded transition-colors font-mono"
                 title={field.label}
               >
                 {varName}
@@ -133,10 +133,9 @@ price * quantity * (1 + taxRate / 100)`}
         className="font-mono text-sm"
       />
 
-      {/* Quick Reference */}
-      <div className="bg-blue-50 rounded-lg p-3">
-        <h5 className="text-xs font-medium text-blue-800 mb-2">Quick Reference</h5>
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-700">
+      <div className="bg-blue-50 dark:bg-slate-800/50 rounded-lg p-3 border border-blue-100 dark:border-slate-700/50">
+        <h5 className="text-xs font-medium text-blue-800 dark:text-blue-300 mb-2">Quick Reference</h5>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-700 dark:text-slate-400">
           <div><code>+</code> <code>-</code> <code>*</code> <code>/</code> math</div>
           <div><code>sum([a, b, c])</code> sum array</div>
           <div><code>avg([a, b, c])</code> average</div>
@@ -149,10 +148,10 @@ price * quantity * (1 + taxRate / 100)`}
       </div>
 
       {/* Test Panel */}
-      <div className="border border-gray-200 rounded-lg p-4 space-y-3">
-        <h5 className="text-sm font-medium text-gray-700">Test Calculation</h5>
+      <div className="border border-gray-200 dark:border-slate-800 rounded-lg p-4 space-y-3 bg-white dark:bg-slate-900/50">
+        <h5 className="text-sm font-medium text-gray-700 dark:text-slate-200">Test Calculation</h5>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">
+          <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">
             Test Context (JSON) - use variable names as keys
           </label>
           <Textarea
@@ -193,33 +192,33 @@ price * quantity * (1 + taxRate / 100)`}
       </div>
 
       {/* Example Formulas */}
-      <details className="text-sm">
-        <summary className="cursor-pointer text-gray-600 hover:text-gray-800">
+      <details className="text-sm group">
+        <summary className="cursor-pointer text-gray-600 dark:text-slate-400 hover:text-gray-800 dark:hover:text-slate-200">
           <HelpCircle className="h-4 w-4 inline mr-1" />
           Example Formulas
         </summary>
-        <div className="mt-2 space-y-2 text-gray-600 pl-5">
+        <div className="mt-2 space-y-2 text-gray-600 dark:text-slate-400 pl-5">
           <div>
             <strong>Order Total:</strong>
-            <code className="block bg-gray-100 p-2 rounded mt-1 text-xs">
+            <code className="block bg-gray-100 dark:bg-slate-800 p-2 rounded mt-1 text-xs border border-gray-200 dark:border-slate-700">
               {`subtotal + shipping - discount`}
             </code>
           </div>
           <div>
             <strong>Tax Amount:</strong>
-            <code className="block bg-gray-100 p-2 rounded mt-1 text-xs">
+            <code className="block bg-gray-100 dark:bg-slate-800 p-2 rounded mt-1 text-xs border border-gray-200 dark:border-slate-700">
               {`subtotal * (taxRate / 100)`}
             </code>
           </div>
           <div>
             <strong>Percentage:</strong>
-            <code className="block bg-gray-100 p-2 rounded mt-1 text-xs">
+            <code className="block bg-gray-100 dark:bg-slate-800 p-2 rounded mt-1 text-xs border border-gray-200 dark:border-slate-700">
               {`Math.round((completed / total) * 100)`}
             </code>
           </div>
           <div>
             <strong>Conditional:</strong>
-            <code className="block bg-gray-100 p-2 rounded mt-1 text-xs">
+            <code className="block bg-gray-100 dark:bg-slate-800 p-2 rounded mt-1 text-xs border border-gray-200 dark:border-slate-700">
               {`quantity > 10 ? price * 0.9 : price`}
             </code>
           </div>

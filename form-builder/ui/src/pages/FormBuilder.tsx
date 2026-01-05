@@ -103,7 +103,7 @@ function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void })
     <div className="p-4 space-y-6">
       {Object.entries(categories).map(([category, title]) => (
         <div key={category}>
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+          <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-2">
             {title}
           </h3>
           <div className="grid grid-cols-2 gap-2">
@@ -113,10 +113,10 @@ function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void })
                 <button
                   key={field.type}
                   onClick={() => onAddField(field.type)}
-                  className="flex items-center gap-2 p-2 text-left text-sm rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition-colors"
+                  className="flex items-center gap-2 p-2 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
                 >
-                  <IconComponent className="h-4 w-4 text-gray-500" />
-                  <span className="text-gray-700 truncate">{field.label}</span>
+                  <IconComponent className="h-4 w-4 text-gray-500 dark:text-slate-500" />
+                  <span className="text-gray-700 dark:text-slate-300 truncate">{field.label}</span>
                 </button>
               );
             })}
@@ -161,8 +161,8 @@ function SortableFieldCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'group relative bg-white rounded-lg border-2 transition-all',
-        isSelected ? 'border-primary-500 shadow-md' : 'border-gray-200 hover:border-gray-300',
+        'group relative bg-white dark:bg-slate-900 rounded-lg border-2 transition-all',
+        isSelected ? 'border-primary-500 shadow-xl' : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700',
         isDragging && 'opacity-50 shadow-lg'
       )}
     >
@@ -170,29 +170,29 @@ function SortableFieldCard({
         <button
           {...attributes}
           {...listeners}
-          className="mt-1 p-1 text-gray-400 hover:text-gray-600 cursor-grab active:cursor-grabbing"
+          className="mt-1 p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing"
         >
           <GripVertical className="h-4 w-4" />
         </button>
 
         <div className="flex-1 min-w-0" onClick={onSelect}>
           <div className="flex items-center gap-2 mb-1">
-            <IconComponent className="h-4 w-4 text-gray-400" />
-            <span className="text-xs text-gray-500">{fieldInfo.label}</span>
+            <IconComponent className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+            <span className="text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
             {field.required && (
               <span className="text-xs text-red-500">*</span>
             )}
           </div>
-          <p className="font-medium text-gray-900 truncate">{field.label}</p>
+          <p className="font-medium text-gray-900 dark:text-white truncate">{field.label}</p>
           {field.description && (
-            <p className="text-sm text-gray-500 truncate mt-1">{field.description}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-500 truncate mt-1">{field.description}</p>
           )}
         </div>
 
         <button
           onClick={onDelete}
           aria-label="Delete field"
-          className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="p-1 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <Trash2 className="h-4 w-4" />
         </button>
@@ -225,9 +225,9 @@ function FieldSettingsPanel({
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-gray-200">
-        <h3 className="font-medium text-gray-900">Field Settings</h3>
-        <p className="text-sm text-gray-500 mt-1">{FIELD_TYPE_INFO[field.type]?.label}</p>
+      <div className="p-4 border-b border-gray-200 dark:border-slate-700">
+        <h3 className="font-medium text-gray-900 dark:text-white">Field Settings</h3>
+        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">{FIELD_TYPE_INFO[field.type]?.label}</p>
       </div>
 
       {/* Tabs */}
@@ -278,7 +278,7 @@ function FieldSettingsPanel({
           {/* Options for choice fields */}
           {['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type) && (
             <div>
-              <h4 className="font-medium text-gray-900 mb-2">Options</h4>
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Options</h4>
               <div className="space-y-2">
                 {field.properties.options?.map((option, index) => (
                   <div key={option.id} className="flex gap-2">
@@ -331,7 +331,7 @@ function FieldSettingsPanel({
           {/* Rating settings */}
           {field.type === 'rating' && (
             <div>
-              <h4 className="font-medium text-gray-900 mb-2">Rating Settings</h4>
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Rating Settings</h4>
               <Input
                 label="Max Stars"
                 type="number"
@@ -350,7 +350,7 @@ function FieldSettingsPanel({
           {/* Scale settings */}
           {field.type === 'scale' && (
             <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 mb-2">Scale Settings</h4>
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Scale Settings</h4>
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   label="Start"
@@ -413,8 +413,8 @@ function FieldSettingsPanel({
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
           {['statement', 'welcome_screen', 'thank_you', 'calculated'].includes(field.type) ? (
-            <div className="text-center py-8 text-gray-500">
-              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+            <div className="text-center py-8 text-slate-500">
+              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-slate-600" />
               <p>Validation is not applicable for this field type.</p>
             </div>
           ) : (
@@ -431,8 +431,8 @@ function FieldSettingsPanel({
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h4 className="font-medium text-gray-900">Conditional Logic</h4>
-                <p className="text-sm text-gray-500">
+                <h4 className="font-medium text-gray-900 dark:text-white">Conditional Logic</h4>
+                <p className="text-sm text-gray-500 dark:text-slate-500">
                   Show or hide this field based on conditions
                 </p>
               </div>
@@ -561,10 +561,10 @@ export default function FormBuilder() {
 
     const defaultOptions = ['dropdown', 'multiple_choice', 'checkboxes'].includes(type)
       ? [
-          { id: crypto.randomUUID(), label: 'Option 1', value: 'option_1' },
-          { id: crypto.randomUUID(), label: 'Option 2', value: 'option_2' },
-          { id: crypto.randomUUID(), label: 'Option 3', value: 'option_3' },
-        ]
+        { id: crypto.randomUUID(), label: 'Option 1', value: 'option_1' },
+        { id: crypto.randomUUID(), label: 'Option 2', value: 'option_2' },
+        { id: crypto.randomUUID(), label: 'Option 3', value: 'option_3' },
+      ]
       : undefined;
 
     const field = addField(form.id, {
@@ -665,7 +665,7 @@ export default function FormBuilder() {
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">Form not found</p>
+        <p className="text-slate-500">Form not found</p>
       </div>
     );
   }
@@ -718,9 +718,9 @@ export default function FormBuilder() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
+      <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
@@ -739,10 +739,10 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setShowAIGenerator(true)}
             title="Generate with AI"
-            className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200 hover:border-purple-300"
+            className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
           >
-            <Sparkles className="h-4 w-4 text-purple-600" />
-            <span className="hidden lg:inline ml-2 text-purple-700">AI</span>
+            <Sparkles className="h-4 w-4 text-purple-400" />
+            <span className="hidden lg:inline ml-2 text-purple-300">AI</span>
           </Button>
 
           {/* Settings - hidden on smallest screens */}
@@ -824,7 +824,7 @@ export default function FormBuilder() {
 
       {/* Mobile Tabs */}
       {isMobile && (
-        <div className="bg-white border-b border-gray-200 px-4 py-2 flex-shrink-0">
+        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-4 py-2 flex-shrink-0">
           <div className="flex gap-2">
             <Button
               variant={mobilePanel === 'palette' ? 'primary' : 'outline'}
@@ -856,9 +856,9 @@ export default function FormBuilder() {
       <div className="flex-1 flex overflow-hidden">
         {/* Field Palette - Desktop or Mobile when selected */}
         {(!isMobile || mobilePanel === 'palette') && (
-          <aside className="w-full md:w-64 bg-white border-r border-gray-200 overflow-y-auto flex-shrink-0">
-            <div className="p-4 border-b border-gray-200">
-              <h2 className="font-semibold text-gray-900">Add Fields</h2>
+          <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 overflow-y-auto flex-shrink-0">
+            <div className="p-4 border-b border-gray-200 dark:border-slate-800">
+              <h2 className="font-semibold text-gray-900 dark:text-white">Add Fields</h2>
             </div>
             <FieldPalette onAddField={handleAddField} />
           </aside>
@@ -869,9 +869,9 @@ export default function FormBuilder() {
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
             <div className="max-w-2xl mx-auto">
               {form.fields.length === 0 ? (
-                <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-xl">
-                  <Plus className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
+                  <Plus className="h-12 w-12 text-gray-300 dark:text-slate-600 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
                     Add your first field
                   </h3>
                   <p className="text-gray-500 mb-4">
@@ -916,7 +916,7 @@ export default function FormBuilder() {
               {form.fields.length > 0 && (
                 <button
                   onClick={() => setMobilePanel('palette')}
-                  className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2"
+                  className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-500 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2"
                 >
                   <Plus className="h-4 w-4" />
                   Add Field
@@ -928,7 +928,7 @@ export default function FormBuilder() {
 
         {/* Settings Panel - Desktop or Mobile when selected */}
         {(!isMobile || mobilePanel === 'settings') && (
-          <aside className="w-full md:w-80 bg-white border-l border-gray-200 overflow-y-auto flex-shrink-0">
+          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 overflow-y-auto flex-shrink-0">
             {selectedField ? (
               <FieldSettingsPanel
                 field={selectedField}

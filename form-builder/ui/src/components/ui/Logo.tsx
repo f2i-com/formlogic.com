@@ -63,8 +63,8 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
       </svg>
 
       {showText && (
-        <span className={`font-semibold text-gray-900 tracking-tight ${text}`}>
-          Form<span className="text-primary-600">Logic</span>
+        <span className={`font-semibold text-gray-900 dark:text-white tracking-tight ${text}`}>
+          Form<span className="text-primary-600 dark:text-indigo-400">Logic</span>
         </span>
       )}
     </div>

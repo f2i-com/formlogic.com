@@ -54,8 +54,8 @@ function SectionHeader({
   icon: Icon,
   title,
   description,
-  iconBg = 'bg-gray-100',
-  iconColor = 'text-gray-600',
+  iconBg = 'bg-gray-100 dark:bg-slate-800',
+  iconColor = 'text-gray-500 dark:text-slate-400',
 }: {
   icon: React.ElementType;
   title: string;
@@ -69,9 +69,9 @@ function SectionHeader({
         <Icon className={`h-5 w-5 ${iconColor}`} />
       </div>
       <div>
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
         {description && (
-          <p className="text-sm text-gray-500 mt-0.5">{description}</p>
+          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">{description}</p>
         )}
       </div>
     </div>
@@ -128,7 +128,7 @@ export function Settings() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen">
       <Header title="Settings" />
 
       <div className="p-4 sm:p-6 max-w-3xl mx-auto space-y-6">
@@ -139,8 +139,8 @@ export function Settings() {
               icon={User}
               title="Profile"
               description="Manage your personal information"
-              iconBg="bg-indigo-100"
-              iconColor="text-indigo-600"
+              iconBg="bg-indigo-500/10"
+              iconColor="text-indigo-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <Input
@@ -176,18 +176,18 @@ export function Settings() {
               icon={Bell}
               title="Notifications"
               description="Configure how you receive updates"
-              iconBg="bg-blue-100"
-              iconColor="text-blue-600"
+              iconBg="bg-blue-500/10"
+              iconColor="text-blue-400"
             />
             <div className="space-y-1 ml-0 sm:ml-14">
-              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+              <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <Mail className="h-4 w-4 text-gray-600" />
+                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
+                    <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">Email notifications</p>
-                    <p className="text-sm text-gray-500">Receive email notifications for new form responses</p>
+                    <p className="font-medium text-gray-900 dark:text-white">Email notifications</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-500">Receive email notifications for new form responses</p>
                   </div>
                 </div>
                 <Switch
@@ -197,12 +197,12 @@ export function Settings() {
               </div>
               <div className="flex items-center justify-between py-3">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <Calendar className="h-4 w-4 text-gray-600" />
+                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
+                    <Calendar className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">Weekly digest</p>
-                    <p className="text-sm text-gray-500">Get a weekly summary of form activity</p>
+                    <p className="font-medium text-gray-900 dark:text-white">Weekly digest</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-500">Get a weekly summary of form activity</p>
                   </div>
                 </div>
                 <Switch
@@ -221,18 +221,18 @@ export function Settings() {
               icon={Settings2}
               title="Default Form Settings"
               description="Set defaults for new forms you create"
-              iconBg="bg-green-100"
-              iconColor="text-green-600"
+              iconBg="bg-green-500/10"
+              iconColor="text-green-400"
             />
             <div className="space-y-1 ml-0 sm:ml-14">
-              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+              <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <LayoutGrid className="h-4 w-4 text-gray-600" />
+                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
+                    <LayoutGrid className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">Show progress bar</p>
-                    <p className="text-sm text-gray-500">Display progress bar on forms by default</p>
+                    <p className="font-medium text-gray-900 dark:text-white">Show progress bar</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-500">Display progress bar on forms by default</p>
                   </div>
                 </div>
                 <Switch
@@ -242,12 +242,12 @@ export function Settings() {
               </div>
               <div className="flex items-center justify-between py-3">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 rounded-lg">
-                    <ArrowLeft className="h-4 w-4 text-gray-600" />
+                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
+                    <ArrowLeft className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                   </div>
                   <div>
-                    <p className="font-medium text-gray-900">Allow back navigation</p>
-                    <p className="text-sm text-gray-500">Allow respondents to go back to previous questions</p>
+                    <p className="font-medium text-gray-900 dark:text-white">Allow back navigation</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-500">Allow respondents to go back to previous questions</p>
                   </div>
                 </div>
                 <Switch
@@ -266,12 +266,12 @@ export function Settings() {
               icon={Shield}
               title="Security"
               description="Manage your account security"
-              iconBg="bg-purple-100"
-              iconColor="text-purple-600"
+              iconBg="bg-purple-500/10"
+              iconColor="text-purple-400"
             />
             <div className="ml-0 sm:ml-14">
-              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <p className="text-sm text-gray-600">
+              <div className="p-4 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-gray-200 dark:border-slate-800">
+                <p className="text-sm text-gray-500 dark:text-slate-400">
                   Password management and two-factor authentication settings coming soon.
                 </p>
               </div>
@@ -280,19 +280,19 @@ export function Settings() {
         </Card>
 
         {/* Danger Zone */}
-        <Card className="overflow-hidden border-red-200">
+        <Card className="overflow-hidden border-red-500/20">
           <CardContent className="p-6">
             <SectionHeader
               icon={AlertTriangle}
               title="Danger Zone"
               description="Irreversible and destructive actions"
-              iconBg="bg-red-100"
-              iconColor="text-red-600"
+              iconBg="bg-red-500/10"
+              iconColor="text-red-500"
             />
             <div className="ml-0 sm:ml-14">
-              <div className="p-4 bg-red-50 rounded-lg border border-red-200">
-                <h3 className="font-medium text-red-800 mb-1">Delete Account</h3>
-                <p className="text-sm text-red-700 mb-4">
+              <div className="p-4 bg-red-500/5 rounded-lg border border-red-500/20">
+                <h3 className="font-medium text-red-400 mb-1">Delete Account</h3>
+                <p className="text-sm text-red-300/70 mb-4">
                   Once you delete your account, there is no going back. All your forms, responses, and data will be permanently removed.
                 </p>
                 <Button variant="danger" onClick={handleDeleteAccount}>

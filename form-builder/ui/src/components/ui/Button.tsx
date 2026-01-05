@@ -27,21 +27,21 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const variants = {
       primary:
-        'bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 active:bg-primary-800 shadow-sm hover:shadow',
+        'bg-primary-600 text-white hover:bg-primary-700 dark:hover:bg-primary-500 focus:ring-primary-500 active:bg-primary-800 dark:active:bg-primary-700 shadow-md dark:shadow-[0_0_15px_-3px_rgba(99,102,241,0.4)] dark:hover:shadow-[0_0_20px_-3px_rgba(99,102,241,0.5)] border border-transparent',
       secondary:
-        'bg-gray-100 text-gray-900 hover:bg-gray-200 focus:ring-gray-500 active:bg-gray-300',
+        'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-100 hover:bg-gray-50 dark:hover:bg-slate-700 focus:ring-gray-500 dark:focus:ring-slate-500 active:bg-gray-100 dark:active:bg-slate-900 border border-gray-200 dark:border-slate-700',
       outline:
-        'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400 focus:ring-primary-500 active:bg-gray-100',
+        'border border-gray-300 dark:border-slate-700 bg-transparent text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white dark:hover:border-slate-600 focus:ring-primary-500 active:bg-gray-100 dark:active:bg-slate-900',
       ghost:
-        'text-gray-700 hover:bg-gray-100 focus:ring-gray-500 active:bg-gray-200',
+        'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white focus:ring-gray-500 dark:focus:ring-slate-500 active:bg-gray-200 dark:active:bg-slate-900/80',
       danger:
-        'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 active:bg-red-800 shadow-sm hover:shadow',
+        'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-500 border border-red-200 dark:border-red-500/50 hover:bg-red-100 dark:hover:bg-red-500/20 focus:ring-red-500 active:bg-red-200 dark:active:bg-red-500/30 dark:hover:border-red-500',
     };
 
     const sizes = {
-      sm: 'px-3 py-1.5 text-sm gap-1.5',
-      md: 'px-4 py-2 text-sm gap-2',
-      lg: 'px-6 py-3 text-base gap-2.5',
+      sm: 'px-3 py-1.5 text-xs font-medium gap-1.5',
+      md: 'px-4 py-2 text-sm font-medium gap-2',
+      lg: 'px-6 py-3 text-base font-medium gap-2.5',
     };
 
     return (

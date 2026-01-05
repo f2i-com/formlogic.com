@@ -38,7 +38,7 @@ export function LoadingState({ message = 'Loading...', size = 'md', className }:
     <div className={cn('flex flex-col items-center justify-center py-12', className)}>
       <Spinner size={size} />
       {message && (
-        <p className="mt-4 text-sm text-gray-500">{message}</p>
+        <p className="mt-4 text-sm text-gray-500 dark:text-slate-500">{message}</p>
       )}
     </div>
   );

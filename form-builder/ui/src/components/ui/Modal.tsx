@@ -136,29 +136,29 @@ export function Modal({
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.15 }}
             className={cn(
-              'relative w-full bg-white rounded-xl shadow-2xl',
+              'relative w-full bg-white dark:bg-slate-900 rounded-xl shadow-2xl',
               'max-h-[90vh] overflow-hidden flex flex-col',
-              'ring-1 ring-black/5',
+              'ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-slate-800',
               sizes[size]
             )}
           >
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50/50">
+              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
                 <div className="min-w-0 flex-1 pr-2">
                   {title && (
-                    <h2 id="modal-title" className="text-base sm:text-lg font-semibold text-gray-900 truncate">
+                    <h2 id="modal-title" className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
                       {title}
                     </h2>
                   )}
                   {description && (
-                    <p id="modal-description" className="mt-1 text-sm text-gray-500">{description}</p>
+                    <p id="modal-description" className="mt-1 text-sm text-gray-500 dark:text-slate-500">{description}</p>
                   )}
                 </div>
                 {showCloseButton && (
                   <button
                     onClick={onClose}
                     aria-label="Close modal"
-                    className="p-2 -m-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
+                    className="p-2 -m-1 text-gray-400 dark:text-slate-400 hover:text-gray-500 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors flex-shrink-0"
                   >
                     <X className="h-5 w-5" />
                   </button>

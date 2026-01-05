@@ -41,29 +41,29 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
               <Settings className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Form Settings</h2>
-              <p className="text-sm text-gray-500">Configure how your form behaves</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Form Settings</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Configure how your form behaves</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
             aria-label="Close"
           >
-            <X className="h-5 w-5 text-gray-500" />
+            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-6">
+        <div className="flex border-b border-gray-200 dark:border-slate-800 px-6">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -71,8 +71,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
               className={cn(
                 'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
                 activeTab === tab.id
-                  ? 'border-primary-500 text-primary-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
               )}
             >
               {tab.icon}
@@ -87,10 +87,10 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           {activeTab === 'presentation' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Form Layout</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Form Layout</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-gray-600 mb-2">Presentation Mode</label>
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Presentation Mode</label>
                     <div className="grid grid-cols-3 gap-3">
                       {[
                         { value: 'focused', label: 'Focused', desc: 'One question at a time' },
@@ -103,12 +103,12 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                           className={cn(
                             'p-3 rounded-lg border-2 text-left transition-all',
                             editedSettings.presentationMode === mode.value
-                              ? 'border-primary-500 bg-primary-50'
-                              : 'border-gray-200 hover:border-gray-300'
+                              ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                              : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                           )}
                         >
-                          <p className="font-medium text-gray-900 text-sm">{mode.label}</p>
-                          <p className="text-xs text-gray-500">{mode.desc}</p>
+                          <p className="font-medium text-gray-900 dark:text-white text-sm">{mode.label}</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-400">{mode.desc}</p>
                         </button>
                       ))}
                     </div>
@@ -116,11 +116,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
 
                   {editedSettings.presentationMode === 'both' && (
                     <div>
-                      <label className="block text-sm text-gray-600 mb-2">Default Mode</label>
+                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Default Mode</label>
                       <select
                         value={editedSettings.defaultPresentationMode}
                         onChange={(e) => updateSettings({ defaultPresentationMode: e.target.value as 'focused' | 'classic' })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
                       >
                         <option value="focused">Focused (One at a time)</option>
                         <option value="classic">Classic (Scrollable)</option>
@@ -130,8 +130,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Navigation</h3>
+              <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Navigation</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.showProgressBar}
@@ -148,8 +148,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Submit Button</h3>
+              <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Submit Button</h3>
                 <Input
                   label="Button Text"
                   value={editedSettings.submitButtonText}
@@ -164,10 +164,10 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           {activeTab === 'behavior' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 mb-3">After Submission</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">After Submission</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-gray-600 mb-2">
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">
                       <div className="flex items-center gap-2">
                         <Link2 className="h-4 w-4" />
                         Redirect URL (optional)
@@ -178,18 +178,18 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                       onChange={(e) => updateSettings({ redirectUrl: e.target.value || undefined })}
                       placeholder="https://example.com/thank-you"
                     />
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                       Leave empty to show the default thank you screen
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="border-t border-gray-200 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Response Limits</h3>
+              <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Response Limits</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-gray-600 mb-2">Response Quota (optional)</label>
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Response Quota (optional)</label>
                     <Input
                       type="number"
                       min={0}
@@ -197,7 +197,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                       onChange={(e) => updateSettings({ quotaLimit: e.target.value ? parseInt(e.target.value) : undefined })}
                       placeholder="Unlimited"
                     />
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
                       Maximum number of responses to accept
                     </p>
                   </div>
@@ -210,7 +210,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           {activeTab === 'notifications' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Email Notifications</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Email Notifications</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.notifications.emailNotifications}
@@ -235,8 +235,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                 </div>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-700">
+              <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-lg p-4">
+                <p className="text-sm text-blue-700 dark:text-blue-400">
                   Email notifications require a backend email service to be configured.
                 </p>
               </div>
@@ -247,7 +247,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           {activeTab === 'access' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 mb-3">Form Availability</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Form Availability</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.isClosed}
@@ -258,12 +258,12 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
 
                   {editedSettings.isClosed && (
                     <div>
-                      <label className="block text-sm text-gray-600 mb-2">Closed Message</label>
+                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Closed Message</label>
                       <textarea
                         value={editedSettings.closedMessage || ''}
                         onChange={(e) => updateSettings({ closedMessage: e.target.value })}
                         placeholder="This form is no longer accepting responses."
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 min-h-[80px]"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 min-h-[80px]"
                       />
                     </div>
                   )}
@@ -271,8 +271,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
               </div>
 
               {editedSettings.isClosed && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <p className="text-sm text-yellow-700">
+                <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-500/20 rounded-lg p-4">
+                  <p className="text-sm text-yellow-700 dark:text-yellow-400">
                     When closed, visitors will see the closed message instead of the form.
                   </p>
                 </div>
@@ -282,7 +282,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>

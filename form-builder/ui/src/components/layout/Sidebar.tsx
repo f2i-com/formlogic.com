@@ -33,13 +33,13 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 h-full bg-white border-r border-gray-200/80 z-40',
-        'flex flex-col transition-all duration-300 shadow-sm',
+        'fixed left-0 top-0 h-full bg-white dark:bg-slate-900/80 backdrop-blur-md border-r border-gray-200 dark:border-slate-800 z-40',
+        'flex flex-col transition-all duration-300 shadow-xl',
         sidebarCollapsed ? 'w-16' : 'w-64'
       )}
     >
       {/* Logo */}
-      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-100">
+      <div className="h-16 flex items-center justify-center px-4 border-b border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-slate-900/50">
         <Logo size="sm" showText={!sidebarCollapsed} />
       </div>
 
@@ -63,11 +63,11 @@ export function Sidebar() {
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200',
-                'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
+                'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-slate-100',
                 isActive && [
-                  'bg-primary-50 text-primary-700 font-medium',
-                  'border-l-[3px] border-primary-600 -ml-[3px] pl-[calc(0.75rem+3px)]',
-                  'hover:bg-primary-50'
+                  'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400 font-medium',
+                  'border-l-[3px] border-primary-500 -ml-[3px] pl-[calc(0.75rem+3px)]',
+                  'hover:bg-primary-100 dark:hover:bg-primary-500/20'
                 ],
                 sidebarCollapsed && 'justify-center px-0',
                 sidebarCollapsed && isActive && 'ml-0 pl-0 border-l-0'
@@ -78,8 +78,8 @@ export function Sidebar() {
               <>
                 <div className={cn(
                   'flex-shrink-0 p-1 rounded-md transition-colors',
-                  isActive && !sidebarCollapsed && 'bg-primary-100',
-                  sidebarCollapsed && isActive && 'bg-primary-100'
+                  isActive && !sidebarCollapsed && 'bg-primary-100 dark:bg-primary-500/20',
+                  sidebarCollapsed && isActive && 'bg-primary-100 dark:bg-primary-500/20'
                 )}>
                   <item.icon className="h-5 w-5" />
                 </div>
@@ -93,12 +93,12 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse Button */}
-      <div className="p-3 border-t border-gray-100">
+      <div className="p-3 border-t border-gray-200 dark:border-slate-800/80 bg-gray-50 dark:bg-slate-900/30">
         <button
           onClick={toggleSidebar}
           className={cn(
             'flex items-center gap-3 px-3 py-2 w-full rounded-lg',
-            'text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all duration-200',
+            'text-gray-500 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-300 transition-all duration-200',
             sidebarCollapsed && 'justify-center px-0'
           )}
         >

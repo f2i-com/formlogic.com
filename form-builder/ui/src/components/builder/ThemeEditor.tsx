@@ -206,24 +206,24 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
               <Palette className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Theme Customization</h2>
-              <p className="text-sm text-gray-500">Customize your form's appearance</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Theme Customization</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Customize your form's appearance</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
             aria-label="Close"
           >
-            <X className="h-5 w-5 text-gray-500" />
+            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
@@ -231,7 +231,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
           {/* Presets */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Presets</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Presets</h3>
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
               {THEME_PRESETS.map((preset) => (
                 <button
@@ -240,8 +240,8 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                   className={cn(
                     'relative p-2 rounded-lg border-2 transition-all',
                     activePreset === preset.id
-                      ? 'border-primary-500 ring-2 ring-primary-200'
-                      : 'border-gray-200 hover:border-gray-300'
+                      ? 'border-primary-500 ring-2 ring-primary-200 dark:ring-primary-900'
+                      : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                   )}
                 >
                   <div
@@ -257,7 +257,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                       style={{ backgroundColor: preset.preview.primary }}
                     />
                   </div>
-                  <span className="text-xs font-medium text-gray-700">{preset.name}</span>
+                  <span className="text-xs font-medium text-gray-700 dark:text-slate-300">{preset.name}</span>
                 </button>
               ))}
             </div>
@@ -265,22 +265,22 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Colors */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Colors</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Colors</h3>
             <div className="space-y-4">
               {/* Primary Color */}
               <div>
-                <label className="block text-sm text-gray-600 mb-2">Primary Color</label>
+                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Primary Color</label>
                 <div className="flex gap-3">
                   <div className="flex-1 relative">
                     <input
                       type="text"
                       value={editedTheme.primaryColor}
                       onChange={(e) => updateTheme({ primaryColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       placeholder="#6366f1"
                     />
                     <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
                       style={{ backgroundColor: editedTheme.primaryColor }}
                     />
                   </div>
@@ -288,25 +288,25 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                     type="color"
                     value={editedTheme.primaryColor}
                     onChange={(e) => updateTheme({ primaryColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300"
+                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
                   />
                 </div>
               </div>
 
               {/* Background Color */}
               <div>
-                <label className="block text-sm text-gray-600 mb-2">Background Color</label>
+                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Background Color</label>
                 <div className="flex gap-3">
                   <div className="flex-1 relative">
                     <input
                       type="text"
                       value={editedTheme.backgroundColor}
                       onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       placeholder="#ffffff"
                     />
                     <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
                       style={{ backgroundColor: editedTheme.backgroundColor }}
                     />
                   </div>
@@ -314,25 +314,25 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                     type="color"
                     value={editedTheme.backgroundColor}
                     onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300"
+                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
                   />
                 </div>
               </div>
 
               {/* Text Color */}
               <div>
-                <label className="block text-sm text-gray-600 mb-2">Text Color</label>
+                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Text Color</label>
                 <div className="flex gap-3">
                   <div className="flex-1 relative">
                     <input
                       type="text"
                       value={editedTheme.textColor}
                       onChange={(e) => updateTheme({ textColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       placeholder="#1f2937"
                     />
                     <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
                       style={{ backgroundColor: editedTheme.textColor }}
                     />
                   </div>
@@ -340,7 +340,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                     type="color"
                     value={editedTheme.textColor}
                     onChange={(e) => updateTheme({ textColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300"
+                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
                   />
                 </div>
               </div>
@@ -349,13 +349,13 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Typography */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Typography</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Typography</h3>
             <div>
-              <label className="block text-sm text-gray-600 mb-2">Font Family</label>
+              <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Font Family</label>
               <select
                 value={editedTheme.fontFamily}
                 onChange={(e) => updateTheme({ fontFamily: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 style={{ fontFamily: editedTheme.fontFamily }}
               >
                 {FONT_OPTIONS.map((font) => (
@@ -369,9 +369,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Appearance */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Appearance</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Appearance</h3>
             <div>
-              <label className="block text-sm text-gray-600 mb-2">Border Radius</label>
+              <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Border Radius</label>
               <div className="flex gap-3">
                 {BORDER_RADIUS_OPTIONS.map((option) => (
                   <button
@@ -381,8 +381,8 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                       'flex-1 py-2 px-3 border-2 transition-all text-sm',
                       option.class,
                       editedTheme.borderRadius === option.value
-                        ? 'border-primary-500 bg-primary-50 text-primary-700'
-                        : 'border-gray-200 hover:border-gray-300'
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400'
+                        : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
                     )}
                   >
                     {option.label}
@@ -394,9 +394,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Background Image */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Background Image</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Background Image</h3>
             {editedTheme.backgroundImage ? (
-              <div className="relative rounded-lg overflow-hidden border border-gray-200">
+              <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
                 <img
                   src={editedTheme.backgroundImage}
                   alt="Background"
@@ -412,11 +412,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             ) : (
               <button
                 onClick={() => bgInputRef.current?.click()}
-                className="w-full p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex flex-col items-center gap-2"
+                className="w-full p-6 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex flex-col items-center gap-2 group"
               >
-                <Image className="h-8 w-8 text-gray-400" />
-                <span className="text-sm text-gray-500">Upload Background Image</span>
-                <span className="text-xs text-gray-400">PNG, JPG up to 2MB</span>
+                <Image className="h-8 w-8 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
+                <span className="text-sm text-gray-500 dark:text-slate-400">Upload Background Image</span>
+                <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 2MB</span>
               </button>
             )}
             <input
@@ -430,10 +430,10 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Logo */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Logo</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Logo</h3>
             {editedTheme.logo ? (
               <div className="relative inline-block">
-                <div className="p-4 bg-gray-100 rounded-lg border border-gray-200">
+                <div className="p-4 bg-gray-100 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
                   <img
                     src={editedTheme.logo}
                     alt="Logo"
@@ -450,12 +450,12 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             ) : (
               <button
                 onClick={() => logoInputRef.current?.click()}
-                className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400 transition-colors flex items-center gap-3"
+                className="p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 group"
               >
-                <Upload className="h-6 w-6 text-gray-400" />
+                <Upload className="h-6 w-6 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
                 <div className="text-left">
-                  <span className="text-sm text-gray-600 block">Upload Logo</span>
-                  <span className="text-xs text-gray-400">PNG, JPG up to 2MB</span>
+                  <span className="text-sm text-gray-600 dark:text-slate-400 block">Upload Logo</span>
+                  <span className="text-xs text-gray-400 dark:text-slate-500">PNG, JPG up to 2MB</span>
                 </div>
               </button>
             )}
@@ -470,9 +470,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
           {/* Preview */}
           <div>
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Preview</h3>
+            <h3 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">Preview</h3>
             <div
-              className="p-6 rounded-lg border border-gray-200 relative overflow-hidden"
+              className="p-6 rounded-lg border border-gray-200 dark:border-slate-700 relative overflow-hidden"
               style={{
                 backgroundColor: editedTheme.backgroundColor,
                 fontFamily: editedTheme.fontFamily,
@@ -542,7 +542,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-between">
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-between">
           <Button variant="ghost" onClick={handleReset}>
             <RotateCcw className="h-4 w-4 mr-2" />
             Reset

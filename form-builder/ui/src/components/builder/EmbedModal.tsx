@@ -243,10 +243,10 @@ function closeFormPopup() {
           {activeTab === 'link' && (
             <div className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                   Direct Link
                 </label>
-                <p className="text-sm text-gray-500 mb-3">
+                <p className="text-sm text-gray-500 dark:text-slate-400 mb-3">
                   Share this link with anyone to let them fill out your form
                 </p>
                 <div className="flex gap-2">
@@ -254,7 +254,7 @@ function closeFormPopup() {
                     type="text"
                     readOnly
                     value={formUrl}
-                    className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-600"
+                    className="flex-1 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
                   />
                   <Button
                     variant="outline"
@@ -271,9 +271,9 @@ function closeFormPopup() {
                 </div>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">Quick Preview</h4>
-                <div className="bg-white rounded border border-gray-200 p-4 flex items-center justify-center">
+              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Quick Preview</h4>
+                <div className="bg-white rounded border border-gray-200 dark:border-slate-700 p-4 flex items-center justify-center">
                   <div ref={qrRef} className="inline-block">
                     <QRCodeSVG
                       value={formUrl}
@@ -283,7 +283,7 @@ function closeFormPopup() {
                     />
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 mt-2 text-center">
+                <p className="text-xs text-gray-500 dark:text-slate-400 mt-2 text-center">
                   Scan to open form on mobile
                 </p>
               </div>
@@ -295,7 +295,7 @@ function closeFormPopup() {
             <div className="space-y-6">
               {/* Embed Type Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-3">
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
                   Embed Type
                 </label>
                 <div className="grid grid-cols-3 gap-3">
@@ -306,18 +306,18 @@ function closeFormPopup() {
                       className={cn(
                         'p-3 rounded-lg border-2 text-left transition-all',
                         embedType === type.id
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-gray-300'
+                          ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                          : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
                       )}
                     >
                       <div className={cn(
                         'mb-1',
-                        embedType === type.id ? 'text-primary-600' : 'text-gray-400'
+                        embedType === type.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-400 dark:text-slate-500'
                       )}>
                         {type.icon}
                       </div>
-                      <p className="font-medium text-gray-900 text-sm">{type.label}</p>
-                      <p className="text-xs text-gray-500">{type.description}</p>
+                      <p className="font-medium text-gray-900 dark:text-white text-sm">{type.label}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400">{type.description}</p>
                     </button>
                   ))}
                 </div>
@@ -327,13 +327,13 @@ function closeFormPopup() {
               {embedType === 'standard' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                       Width
                     </label>
                     <select
                       value={width}
                       onChange={(e) => setWidth(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
                     >
                       <option value="100%">100% (Full width)</option>
                       <option value="800px">800px</option>
@@ -342,13 +342,13 @@ function closeFormPopup() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
                       Height
                     </label>
                     <select
                       value={height}
                       onChange={(e) => setHeight(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
                     >
                       <option value="400">400px</option>
                       <option value="500">500px</option>
@@ -363,7 +363,7 @@ function closeFormPopup() {
               {/* Embed Code */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300">
                     Embed Code
                   </label>
                   <Button
@@ -384,7 +384,7 @@ function closeFormPopup() {
                     )}
                   </Button>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto max-h-48 overflow-y-auto">
+                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto max-h-48 overflow-y-auto font-mono border border-gray-800">
                   <code>{getEmbedCode()}</code>
                 </pre>
               </div>
@@ -394,7 +394,7 @@ function closeFormPopup() {
           {/* Export Tab */}
           {activeTab === 'export' && (
             <div className="space-y-6">
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-gray-600 dark:text-slate-400">
                 Download your form schema or response data in various formats
               </p>
 
@@ -402,37 +402,37 @@ function closeFormPopup() {
                 <button
                   onClick={handleExportJson}
                   disabled={exporting === 'json'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 rounded-xl border-2 border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition-all group"
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group"
                 >
-                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center mb-3 group-hover:bg-blue-200 transition-colors">
-                    <FileJson className="h-6 w-6 text-blue-600" />
+                  <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/40 transition-colors">
+                    <FileJson className="h-6 w-6 text-blue-600 dark:text-blue-400" />
                   </div>
-                  <span className="font-medium text-gray-900">JSON Schema</span>
-                  <span className="text-xs text-gray-500 mt-1">Form structure + responses</span>
+                  <span className="font-medium text-gray-900 dark:text-white">JSON Schema</span>
+                  <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Form structure + responses</span>
                   {exporting === 'json' && (
-                    <span className="text-xs text-primary-600 mt-2">Downloading...</span>
+                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading...</span>
                   )}
                 </button>
 
                 <button
                   onClick={handleExportCsv}
                   disabled={exporting === 'csv'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 rounded-xl border-2 border-gray-200 hover:border-primary-300 hover:bg-primary-50 transition-all group"
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group"
                 >
-                  <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-200 transition-colors">
-                    <FileSpreadsheet className="h-6 w-6 text-green-600" />
+                  <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-200 dark:group-hover:bg-green-800/40 transition-colors">
+                    <FileSpreadsheet className="h-6 w-6 text-green-600 dark:text-green-400" />
                   </div>
-                  <span className="font-medium text-gray-900">CSV Data</span>
-                  <span className="text-xs text-gray-500 mt-1">Responses spreadsheet</span>
+                  <span className="font-medium text-gray-900 dark:text-white">CSV Data</span>
+                  <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Responses spreadsheet</span>
                   {exporting === 'csv' && (
-                    <span className="text-xs text-primary-600 mt-2">Downloading...</span>
+                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading...</span>
                   )}
                 </button>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-blue-900 mb-1">Need more export options?</h4>
-                <p className="text-sm text-blue-700">
+              <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-blue-900 dark:text-blue-300 mb-1">Need more export options?</h4>
+                <p className="text-sm text-blue-700 dark:text-blue-400">
                   Visit the Analytics page for SQLite database exports and detailed response data.
                 </p>
               </div>

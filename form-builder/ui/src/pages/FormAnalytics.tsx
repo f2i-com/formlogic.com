@@ -200,7 +200,7 @@ export default function FormAnalytics() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
         <EmptyState
           icon={Inbox}
           title="Form not found"
@@ -218,9 +218,9 @@ export default function FormAnalytics() {
   // Process daily responses for chart
   const dailyResponses: DailyResponse[] = analytics?.responsesByDate
     ? analytics.responsesByDate.slice(-7).map(item => ({
-        day: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
-        count: item.count,
-      }))
+      day: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
+      count: item.count,
+    }))
     : localAnalytics.dailyResponses;
 
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
@@ -301,7 +301,7 @@ export default function FormAnalytics() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 transition-colors">
       <Header
         title={`${form.title} - Analytics`}
         actions={
@@ -333,26 +333,26 @@ export default function FormAnalytics() {
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
-                <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg border border-gray-200 py-1 z-50">
+                <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-md shadow-lg border border-gray-200 dark:border-slate-800 py-1 z-50">
                   <button
                     onClick={handleExportCSV}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
                   >
-                    <Download className="h-4 w-4 text-purple-600" />
+                    <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
                     Export CSV
                   </button>
                   <button
                     onClick={handleExportJson}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
                   >
-                    <FileJson className="h-4 w-4 text-green-600" />
+                    <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
                     Export JSON
                   </button>
                   <button
                     onClick={handleExportSqlite}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-100 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
                   >
-                    <Database className="h-4 w-4 text-blue-600" />
+                    <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
                     Download SQLite
                   </button>
                 </div>
@@ -367,54 +367,54 @@ export default function FormAnalytics() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
           <Card>
             <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-blue-100 rounded-lg flex-shrink-0">
-                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-600" />
+              <div className="p-2 sm:p-3 bg-blue-500/10 rounded-lg flex-shrink-0">
+                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">{totalResponses}</p>
-                <p className="text-xs sm:text-sm text-gray-500 truncate">Responses</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{totalResponses}</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Responses</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-green-100 rounded-lg flex-shrink-0">
-                <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 text-green-600" />
+              <div className="p-2 sm:p-3 bg-green-500/10 rounded-lg flex-shrink-0">
+                <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 text-green-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">{completionRate}%</p>
-                <p className="text-xs sm:text-sm text-gray-500 truncate">Completion</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{completionRate}%</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Completion</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-purple-100 rounded-lg flex-shrink-0">
-                <Clock className="h-5 w-5 sm:h-6 sm:w-6 text-purple-600" />
+              <div className="p-2 sm:p-3 bg-purple-500/10 rounded-lg flex-shrink-0">
+                <Clock className="h-5 w-5 sm:h-6 sm:w-6 text-purple-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">
                   {avgCompletionTime > 60
                     ? `${Math.floor(avgCompletionTime / 60)}m`
                     : `${avgCompletionTime}s`}
                 </p>
-                <p className="text-xs sm:text-sm text-gray-500 truncate">Avg. Time</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Avg. Time</p>
               </div>
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-orange-100 rounded-lg flex-shrink-0">
-                <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-600" />
+              <div className="p-2 sm:p-3 bg-orange-500/10 rounded-lg flex-shrink-0">
+                <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-500" />
               </div>
               <div className="min-w-0">
-                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
                   {weeklyChange >= 0 ? '+' : ''}{weeklyChange}%
                 </p>
-                <p className="text-xs sm:text-sm text-gray-500 truncate">This Week</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">This Week</p>
               </div>
             </CardContent>
           </Card>
@@ -423,17 +423,17 @@ export default function FormAnalytics() {
         {/* Chart */}
         <Card>
           <CardHeader>
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Responses Over Time</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white transition-colors">Responses Over Time</h2>
           </CardHeader>
           <CardContent>
             <div className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2">
               {dailyResponses.map((day) => (
                 <div key={day.day} className="flex-1 flex flex-col items-center gap-1 sm:gap-2">
                   <div
-                    className="w-full bg-primary-500 rounded-t-lg transition-all hover:bg-primary-600 min-h-[4px]"
+                    className="w-full bg-primary-600 rounded-t-lg transition-all hover:bg-primary-500 min-h-[4px]"
                     style={{ height: `${Math.max((day.count / maxCount) * 100, 2)}%` }}
                   />
-                  <span className="text-xs sm:text-sm text-gray-500">{day.day.slice(0, 1)}</span>
+                  <span className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 transition-colors">{day.day.slice(0, 1)}</span>
                 </div>
               ))}
             </div>
@@ -444,8 +444,8 @@ export default function FormAnalytics() {
         {Object.keys(fieldBreakdown).length > 0 && (
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
-              <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-600" />
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Field Breakdown</h2>
+              <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-500" />
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white transition-colors">Field Breakdown</h2>
             </CardHeader>
             <CardContent>
               <div className="space-y-6 sm:space-y-8">
@@ -453,25 +453,25 @@ export default function FormAnalytics() {
                   <div key={fieldId}>
                     <div className="flex items-center gap-2 mb-2 sm:mb-3">
                       {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500" />}
-                      <h3 className="font-medium text-gray-900 text-sm sm:text-base">{breakdown.label}</h3>
+                      <h3 className="font-medium text-gray-900 dark:text-white text-sm sm:text-base transition-colors">{breakdown.label}</h3>
                     </div>
                     <div className="space-y-2">
                       {breakdown.data.map((item, index) => {
                         const maxPercentage = Math.max(...breakdown.data.map((d) => d.percentage), 1);
                         return (
                           <div key={index} className="flex items-center gap-2 sm:gap-3">
-                            <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-700 truncate flex-shrink-0" title={item.label}>
+                            <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate flex-shrink-0 transition-colors" title={item.label}>
                               {item.label}
                             </div>
-                            <div className="flex-1 h-5 sm:h-6 bg-gray-100 rounded-full overflow-hidden">
+                            <div className="flex-1 h-5 sm:h-6 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
                               <div
-                                className="h-full bg-primary-500 rounded-full transition-all"
+                                className="h-full bg-primary-600 rounded-full transition-all"
                                 style={{ width: `${(item.percentage / maxPercentage) * 100}%` }}
                               />
                             </div>
                             <div className="w-16 sm:w-20 text-right flex-shrink-0">
-                              <span className="text-xs sm:text-sm font-medium text-gray-900">{item.percentage}%</span>
-                              <span className="text-xs text-gray-500 ml-1 hidden sm:inline">({item.count})</span>
+                              <span className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white transition-colors">{item.percentage}%</span>
+                              <span className="text-xs text-gray-500 dark:text-slate-500 ml-1 hidden sm:inline transition-colors">({item.count})</span>
                             </div>
                           </div>
                         );
@@ -487,7 +487,7 @@ export default function FormAnalytics() {
         {/* Recent Responses */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">Recent Responses</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">Recent Responses</h2>
             <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)}>
               View All
             </Button>
@@ -508,12 +508,12 @@ export default function FormAnalytics() {
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">ID</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Submitted</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Time</th>
+                    <tr className="border-b border-gray-200 dark:border-slate-800">
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">ID</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Submitted</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Time</th>
                       {form.fields.slice(0, 3).map((field) => (
-                        <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500">
+                        <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">
                           {field.label}
                         </th>
                       ))}
@@ -521,18 +521,18 @@ export default function FormAnalytics() {
                   </thead>
                   <tbody>
                     {localResponses.slice(0, 10).map((response) => (
-                      <tr key={response.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="py-3 px-4 text-sm text-gray-900 font-mono">
+                      <tr key={response.id} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">
                           #{response.id.slice(0, 8)}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-600">
+                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {formatDate(response.submittedAt)}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-600">
+                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {Math.round(response.completionTime / 1000)}s
                         </td>
                         {form.fields.slice(0, 3).map((field) => (
-                          <td key={field.id} className="py-3 px-4 text-sm text-gray-600 truncate max-w-xs">
+                          <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs">
                             {String(response.answers[field.id] || '-')}
                           </td>
                         ))}

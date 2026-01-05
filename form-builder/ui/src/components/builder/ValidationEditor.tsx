@@ -123,7 +123,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-medium text-gray-700">Validation Rules</h4>
+        <h4 className="text-sm font-medium text-gray-700 dark:text-slate-200">Validation Rules</h4>
         <Dropdown
           options={options.map((o) => ({ value: o.label, label: o.label }))}
           value=""
@@ -134,7 +134,7 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
       </div>
 
       {rules.length === 0 ? (
-        <p className="text-sm text-gray-500 text-center py-4">
+        <p className="text-sm text-gray-500 dark:text-slate-400 text-center py-4">
           No validation rules. Add a rule to validate field input.
         </p>
       ) : (
@@ -142,18 +142,18 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
           {rules.map((rule) => (
             <div
               key={rule.id}
-              className="border border-gray-200 rounded-lg overflow-hidden"
+              className="border border-gray-200 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-900"
             >
               {/* Rule Header */}
               <div
                 className={cn(
-                  'flex items-center justify-between p-3 bg-gray-50 cursor-pointer',
-                  expandedRuleId === rule.id && 'border-b border-gray-200'
+                  'flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800/50 cursor-pointer',
+                  expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-800'
                 )}
                 onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700">
+                  <span className="text-sm font-medium text-gray-700 dark:text-slate-200">
                     {getRuleLabel(rule)}
                   </span>
                 </div>
@@ -212,7 +212,7 @@ return null;`}
                       />
 
                       {/* Test Expression */}
-                      <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                      <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-3 space-y-2 border border-gray-200 dark:border-slate-800">
                         <div className="flex gap-2">
                           <Input
                             placeholder="Test value"

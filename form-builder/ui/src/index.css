@@ -1,20 +1,29 @@
 @import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
     --ring: 221.2 83.2% 53.3%;
-    --color-border: theme(colors.gray.200);
+    --color-border: theme(colors.slate.800);
   }
 
   body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+    @apply bg-gray-50 text-gray-900 dark:bg-slate-950 dark:text-slate-50 antialiased;
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Dark mode specific background */
+  :root.dark body {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 24px 24px;
   }
 
   /* Smoother scrolling */
@@ -35,10 +44,15 @@
 }
 
 @layer utilities {
+
   /* Thin scrollbar */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+    scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
+  }
+
+  :root.dark .scrollbar-thin {
+    scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -51,12 +65,20 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: rgba(0, 0, 0, 0.2);
+    background-color: rgba(0, 0, 0, 0.1);
     border-radius: 3px;
   }
 
+  :root.dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: rgba(0, 0, 0, 0.3);
+    background-color: rgba(0, 0, 0, 0.2);
+  }
+
+  :root.dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.2);
   }
 
   /* Hide scrollbar but keep functionality */
@@ -83,6 +105,7 @@
       transform: translateX(100%);
       opacity: 0;
     }
+
     to {
       transform: translateX(0);
       opacity: 1;
@@ -94,6 +117,7 @@
       transform: translateX(0);
       opacity: 1;
     }
+
     to {
       transform: translateX(100%);
       opacity: 0;
@@ -114,6 +138,7 @@
       opacity: var(--tw-enter-opacity, 0);
       transform: var(--tw-enter-translate, translateY(0)) var(--tw-enter-scale, scale(1));
     }
+
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
@@ -130,6 +155,7 @@
       opacity: 0;
       transform: scale(0.95);
     }
+
     to {
       opacity: 1;
       transform: scale(1);
@@ -142,9 +168,12 @@
   }
 
   @keyframes pulse-subtle {
-    0%, 100% {
+
+    0%,
+    100% {
       opacity: 1;
     }
+
     50% {
       opacity: 0.7;
     }
@@ -152,22 +181,22 @@
 
   /* Text gradient utility */
   .text-gradient {
-    @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-primary-400 dark:to-primary-600 bg-clip-text text-transparent;
   }
 
   /* Glass effect */
   .glass {
-    @apply bg-white/80 backdrop-blur-md;
+    @apply bg-white/70 dark:bg-slate-900/70 backdrop-blur-md border border-gray-200 dark:border-white/5;
   }
 
   /* Card hover effect */
   .card-hover {
-    @apply transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;
+    @apply transition-all duration-200 hover:shadow-lg hover:shadow-primary-500/10 hover:-translate-y-0.5 hover:border-primary-500/20;
   }
 
   /* Focus ring utility */
   .focus-ring {
-    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 focus:ring-offset-white dark:focus:ring-offset-slate-950;
   }
 
   /* Shake animation for errors */
@@ -176,10 +205,27 @@
   }
 
   @keyframes shake {
-    10%, 90% { transform: translateX(-1px); }
-    20%, 80% { transform: translateX(2px); }
-    30%, 50%, 70% { transform: translateX(-3px); }
-    40%, 60% { transform: translateX(3px); }
+
+    10%,
+    90% {
+      transform: translateX(-1px);
+    }
+
+    20%,
+    80% {
+      transform: translateX(2px);
+    }
+
+    30%,
+    50%,
+    70% {
+      transform: translateX(-3px);
+    }
+
+    40%,
+    60% {
+      transform: translateX(3px);
+    }
   }
 
   /* Safe area for mobile devices with notches */

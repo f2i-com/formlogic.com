@@ -594,9 +594,9 @@ export default function FormPreview() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
       {/* Header */}
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0">
+      <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-4 flex-shrink-0 transition-colors duration-300">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate(`/builder/${form.id}`)}>
             <ArrowLeft className="h-4 w-4 sm:mr-2" />
@@ -606,12 +606,14 @@ export default function FormPreview() {
 
         <div className="flex items-center gap-2">
           {/* Device toggle - hidden on mobile since it's responsive anyway */}
-          <div className="hidden md:flex items-center bg-gray-100 rounded-lg p-1">
+          <div className="hidden md:flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-1 transition-colors duration-300">
             <button
               onClick={() => setPreviewDevice('desktop')}
               className={cn(
-                'p-2 rounded-md transition-colors',
-                previewDevice === 'desktop' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                'p-2 rounded-md transition-all duration-200',
+                previewDevice === 'desktop'
+                  ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
+                  : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
               )}
             >
               <Monitor className="h-4 w-4" />
@@ -619,8 +621,10 @@ export default function FormPreview() {
             <button
               onClick={() => setPreviewDevice('mobile')}
               className={cn(
-                'p-2 rounded-md transition-colors',
-                previewDevice === 'mobile' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                'p-2 rounded-md transition-all duration-200',
+                previewDevice === 'mobile'
+                  ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
+                  : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
               )}
             >
               <Smartphone className="h-4 w-4" />
@@ -628,12 +632,14 @@ export default function FormPreview() {
           </div>
 
           {/* Mode toggle - simplified on mobile */}
-          <div className="flex items-center bg-gray-100 rounded-lg p-1">
+          <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-1 transition-colors duration-300">
             <button
               onClick={() => setPreviewMode('focused')}
               className={cn(
-                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-colors',
-                previewMode === 'focused' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200',
+                previewMode === 'focused'
+                  ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
+                  : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
               )}
             >
               Focused
@@ -641,8 +647,10 @@ export default function FormPreview() {
             <button
               onClick={() => setPreviewMode('classic')}
               className={cn(
-                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-colors',
-                previewMode === 'classic' ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200',
+                previewMode === 'classic'
+                  ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
+                  : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
               )}
             >
               Classic
