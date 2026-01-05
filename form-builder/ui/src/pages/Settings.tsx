@@ -1,11 +1,22 @@
 import { useState, useEffect } from 'react';
 import { Header } from '../components/layout/Header';
-import { Card, CardContent, CardHeader } from '../components/ui/Card';
+import { Card, CardContent } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
+import {
+  User,
+  Bell,
+  Settings2,
+  AlertTriangle,
+  Mail,
+  Calendar,
+  LayoutGrid,
+  ArrowLeft,
+  Shield,
+} from 'lucide-react';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -36,6 +47,35 @@ function getStoredPreferences(): UserPreferences {
 
 function savePreferences(prefs: UserPreferences): void {
   localStorage.setItem('formlogic_user_preferences', JSON.stringify(prefs));
+}
+
+// Section Header Component
+function SectionHeader({
+  icon: Icon,
+  title,
+  description,
+  iconBg = 'bg-gray-100',
+  iconColor = 'text-gray-600',
+}: {
+  icon: React.ElementType;
+  title: string;
+  description?: string;
+  iconBg?: string;
+  iconColor?: string;
+}) {
+  return (
+    <div className="flex items-start gap-4 mb-6">
+      <div className={`p-2.5 rounded-lg ${iconBg}`}>
+        <Icon className={`h-5 w-5 ${iconColor}`} />
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        {description && (
+          <p className="text-sm text-gray-500 mt-0.5">{description}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function Settings() {
@@ -84,99 +124,182 @@ export function Settings() {
   };
 
   const handleDeleteAccount = () => {
-    // For now, just show a confirmation message
-    // In production, this would call an API endpoint
     toast.warning('Not Implemented', 'Account deletion is not yet available. Contact support for assistance.');
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gray-50">
       <Header title="Settings" />
 
-      <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <div className="p-4 sm:p-6 max-w-3xl mx-auto space-y-6">
         {/* Profile Settings */}
-        <Card>
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">Profile</h2>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Input
-              label="Name"
-              placeholder="Your name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={User}
+              title="Profile"
+              description="Manage your personal information"
+              iconBg="bg-indigo-100"
+              iconColor="text-indigo-600"
             />
-            <Input
-              label="Email"
-              type="email"
-              placeholder="your@email.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Button
-              onClick={handleSaveProfile}
-              disabled={!hasProfileChanges || isLoading}
-              isLoading={isLoading}
-            >
-              {hasProfileChanges ? 'Save Changes' : 'No Changes'}
-            </Button>
+            <div className="space-y-4 ml-0 sm:ml-14">
+              <Input
+                label="Name"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <Input
+                label="Email"
+                type="email"
+                placeholder="your@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <div className="pt-2">
+                <Button
+                  onClick={handleSaveProfile}
+                  disabled={!hasProfileChanges || isLoading}
+                  isLoading={isLoading}
+                >
+                  {hasProfileChanges ? 'Save Changes' : 'No Changes'}
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         {/* Notification Settings */}
-        <Card>
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">Notifications</h2>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Switch
-              checked={preferences.emailNotifications}
-              onChange={(checked) => handlePreferenceChange('emailNotifications', checked)}
-              label="Email notifications"
-              description="Receive email notifications for new form responses"
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Bell}
+              title="Notifications"
+              description="Configure how you receive updates"
+              iconBg="bg-blue-100"
+              iconColor="text-blue-600"
             />
-            <Switch
-              checked={preferences.weeklyDigest}
-              onChange={(checked) => handlePreferenceChange('weeklyDigest', checked)}
-              label="Weekly digest"
-              description="Get a weekly summary of form activity"
-            />
+            <div className="space-y-1 ml-0 sm:ml-14">
+              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <Mail className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">Email notifications</p>
+                    <p className="text-sm text-gray-500">Receive email notifications for new form responses</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={preferences.emailNotifications}
+                  onChange={(checked) => handlePreferenceChange('emailNotifications', checked)}
+                />
+              </div>
+              <div className="flex items-center justify-between py-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <Calendar className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">Weekly digest</p>
+                    <p className="text-sm text-gray-500">Get a weekly summary of form activity</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={preferences.weeklyDigest}
+                  onChange={(checked) => handlePreferenceChange('weeklyDigest', checked)}
+                />
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         {/* Default Form Settings */}
-        <Card>
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">Default Form Settings</h2>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Switch
-              checked={preferences.showProgressBar}
-              onChange={(checked) => handlePreferenceChange('showProgressBar', checked)}
-              label="Show progress bar"
-              description="Display progress bar on forms by default"
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Settings2}
+              title="Default Form Settings"
+              description="Set defaults for new forms you create"
+              iconBg="bg-green-100"
+              iconColor="text-green-600"
             />
-            <Switch
-              checked={preferences.allowBackNavigation}
-              onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
-              label="Allow back navigation"
-              description="Allow respondents to go back to previous questions"
+            <div className="space-y-1 ml-0 sm:ml-14">
+              <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <LayoutGrid className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">Show progress bar</p>
+                    <p className="text-sm text-gray-500">Display progress bar on forms by default</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={preferences.showProgressBar}
+                  onChange={(checked) => handlePreferenceChange('showProgressBar', checked)}
+                />
+              </div>
+              <div className="flex items-center justify-between py-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-gray-100 rounded-lg">
+                    <ArrowLeft className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">Allow back navigation</p>
+                    <p className="text-sm text-gray-500">Allow respondents to go back to previous questions</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={preferences.allowBackNavigation}
+                  onChange={(checked) => handlePreferenceChange('allowBackNavigation', checked)}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Security Section */}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Shield}
+              title="Security"
+              description="Manage your account security"
+              iconBg="bg-purple-100"
+              iconColor="text-purple-600"
             />
+            <div className="ml-0 sm:ml-14">
+              <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-sm text-gray-600">
+                  Password management and two-factor authentication settings coming soon.
+                </p>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         {/* Danger Zone */}
-        <Card className="border-red-200">
-          <CardHeader>
-            <h2 className="text-lg font-semibold text-red-600">Danger Zone</h2>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-600 mb-4">
-              Once you delete your account, there is no going back. Please be certain.
-            </p>
-            <Button variant="danger" onClick={handleDeleteAccount}>
-              Delete Account
-            </Button>
+        <Card className="overflow-hidden border-red-200">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={AlertTriangle}
+              title="Danger Zone"
+              description="Irreversible and destructive actions"
+              iconBg="bg-red-100"
+              iconColor="text-red-600"
+            />
+            <div className="ml-0 sm:ml-14">
+              <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                <h3 className="font-medium text-red-800 mb-1">Delete Account</h3>
+                <p className="text-sm text-red-700 mb-4">
+                  Once you delete your account, there is no going back. All your forms, responses, and data will be permanently removed.
+                </p>
+                <Button variant="danger" onClick={handleDeleteAccount}>
+                  Delete Account
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

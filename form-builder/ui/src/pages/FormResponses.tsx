@@ -9,17 +9,22 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
-  X,
   Check,
   AlertTriangle,
   Calendar,
   Clock,
-  Filter,
+  Inbox,
   Share2,
+  Users,
+  CalendarDays,
+  Timer,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
+import { Spinner } from '../components/ui/Spinner';
+import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
@@ -34,6 +39,37 @@ interface ResponseWithStatus extends FormResponse {
   status?: string;
   tags?: string[];
   computed?: Record<string, unknown>;
+}
+
+// Stats card component for consistency
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  iconBg,
+  iconColor,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string | number;
+  iconBg: string;
+  iconColor: string;
+}) {
+  return (
+    <Card className="hover:shadow-md transition-shadow">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-3">
+          <div className={cn('p-2.5 rounded-lg', iconBg)}>
+            <Icon className={cn('h-5 w-5', iconColor)} />
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-gray-900">{value}</p>
+            <p className="text-sm text-gray-500">{label}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function FormResponses() {
@@ -105,6 +141,20 @@ export function FormResponses() {
       .slice(0, 4);
   }, [form]);
 
+  // Calculate stats
+  const stats = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const today = new Date().toDateString();
+
+    const thisWeek = responses.filter((r) => new Date(r.submittedAt).getTime() > weekAgo).length;
+    const todayCount = responses.filter((r) => new Date(r.submittedAt).toDateString() === today).length;
+    const avgTime = responses.length > 0
+      ? responses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / responses.length
+      : 0;
+
+    return { total: responses.length, thisWeek, todayCount, avgTime };
+  }, [responses]);
+
   // Filter and sort responses
   const filteredResponses = useMemo(() => {
     let filtered = responses;
@@ -113,10 +163,8 @@ export function FormResponses() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter((response) => {
-        // Search in answers
         const answersStr = JSON.stringify(response.answers).toLowerCase();
         if (answersStr.includes(query)) return true;
-        // Search in ID
         if (response.id.toLowerCase().includes(query)) return true;
         return false;
       });
@@ -175,16 +223,13 @@ export function FormResponses() {
           toast.error('Failed to update response', result.error);
           return;
         }
-        // Update local state
         setResponses((prev) =>
           prev.map((r) =>
             r.id === selectedResponse.id ? { ...r, answers: editedAnswers } : r
           )
         );
       } else {
-        // Local storage update
         updateLocalResponse(selectedResponse.id, editedAnswers);
-        // Update local state
         setResponses((prev) =>
           prev.map((r) =>
             r.id === selectedResponse.id ? { ...r, answers: editedAnswers } : r
@@ -293,19 +338,21 @@ export function FormResponses() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Spinner size="lg" />
       </div>
     );
   }
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Form not found</h2>
-          <Button onClick={() => navigate('/')}>Go to Dashboard</Button>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <EmptyState
+          icon={Inbox}
+          title="Form not found"
+          description="The form you're looking for doesn't exist or has been deleted."
+          action={<Button onClick={() => navigate('/')}>Go to Dashboard</Button>}
+        />
       </div>
     );
   }
@@ -335,46 +382,34 @@ export function FormResponses() {
       <div className="p-4 sm:p-6 max-w-7xl mx-auto">
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-sm text-gray-500">Total Responses</p>
-              <p className="text-2xl font-bold text-gray-900">{responses.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-sm text-gray-500">This Week</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {responses.filter((r) => {
-                  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-                  return new Date(r.submittedAt).getTime() > weekAgo;
-                }).length}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-sm text-gray-500">Today</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {responses.filter((r) => {
-                  const today = new Date().toDateString();
-                  return new Date(r.submittedAt).toDateString() === today;
-                }).length}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <p className="text-sm text-gray-500">Avg. Time</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {responses.length > 0
-                  ? formatDuration(
-                      responses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / responses.length
-                    )
-                  : '-'}
-              </p>
-            </CardContent>
-          </Card>
+          <StatCard
+            icon={Users}
+            label="Total Responses"
+            value={stats.total}
+            iconBg="bg-indigo-100"
+            iconColor="text-indigo-600"
+          />
+          <StatCard
+            icon={CalendarDays}
+            label="This Week"
+            value={stats.thisWeek}
+            iconBg="bg-green-100"
+            iconColor="text-green-600"
+          />
+          <StatCard
+            icon={Calendar}
+            label="Today"
+            value={stats.todayCount}
+            iconBg="bg-blue-100"
+            iconColor="text-blue-600"
+          />
+          <StatCard
+            icon={Timer}
+            label="Avg. Time"
+            value={formatDuration(stats.avgTime)}
+            iconBg="bg-amber-100"
+            iconColor="text-amber-600"
+          />
         </div>
 
         {/* Filters */}
@@ -390,7 +425,7 @@ export function FormResponses() {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors"
               />
             </div>
           </div>
@@ -398,9 +433,9 @@ export function FormResponses() {
             <button
               onClick={() => toggleSort('submittedAt')}
               className={cn(
-                'px-3 py-2 text-sm rounded-lg border transition-colors flex items-center gap-2',
+                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
                 sortField === 'submittedAt'
-                  ? 'bg-primary-50 border-primary-200 text-primary-700'
+                  ? 'bg-primary-50 border-primary-300 text-primary-700 shadow-sm'
                   : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
               )}
             >
@@ -410,9 +445,9 @@ export function FormResponses() {
             <button
               onClick={() => toggleSort('completionTime')}
               className={cn(
-                'px-3 py-2 text-sm rounded-lg border transition-colors flex items-center gap-2',
+                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
                 sortField === 'completionTime'
-                  ? 'bg-primary-50 border-primary-200 text-primary-700'
+                  ? 'bg-primary-50 border-primary-300 text-primary-700 shadow-sm'
                   : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
               )}
             >
@@ -425,45 +460,44 @@ export function FormResponses() {
         {/* Responses Table */}
         {responses.length === 0 ? (
           <Card>
-            <CardContent className="p-12 text-center">
-              <div className="text-gray-400 mb-4">
-                <Filter className="h-12 w-12 mx-auto" />
-              </div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No responses yet</h3>
-              <p className="text-gray-500 mb-4">
-                Share your form to start collecting responses
-              </p>
-              <Button onClick={() => navigate(`/builder/${formId}`)}>Go to Builder</Button>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={Inbox}
+                title="No responses yet"
+                description="Share your form to start collecting responses"
+                action={<Button onClick={() => navigate(`/builder/${formId}`)}>Go to Builder</Button>}
+              />
             </CardContent>
           </Card>
         ) : (
-          <Card>
+          <Card className="overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Date
                     </th>
                     {displayFields.map((field) => (
                       <th
                         key={field.id}
-                        className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell"
+                        className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider hidden sm:table-cell"
+                        title={field.label}
                       >
-                        {field.label}
+                        <span className="truncate block max-w-[150px]">{field.label}</span>
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Time
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">
                       Actions
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-gray-200 bg-white">
                   {paginatedResponses.map((response) => (
-                    <tr key={response.id} className="hover:bg-gray-50">
+                    <tr key={response.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900">
                         {formatDate(response.submittedAt)}
                       </td>
@@ -471,6 +505,7 @@ export function FormResponses() {
                         <td
                           key={field.id}
                           className="px-4 py-4 text-sm text-gray-600 max-w-[200px] truncate hidden sm:table-cell"
+                          title={formatValue(response.answers[field.id])}
                         >
                           {formatValue(response.answers[field.id])}
                         </td>
@@ -511,11 +546,11 @@ export function FormResponses() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between">
-                <p className="text-sm text-gray-500">
-                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{' '}
-                  {Math.min(currentPage * ITEMS_PER_PAGE, filteredResponses.length)} of{' '}
-                  {filteredResponses.length} responses
+              <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+                <p className="text-sm text-gray-600">
+                  Showing <span className="font-medium">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
+                  <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, filteredResponses.length)}</span> of{' '}
+                  <span className="font-medium">{filteredResponses.length}</span> responses
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -526,7 +561,7 @@ export function FormResponses() {
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <span className="px-3 py-1 text-sm text-gray-700">
+                  <span className="px-3 py-1.5 text-sm text-gray-700 font-medium bg-white border border-gray-300 rounded-lg">
                     {currentPage} / {totalPages}
                   </span>
                   <Button
@@ -545,60 +580,52 @@ export function FormResponses() {
       </div>
 
       {/* View Modal */}
-      {isViewModalOpen && selectedResponse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Response Details</h2>
-                <p className="text-sm text-gray-500">
-                  Submitted {formatDate(selectedResponse.submittedAt)}
-                </p>
-              </div>
-              <button
-                onClick={() => setIsViewModalOpen(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="space-y-4">
-                {form.fields
-                  .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-                  .map((field) => (
-                    <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0">
-                      <p className="text-sm font-medium text-gray-500 mb-1">{field.label}</p>
-                      <p className="text-gray-900">
-                        {formatValue(selectedResponse.answers[field.id]) || (
-                          <span className="text-gray-400 italic">No answer</span>
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                {/* Metadata */}
-                <div className="pt-4 border-t border-gray-200">
-                  <h3 className="text-sm font-medium text-gray-500 mb-3">Metadata</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <p className="text-gray-500">Response ID</p>
-                      <p className="text-gray-900 font-mono text-xs">{selectedResponse.id}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-500">Completion Time</p>
-                      <p className="text-gray-900">
-                        {formatDuration(selectedResponse.completionTime || 0)}
-                      </p>
-                    </div>
-                    {selectedResponse.metadata?.userAgent && (
-                      <div className="col-span-2">
-                        <p className="text-gray-500">User Agent</p>
-                        <p className="text-gray-900 text-xs truncate">
-                          {selectedResponse.metadata.userAgent}
-                        </p>
-                      </div>
-                    )}
+      <Modal
+        isOpen={isViewModalOpen}
+        onClose={() => setIsViewModalOpen(false)}
+        title="Response Details"
+        description={selectedResponse ? `Submitted ${formatDate(selectedResponse.submittedAt)}` : undefined}
+        size="lg"
+      >
+        {selectedResponse && (
+          <>
+            <div className="p-6 space-y-4">
+              {form.fields
+                .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+                .map((field) => (
+                  <div key={field.id} className="border-b border-gray-100 pb-4 last:border-0 last:pb-0">
+                    <p className="text-sm font-medium text-gray-500 mb-1">{field.label}</p>
+                    <p className="text-gray-900">
+                      {formatValue(selectedResponse.answers[field.id]) || (
+                        <span className="text-gray-400 italic">No answer</span>
+                      )}
+                    </p>
                   </div>
+                ))}
+              {/* Metadata */}
+              <div className="pt-4 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-500 mb-3">Metadata</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Response ID</p>
+                    <p className="text-gray-900 font-mono text-xs bg-gray-100 px-2 py-1 rounded mt-1">
+                      {selectedResponse.id}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Completion Time</p>
+                    <p className="text-gray-900 mt-1">
+                      {formatDuration(selectedResponse.completionTime || 0)}
+                    </p>
+                  </div>
+                  {selectedResponse.metadata?.userAgent && (
+                    <div className="col-span-2">
+                      <p className="text-gray-500">User Agent</p>
+                      <p className="text-gray-900 text-xs truncate mt-1">
+                        {selectedResponse.metadata.userAgent}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -616,43 +643,33 @@ export function FormResponses() {
                 Edit
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Modal>
 
       {/* Edit Modal */}
-      {isEditModalOpen && selectedResponse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Edit Response</h2>
-                <p className="text-sm text-gray-500">
-                  Modify the response data
-                </p>
-              </div>
-              <button
-                onClick={() => setIsEditModalOpen(false)}
-                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <X className="h-5 w-5 text-gray-500" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="space-y-4">
-                {form.fields
-                  .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-                  .map((field) => (
-                    <div key={field.id}>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        {field.label}
-                      </label>
-                      {renderEditField(field, editedAnswers[field.id], (value) =>
-                        setEditedAnswers((prev) => ({ ...prev, [field.id]: value }))
-                      )}
-                    </div>
-                  ))}
-              </div>
+      <Modal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        title="Edit Response"
+        description="Modify the response data"
+        size="lg"
+      >
+        {selectedResponse && (
+          <>
+            <div className="p-6 space-y-4">
+              {form.fields
+                .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+                .map((field) => (
+                  <div key={field.id}>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      {field.label}
+                    </label>
+                    {renderEditField(field, editedAnswers[field.id], (value) =>
+                      setEditedAnswers((prev) => ({ ...prev, [field.id]: value }))
+                    )}
+                  </div>
+                ))}
             </div>
             <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
@@ -663,41 +680,42 @@ export function FormResponses() {
                 Save Changes
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Modal>
 
       {/* Delete Confirmation Modal */}
-      {isDeleteModalOpen && selectedResponse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-            <div className="p-6">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="p-3 bg-red-100 rounded-full">
-                  <AlertTriangle className="h-6 w-6 text-red-600" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">Delete Response</h2>
-                  <p className="text-sm text-gray-500">This action cannot be undone</p>
-                </div>
-              </div>
-              <p className="text-gray-600 mb-6">
-                Are you sure you want to delete this response? All data associated with this
-                submission will be permanently removed.
-              </p>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button variant="danger" onClick={handleDelete}>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
-              </div>
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        size="sm"
+        showCloseButton={false}
+      >
+        <div className="p-6">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="p-3 bg-red-100 rounded-full">
+              <AlertTriangle className="h-6 w-6 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Delete Response</h2>
+              <p className="text-sm text-gray-500">This action cannot be undone</p>
             </div>
           </div>
+          <p className="text-gray-600 mb-6">
+            Are you sure you want to delete this response? All data associated with this
+            submission will be permanently removed.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleDelete}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </Button>
+          </div>
         </div>
-      )}
+      </Modal>
 
       {/* Embed Modal */}
       <EmbedModal
@@ -717,6 +735,7 @@ function renderEditField(
   onChange: (value: unknown) => void
 ) {
   const currentValue = value ?? '';
+  const inputClasses = "w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors";
 
   switch (field.type) {
     case 'short_text':
@@ -728,7 +747,7 @@ function renderEditField(
           type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -738,7 +757,7 @@ function renderEditField(
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
           rows={4}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -750,7 +769,7 @@ function renderEditField(
           type="number"
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value ? Number(e.target.value) : null)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -760,7 +779,7 @@ function renderEditField(
           type="date"
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -770,7 +789,7 @@ function renderEditField(
           type="time"
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -780,7 +799,7 @@ function renderEditField(
           type="datetime-local"
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
 
@@ -790,7 +809,7 @@ function renderEditField(
         <select
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         >
           <option value="">Select...</option>
           {field.properties.options?.map((opt) => (
@@ -806,7 +825,7 @@ function renderEditField(
       return (
         <div className="space-y-2">
           {field.properties.options?.map((opt) => (
-            <label key={opt.id} className="flex items-center gap-2">
+            <label key={opt.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
               <input
                 type="checkbox"
                 checked={selectedValues.includes(opt.value)}
@@ -817,9 +836,9 @@ function renderEditField(
                     onChange(selectedValues.filter((v: string) => v !== opt.value));
                   }
                 }}
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />
-              {opt.label}
+              <span className="text-gray-700">{opt.label}</span>
             </label>
           ))}
         </div>
@@ -832,7 +851,7 @@ function renderEditField(
           type="text"
           value={String(currentValue)}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+          className={inputClasses}
         />
       );
   }

@@ -11,7 +11,10 @@ import {
   Copy,
   Trash2,
   Table,
-  Share2
+  Share2,
+  Inbox,
+  Globe,
+  Archive,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -19,21 +22,12 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
+import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import type { Form } from '../types/form';
-
-// Empty state component - defined outside to avoid re-creation during render
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="col-span-full py-12 text-center">
-      <FileText className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-      <p className="text-gray-500">{message}</p>
-    </div>
-  );
-}
 
 export function FormsList() {
   const navigate = useNavigate();
@@ -236,7 +230,18 @@ export function FormsList() {
           <TabsContent value="all">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredForms.length === 0 ? (
-                <EmptyState message="No forms found. Create your first form!" />
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={Inbox}
+                    title="No forms yet"
+                    description="Create your first form to get started"
+                    action={
+                      <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+                        Create Form
+                      </Button>
+                    }
+                  />
+                </div>
               ) : (
                 filteredForms.map((form) => <FormCard key={form.id} form={form} />)
               )}
@@ -246,7 +251,13 @@ export function FormsList() {
           <TabsContent value="published">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {publishedForms.length === 0 ? (
-                <EmptyState message="No published forms yet." />
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={Globe}
+                    title="No published forms"
+                    description="Publish a form to make it available to respondents"
+                  />
+                </div>
               ) : (
                 publishedForms.map((form) => <FormCard key={form.id} form={form} />)
               )}
@@ -256,7 +267,13 @@ export function FormsList() {
           <TabsContent value="draft">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {draftForms.length === 0 ? (
-                <EmptyState message="No draft forms." />
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={FileText}
+                    title="No drafts"
+                    description="Draft forms will appear here while you work on them"
+                  />
+                </div>
               ) : (
                 draftForms.map((form) => <FormCard key={form.id} form={form} />)
               )}
@@ -266,7 +283,13 @@ export function FormsList() {
           <TabsContent value="archived">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {archivedForms.length === 0 ? (
-                <EmptyState message="No archived forms." />
+                <div className="col-span-full">
+                  <EmptyState
+                    icon={Archive}
+                    title="No archived forms"
+                    description="Archived forms will appear here"
+                  />
+                </div>
               ) : (
                 archivedForms.map((form) => <FormCard key={form.id} form={form} />)
               )}

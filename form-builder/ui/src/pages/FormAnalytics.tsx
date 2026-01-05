@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3 } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox } from 'lucide-react';
+import { Spinner } from '../components/ui/Spinner';
+import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
@@ -198,8 +200,13 @@ export default function FormAnalytics() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">Form not found</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <EmptyState
+          icon={Inbox}
+          title="Form not found"
+          description="The form you're looking for doesn't exist or has been deleted."
+          action={<Button onClick={() => navigate('/')}>Go to Dashboard</Button>}
+        />
       </div>
     );
   }
@@ -488,10 +495,15 @@ export default function FormAnalytics() {
           <CardContent>
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+                <Spinner />
               </div>
             ) : localResponses.length === 0 ? (
-              <p className="text-center text-gray-500 py-8">No responses yet</p>
+              <EmptyState
+                icon={Inbox}
+                title="No responses yet"
+                description="Share your form to start collecting responses"
+                className="py-8"
+              />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
