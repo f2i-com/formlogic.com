@@ -14,7 +14,7 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
   const { icon, text } = sizes[size];
 
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
+    <div className={`flex items-center gap-2.5 ${className}`}>
       <svg
         width={icon}
         height={icon}
@@ -23,66 +23,47 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
         xmlns="http://www.w3.org/2000/svg"
         className="flex-shrink-0"
       >
-        {/* Background rounded square */}
-        <rect width="40" height="40" rx="8" fill="url(#gradient)" />
+        {/* Background rounded square with gradient */}
+        <rect width="40" height="40" rx="10" fill="url(#logoGradient)" />
 
-        {/* Form icon - stylized document with checkmark */}
-        <g transform="translate(8, 6)">
-          {/* Document outline */}
-          <path
-            d="M4 4C4 2.89543 4.89543 2 6 2H14L20 8V24C20 25.1046 19.1046 26 18 26H6C4.89543 26 4 25.1046 4 24V4Z"
+        {/* Simple form/document icon centered */}
+        <g transform="translate(10, 8)">
+          {/* Document body */}
+          <rect
+            x="2"
+            y="0"
+            width="16"
+            height="24"
+            rx="3"
             fill="white"
-            fillOpacity="0.9"
+            fillOpacity="0.95"
           />
-          {/* Folded corner */}
+
+          {/* Form lines */}
+          <rect x="5" y="5" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.4" />
+          <rect x="5" y="10" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.4" />
+
+          {/* Checkmark circle */}
+          <circle cx="10" cy="18" r="4" fill="#6366f1" fillOpacity="0.15" />
           <path
-            d="M14 2V8H20L14 2Z"
-            fill="white"
-            fillOpacity="0.6"
-          />
-          {/* Lines representing form fields */}
-          <rect x="7" y="12" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.6" />
-          <rect x="7" y="16" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.6" />
-          {/* Checkmark - representing logic/validation */}
-          <path
-            d="M9 21L11.5 23.5L15.5 19.5"
+            d="M7.5 18L9 19.5L12.5 16"
             stroke="#6366f1"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </g>
-
-        {/* Code brackets - representing scripting */}
-        <g transform="translate(26, 22)">
-          <path
-            d="M2 4L0 6L2 8"
-            stroke="white"
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
-            opacity="0.8"
-          />
-          <path
-            d="M6 4L8 6L6 8"
-            stroke="white"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.8"
           />
         </g>
 
         <defs>
-          <linearGradient id="gradient" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#6366f1" />
-            <stop offset="1" stopColor="#4f46e5" />
+          <linearGradient id="logoGradient" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#818cf8" />
+            <stop offset="1" stopColor="#6366f1" />
           </linearGradient>
         </defs>
       </svg>
 
       {showText && (
-        <span className={`font-semibold text-gray-900 ${text}`}>
+        <span className={`font-semibold text-gray-900 tracking-tight ${text}`}>
           Form<span className="text-primary-600">Logic</span>
         </span>
       )}
@@ -101,7 +82,7 @@ export function LogoWhite({ size = 'md', showText = true, className = '' }: Logo
   const { icon, text } = sizes[size];
 
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
+    <div className={`flex items-center gap-2.5 ${className}`}>
       <svg
         width={icon}
         height={icon}
@@ -110,61 +91,42 @@ export function LogoWhite({ size = 'md', showText = true, className = '' }: Logo
         xmlns="http://www.w3.org/2000/svg"
         className="flex-shrink-0"
       >
-        {/* Background rounded square */}
-        <rect width="40" height="40" rx="8" fill="white" fillOpacity="0.15" />
-        <rect width="40" height="40" rx="8" stroke="white" strokeOpacity="0.3" strokeWidth="1" />
+        {/* Background with subtle glass effect */}
+        <rect width="40" height="40" rx="10" fill="white" fillOpacity="0.15" />
+        <rect width="40" height="40" rx="10" stroke="white" strokeOpacity="0.25" strokeWidth="1" />
 
-        {/* Form icon - stylized document with checkmark */}
-        <g transform="translate(8, 6)">
-          {/* Document outline */}
-          <path
-            d="M4 4C4 2.89543 4.89543 2 6 2H14L20 8V24C20 25.1046 19.1046 26 18 26H6C4.89543 26 4 25.1046 4 24V4Z"
+        {/* Simple form/document icon centered */}
+        <g transform="translate(10, 8)">
+          {/* Document body */}
+          <rect
+            x="2"
+            y="0"
+            width="16"
+            height="24"
+            rx="3"
             fill="white"
-            fillOpacity="0.9"
+            fillOpacity="0.95"
           />
-          {/* Folded corner */}
+
+          {/* Form lines */}
+          <rect x="5" y="5" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.5" />
+          <rect x="5" y="10" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.5" />
+
+          {/* Checkmark circle */}
+          <circle cx="10" cy="18" r="4" fill="#6366f1" fillOpacity="0.2" />
           <path
-            d="M14 2V8H20L14 2Z"
-            fill="white"
-            fillOpacity="0.6"
-          />
-          {/* Lines representing form fields */}
-          <rect x="7" y="12" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.7" />
-          <rect x="7" y="16" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.7" />
-          {/* Checkmark - representing logic/validation */}
-          <path
-            d="M9 21L11.5 23.5L15.5 19.5"
+            d="M7.5 18L9 19.5L12.5 16"
             stroke="#6366f1"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </g>
-
-        {/* Code brackets - representing scripting */}
-        <g transform="translate(26, 22)">
-          <path
-            d="M2 4L0 6L2 8"
-            stroke="white"
             strokeWidth="1.5"
             strokeLinecap="round"
             strokeLinejoin="round"
-            opacity="0.9"
-          />
-          <path
-            d="M6 4L8 6L6 8"
-            stroke="white"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.9"
           />
         </g>
       </svg>
 
       {showText && (
-        <span className={`font-semibold text-white ${text}`}>
-          Form<span className="text-indigo-300">Logic</span>
+        <span className={`font-semibold text-white tracking-tight ${text}`}>
+          Form<span className="text-indigo-200">Logic</span>
         </span>
       )}
     </div>

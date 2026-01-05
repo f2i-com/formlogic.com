@@ -78,11 +78,13 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
       title={mode === 'login' ? 'Sign In' : 'Create Account'}
       size="sm"
     >
-      <form onSubmit={handleSubmit} className="p-6 space-y-4">
+      <form onSubmit={handleSubmit} className="p-6 space-y-5">
         {displayError && (
-          <div className="flex items-center gap-2 p-3 text-sm text-red-700 bg-red-50 rounded-lg">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-            <span>{displayError}</span>
+          <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl animate-shake">
+            <div className="p-1 bg-red-100 rounded-lg">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            </div>
+            <span className="font-medium">{displayError}</span>
           </div>
         )}
 
@@ -176,14 +178,14 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
           )}
         </Button>
 
-        <div className="text-center text-sm text-gray-600">
+        <div className="pt-2 text-center text-sm text-gray-600">
           {mode === 'login' ? (
             <>
               Don't have an account?{' '}
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-indigo-600 hover:text-indigo-700 font-medium"
+                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline"
                 disabled={isLoading}
               >
                 Sign up
@@ -195,7 +197,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-indigo-600 hover:text-indigo-700 font-medium"
+                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline"
                 disabled={isLoading}
               >
                 Sign in

@@ -17,7 +17,6 @@ export function Tooltip({
   const [isVisible, setIsVisible] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
@@ -46,10 +45,10 @@ export function Tooltip({
   };
 
   const arrows = {
-    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-900',
-    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-900',
-    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-900',
-    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-900',
+    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-800',
+    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-800',
+    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-800',
+    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-800',
   };
 
   return (
@@ -57,12 +56,17 @@ export function Tooltip({
       className="relative inline-flex"
       onMouseEnter={showTooltip}
       onMouseLeave={hideTooltip}
+      onFocus={showTooltip}
+      onBlur={hideTooltip}
     >
       {children}
       {isVisible && (
         <div
+          role="tooltip"
           className={cn(
-            'absolute z-50 px-2 py-1 text-xs text-white bg-gray-900 rounded whitespace-nowrap',
+            'absolute z-50 px-2.5 py-1.5 text-xs font-medium text-white',
+            'bg-gray-800 rounded-lg shadow-lg',
+            'whitespace-nowrap animate-scale-in',
             positions[position]
           )}
         >

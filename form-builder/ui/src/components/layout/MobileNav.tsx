@@ -21,17 +21,17 @@ export function MobileNav() {
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50 md:hidden">
-      <div className="flex items-center justify-around h-16">
+    <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.08)] z-50 md:hidden safe-area-bottom">
+      <div className="flex items-center justify-around h-16 px-2">
         {navItems.map((item, index) => {
           if (item.isAction) {
             return (
               <button
                 key={index}
                 onClick={item.action}
-                className="flex flex-col items-center justify-center gap-1 px-3 py-2 -mt-6"
+                className="flex flex-col items-center justify-center gap-1 px-3 py-2 -mt-6 group"
               >
-                <div className="w-12 h-12 bg-primary-600 rounded-full flex items-center justify-center shadow-lg">
+                <div className="w-14 h-14 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 transition-transform duration-200 group-hover:scale-105 group-active:scale-95">
                   <item.icon className="h-6 w-6 text-white" />
                 </div>
               </button>
@@ -44,14 +44,20 @@ export function MobileNav() {
               to={item.path!}
               className={({ isActive }) =>
                 cn(
-                  'flex flex-col items-center justify-center gap-1 px-3 py-2',
-                  'text-gray-500 transition-colors',
-                  isActive && 'text-primary-600'
+                  'flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl',
+                  'transition-all duration-200',
+                  isActive
+                    ? 'text-primary-600 bg-primary-50'
+                    : 'text-gray-400 hover:text-gray-600 active:bg-gray-100'
                 )
               }
             >
-              <item.icon className="h-5 w-5" />
-              <span className="text-xs font-medium">{item.label}</span>
+              {({ isActive }) => (
+                <>
+                  <item.icon className={cn('h-5 w-5 transition-transform', isActive && 'scale-110')} />
+                  <span className="text-xs font-medium">{item.label}</span>
+                </>
+              )}
             </NavLink>
           );
         })}

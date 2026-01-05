@@ -122,7 +122,7 @@ export function Modal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/60 backdrop-blur-md"
             onClick={onClose}
           />
           <motion.div
@@ -136,13 +136,14 @@ export function Modal({
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.15 }}
             className={cn(
-              'relative w-full bg-white rounded-xl shadow-xl',
+              'relative w-full bg-white rounded-xl shadow-2xl',
               'max-h-[90vh] overflow-hidden flex flex-col',
+              'ring-1 ring-black/5',
               sizes[size]
             )}
           >
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200">
+              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50/50">
                 <div className="min-w-0 flex-1 pr-2">
                   {title && (
                     <h2 id="modal-title" className="text-base sm:text-lg font-semibold text-gray-900 truncate">

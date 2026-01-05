@@ -12,9 +12,16 @@ export function Header({ title, actions }: HeaderProps) {
 
   return (
     <>
-      <header className="h-14 sm:h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4">
+      <header className="h-14 sm:h-16 bg-white/95 backdrop-blur-sm shadow-sm sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4">
         <div className="flex-shrink-0 min-w-0">
-          {title && <h1 className="text-lg sm:text-xl font-semibold text-gray-900 truncate">{title}</h1>}
+          {title && (
+            <h1
+              className="text-lg sm:text-xl font-semibold text-gray-900 truncate"
+              title={title}
+            >
+              {title}
+            </h1>
+          )}
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">

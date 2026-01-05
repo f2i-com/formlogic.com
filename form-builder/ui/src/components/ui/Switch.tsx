@@ -19,9 +19,9 @@ export function Switch({
 }: SwitchProps) {
   const sizes = {
     sm: {
-      track: 'w-8 h-4',
-      thumb: 'h-3 w-3',
-      translate: 'translate-x-4',
+      track: 'w-8 h-[18px]',
+      thumb: 'h-3.5 w-3.5',
+      translate: 'translate-x-[14px]',
     },
     md: {
       track: 'w-11 h-6',
@@ -33,7 +33,7 @@ export function Switch({
   return (
     <label
       className={cn(
-        'flex items-start gap-3 cursor-pointer',
+        'flex items-start gap-3 cursor-pointer select-none',
         disabled && 'opacity-50 cursor-not-allowed'
       )}
     >
@@ -44,16 +44,19 @@ export function Switch({
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         className={cn(
-          'relative inline-flex shrink-0 rounded-full transition-colors',
-          'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+          'relative inline-flex shrink-0 rounded-full transition-all duration-200',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
           sizes[size].track,
-          checked ? 'bg-primary-600' : 'bg-gray-200'
+          checked
+            ? 'bg-primary-600 shadow-inner'
+            : 'bg-gray-300 hover:bg-gray-400'
         )}
       >
         <span
           className={cn(
-            'pointer-events-none inline-block rounded-full bg-white shadow-sm',
-            'transform transition-transform',
+            'pointer-events-none inline-block rounded-full bg-white',
+            'shadow-md ring-1 ring-black/5',
+            'transform transition-transform duration-200 ease-out',
             sizes[size].thumb,
             'translate-x-0.5 translate-y-0.5',
             checked && sizes[size].translate
@@ -61,12 +64,12 @@ export function Switch({
         />
       </button>
       {(label || description) && (
-        <div className="flex flex-col">
+        <div className="flex flex-col pt-0.5">
           {label && (
-            <span className="text-sm font-medium text-gray-900">{label}</span>
+            <span className="text-sm font-medium text-gray-900 leading-tight">{label}</span>
           )}
           {description && (
-            <span className="text-sm text-gray-500">{description}</span>
+            <span className="text-sm text-gray-500 leading-snug mt-0.5">{description}</span>
           )}
         </div>
       )}

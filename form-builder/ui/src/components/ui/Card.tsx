@@ -3,15 +3,17 @@ import { cn } from '../../lib/utils';
 
 interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;
+  hover?: boolean;
 }
 
 const Card = React.forwardRef<HTMLDivElement, CardProps>(
-  ({ className, children, ...props }, ref) => {
+  ({ className, children, hover = false, ...props }, ref) => {
     return (
       <div
         ref={ref}
         className={cn(
-          'bg-white rounded-xl border border-gray-200 shadow-sm',
+          'bg-white rounded-xl border border-gray-200/80 shadow-sm',
+          hover && 'transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 hover:border-gray-300/80',
           className
         )}
         {...props}
@@ -33,7 +35,10 @@ const CardHeader = React.forwardRef<HTMLDivElement, CardHeaderProps>(
     return (
       <div
         ref={ref}
-        className={cn('px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200', className)}
+        className={cn(
+          'px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 bg-gray-50/30',
+          className
+        )}
         {...props}
       >
         {children}
@@ -69,7 +74,10 @@ const CardFooter = React.forwardRef<HTMLDivElement, CardFooterProps>(
     return (
       <div
         ref={ref}
-        className={cn('px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-200', className)}
+        className={cn(
+          'px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-100 bg-gray-50/30',
+          className
+        )}
         {...props}
       >
         {children}

@@ -14,13 +14,31 @@
 
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Smoother scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Better focus outline for accessibility */
+  :focus-visible {
+    outline: 2px solid theme(colors.primary.500);
+    outline-offset: 2px;
+  }
+
+  /* Remove default focus outline when using focus-visible */
+  :focus:not(:focus-visible) {
+    outline: none;
   }
 }
 
 @layer utilities {
+  /* Thin scrollbar */
   .scrollbar-thin {
     scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -37,13 +55,27 @@
     border-radius: 3px;
   }
 
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.3);
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Toast animations */
   .animate-slide-in {
-    animation: slide-in 0.2s ease-out forwards;
+    animation: slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   .animate-slide-out {
-    animation: slide-out 0.15s ease-in forwards;
+    animation: slide-out 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   @keyframes slide-in {
@@ -66,6 +98,97 @@
       transform: translateX(100%);
       opacity: 0;
     }
+  }
+
+  /* Fade in animation */
+  .animate-in {
+    animation: animate-in 0.2s ease-out forwards;
+  }
+
+  .fade-in-0 {
+    --tw-enter-opacity: 0;
+  }
+
+  @keyframes animate-in {
+    from {
+      opacity: var(--tw-enter-opacity, 0);
+      transform: var(--tw-enter-translate, translateY(0)) var(--tw-enter-scale, scale(1));
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  /* Scale up animation */
+  .animate-scale-in {
+    animation: scale-in 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Pulse subtle animation for loading states */
+  .animate-pulse-subtle {
+    animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-subtle {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+
+  /* Text gradient utility */
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+  }
+
+  /* Glass effect */
+  .glass {
+    @apply bg-white/80 backdrop-blur-md;
+  }
+
+  /* Card hover effect */
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;
+  }
+
+  /* Focus ring utility */
+  .focus-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
+  }
+
+  /* Shake animation for errors */
+  .animate-shake {
+    animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  }
+
+  @keyframes shake {
+    10%, 90% { transform: translateX(-1px); }
+    20%, 80% { transform: translateX(2px); }
+    30%, 50%, 70% { transform: translateX(-3px); }
+    40%, 60% { transform: translateX(3px); }
+  }
+
+  /* Safe area for mobile devices with notches */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 }
 

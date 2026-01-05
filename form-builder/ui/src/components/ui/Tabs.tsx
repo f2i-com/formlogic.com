@@ -43,15 +43,19 @@ export function Tabs({
 interface TabsListProps {
   children: React.ReactNode;
   className?: string;
+  variant?: 'pills' | 'underline';
 }
 
-export function TabsList({ children, className }: TabsListProps) {
+export function TabsList({ children, className, variant = 'pills' }: TabsListProps) {
   return (
     <div
       className={cn(
-        'flex items-center gap-1 p-1 bg-gray-100 rounded-lg overflow-x-auto',
+        'flex items-center overflow-x-auto',
+        variant === 'pills' && 'gap-1 p-1 bg-gray-100/80 rounded-lg',
+        variant === 'underline' && 'gap-0 border-b border-gray-200',
         className
       )}
+      role="tablist"
     >
       {children}
     </div>
@@ -63,6 +67,7 @@ interface TabsTriggerProps {
   children: React.ReactNode;
   className?: string;
   disabled?: boolean;
+  variant?: 'pills' | 'underline';
 }
 
 export function TabsTrigger({
@@ -70,6 +75,7 @@ export function TabsTrigger({
   children,
   className,
   disabled,
+  variant = 'pills',
 }: TabsTriggerProps) {
   const context = useContext(TabsContext);
   if (!context) throw new Error('TabsTrigger must be used within Tabs');
@@ -80,13 +86,25 @@ export function TabsTrigger({
   return (
     <button
       type="button"
+      role="tab"
+      aria-selected={isActive}
       onClick={() => !disabled && setActiveTab(value)}
       disabled={disabled}
       className={cn(
-        'px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex-shrink-0 whitespace-nowrap',
-        isActive
-          ? 'bg-white text-gray-900 shadow-sm'
-          : 'text-gray-600 hover:text-gray-900',
+        'text-sm font-medium flex-shrink-0 whitespace-nowrap transition-all duration-200',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+        variant === 'pills' && [
+          'px-3 py-1.5 rounded-md',
+          isActive
+            ? 'bg-white text-gray-900 shadow-sm'
+            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50',
+        ],
+        variant === 'underline' && [
+          'px-4 py-2.5 border-b-2 -mb-px',
+          isActive
+            ? 'border-primary-600 text-primary-700'
+            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
+        ],
         disabled && 'opacity-50 cursor-not-allowed',
         className
       )}
@@ -108,5 +126,9 @@ export function TabsContent({ value, children, className }: TabsContentProps) {
 
   if (context.activeTab !== value) return null;
 
-  return <div className={className}>{children}</div>;
+  return (
+    <div role="tabpanel" className={cn('animate-in fade-in-0 duration-200', className)}>
+      {children}
+    </div>
+  );
 }
