@@ -202,6 +202,7 @@ $app->get('/api/health', function ($request, $response) {
     $response->getBody()->write(json_encode([
         'status' => 'ok',
         'timestamp' => date('c'),
+        'cors_origin' => $_ENV['CORS_ORIGIN'] ?? 'NOT SET',
     ]));
     return $response->withHeader('Content-Type', 'application/json');
 });

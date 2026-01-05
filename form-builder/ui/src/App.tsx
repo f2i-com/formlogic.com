@@ -7,12 +7,14 @@ import { useFormStore } from './stores/formStore';
 import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-// Lazy load builder and preview pages for better performance
+// Lazy load pages for better performance
 const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
 const FormPreview = React.lazy(() => import('./pages/FormPreview'));
 const FormAnalytics = React.lazy(() => import('./pages/FormAnalytics'));
 const FormResponse = React.lazy(() => import('./pages/FormResponse'));
 const FormResponses = React.lazy(() => import('./pages/FormResponses'));
+const Login = React.lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
+const Signup = React.lazy(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
 function LoadingFallback() {
   return (
@@ -56,6 +58,8 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Redirect all other routes to landing */}
