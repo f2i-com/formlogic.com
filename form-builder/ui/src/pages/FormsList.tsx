@@ -16,6 +16,7 @@ import {
   Globe,
   Archive,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -34,7 +35,7 @@ export function FormsList() {
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
 
   const handleCreateForm = async () => {
@@ -62,7 +63,7 @@ export function FormsList() {
 
   const FormCard = ({ form }: { form: Form }) => {
     const responses = getResponsesByFormId(form.id);
-    const isMenuOpen = activeMenu === form.id;
+    const isMenuOpen = activeMenu?.id === form.id;
 
     return (
       <Card className="hover:shadow-md transition-shadow">
@@ -83,18 +84,34 @@ export function FormsList() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setActiveMenu(isMenuOpen ? null : form.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveMenu(
+                    activeMenu?.id === form.id
+                      ? null
+                      : { id: form.id, rect: e.currentTarget.getBoundingClientRect() }
+                  );
+                }}
               >
                 <MoreVertical className="h-4 w-4" />
               </Button>
 
-              {isMenuOpen && (
-                <>
+              {isMenuOpen && activeMenu && createPortal(
+                <div
+                  className="fixed inset-0 z-[60]"
+                  style={{ zIndex: 60 }} // Enforce high z-index
+                >
                   <div
-                    className="fixed inset-0 z-10"
+                    className="absolute inset-0 bg-transparent"
                     onClick={() => setActiveMenu(null)}
                   />
-                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 z-20 py-1 ring-1 ring-black/5 dark:ring-white/5">
+                  <div
+                    className="absolute w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/5 overflow-hidden"
+                    style={{
+                      top: activeMenu.rect.bottom + 4,
+                      left: activeMenu.rect.right - 192, // Align right edge (192px = w-48)
+                    }}
+                  >
                     <button
                       onClick={() => {
                         navigate(`/builder/${form.id}`);
@@ -157,7 +174,8 @@ export function FormsList() {
                       <Trash2 className="h-4 w-4" /> Delete
                     </button>
                   </div>
-                </>
+                </div>,
+                document.body
               )}
             </div>
           </div>
