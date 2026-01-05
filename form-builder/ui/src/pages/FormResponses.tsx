@@ -381,7 +381,7 @@ export function FormResponses() {
         }
       />
 
-      <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           <StatCard

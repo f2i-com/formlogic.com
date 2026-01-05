@@ -406,7 +406,7 @@ export function Dashboard() {
     <div className="min-h-screen">
       <Header title="Dashboard" />
 
-      <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Welcome Section */}
         <div className="mb-8">
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">

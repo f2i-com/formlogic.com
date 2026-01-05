@@ -206,7 +206,7 @@ export function FormsList() {
         }
       />
 
-      <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Search */}
         <div className="mb-4 sm:mb-6">
           <Input

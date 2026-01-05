@@ -134,7 +134,7 @@ export function Settings() {
     <div className="min-h-screen">
       <Header title="Settings" />
 
-      <div className="p-4 sm:p-6 max-w-3xl mx-auto space-y-6">
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
         {/* Profile Settings */}
         <Card className="overflow-hidden">
           <CardContent className="p-6">
