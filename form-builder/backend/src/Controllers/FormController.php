@@ -121,11 +121,17 @@ class FormController
         try {
             $form = $this->formService->createForm($data);
             return $this->jsonResponse($response, ['form' => $form], 201);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Form creation error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -159,11 +165,17 @@ class FormController
             }
 
             return $this->jsonResponse($response, ['form' => $updatedForm]);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Form update error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -236,11 +248,17 @@ class FormController
             }
 
             return $this->jsonResponse($response, ['form' => $duplicatedForm], 201);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Form duplication error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 

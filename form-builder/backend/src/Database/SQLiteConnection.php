@@ -17,7 +17,7 @@ class SQLiteConnection
         $this->storagePath = $storagePath;
 
         if (!is_dir($storagePath)) {
-            mkdir($storagePath, 0755, true);
+            mkdir($storagePath, 0700, true);
         }
     }
 

@@ -110,7 +110,20 @@ function clearDebounceTimer(formId: string) {
 
 export const useFormStore = create<FormState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+    // Helper to sync a form field to the API with debouncing
+    const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
+      if (get().storageMode === 'api') {
+        debouncedSave(formId, async () => {
+          const form = get().forms.find((f) => f.id === formId);
+          if (form) {
+            await api.updateForm(formId, { [field]: form[field] });
+          }
+        });
+      }
+    };
+
+    return ({
       forms: [],
       activeFormId: null,
       selectedFieldId: null,
@@ -342,16 +355,7 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { fields: updatedForm.fields });
-            }
-          });
-        }
+        syncFormField(formId, 'fields');
 
         return field;
       },
@@ -371,16 +375,7 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { fields: updatedForm.fields });
-            }
-          });
-        }
+        syncFormField(formId, 'fields');
       },
 
       deleteField: (formId, fieldId) => {
@@ -400,16 +395,7 @@ export const useFormStore = create<FormState>()(
             state.selectedFieldId === fieldId ? null : state.selectedFieldId,
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { fields: updatedForm.fields });
-            }
-          });
-        }
+        syncFormField(formId, 'fields');
       },
 
       duplicateField: (formId, fieldId) => {
@@ -451,16 +437,7 @@ export const useFormStore = create<FormState>()(
           selectedFieldId: newFieldId,
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { fields: updatedForm.fields });
-            }
-          });
-        }
+        syncFormField(formId, 'fields');
 
         return newField;
       },
@@ -486,16 +463,7 @@ export const useFormStore = create<FormState>()(
           }),
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { fields: updatedForm.fields });
-            }
-          });
-        }
+        syncFormField(formId, 'fields');
       },
 
       setSelectedField: (fieldId) => set({ selectedFieldId: fieldId }),
@@ -513,16 +481,7 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { settings: updatedForm.settings });
-            }
-          });
-        }
+        syncFormField(formId, 'settings');
       },
 
       updateFormTheme: (formId, theme) => {
@@ -538,16 +497,7 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // Sync to API if in API mode
-        const currentState = get();
-        if (currentState.storageMode === 'api') {
-          debouncedSave(formId, async () => {
-            const updatedForm = get().forms.find((f) => f.id === formId);
-            if (updatedForm) {
-              await api.updateForm(formId, { theme: updatedForm.theme });
-            }
-          });
-        }
+        syncFormField(formId, 'theme');
       },
 
       // Sync all local forms to API
@@ -605,7 +555,8 @@ export const useFormStore = create<FormState>()(
           return false;
         }
       },
-    }),
+    });
+    },
     {
       name: 'formlogic-forms',
       partialize: (state) => ({

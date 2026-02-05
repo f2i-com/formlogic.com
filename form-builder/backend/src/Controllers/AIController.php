@@ -78,8 +78,9 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
+            error_log('AI form generation error: ' . $e->getMessage());
             $response->getBody()->write(json_encode([
-                'error' => $e->getMessage(),
+                'error' => 'An unexpected error occurred',
             ]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
@@ -160,8 +161,9 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
+            error_log('AI file generation error: ' . $e->getMessage());
             $response->getBody()->write(json_encode([
-                'error' => $e->getMessage(),
+                'error' => 'An unexpected error occurred',
             ]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         } finally {
@@ -208,8 +210,9 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
+            error_log('AI image generation error: ' . $e->getMessage());
             $response->getBody()->write(json_encode([
-                'error' => $e->getMessage(),
+                'error' => 'An unexpected error occurred',
             ]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
@@ -250,8 +253,9 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
+            error_log('AI script generation error: ' . $e->getMessage());
             $response->getBody()->write(json_encode([
-                'error' => $e->getMessage(),
+                'error' => 'An unexpected error occurred',
             ]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
@@ -293,8 +297,9 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
+            error_log('AI script improvement error: ' . $e->getMessage());
             $response->getBody()->write(json_encode([
-                'error' => $e->getMessage(),
+                'error' => 'An unexpected error occurred',
             ]));
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }

@@ -236,10 +236,7 @@ class FormService
             'theme' => $original['theme'],
             'logicScript' => $original['logicScript'] ?? null,
             'logicPrompt' => $original['logicPrompt'] ?? null,
-            'fields' => array_map(function ($field) {
-                $field['id'] = $this->generateUuid();
-                return $field;
-            }, $original['fields']),
+            'fields' => $this->generateDuplicateFieldIds($original['fields']),
         ];
 
         return $this->createForm($newData);
@@ -294,7 +291,7 @@ class FormService
 
         foreach ($fields as $index => $field) {
             $stmt->execute([
-                'id' => $field['id'] ?? $this->generateUuid(),
+                'id' => $field['id'] ?? $this->generateHumanFieldId($field['label'] ?? ''),
                 'type' => $field['type'],
                 'label' => $field['label'] ?? null,
                 'description' => $field['description'] ?? null,
@@ -306,6 +303,42 @@ class FormService
                 'conditional_logic' => json_encode($field['conditionalLogic'] ?? null),
             ]);
         }
+    }
+
+    /**
+     * Generate human-friendly field IDs for duplicated fields.
+     * Appends '_copy' suffix and deduplicates with numeric counters.
+     */
+    private function generateDuplicateFieldIds(array $fields): array
+    {
+        $usedIds = [];
+        $result = [];
+
+        foreach ($fields as $field) {
+            $baseId = $this->generateHumanFieldId($field['label'] ?? '');
+            $finalId = $baseId;
+            $counter = 1;
+            while (in_array($finalId, $usedIds, true)) {
+                $finalId = $baseId . '_' . $counter;
+                $counter++;
+            }
+            $usedIds[] = $finalId;
+            $field['id'] = $finalId;
+            $result[] = $field;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Generate a human-friendly field ID from a label
+     */
+    private function generateHumanFieldId(string $label): string
+    {
+        $id = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $label));
+        $id = trim($id, '_');
+        $id = substr($id, 0, 32);
+        return $id ?: 'field';
     }
 
     /**

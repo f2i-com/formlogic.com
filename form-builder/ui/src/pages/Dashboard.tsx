@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v4 as uuidv4 } from 'uuid';
+
 import {
   FileText,
   Eye,
@@ -284,7 +284,7 @@ function FormActionsDropdown({
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { forms, createForm, setActiveForm, deleteForm, storageMode } = useFormStore();
+  const { forms, createForm, setActiveForm, deleteForm, addField, storageMode } = useFormStore();
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
@@ -300,13 +300,9 @@ export function Dashboard() {
 
     if (template) {
       const form = await createForm(template.name);
-      const fieldsWithIds = template.fields.map((field, index) => ({
-        ...field,
-        id: uuidv4(),
-        order: index,
-      }));
-      const formStore = useFormStore.getState();
-      formStore.updateForm(form.id, { fields: fieldsWithIds });
+      template.fields.forEach((field) => {
+        addField(form.id, field);
+      });
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
       toast.success('Form Created', `Started with "${template.name}" template`);

@@ -207,12 +207,13 @@ $app->get('/api/health', function ($request, $response) {
     return $response->withHeader('Content-Type', 'application/json');
 });
 
-// Auth routes (public)
+// Auth routes (public, rate limited)
+$authRateLimiter = new RateLimitMiddleware(10, 60, 'auth');
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
     $group->post('/logout', [AuthController::class, 'logout']);
-});
+})->add($authRateLimiter);
 
 // Auth routes (protected)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {

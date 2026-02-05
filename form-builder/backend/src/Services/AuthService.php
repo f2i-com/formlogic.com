@@ -64,7 +64,7 @@ class AuthService
         } catch (\PDOException $e) {
             // Check for duplicate key error (MySQL error code 1062, SQLSTATE 23000)
             if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
-                throw new \Exception('Email already registered');
+                throw new \RuntimeException('Email already registered');
             }
             // Re-throw other database errors
             throw $e;
@@ -97,7 +97,7 @@ class AuthService
         // Check per-IP+email rate limit
         if ($this->isRateLimited($rateLimitKey)) {
             $remainingSeconds = $this->getRateLimitRemainingSeconds($rateLimitKey);
-            throw new \Exception(
+            throw new \RuntimeException(
                 "Too many login attempts. Please try again in " .
                 ceil($remainingSeconds / 60) . " minute(s)."
             );
@@ -106,7 +106,7 @@ class AuthService
         // Check per-email rate limit (protects against distributed attacks)
         if ($this->isEmailRateLimited($emailKey)) {
             $remainingSeconds = $this->getEmailRateLimitRemainingSeconds($emailKey);
-            throw new \Exception(
+            throw new \RuntimeException(
                 "Too many login attempts for this account. Please try again in " .
                 ceil($remainingSeconds / 60) . " minute(s)."
             );
@@ -118,12 +118,12 @@ class AuthService
 
         if (!$row) {
             $this->recordFailedLogin($rateLimitKey, $emailKey);
-            throw new \Exception('Invalid email or password');
+            throw new \RuntimeException('Invalid email or password');
         }
 
         if (!password_verify($password, $row['password_hash'])) {
             $this->recordFailedLogin($rateLimitKey, $emailKey);
-            throw new \Exception('Invalid email or password');
+            throw new \RuntimeException('Invalid email or password');
         }
 
         // Clear rate limits on successful login
@@ -375,7 +375,7 @@ class AuthService
             $stmt = $this->mysql->prepare("SELECT id FROM users WHERE email = :email AND id != :check_id");
             $stmt->execute(['email' => $data['email'], 'check_id' => $userId]);
             if ($stmt->fetch()) {
-                throw new \Exception('Email already in use');
+                throw new \RuntimeException('Email already in use');
             }
 
             $updates[] = "email = :email";

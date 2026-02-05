@@ -4,33 +4,7 @@ import {
   ArrowLeft,
   Eye,
   Settings,
-  GripVertical,
   Plus,
-  Trash2,
-  HelpCircle,
-  Type,
-  AlignLeft,
-  Mail,
-  Phone,
-  Hash,
-  Link,
-  Calendar,
-  Clock,
-  CalendarClock,
-  ChevronDown,
-  CircleDot,
-  CheckSquare,
-  Star,
-  Sliders,
-  Paperclip,
-  PenTool,
-  CreditCard,
-  Calculator,
-  MessageSquare,
-  PartyPopper,
-  Heart,
-  Zap,
-  ShieldCheck,
   Code2,
   Share2,
   Sparkles,
@@ -50,16 +24,11 @@ import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
-import { Switch } from '../components/ui/Switch';
-import { Badge } from '../components/ui/Badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
-import { LogicEditor, ValidationEditor, CalculatedFieldEditor, ScriptEditor } from '../components/builder';
+import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
@@ -69,440 +38,15 @@ import { useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
-import { cn } from '../lib/utils';
-import { FIELD_TYPE_INFO, type FormField, type FieldType, type ConditionalLogic } from '../types/form';
+import type { FormField, FieldType } from '../types/form';
 
-// Icon map for field types
-const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
-  Type, AlignLeft, Mail, Phone, Hash, Link, Calendar, Clock, CalendarClock,
-  ChevronDown, CircleDot, CheckSquare, Star, Sliders, Paperclip, PenTool,
-  CreditCard, Calculator, MessageSquare, PartyPopper, Heart, HelpCircle
-};
-
-// Field Palette Component
-function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => void }) {
-  const categories = {
-    text: 'Text Inputs',
-    datetime: 'Date & Time',
-    choice: 'Choices',
-    rating: 'Rating & Scale',
-    advanced: 'Advanced',
-    layout: 'Layout',
-  };
-
-  const fieldsByCategory = Object.entries(FIELD_TYPE_INFO).reduce(
-    (acc, [type, info]) => {
-      if (!acc[info.category]) acc[info.category] = [];
-      acc[info.category].push({ type: type as FieldType, ...info });
-      return acc;
-    },
-    {} as Record<string, Array<{ type: FieldType; label: string; icon: string }>>
-  );
-
-  return (
-    <div className="p-4 space-y-6">
-      {Object.entries(categories).map(([category, title]) => (
-        <div key={category}>
-          <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-2">
-            {title}
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            {fieldsByCategory[category]?.map((field) => {
-              const IconComponent = ICON_MAP[field.icon] || HelpCircle;
-              return (
-                <button
-                  key={field.type}
-                  onClick={() => onAddField(field.type)}
-                  className="flex items-center gap-2 p-2 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors"
-                >
-                  <IconComponent className="h-4 w-4 text-gray-500 dark:text-slate-500" />
-                  <span className="text-gray-700 dark:text-slate-300 truncate">{field.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Sortable Field Card Component
-function SortableFieldCard({
-  field,
-  isSelected,
-  onSelect,
-  onDelete,
-}: {
-  field: FormField;
-  isSelected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: field.id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
-  const fieldInfo = FIELD_TYPE_INFO[field.type];
-  const IconComponent = ICON_MAP[fieldInfo.icon] || HelpCircle;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        'group relative bg-white dark:bg-slate-900 rounded-lg border-2 transition-all',
-        isSelected ? 'border-primary-500 shadow-xl' : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700',
-        isDragging && 'opacity-50 shadow-lg'
-      )}
-    >
-      <div className="flex items-start gap-3 p-4">
-        <button
-          {...attributes}
-          {...listeners}
-          className="mt-1 p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-
-        <div className="flex-1 min-w-0" onClick={onSelect}>
-          <div className="flex items-center gap-2 mb-1">
-            <IconComponent className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <span className="text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
-            {field.required && (
-              <span className="text-xs text-red-500">*</span>
-            )}
-          </div>
-          <p className="font-medium text-gray-900 dark:text-white truncate">{field.label}</p>
-          {field.description && (
-            <p className="text-sm text-gray-500 dark:text-slate-500 truncate mt-1">{field.description}</p>
-          )}
-        </div>
-
-        <button
-          onClick={onDelete}
-          aria-label="Delete field"
-          className="p-1 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Field Settings Panel
-function FieldSettingsPanel({
-  field,
-  allFields,
-  onUpdate,
-}: {
-  field: FormField;
-  allFields: FormField[];
-  onUpdate: (updates: Partial<FormField>) => void;
-}) {
-  const [showLogicEditor, setShowLogicEditor] = useState(false);
-
-  const handleSaveLogic = (logic: ConditionalLogic | undefined) => {
-    onUpdate({ conditionalLogic: logic });
-  };
-
-  // Check if field has conditional logic
-  const hasLogic = !!field.conditionalLogic?.expression;
-  // Check if field has validation rules
-  const hasValidation = (field.validation?.length || 0) > 0;
-
-  return (
-    <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 dark:border-slate-700">
-        <h3 className="font-medium text-gray-900 dark:text-white">Field Settings</h3>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">{FIELD_TYPE_INFO[field.type]?.label}</p>
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="basic" className="flex-1 flex flex-col">
-        <TabsList className="mx-4 mt-2">
-          <TabsTrigger value="basic">Basic</TabsTrigger>
-          <TabsTrigger value="validation">
-            Validation
-            {hasValidation && <Badge variant="info" className="ml-1" size="sm">{field.validation?.length}</Badge>}
-          </TabsTrigger>
-          <TabsTrigger value="logic">
-            Logic
-            {hasLogic && <Zap className="ml-1 h-3 w-3 text-yellow-500" />}
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Basic Settings Tab */}
-        <TabsContent value="basic" className="flex-1 overflow-y-auto p-4 space-y-4">
-          <Input
-            label="Label"
-            value={field.label}
-            onChange={(e) => onUpdate({ label: e.target.value })}
-          />
-
-          <Input
-            label="Description (optional)"
-            value={field.description || ''}
-            onChange={(e) => onUpdate({ description: e.target.value })}
-          />
-
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated'].includes(field.type) && (
-            <Input
-              label="Placeholder"
-              value={field.placeholder || ''}
-              onChange={(e) => onUpdate({ placeholder: e.target.value })}
-            />
-          )}
-
-          {!['statement', 'welcome_screen', 'thank_you'].includes(field.type) && (
-            <Switch
-              checked={field.required}
-              onChange={(checked) => onUpdate({ required: checked })}
-              label="Required"
-              description="Make this field mandatory"
-            />
-          )}
-
-          {/* Options for choice fields */}
-          {['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type) && (
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Options</h4>
-              <div className="space-y-2">
-                {field.properties.options?.map((option, index) => (
-                  <div key={option.id} className="flex gap-2">
-                    <Input
-                      value={option.label}
-                      onChange={(e) => {
-                        const newOptions = [...(field.properties.options || [])];
-                        newOptions[index] = { ...option, label: e.target.value, value: e.target.value };
-                        onUpdate({ properties: { ...field.properties, options: newOptions } });
-                      }}
-                      placeholder={`Option ${index + 1}`}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label="Remove option"
-                      onClick={() => {
-                        const newOptions = field.properties.options?.filter((_, i) => i !== index);
-                        onUpdate({ properties: { ...field.properties, options: newOptions } });
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                ))}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const newOption = {
-                      id: crypto.randomUUID(),
-                      label: `Option ${(field.properties.options?.length || 0) + 1}`,
-                      value: `option_${(field.properties.options?.length || 0) + 1}`,
-                    };
-                    onUpdate({
-                      properties: {
-                        ...field.properties,
-                        options: [...(field.properties.options || []), newOption],
-                      },
-                    });
-                  }}
-                  leftIcon={<Plus className="h-4 w-4" />}
-                >
-                  Add Option
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Rating settings */}
-          {field.type === 'rating' && (
-            <div>
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Rating Settings</h4>
-              <Input
-                label="Max Stars"
-                type="number"
-                min={1}
-                max={10}
-                value={field.properties.maxStars || 5}
-                onChange={(e) =>
-                  onUpdate({
-                    properties: { ...field.properties, maxStars: parseInt(e.target.value) },
-                  })
-                }
-              />
-            </div>
-          )}
-
-          {/* Scale settings */}
-          {field.type === 'scale' && (
-            <div className="space-y-3">
-              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Scale Settings</h4>
-              <div className="grid grid-cols-2 gap-2">
-                <Input
-                  label="Start"
-                  type="number"
-                  value={field.properties.scaleStart || 1}
-                  onChange={(e) =>
-                    onUpdate({
-                      properties: { ...field.properties, scaleStart: parseInt(e.target.value) },
-                    })
-                  }
-                />
-                <Input
-                  label="End"
-                  type="number"
-                  value={field.properties.scaleEnd || 10}
-                  onChange={(e) =>
-                    onUpdate({
-                      properties: { ...field.properties, scaleEnd: parseInt(e.target.value) },
-                    })
-                  }
-                />
-              </div>
-              <Input
-                label="Start Label"
-                value={field.properties.scaleStartLabel || ''}
-                onChange={(e) =>
-                  onUpdate({
-                    properties: { ...field.properties, scaleStartLabel: e.target.value },
-                  })
-                }
-                placeholder="e.g., Not likely"
-              />
-              <Input
-                label="End Label"
-                value={field.properties.scaleEndLabel || ''}
-                onChange={(e) =>
-                  onUpdate({
-                    properties: { ...field.properties, scaleEndLabel: e.target.value },
-                  })
-                }
-                placeholder="e.g., Very likely"
-              />
-            </div>
-          )}
-
-          {/* Calculated field expression */}
-          {field.type === 'calculated' && (
-            <CalculatedFieldEditor
-              expression={field.properties.calculationExpression || ''}
-              allFields={allFields}
-              onChange={(expr) =>
-                onUpdate({
-                  properties: { ...field.properties, calculationExpression: expr },
-                })
-              }
-            />
-          )}
-        </TabsContent>
-
-        {/* Validation Tab */}
-        <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
-          {['statement', 'welcome_screen', 'thank_you', 'calculated'].includes(field.type) ? (
-            <div className="text-center py-8 text-slate-500">
-              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-slate-600" />
-              <p>Validation is not applicable for this field type.</p>
-            </div>
-          ) : (
-            <ValidationEditor
-              rules={field.validation || []}
-              fieldType={field.type}
-              onChange={(rules) => onUpdate({ validation: rules })}
-            />
-          )}
-        </TabsContent>
-
-        {/* Logic Tab */}
-        <TabsContent value="logic" className="flex-1 overflow-y-auto p-4">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="font-medium text-gray-900 dark:text-white">Conditional Logic</h4>
-                <p className="text-sm text-gray-500 dark:text-slate-500">
-                  Show or hide this field based on conditions
-                </p>
-              </div>
-            </div>
-
-            {hasLogic ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <Zap className="h-5 w-5 text-yellow-600 mt-0.5" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-yellow-800">
-                      {field.conditionalLogic?.action === 'show' && 'Show when:'}
-                      {field.conditionalLogic?.action === 'hide' && 'Hide when:'}
-                      {field.conditionalLogic?.action === 'require' && 'Require when:'}
-                      {field.conditionalLogic?.action === 'skip' && 'Skip when:'}
-                    </p>
-                    <code className="text-xs text-yellow-700 block mt-1 break-all">
-                      {field.conditionalLogic?.expression}
-                    </code>
-                  </div>
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <Button size="sm" variant="outline" onClick={() => setShowLogicEditor(true)}>
-                    Edit Logic
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => onUpdate({ conditionalLogic: undefined })}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => setShowLogicEditor(true)}
-                leftIcon={<Zap className="h-4 w-4" />}
-              >
-                Add Conditional Logic
-              </Button>
-            )}
-
-            {/* Logic Editor Modal */}
-            <LogicEditor
-              isOpen={showLogicEditor}
-              onClose={() => setShowLogicEditor(false)}
-              field={field}
-              allFields={allFields}
-              onSave={handleSaveLogic}
-            />
-          </div>
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
+type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | null;
 
 // Main Form Builder Component
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
-  const [showScriptEditor, setShowScriptEditor] = useState(false);
-  const [showEmbedModal, setShowEmbedModal] = useState(false);
-  const [showAIGenerator, setShowAIGenerator] = useState(false);
-  const [showThemeEditor, setShowThemeEditor] = useState(false);
-  const [showFormSettings, setShowFormSettings] = useState(false);
-  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+  const [activeModal, setActiveModal] = useState<ModalType>(null);
 
   const {
     getForm,
@@ -638,8 +182,8 @@ export default function FormBuilder() {
   const shortcuts: KeyboardShortcut[] = useMemo(() => [
     { key: 's', ctrl: true, description: 'Save form', action: handleSave },
     { key: 'p', ctrl: true, description: 'Preview form', action: handlePreview },
-    { key: '/', ctrl: true, description: 'Show keyboard shortcuts', action: () => setShowKeyboardShortcuts(true) },
-    { key: '?', ctrl: true, description: 'Show keyboard shortcuts', action: () => setShowKeyboardShortcuts(true) },
+    { key: '/', ctrl: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
+    { key: '?', ctrl: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
     { key: 'Escape', description: 'Deselect field', action: () => setSelectedField(null) },
     { key: 'd', ctrl: true, description: 'Duplicate selected field', action: handleDuplicateSelected },
     { key: 'Delete', description: 'Delete selected field', action: handleDeleteSelected },
@@ -700,8 +244,9 @@ export default function FormBuilder() {
     });
 
     // Add generated fields
+    let firstFieldId: string | null = null;
     fields.forEach((field) => {
-      addField(form.id, {
+      const created = addField(form.id, {
         type: field.type,
         label: field.label,
         description: field.description,
@@ -709,13 +254,18 @@ export default function FormBuilder() {
         required: field.required,
         properties: field.properties || {},
       });
+      if (!firstFieldId) {
+        firstFieldId = created.id;
+      }
     });
 
     // Select the first generated field
-    if (fields.length > 0) {
-      setSelectedField(fields[0].id);
+    if (firstFieldId) {
+      setSelectedField(firstFieldId);
     }
   };
+
+  const closeModal = () => setActiveModal(null);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -737,7 +287,7 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowAIGenerator(true)}
+            onClick={() => setActiveModal('ai')}
             title="Generate with AI"
             className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
           >
@@ -749,7 +299,7 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowFormSettings(true)}
+            onClick={() => setActiveModal('settings')}
             title="Form Settings"
             className="hidden sm:flex"
           >
@@ -761,7 +311,7 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowThemeEditor(true)}
+            onClick={() => setActiveModal('theme')}
             title="Theme Customization"
             className="hidden md:flex"
           >
@@ -773,7 +323,7 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowScriptEditor(true)}
+            onClick={() => setActiveModal('script')}
             title="Backend Logic Script"
             className="hidden md:flex"
           >
@@ -792,7 +342,7 @@ export default function FormBuilder() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowEmbedModal(true)}
+            onClick={() => setActiveModal('embed')}
             title="Share & Embed"
             className="hidden sm:flex"
           >
@@ -804,7 +354,7 @@ export default function FormBuilder() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setShowKeyboardShortcuts(true)}
+            onClick={() => setActiveModal('shortcuts')}
             title="Keyboard Shortcuts (Ctrl+?)"
             className="hidden sm:flex"
           >
@@ -880,7 +430,7 @@ export default function FormBuilder() {
                   <div className="flex items-center justify-center gap-2">
                     <span className="text-gray-400">or</span>
                     <Button
-                      onClick={() => setShowAIGenerator(true)}
+                      onClick={() => setActiveModal('ai')}
                       className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
                     >
                       <Sparkles className="h-4 w-4 mr-2" />
@@ -947,8 +497,8 @@ export default function FormBuilder() {
 
       {/* Script Editor Modal */}
       <ScriptEditor
-        isOpen={showScriptEditor}
-        onClose={() => setShowScriptEditor(false)}
+        isOpen={activeModal === 'script'}
+        onClose={closeModal}
         script={form.logicScript || ''}
         onSave={(script) => {
           updateForm(form.id, { logicScript: script });
@@ -959,39 +509,39 @@ export default function FormBuilder() {
 
       {/* Embed Modal */}
       <EmbedModal
-        isOpen={showEmbedModal}
-        onClose={() => setShowEmbedModal(false)}
+        isOpen={activeModal === 'embed'}
+        onClose={closeModal}
         formId={form.id}
         formTitle={form.title}
       />
 
       {/* AI Form Generator Modal */}
       <AIFormGenerator
-        isOpen={showAIGenerator}
-        onClose={() => setShowAIGenerator(false)}
+        isOpen={activeModal === 'ai'}
+        onClose={closeModal}
         onGenerate={handleAIGenerate}
       />
 
       {/* Theme Editor Modal */}
       <ThemeEditor
-        isOpen={showThemeEditor}
-        onClose={() => setShowThemeEditor(false)}
+        isOpen={activeModal === 'theme'}
+        onClose={closeModal}
         theme={form.theme}
         onSave={(theme) => updateForm(form.id, { theme })}
       />
 
       {/* Form Settings Modal */}
       <FormSettingsModal
-        isOpen={showFormSettings}
-        onClose={() => setShowFormSettings(false)}
+        isOpen={activeModal === 'settings'}
+        onClose={closeModal}
         settings={form.settings}
         onSave={(settings) => updateForm(form.id, { settings })}
       />
 
       {/* Keyboard Shortcuts Help */}
       <KeyboardShortcutsHelp
-        isOpen={showKeyboardShortcuts}
-        onClose={() => setShowKeyboardShortcuts(false)}
+        isOpen={activeModal === 'shortcuts'}
+        onClose={closeModal}
       />
     </div>
   );

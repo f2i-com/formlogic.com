@@ -74,11 +74,18 @@ class AuthController
             return $this->jsonResponse($response, [
                 'user' => $result['user'],
             ], 201);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            // Known validation errors - safe to expose
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Registration error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -110,13 +117,19 @@ class AuthController
             return $this->jsonResponse($response, [
                 'user' => $result['user'],
             ]);
-        } catch (\Exception $e) {
-            // Check if this is a rate limit error (429 Too Many Requests)
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            // Known validation/auth errors - safe to expose
             $statusCode = str_contains($e->getMessage(), 'Too many login attempts') ? 429 : 401;
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], $statusCode);
+        } catch (\Exception $e) {
+            error_log('Login error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -178,11 +191,17 @@ class AuthController
             return $this->jsonResponse($response, [
                 'user' => $updatedUser->toArray(),
             ]);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Profile update error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 

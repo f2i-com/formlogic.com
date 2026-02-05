@@ -7,3 +7,7 @@ export { EmbedModal } from './EmbedModal';
 export { AIFormGenerator } from './AIFormGenerator';
 export { FormSettingsModal } from './FormSettingsPanel';
 export { TemplateSelector } from './TemplateSelector';
+export { FieldPalette } from './FieldPalette';
+export { ICON_MAP } from './fieldIcons';
+export { SortableFieldCard } from './SortableFieldCard';
+export { FieldSettingsPanel } from './FieldSettingsPanel';

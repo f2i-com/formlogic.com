@@ -173,11 +173,17 @@ class ResponseController
             }
 
             return $this->jsonResponse($response, ['response' => $result], 201);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Response creation error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -408,11 +414,17 @@ class ResponseController
             }
 
             return $this->jsonResponse($response, ['response' => $formResponse]);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\Exception $e) {
+            error_log('Response update error: ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -544,9 +556,10 @@ class ResponseController
                 'instructionCount' => $result->instructionCount,
             ]);
         } catch (\Exception $e) {
+            error_log('Recompute error: ' . $e->getMessage());
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => $e->getMessage(),
+                'message' => 'An unexpected error occurred',
             ], 500);
         }
     }
