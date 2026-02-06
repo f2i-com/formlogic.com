@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export interface Column<T> {
@@ -77,13 +77,15 @@ export function DataTable<T extends Record<string, unknown>>({
   return (
     <div className={cn('w-full', className)}>
       {searchable && (
-        <div className="mb-4">
+        <div className="mb-4 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
           <input
             type="text"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             placeholder={searchPlaceholder}
-            className="w-full max-w-sm px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            aria-label="Search table"
+            className="w-full max-w-sm pl-9 pr-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           />
         </div>
       )}
@@ -116,8 +118,9 @@ export function DataTable<T extends Record<string, unknown>>({
           <tbody>
             {paged.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-8 text-center text-gray-500 dark:text-slate-500">
-                  {emptyMessage}
+                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center">
+                  <Inbox className="h-8 w-8 mx-auto text-gray-300 dark:text-slate-600 mb-2" />
+                  <p className="text-sm text-gray-500 dark:text-slate-500">{emptyMessage}</p>
                 </td>
               </tr>
             ) : (
@@ -159,15 +162,17 @@ export function DataTable<T extends Record<string, unknown>>({
             <button
               onClick={() => setPage(Math.max(0, page - 1))}
               disabled={page === 0}
-              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Previous page"
+              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span>Page {page + 1} of {totalPages}</span>
+            <span className="tabular-nums">Page {page + 1} of {totalPages}</span>
             <button
               onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
               disabled={page >= totalPages - 1}
-              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Next page"
+              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

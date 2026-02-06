@@ -50,13 +50,13 @@ export function ProgressBar({
     <div className={cn('w-full', className)}>
       {showLabel && (
         <div className="flex justify-between text-sm mb-1.5">
-          <span className="font-medium text-gray-700">Progress</span>
-          <span className="text-gray-500">{Math.round(percentage)}%</span>
+          <span className="font-medium text-gray-700 dark:text-slate-300">Progress</span>
+          <span className="text-gray-500 dark:text-slate-400">{Math.round(percentage)}%</span>
         </div>
       )}
       <div
         className={cn(
-          'w-full bg-gray-100 rounded-full overflow-hidden',
+          'w-full bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden',
           sizes[size]
         )}
       >
@@ -72,6 +72,7 @@ export function ProgressBar({
           aria-valuenow={value}
           aria-valuemin={0}
           aria-valuemax={max}
+          aria-label="Progress"
         />
       </div>
     </div>
