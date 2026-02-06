@@ -25,8 +25,12 @@ export function AppFormManager() {
   };
 
   useEffect(() => {
-    // Ensure user's forms are loaded, then load app forms
-    refreshForms().then(() => loadForms());
+    const init = async () => {
+      await refreshForms();
+      await loadForms();
+    };
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
   const includedFormIds = appForms.map((f) => f.formId);

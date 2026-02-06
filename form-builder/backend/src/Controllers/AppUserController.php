@@ -87,6 +87,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        if (!$this->appUserService->roleBelongsToApp($args['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
+        }
+
         $data = $request->getParsedBody();
 
         try {
@@ -108,6 +112,10 @@ class AppUserController
         $appId = $args['appId'];
         if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_ROLES)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->roleBelongsToApp($args['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
         try {
@@ -132,6 +140,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        if (!$this->appUserService->roleBelongsToApp($args['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
+        }
+
         $permissions = $this->appUserService->getRolePermissions($args['roleId']);
         return $this->jsonResponse($response, ['permissions' => $permissions]);
     }
@@ -146,6 +158,10 @@ class AppUserController
         $appId = $args['appId'];
         if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_ROLES)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->roleBelongsToApp($args['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
         $data = $request->getParsedBody();
@@ -194,6 +210,10 @@ class AppUserController
 
         $data = $request->getParsedBody();
 
+        if (!$this->appUserService->appUserBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+
         try {
             $this->appUserService->updateAppUser($args['id'], $data);
             $users = $this->appUserService->getAppUsers($appId);
@@ -213,6 +233,10 @@ class AppUserController
         $appId = $args['appId'];
         if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_USERS)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->appUserBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
         }
 
         try {
@@ -298,6 +322,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        if (!$this->appUserService->invitationBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invitation not found'], 404);
+        }
+
         $this->appUserService->revokeInvitation($args['id']);
         return $this->jsonResponse($response, ['success' => true, 'message' => 'Invitation revoked']);
     }
@@ -357,6 +385,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
+        }
+
         $data = $request->getParsedBody();
         $this->appUserService->updateGroup($args['id'], $data);
         return $this->jsonResponse($response, ['success' => true]);
@@ -372,6 +404,10 @@ class AppUserController
         $appId = $args['appId'];
         if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_USERS)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
         }
 
         $this->appUserService->deleteGroup($args['id']);
@@ -390,6 +426,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
+        }
+
         $this->appUserService->addGroupMember($args['id'], $args['memberId']);
         return $this->jsonResponse($response, ['success' => true]);
     }
@@ -404,6 +444,10 @@ class AppUserController
         $appId = $args['appId'];
         if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_USERS)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
         }
 
         $this->appUserService->removeGroupMember($args['id'], $args['memberId']);

@@ -138,7 +138,7 @@ class AppPublicController
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app) {
+        if (!$app || $app['status'] !== 'published') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 

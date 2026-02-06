@@ -39,6 +39,8 @@ export function AppRoleEditor() {
           permission: (p as Record<string, unknown>).permission as PermissionAction,
         })));
       }
+    }).catch(() => {
+      setPermissions([]);
     });
   }, [appId, selectedRoleId]);
 

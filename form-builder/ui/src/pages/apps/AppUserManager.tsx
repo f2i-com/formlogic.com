@@ -23,10 +23,15 @@ export function AppUserManager() {
 
   useEffect(() => {
     if (!appId) return;
-    fetchUsers(appId);
-    fetchInvitations(appId);
-    fetchGroups(appId);
-    fetchRoles(appId).then(setRoles);
+    Promise.all([
+      fetchUsers(appId),
+      fetchInvitations(appId),
+      fetchGroups(appId),
+      fetchRoles(appId).then(setRoles),
+    ]).catch(() => {
+      // Errors handled by individual store methods
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
   const appUsers = users[appId!] || [];

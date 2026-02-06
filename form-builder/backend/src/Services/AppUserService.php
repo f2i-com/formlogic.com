@@ -20,6 +20,36 @@ class AppUserService
         $this->mysql = $mysql->getConnection();
     }
 
+    // Ownership verification helpers
+
+    public function roleBelongsToApp(string $roleId, string $appId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT id FROM app_roles WHERE id = :id AND app_id = :app_id");
+        $stmt->execute(['id' => $roleId, 'app_id' => $appId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+    }
+
+    public function appUserBelongsToApp(string $appUserId, string $appId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT id FROM app_users WHERE id = :id AND app_id = :app_id");
+        $stmt->execute(['id' => $appUserId, 'app_id' => $appId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+    }
+
+    public function invitationBelongsToApp(string $invitationId, string $appId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT id FROM app_invitations WHERE id = :id AND app_id = :app_id");
+        $stmt->execute(['id' => $invitationId, 'app_id' => $appId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+    }
+
+    public function groupBelongsToApp(string $groupId, string $appId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT id FROM app_user_groups WHERE id = :id AND app_id = :app_id");
+        $stmt->execute(['id' => $groupId, 'app_id' => $appId]);
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+    }
+
     // Roles
 
     public function getRoles(string $appId): array

@@ -37,7 +37,8 @@ export function AppDataTable() {
         setLoading(false);
       });
     }
-  }, [formId, fetchResponses]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formId]);
 
   const handleDelete = async (responseId: string) => {
     if (!formId || !confirm('Delete this response?')) return;
