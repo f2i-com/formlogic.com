@@ -26,32 +26,35 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
         {/* Background rounded square with gradient */}
         <rect width="40" height="40" rx="10" fill="url(#logoGradient)" />
 
-        {/* Simple form/document icon centered */}
-        <g transform="translate(10, 8)">
-          {/* Document body */}
-          <rect
-            x="2"
-            y="0"
-            width="16"
-            height="24"
-            rx="3"
-            fill="white"
-            fillOpacity="0.95"
-          />
-
-          {/* Form lines */}
-          <rect x="5" y="5" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.4" />
-          <rect x="5" y="10" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.4" />
-
-          {/* Checkmark circle */}
-          <circle cx="10" cy="18" r="4" fill="#6366f1" fillOpacity="0.15" />
+        {/* Branching flow icon: form input → logic branches → outcomes */}
+        <g transform="translate(8, 6)">
+          {/* Branching curves (behind nodes) */}
           <path
-            d="M7.5 18L9 19.5L12.5 16"
-            stroke="#6366f1"
-            strokeWidth="1.5"
+            d="M12 9 C12 15, 5 17, 5 22"
+            stroke="white"
+            strokeWidth="2.5"
             strokeLinecap="round"
-            strokeLinejoin="round"
+            fill="none"
+            opacity="0.5"
           />
+          <path
+            d="M12 9 C12 15, 19 17, 19 22"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            fill="none"
+            opacity="0.5"
+          />
+
+          {/* Top rounded bar (form field / input) */}
+          <rect x="3" y="0" width="18" height="9" rx="3" fill="white" fillOpacity="0.95" />
+          <rect x="6" y="3.5" width="12" height="2" rx="1" fill="#6366f1" fillOpacity="0.35" />
+
+          {/* Bottom-left node (outcome) */}
+          <circle cx="5" cy="23" r="3.5" fill="white" fillOpacity="0.9" />
+
+          {/* Bottom-right node (outcome) */}
+          <circle cx="19" cy="23" r="3.5" fill="white" fillOpacity="0.9" />
         </g>
 
         <defs>
@@ -95,32 +98,35 @@ export function LogoWhite({ size = 'md', showText = true, className = '' }: Logo
         <rect width="40" height="40" rx="10" fill="white" fillOpacity="0.15" />
         <rect width="40" height="40" rx="10" stroke="white" strokeOpacity="0.25" strokeWidth="1" />
 
-        {/* Simple form/document icon centered */}
-        <g transform="translate(10, 8)">
-          {/* Document body */}
-          <rect
-            x="2"
-            y="0"
-            width="16"
-            height="24"
-            rx="3"
-            fill="white"
-            fillOpacity="0.95"
-          />
-
-          {/* Form lines */}
-          <rect x="5" y="5" width="10" height="2" rx="1" fill="#6366f1" fillOpacity="0.5" />
-          <rect x="5" y="10" width="7" height="2" rx="1" fill="#6366f1" fillOpacity="0.5" />
-
-          {/* Checkmark circle */}
-          <circle cx="10" cy="18" r="4" fill="#6366f1" fillOpacity="0.2" />
+        {/* Branching flow icon: form input → logic branches → outcomes */}
+        <g transform="translate(8, 6)">
+          {/* Branching curves (behind nodes) */}
           <path
-            d="M7.5 18L9 19.5L12.5 16"
-            stroke="#6366f1"
-            strokeWidth="1.5"
+            d="M12 9 C12 15, 5 17, 5 22"
+            stroke="white"
+            strokeWidth="2.5"
             strokeLinecap="round"
-            strokeLinejoin="round"
+            fill="none"
+            opacity="0.55"
           />
+          <path
+            d="M12 9 C12 15, 19 17, 19 22"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            fill="none"
+            opacity="0.55"
+          />
+
+          {/* Top rounded bar (form field / input) */}
+          <rect x="3" y="0" width="18" height="9" rx="3" fill="white" fillOpacity="0.95" />
+          <rect x="6" y="3.5" width="12" height="2" rx="1" fill="#6366f1" fillOpacity="0.45" />
+
+          {/* Bottom-left node (outcome) */}
+          <circle cx="5" cy="23" r="3.5" fill="white" fillOpacity="0.9" />
+
+          {/* Bottom-right node (outcome) */}
+          <circle cx="19" cy="23" r="3.5" fill="white" fillOpacity="0.9" />
         </g>
       </svg>
 
