@@ -1,0 +1,199 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Check, Globe } from 'lucide-react';
+import { useAppStore } from '../../stores/appStore';
+import { useFormStore } from '../../stores/formStore';
+import { Header } from '../../components/layout/Header';
+import { Button } from '../../components/ui/Button';
+import { cn } from '../../lib/utils';
+
+const steps = ['App Details', 'Select Forms', 'Review'];
+
+export function AppCreateWizard() {
+  const navigate = useNavigate();
+  const { createApp } = useAppStore();
+  const { forms } = useFormStore();
+  const [step, setStep] = useState(0);
+  const [isCreating, setIsCreating] = useState(false);
+
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedFormIds, setSelectedFormIds] = useState<string[]>([]);
+
+  const canNext = step === 0 ? name.trim().length > 0 : true;
+
+  const handleCreate = async () => {
+    setIsCreating(true);
+    const app = await createApp({ name, description: description || undefined });
+    if (app) {
+      // Add selected forms
+      for (const formId of selectedFormIds) {
+        await useAppStore.getState().addFormToApp(app.id, formId);
+      }
+      navigate(`/apps/${app.id}/settings`);
+    }
+    setIsCreating(false);
+  };
+
+  const toggleForm = (formId: string) => {
+    setSelectedFormIds((prev) =>
+      prev.includes(formId) ? prev.filter((id) => id !== formId) : [...prev, formId]
+    );
+  };
+
+  return (
+    <div className="min-h-screen">
+      <Header
+        title="Create New App"
+        actions={
+          <Button variant="ghost" size="sm" onClick={() => navigate('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            Back
+          </Button>
+        }
+      />
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+      <div className="max-w-2xl mx-auto">
+
+      {/* Step indicator */}
+      <div className="flex items-center gap-2 mb-8">
+        {steps.map((label, i) => (
+          <div key={label} className="flex items-center gap-2">
+            <div className={cn(
+              'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors',
+              i < step ? 'bg-primary-600 text-white' :
+              i === step ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400 ring-2 ring-primary-600' :
+              'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
+            )}>
+              {i < step ? <Check className="h-4 w-4" /> : i + 1}
+            </div>
+            <span className={cn('text-sm hidden sm:inline', i === step ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-400 dark:text-slate-500')}>{label}</span>
+            {i < steps.length - 1 && <div className="w-8 h-px bg-gray-200 dark:bg-slate-700" />}
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+        {step === 0 && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name *</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="My Application"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="What does this app do?"
+                rows={3}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later.</p>
+            {forms.length === 0 ? (
+              <p className="text-center text-gray-400 dark:text-slate-500 py-8">No forms available. Create some forms first.</p>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {forms.map((form) => (
+                  <label
+                    key={form.id}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
+                      selectedFormIds.includes(form.id)
+                        ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
+                        : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedFormIds.includes(form.id)}
+                      onChange={() => toggleForm(form.id)}
+                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
+                      {form.description && <p className="text-xs text-gray-500 dark:text-slate-400">{form.description}</p>}
+                    </div>
+                    <span className={cn('ml-auto text-xs px-2 py-0.5 rounded-full', form.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400')}>
+                      {form.status}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
+              <Globe className="h-10 w-10 text-primary-600 dark:text-primary-400" />
+              <div>
+                <h3 className="font-semibold text-gray-900 dark:text-white">{name}</h3>
+                {description && <p className="text-sm text-gray-500 dark:text-slate-400">{description}</p>}
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Included Forms ({selectedFormIds.length})</h4>
+              {selectedFormIds.length === 0 ? (
+                <p className="text-sm text-gray-400 dark:text-slate-500">No forms selected</p>
+              ) : (
+                <ul className="space-y-1">
+                  {selectedFormIds.map((id) => {
+                    const form = forms.find((f) => f.id === id);
+                    return form ? (
+                      <li key={id} className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                        {form.title}
+                      </li>
+                    ) : null;
+                  })}
+                </ul>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 dark:text-slate-500">Default roles (Owner, Admin, Member) will be created automatically.</p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between mt-6">
+        <Button
+          variant="ghost"
+          onClick={() => setStep(Math.max(0, step - 1))}
+          disabled={step === 0}
+          leftIcon={<ArrowLeft className="h-4 w-4" />}
+        >
+          Back
+        </Button>
+
+        {step < steps.length - 1 ? (
+          <Button
+            onClick={() => setStep(step + 1)}
+            disabled={!canNext}
+            rightIcon={<ArrowRight className="h-4 w-4" />}
+          >
+            Next
+          </Button>
+        ) : (
+          <Button onClick={handleCreate} disabled={isCreating}>
+            {isCreating ? 'Creating...' : 'Create App'}
+          </Button>
+        )}
+      </div>
+    </div>
+    </div>
+    </div>
+  );
+}

@@ -35,6 +35,7 @@ lerna-debug.log*
 # PHP
 /backend/vendor/
 /backend/storage/forms/*.db
+/backend/storage/forms/*.sqlite
 /backend/logs/*.log
 
 # OS files

@@ -337,6 +337,229 @@ class ApiClient {
       body: JSON.stringify({ script, prompt, fields }),
     });
   }
+
+  // App Admin endpoints
+  async getApps(): Promise<ApiResponse<{ apps: unknown[]; count: number }>> {
+    return this.request('/apps');
+  }
+
+  async createApp(data: Record<string, unknown>): Promise<ApiResponse<{ app: unknown }>> {
+    return this.request('/apps', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getApp(id: string): Promise<ApiResponse<{ app: unknown }>> {
+    return this.request(`/apps/${id}`);
+  }
+
+  async updateApp(id: string, data: Record<string, unknown>): Promise<ApiResponse<{ app: unknown }>> {
+    return this.request(`/apps/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteApp(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // App Form management
+  async getAppForms(appId: string): Promise<ApiResponse<{ forms: unknown[] }>> {
+    return this.request(`/apps/${appId}/forms`);
+  }
+
+  async addAppForm(appId: string, formId: string, displayName?: string): Promise<ApiResponse<{ forms: unknown[] }>> {
+    return this.request(`/apps/${appId}/forms`, {
+      method: 'POST',
+      body: JSON.stringify({ formId, displayName }),
+    });
+  }
+
+  async updateAppForm(appId: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ forms: unknown[] }>> {
+    return this.request(`/apps/${appId}/forms/${formId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeAppForm(appId: string, formId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/forms/${formId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async reorderAppForms(appId: string, formIds: string[]): Promise<ApiResponse<{ forms: unknown[] }>> {
+    return this.request(`/apps/${appId}/forms/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ formIds }),
+    });
+  }
+
+  // App Role management
+  async getAppRoles(appId: string): Promise<ApiResponse<{ roles: unknown[] }>> {
+    return this.request(`/apps/${appId}/roles`);
+  }
+
+  async createAppRole(appId: string, data: { name: string; description?: string }): Promise<ApiResponse<{ role: unknown }>> {
+    return this.request(`/apps/${appId}/roles`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAppRole(appId: string, roleId: string, data: Record<string, unknown>): Promise<ApiResponse<{ roles: unknown[] }>> {
+    return this.request(`/apps/${appId}/roles/${roleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAppRole(appId: string, roleId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/roles/${roleId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // App Role Permissions
+  async getAppRolePermissions(appId: string, roleId: string): Promise<ApiResponse<{ permissions: unknown[] }>> {
+    return this.request(`/apps/${appId}/roles/${roleId}/permissions`);
+  }
+
+  async setAppRolePermissions(appId: string, roleId: string, permissions: unknown[]): Promise<ApiResponse<{ permissions: unknown[] }>> {
+    return this.request(`/apps/${appId}/roles/${roleId}/permissions`, {
+      method: 'PUT',
+      body: JSON.stringify({ permissions }),
+    });
+  }
+
+  // App User management
+  async getAppUsers(appId: string): Promise<ApiResponse<{ users: unknown[]; count: number }>> {
+    return this.request(`/apps/${appId}/users`);
+  }
+
+  async updateAppUser(appId: string, appUserId: string, data: Record<string, unknown>): Promise<ApiResponse<{ users: unknown[] }>> {
+    return this.request(`/apps/${appId}/users/${appUserId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async removeAppUser(appId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/users/${appUserId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // App Invitations
+  async getAppInvitations(appId: string): Promise<ApiResponse<{ invitations: unknown[] }>> {
+    return this.request(`/apps/${appId}/invitations`);
+  }
+
+  async createAppInvitation(appId: string, email: string, roleId: string): Promise<ApiResponse<{ invitation: unknown }>> {
+    return this.request(`/apps/${appId}/invitations`, {
+      method: 'POST',
+      body: JSON.stringify({ email, roleId }),
+    });
+  }
+
+  async revokeAppInvitation(appId: string, invitationId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/invitations/${invitationId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async acceptAppInvitation(token: string): Promise<ApiResponse<{ success: boolean; membership: unknown }>> {
+    return this.request('/apps/invitations/accept', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  // App Groups
+  async getAppGroups(appId: string): Promise<ApiResponse<{ groups: unknown[] }>> {
+    return this.request(`/apps/${appId}/groups`);
+  }
+
+  async createAppGroup(appId: string, data: { name: string; description?: string }): Promise<ApiResponse<{ group: unknown }>> {
+    return this.request(`/apps/${appId}/groups`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAppGroup(appId: string, groupId: string, data: Record<string, unknown>): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/groups/${groupId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAppGroup(appId: string, groupId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/groups/${groupId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async addAppGroupMember(appId: string, groupId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/groups/${groupId}/members/${appUserId}`, {
+      method: 'POST',
+    });
+  }
+
+  async removeAppGroupMember(appId: string, groupId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/groups/${groupId}/members/${appUserId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // App Runtime endpoints (end-user facing)
+  async getAppRuntime(slug: string): Promise<ApiResponse<{ app: unknown; forms: unknown[]; user: unknown; permissions: unknown }>> {
+    return this.request(`/app/${slug}`);
+  }
+
+  async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
+    return this.request(`/app/${slug}/my-permissions`);
+  }
+
+  async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
+    return this.request(`/app/${slug}/forms/${formId}`);
+  }
+
+  async createAppResponse(slug: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getAppResponses(slug: string, formId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const query = params.toString();
+    return this.request(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
+  }
+
+  async getAppResponseById(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`);
+  }
+
+  async updateAppResponse(slug: string, formId: string, responseId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAppResponse(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 // Types

@@ -5,7 +5,8 @@ import {
   Plus,
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Globe
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
@@ -16,6 +17,7 @@ import { Logo } from '../ui/Logo';
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/forms', icon: FileText, label: 'My Forms' },
+  { path: '/apps', icon: Globe, label: 'Apps' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 

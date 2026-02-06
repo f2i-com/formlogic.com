@@ -22,6 +22,12 @@ use FormLogic\Middleware\RateLimitMiddleware;
 use FormLogic\Middleware\BodySizeLimitMiddleware;
 use FormLogic\Services\AIService;
 use FormLogic\Services\DocumentConverter;
+use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
+use FormLogic\Services\AppResponseService;
+use FormLogic\Controllers\AppController;
+use FormLogic\Controllers\AppUserController;
+use FormLogic\Controllers\AppPublicController;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -43,6 +49,7 @@ $container->set(MySQLConnection::class, function (Container $c) {
     $mysql = new MySQLConnection($c->get('settings')['mysql']);
     // Initialize schema on first run
     $mysql->initializeSchema();
+    $mysql->runMigrations();
     return $mysql;
 });
 
@@ -120,6 +127,52 @@ $container->set(AIController::class, function (Container $c) {
         $c->get(AIService::class),
         $c->get(DocumentConverter::class),
         $c->get('settings')['uploads'] ?? []
+    );
+});
+
+// Register App services
+$container->set(AppService::class, function (Container $c) {
+    return new AppService(
+        $c->get(MySQLConnection::class),
+        $c->get(FormService::class)
+    );
+});
+
+$container->set(AppUserService::class, function (Container $c) {
+    return new AppUserService(
+        $c->get(MySQLConnection::class)
+    );
+});
+
+$container->set(AppResponseService::class, function (Container $c) {
+    return new AppResponseService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(ResponseService::class),
+        $c->get(FormLogicRuntime::class)
+    );
+});
+
+// Register App controllers
+$container->set(AppController::class, function (Container $c) {
+    return new AppController(
+        $c->get(AppService::class)
+    );
+});
+
+$container->set(AppUserController::class, function (Container $c) {
+    return new AppUserController(
+        $c->get(AppUserService::class),
+        $c->get(AppService::class)
+    );
+});
+
+$container->set(AppPublicController::class, function (Container $c) {
+    return new AppPublicController(
+        $c->get(AppService::class),
+        $c->get(AppUserService::class),
+        $c->get(AppResponseService::class),
+        $c->get(FormService::class)
     );
 });
 
@@ -363,6 +416,155 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);
+
+// App Admin routes (protected - require authentication + ownership)
+$app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(AppController::class)->index($request, $response);
+    });
+    $group->post('', function ($request, $response) use ($container) {
+        return $container->get(AppController::class)->create($request, $response);
+    });
+    $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->show($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->update($request, $response, $getArgs($request));
+    });
+    $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->delete($request, $response, $getArgs($request));
+    });
+
+    // App form management
+    $group->get('/{id}/forms', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->listForms($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/forms', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->addForm($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}/forms/reorder', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->reorderForms($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->updateForm($request, $response, $getArgs($request));
+    });
+    $group->delete('/{id}/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->removeForm($request, $response, $getArgs($request));
+    });
+
+    // Role management
+    $group->get('/{appId}/roles', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->listRoles($request, $response, $getArgs($request));
+    });
+    $group->post('/{appId}/roles', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->createRole($request, $response, $getArgs($request));
+    });
+    $group->put('/{appId}/roles/{roleId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->updateRole($request, $response, $getArgs($request));
+    });
+    $group->delete('/{appId}/roles/{roleId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->deleteRole($request, $response, $getArgs($request));
+    });
+
+    // Permission management
+    $group->get('/{appId}/roles/{roleId}/permissions', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->getPermissions($request, $response, $getArgs($request));
+    });
+    $group->put('/{appId}/roles/{roleId}/permissions', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->setPermissions($request, $response, $getArgs($request));
+    });
+
+    // User management
+    $group->get('/{appId}/users', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->listUsers($request, $response, $getArgs($request));
+    });
+    $group->put('/{appId}/users/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->updateUser($request, $response, $getArgs($request));
+    });
+    $group->delete('/{appId}/users/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->removeUser($request, $response, $getArgs($request));
+    });
+
+    // Invitation management
+    $group->get('/{appId}/invitations', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->listInvitations($request, $response, $getArgs($request));
+    });
+    $group->post('/{appId}/invitations', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->createInvitation($request, $response, $getArgs($request));
+    });
+    $group->delete('/{appId}/invitations/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->revokeInvitation($request, $response, $getArgs($request));
+    });
+
+    // Accept invitation (just requires platform auth, no app ownership)
+    $group->post('/invitations/accept', function ($request, $response) use ($container) {
+        return $container->get(AppUserController::class)->acceptInvitation($request, $response);
+    });
+
+    // Group management
+    $group->get('/{appId}/groups', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->listGroups($request, $response, $getArgs($request));
+    });
+    $group->post('/{appId}/groups', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->createGroup($request, $response, $getArgs($request));
+    });
+    $group->put('/{appId}/groups/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->updateGroup($request, $response, $getArgs($request));
+    });
+    $group->delete('/{appId}/groups/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->deleteGroup($request, $response, $getArgs($request));
+    });
+    $group->post('/{appId}/groups/{id}/members/{memberId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->addGroupMember($request, $response, $getArgs($request));
+    });
+    $group->delete('/{appId}/groups/{id}/members/{memberId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->removeGroupMember($request, $response, $getArgs($request));
+    });
+})->add($authRequired);
+
+// App Runtime routes (public-facing, auth required for most)
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired) {
+    // PWA manifest (public, no auth)
+    $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
+    });
+
+    // App config + forms + permissions (auth required)
+    $group->get('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->getApp($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // User permissions
+    $group->get('/my-permissions', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->getMyPermissions($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Form in app context
+    $group->get('/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->getForm($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Response CRUD
+    $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->createResponse($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->listResponses($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    $group->get('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->getResponseById($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->updateResponseById($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    $group->delete('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->deleteResponseById($request, $response, $getArgs($request));
+    })->add($authRequired);
+});
 
 // Run app
 $app->run();

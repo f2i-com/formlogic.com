@@ -151,6 +151,143 @@ class MySQLConnection
                 INDEX idx_date (date)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Apps table
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS apps (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_id VARCHAR(36) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                slug VARCHAR(255) NOT NULL UNIQUE,
+                description TEXT,
+                logo_url VARCHAR(500),
+                status ENUM('draft', 'published', 'archived') DEFAULT 'draft',
+                settings JSON,
+                theme JSON,
+                nav_config JSON,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_owner_id (owner_id),
+                INDEX idx_slug (slug),
+                INDEX idx_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App-form join table
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_forms (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                form_id VARCHAR(36) NOT NULL,
+                display_name VARCHAR(255),
+                sort_order INT DEFAULT 0,
+                is_visible TINYINT(1) DEFAULT 1,
+                settings JSON,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_app_form (app_id, form_id),
+                INDEX idx_app_id (app_id),
+                INDEX idx_sort_order (sort_order)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App roles
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_roles (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                is_system TINYINT(1) DEFAULT 0,
+                sort_order INT DEFAULT 0,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_app_role (app_id, name),
+                INDEX idx_app_id (app_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App role permissions
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_role_permissions (
+                id VARCHAR(36) PRIMARY KEY,
+                role_id VARCHAR(36) NOT NULL,
+                form_id VARCHAR(36) DEFAULT NULL,
+                permission VARCHAR(50) NOT NULL,
+                FOREIGN KEY (role_id) REFERENCES app_roles(id) ON DELETE CASCADE,
+                FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_role_perm (role_id, form_id, permission),
+                INDEX idx_role_id (role_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App users
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_users (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                role_id VARCHAR(36) NOT NULL,
+                status ENUM('pending', 'active', 'suspended') DEFAULT 'active',
+                invited_by VARCHAR(36),
+                invited_at TIMESTAMP NULL,
+                joined_at TIMESTAMP NULL,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (role_id) REFERENCES app_roles(id) ON DELETE RESTRICT,
+                UNIQUE KEY unique_app_user (app_id, user_id),
+                INDEX idx_app_id (app_id),
+                INDEX idx_user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App user groups
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_user_groups (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_app_group (app_id, name),
+                INDEX idx_app_id (app_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App user group members
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_user_group_members (
+                id VARCHAR(36) PRIMARY KEY,
+                group_id VARCHAR(36) NOT NULL,
+                app_user_id VARCHAR(36) NOT NULL,
+                FOREIGN KEY (group_id) REFERENCES app_user_groups(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_group_member (group_id, app_user_id),
+                INDEX idx_group_id (group_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // App invitations
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_invitations (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                role_id VARCHAR(36) NOT NULL,
+                token_hash VARCHAR(255) NOT NULL,
+                invited_by VARCHAR(36) NOT NULL,
+                status ENUM('pending', 'accepted', 'expired', 'revoked') DEFAULT 'pending',
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (role_id) REFERENCES app_roles(id) ON DELETE CASCADE,
+                FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_app_id (app_id),
+                INDEX idx_email (email),
+                INDEX idx_token_hash (token_hash),
+                INDEX idx_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /**

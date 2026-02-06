@@ -18,6 +18,18 @@ const FormResponses = React.lazy(() => import('./pages/FormResponses'));
 const Login = React.lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
 const Signup = React.lazy(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
+// Lazy load app admin pages
+const AppsDashboard = React.lazy(() => import('./pages/apps/AppsDashboard').then(m => ({ default: m.AppsDashboard })));
+const AppCreateWizard = React.lazy(() => import('./pages/apps/AppCreateWizard').then(m => ({ default: m.AppCreateWizard })));
+const AppSettingsPage = React.lazy(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
+const AppFormManager = React.lazy(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
+const AppUserManager = React.lazy(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
+const AppRoleEditor = React.lazy(() => import('./pages/apps/AppRoleEditor').then(m => ({ default: m.AppRoleEditor })));
+const AppDeploySettings = React.lazy(() => import('./pages/apps/AppDeploySettings').then(m => ({ default: m.AppDeploySettings })));
+
+// Lazy load app runtime
+const AppRuntimeRoot = React.lazy(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
+
 function LoadingFallback() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
@@ -73,6 +85,8 @@ function AppRoutes() {
         <Route path="/signup" element={<Signup />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
+        {/* App runtime - accessible with platform auth */}
+        <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* Redirect all other routes to landing */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -89,6 +103,14 @@ function AppRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
         <Route path="/responses/:formId" element={<FormResponses />} />
+        {/* App admin routes */}
+        <Route path="/apps" element={<AppsDashboard />} />
+        <Route path="/apps/new" element={<AppCreateWizard />} />
+        <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
+        <Route path="/apps/:appId/forms" element={<AppFormManager />} />
+        <Route path="/apps/:appId/users" element={<AppUserManager />} />
+        <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
+        <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
       </Route>
 
       {/* Builder route (full screen, no sidebar) */}
@@ -99,6 +121,9 @@ function AppRoutes() {
 
       {/* Public form response route */}
       <Route path="/form/:formId" element={<FormResponse />} />
+
+      {/* App runtime (full screen, separate layout) */}
+      <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
     </Routes>
   );
 }
