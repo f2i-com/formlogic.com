@@ -88,7 +88,7 @@ export function AppRoleEditor() {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Role list */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
+        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4 overflow-hidden">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3">Roles</h3>
           <div className="space-y-1 mb-4">
             {roles.map((role) => (
@@ -109,7 +109,7 @@ export function AppRoleEditor() {
           </div>
           <div className="flex gap-2">
             <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role"
-              className="flex-1 px-2 py-1 border border-gray-300 dark:border-slate-600 rounded text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white" />
+              className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-slate-600 rounded text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white" />
             <button onClick={handleCreateRole} disabled={!newRoleName.trim()} className="p-1 text-primary-600 hover:text-primary-700 disabled:opacity-50">
               <Plus className="h-4 w-4" />
             </button>
@@ -122,7 +122,7 @@ export function AppRoleEditor() {
             <>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900 dark:text-white">Permissions for "{selectedRole.name}"</h3>
-                <Button size="sm" onClick={handleSavePermissions} disabled={saving || selectedRole.isSystem}>
+                <Button size="sm" onClick={handleSavePermissions} disabled={saving || selectedRole.name === 'Owner'}>
                   {saving ? 'Saving...' : 'Save Permissions'}
                 </Button>
               </div>
@@ -133,7 +133,6 @@ export function AppRoleEditor() {
                   permissions={permissions}
                   forms={appForms.map((f) => ({ formId: f.formId, displayName: f.displayName }))}
                   onChange={setPermissions}
-                  disabled={selectedRole.isSystem}
                 />
               )}
             </>
