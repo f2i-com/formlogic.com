@@ -234,14 +234,14 @@ return null;`}
                             {result.valid ? (
                               <>
                                 <CheckCircle className="h-4 w-4 text-green-500" />
-                                <span className="text-green-700">
+                                <span className="text-green-700 dark:text-green-400">
                                   {result.output === null ? 'Valid!' : `Error: ${result.output}`}
                                 </span>
                               </>
                             ) : (
                               <>
                                 <AlertCircle className="h-4 w-4 text-red-500" />
-                                <span className="text-red-700">{result.error}</span>
+                                <span className="text-red-700 dark:text-red-400">{result.error}</span>
                               </>
                             )}
                           </div>

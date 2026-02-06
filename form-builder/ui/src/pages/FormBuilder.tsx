@@ -295,7 +295,7 @@ export default function FormBuilder() {
             className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
           >
             <Sparkles className="h-4 w-4 text-purple-400" />
-            <span className="hidden lg:inline ml-2 text-purple-300">AI</span>
+            <span className="hidden lg:inline ml-2 text-purple-600 dark:text-purple-300">AI</span>
           </Button>
 
           {/* Settings - hidden on smallest screens */}
@@ -490,7 +490,7 @@ export default function FormBuilder() {
               />
             ) : (
               <div className="p-6 text-center text-gray-500">
-                <Settings className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+                <Settings className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                 <p>Select a field to edit its settings</p>
               </div>
             )}

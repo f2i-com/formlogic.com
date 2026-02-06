@@ -176,14 +176,14 @@ price * quantity * (1 + taxRate / 100)`}
               {result.valid ? (
                 <>
                   <CheckCircle className="h-4 w-4 text-green-500" />
-                  <span className="text-sm text-green-700">
+                  <span className="text-sm text-green-700 dark:text-green-400">
                     Result: <strong>{String(result.output)}</strong>
                   </span>
                 </>
               ) : (
                 <>
                   <AlertCircle className="h-4 w-4 text-red-500" />
-                  <span className="text-sm text-red-700">{result.error}</span>
+                  <span className="text-sm text-red-700 dark:text-red-400">{result.error}</span>
                 </>
               )}
             </div>

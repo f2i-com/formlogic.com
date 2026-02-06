@@ -636,8 +636,8 @@ export default function FormResponse() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <p className="text-gray-500">Form not found</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
+        <p className="text-gray-500 dark:text-slate-400">Form not found</p>
       </div>
     );
   }

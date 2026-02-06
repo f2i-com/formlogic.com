@@ -241,8 +241,8 @@ export function FieldSettingsPanel({
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
           {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record'].includes(field.type) ? (
-            <div className="text-center py-8 text-slate-500">
-              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-slate-600" />
+            <div className="text-center py-8 text-gray-500 dark:text-slate-500">
+              <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
               <p>Validation is not applicable for this field type.</p>
             </div>
           ) : (
@@ -267,17 +267,17 @@ export function FieldSettingsPanel({
             </div>
 
             {hasLogic ? (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800/50 rounded-lg p-4">
                 <div className="flex items-start gap-3">
-                  <Zap className="h-5 w-5 text-yellow-600 mt-0.5" />
+                  <Zap className="h-5 w-5 text-yellow-600 dark:text-yellow-500 mt-0.5" />
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-yellow-800">
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
                       {field.conditionalLogic?.action === 'show' && 'Show when:'}
                       {field.conditionalLogic?.action === 'hide' && 'Hide when:'}
                       {field.conditionalLogic?.action === 'require' && 'Require when:'}
                       {field.conditionalLogic?.action === 'skip' && 'Skip when:'}
                     </p>
-                    <code className="text-xs text-yellow-700 block mt-1 break-all">
+                    <code className="text-xs text-yellow-700 dark:text-yellow-400 block mt-1 break-all">
                       {field.conditionalLogic?.expression}
                     </code>
                   </div>

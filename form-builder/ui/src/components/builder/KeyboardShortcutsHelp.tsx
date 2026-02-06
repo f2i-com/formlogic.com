@@ -45,7 +45,6 @@ const shortcutSections: ShortcutSection[] = [
       { keys: 'T', description: 'Add Text field' },
       { keys: 'E', description: 'Add Email field' },
       { keys: 'N', description: 'Add Number field' },
-      { keys: 'D', description: 'Add Dropdown field' },
       { keys: 'R', description: 'Add Rating field' },
     ],
   },

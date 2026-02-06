@@ -86,7 +86,7 @@ export function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {displayError && (
-              <div className="flex items-center gap-2 p-3 text-sm text-red-400 bg-red-500/10 rounded-lg border border-red-500/20">
+              <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{displayError}</span>
               </div>

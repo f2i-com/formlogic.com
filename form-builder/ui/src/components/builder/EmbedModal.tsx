@@ -197,29 +197,29 @@ function closeFormPopup() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-slate-50">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
               <ExternalLink className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Share Form</h2>
-              <p className="text-sm text-gray-500">Share, embed, or export your form</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Share Form</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400">Share, embed, or export your form</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
             aria-label="Close"
           >
-            <X className="h-5 w-5 text-gray-500" />
+            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 px-6">
+        <div className="flex border-b border-gray-200 dark:border-slate-800 px-6">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -227,8 +227,8 @@ function closeFormPopup() {
               className={cn(
                 'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
                 activeTab === tab.id
-                  ? 'border-primary-500 text-primary-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
               )}
             >
               {tab.icon}
@@ -273,7 +273,7 @@ function closeFormPopup() {
 
               <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4">
                 <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Quick Preview</h4>
-                <div className="bg-white rounded border border-gray-200 dark:border-slate-700 p-4 flex items-center justify-center">
+                <div className="bg-white dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-700 p-4 flex items-center justify-center">
                   <div ref={qrRef} className="inline-block">
                     <QRCodeSVG
                       value={formUrl}
@@ -443,7 +443,7 @@ function closeFormPopup() {
           {activeTab === 'qr' && (
             <div className="space-y-6">
               <div className="flex flex-col items-center">
-                <div className="bg-white p-6 rounded-xl border-2 border-gray-200 inline-block" ref={qrRef}>
+                <div className="bg-white dark:bg-white p-6 rounded-xl border-2 border-gray-200 dark:border-gray-300 inline-block" ref={qrRef}>
                   <QRCodeSVG
                     value={formUrl}
                     size={200}
@@ -457,7 +457,7 @@ function closeFormPopup() {
                     }}
                   />
                 </div>
-                <p className="text-sm text-gray-600 mt-4 text-center">
+                <p className="text-sm text-gray-600 dark:text-slate-400 mt-4 text-center">
                   Scan this QR code to open the form on any device
                 </p>
               </div>
@@ -469,9 +469,9 @@ function closeFormPopup() {
                 </Button>
               </div>
 
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">Uses for QR codes</h4>
-                <ul className="text-sm text-gray-600 space-y-1">
+              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Uses for QR codes</h4>
+                <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1">
                   <li>Print on flyers, posters, or business cards</li>
                   <li>Add to presentations or documents</li>
                   <li>Display at events or conferences</li>
@@ -483,7 +483,7 @@ function closeFormPopup() {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 flex justify-end">
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
