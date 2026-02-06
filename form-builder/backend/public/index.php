@@ -416,6 +416,8 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
 
     // Return form without sensitive data
     unset($form['userId']);
+    unset($form['logicScript']);
+    unset($form['logicPrompt']);
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);

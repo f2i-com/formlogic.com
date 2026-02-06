@@ -123,19 +123,7 @@ class AIController
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
-        // Validate file type
-        $allowedTypes = $this->uploadSettings['allowedTypes'];
-        $mimeType = $file->getClientMediaType();
-        if (!in_array($mimeType, $allowedTypes, true)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Unsupported file type: ' . $mimeType,
-                'allowed' => $allowedTypes,
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
-
         // Create a secure temp file with restrictive permissions BEFORE writing
-        // This prevents the race condition where file is created with default permissions
         $tempDir = sys_get_temp_dir();
         $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($file->getClientFilename()));
         $tempPath = $tempDir . '/' . bin2hex(random_bytes(16)) . '_' . $safeFilename;
@@ -144,8 +132,22 @@ class AIController
         touch($tempPath);
         chmod($tempPath, 0600);
 
-        // Now move the uploaded file to our prepared location
+        // Move the uploaded file to our prepared location
         $file->moveTo($tempPath);
+
+        // Validate file type using server-side detection (not client-supplied header)
+        $allowedTypes = $this->uploadSettings['allowedTypes'];
+        $mimeType = function_exists('finfo_file')
+            ? finfo_file(finfo_open(FILEINFO_MIME_TYPE), $tempPath)
+            : mime_content_type($tempPath);
+        if (!in_array($mimeType, $allowedTypes, true)) {
+            @unlink($tempPath);
+            $response->getBody()->write(json_encode([
+                'error' => 'Unsupported file type: ' . $mimeType,
+                'allowed' => $allowedTypes,
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
 
         try {
             // Convert document to images

@@ -215,8 +215,8 @@ function FieldInput({
   }
 
   if (field.type === 'scale') {
-    const min = (field.properties?.min as number) ?? 1;
-    const max = (field.properties?.max as number) ?? 10;
+    const min = (field.properties?.scaleStart as number) ?? (field.properties?.min as number) ?? 1;
+    const max = (field.properties?.scaleEnd as number) ?? (field.properties?.max as number) ?? 10;
     const range = max - min + 1;
     return (
       <div className="space-y-3">
@@ -243,10 +243,10 @@ function FieldInput({
             );
           })}
         </div>
-        {Boolean(field.properties?.minLabel || field.properties?.maxLabel) && (
+        {Boolean(field.properties?.scaleStartLabel || field.properties?.minLabel || field.properties?.scaleEndLabel || field.properties?.maxLabel) && (
           <div className="flex justify-between text-sm text-gray-500 dark:text-slate-400">
-            <span>{String(field.properties?.minLabel ?? '')}</span>
-            <span>{String(field.properties?.maxLabel ?? '')}</span>
+            <span>{String(field.properties?.scaleStartLabel ?? field.properties?.minLabel ?? '')}</span>
+            <span>{String(field.properties?.scaleEndLabel ?? field.properties?.maxLabel ?? '')}</span>
           </div>
         )}
       </div>

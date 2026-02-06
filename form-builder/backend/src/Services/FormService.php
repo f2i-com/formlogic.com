@@ -95,7 +95,11 @@ class FormService
         // Check if form already exists
         $existing = $this->getForm($id);
         if ($existing) {
-            // Update existing form instead of inserting
+            // Verify the current user owns this form before allowing update
+            $userId = $data['userId'] ?? null;
+            if (!$userId || ($existing['userId'] ?? null) !== $userId) {
+                throw new \RuntimeException('A form with this ID already exists');
+            }
             return $this->updateForm($id, $data);
         }
 

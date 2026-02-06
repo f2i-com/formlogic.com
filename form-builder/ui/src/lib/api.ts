@@ -56,14 +56,25 @@ class ApiClient {
         credentials: 'include',
       });
 
-      const data = await response.json();
+      let data: T;
+      try {
+        data = await response.json();
+      } catch {
+        if (!response.ok) {
+          if (response.status === 401) {
+            this._isAuthenticated = false;
+          }
+          return { error: `Server error (${response.status})` };
+        }
+        return { error: 'Invalid response from server' };
+      }
 
       if (!response.ok) {
         // If we get a 401, update auth state
         if (response.status === 401) {
           this._isAuthenticated = false;
         }
-        return { error: data.message || 'An error occurred' };
+        return { error: (data as Record<string, unknown>)?.message as string || 'An error occurred' };
       }
 
       return { data };

@@ -58,8 +58,11 @@ class AppController
         try {
             $app = $this->appService->createApp($data, $userId);
             return $this->jsonResponse($response, ['app' => $app], 201);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            error_log('App creation error: ' . $e->getMessage());
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
     }
 
@@ -85,8 +88,11 @@ class AppController
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             return $this->jsonResponse($response, ['app' => $updatedApp]);
-        } catch (\Exception $e) {
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            error_log('App update error: ' . $e->getMessage());
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
     }
 

@@ -604,7 +604,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/builder/${form.id}`)}
                               title="Edit form"
-                              className="hidden md:flex text-slate-400 hover:text-white"
+                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
@@ -613,7 +613,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/preview/${form.id}`)}
                               title="Preview form"
-                              className="hidden md:flex text-slate-400 hover:text-white"
+                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -622,7 +622,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/analytics/${form.id}`)}
                               title="View analytics"
-                              className="hidden lg:flex text-slate-400 hover:text-white"
+                              className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <BarChart3 className="h-4 w-4" />
                             </Button>
@@ -631,7 +631,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/responses/${form.id}`)}
                               title="View data"
-                              className="hidden lg:flex text-slate-400 hover:text-white"
+                              className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Table className="h-4 w-4" />
                             </Button>

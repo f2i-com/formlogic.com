@@ -42,42 +42,59 @@ export const useAppStore = create<AppState>()(
 
       fetchApps: async () => {
         set({ isLoading: true, error: null });
-        const result = await api.getApps();
-        if (result.error) {
-          set({ error: result.error, isLoading: false });
-        } else {
-          set({ apps: (result.data?.apps as App[]) ?? [], isLoading: false });
+        try {
+          const result = await api.getApps();
+          if (result.error) {
+            set({ error: result.error, isLoading: false });
+          } else {
+            set({ apps: (result.data?.apps as App[]) ?? [], isLoading: false });
+          }
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : 'Failed to fetch apps', isLoading: false });
         }
       },
 
       createApp: async (data) => {
         set({ isLoading: true, error: null });
-        const result = await api.createApp(data);
-        if (result.error) {
-          set({ error: result.error, isLoading: false });
+        try {
+          const result = await api.createApp(data);
+          if (result.error) {
+            set({ error: result.error, isLoading: false });
+            return null;
+          }
+          const app = result.data?.app as App;
+          set((s) => ({ apps: [...s.apps, app], isLoading: false }));
+          return app;
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : 'Failed to create app', isLoading: false });
           return null;
         }
-        const app = result.data?.app as App;
-        set((s) => ({ apps: [...s.apps, app], isLoading: false }));
-        return app;
       },
 
       updateApp: async (id, data) => {
-        const result = await api.updateApp(id, data);
-        if (!result.error && result.data) {
-          set((s) => ({
-            apps: s.apps.map((a) => (a.id === id ? (result.data!.app as App) : a)),
-          }));
+        try {
+          const result = await api.updateApp(id, data);
+          if (!result.error && result.data) {
+            set((s) => ({
+              apps: s.apps.map((a) => (a.id === id ? (result.data!.app as App) : a)),
+            }));
+          }
+        } catch (e) {
+          console.error('Failed to update app:', e);
         }
       },
 
       deleteApp: async (id) => {
-        const result = await api.deleteApp(id);
-        if (result.error) return;
-        set((s) => ({
-          apps: s.apps.filter((a) => a.id !== id),
-          activeAppId: s.activeAppId === id ? null : s.activeAppId,
-        }));
+        try {
+          const result = await api.deleteApp(id);
+          if (result.error) return;
+          set((s) => ({
+            apps: s.apps.filter((a) => a.id !== id),
+            activeAppId: s.activeAppId === id ? null : s.activeAppId,
+          }));
+        } catch (e) {
+          console.error('Failed to delete app:', e);
+        }
       },
 
       getApp: (id) => get().apps.find((a) => a.id === id),

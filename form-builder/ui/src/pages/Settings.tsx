@@ -92,6 +92,9 @@ export function Settings() {
   const [email, setEmail] = useState(user?.email || '');
   const [hasProfileChanges, setHasProfileChanges] = useState(false);
 
+  // Theme
+  const themeColor = useUIStore((state) => state.themeColor);
+
   // Preferences state
   const [preferences, setPreferences] = useState<UserPreferences>(getStoredPreferences);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -248,7 +251,7 @@ export function Settings() {
                     { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan' },
                     { id: 'violet', color: 'bg-violet-500', label: 'Violet' },
                   ].map((theme) => {
-                    const isSelected = useUIStore(state => state.themeColor) === theme.id;
+                    const isSelected = themeColor === theme.id;
                     return (
                       <button
                         key={theme.id}

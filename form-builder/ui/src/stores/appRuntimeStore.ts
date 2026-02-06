@@ -50,26 +50,30 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
 
       initialize: async (appSlug: string) => {
         set({ isLoading: true, error: null, appSlug });
-        const result = await api.getAppRuntime(appSlug);
-        if (result.error) {
-          set({ error: result.error, isLoading: false });
-          return;
-        }
-        if (result.data) {
-          const data = result.data as Record<string, unknown>;
-          const perms = data.permissions as AppUserPermissions | undefined;
-          const forms = (data.forms as AppRuntimeForm[]) ?? [];
-          const config: AppRuntimeConfig = {
-            app: data.app as AppRuntimeConfig['app'],
-            forms,
-            userPermissions: perms?.formLevel ?? {},
-          };
-          set({
-            config,
-            permissions: perms ?? null,
-            isLoading: false,
-            activeFormId: forms[0]?.formId ?? null,
-          });
+        try {
+          const result = await api.getAppRuntime(appSlug);
+          if (result.error) {
+            set({ error: result.error, isLoading: false });
+            return;
+          }
+          if (result.data) {
+            const data = result.data as Record<string, unknown>;
+            const perms = data.permissions as AppUserPermissions | undefined;
+            const forms = (data.forms as AppRuntimeForm[]) ?? [];
+            const config: AppRuntimeConfig = {
+              app: data.app as AppRuntimeConfig['app'],
+              forms,
+              userPermissions: perms?.formLevel ?? {},
+            };
+            set({
+              config,
+              permissions: perms ?? null,
+              isLoading: false,
+              activeFormId: forms[0]?.formId ?? null,
+            });
+          }
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : 'Failed to load app', isLoading: false });
         }
       },
 

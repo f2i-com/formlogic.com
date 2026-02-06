@@ -30,23 +30,32 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle }: EmbedModalPro
   const baseUrl = window.location.origin;
   const formUrl = `${baseUrl}/form/${formId}`;
 
+  // Escape HTML special characters to prevent XSS in generated embed code
+  const escapeHtml = (str: string) =>
+    str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  const safeTitle = escapeHtml(formTitle);
+  const safeUrl = escapeHtml(formUrl);
+
   const getEmbedCode = () => {
     switch (embedType) {
       case 'standard':
         return `<iframe
-  src="${formUrl}"
+  src="${safeUrl}"
   width="${width}"
   height="${height}px"
   frameborder="0"
+  sandbox="allow-forms allow-scripts allow-same-origin"
   style="border: none; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);"
-  title="${formTitle}"
+  title="${safeTitle}"
 ></iframe>`;
 
       case 'fullpage':
         return `<iframe
-  src="${formUrl}"
+  src="${safeUrl}"
+  sandbox="allow-forms allow-scripts allow-same-origin"
   style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; border: none; z-index: 9999;"
-  title="${formTitle}"
+  title="${safeTitle}"
 ></iframe>`;
 
       case 'popup':
@@ -72,7 +81,7 @@ function openFormPopup() {
   closeBtn.onclick = closeFormPopup;
 
   const iframe = document.createElement('iframe');
-  iframe.src = '${formUrl}';
+  iframe.src = '${safeUrl}';
   iframe.style.cssText = 'width:100%;height:100%;border:none;';
 
   container.appendChild(closeBtn);
