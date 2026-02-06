@@ -80,8 +80,8 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
     >
       <form onSubmit={handleSubmit} className="p-6 space-y-5">
         {displayError && (
-          <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl animate-shake">
-            <div className="p-1 bg-red-100 rounded-lg">
+          <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl animate-shake">
+            <div className="p-1 bg-red-100 dark:bg-red-500/20 rounded-lg">
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
             </div>
             <span className="font-medium">{displayError}</span>
@@ -90,11 +90,11 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
 
         {mode === 'register' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Name
             </label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <Input
                 type="text"
                 value={name}
@@ -112,7 +112,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
             Email <span className="text-red-500">*</span>
           </label>
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
             <Input
               type="email"
               value={email}
@@ -130,7 +130,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
             Password <span className="text-red-500">*</span>
           </label>
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
             <Input
               type="password"
               value={password}
@@ -145,11 +145,11 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
 
         {mode === 'register' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Confirm Password <span className="text-red-500">*</span>
             </label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <Input
                 type="password"
                 value={confirmPassword}
@@ -178,7 +178,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
           )}
         </Button>
 
-        <div className="pt-2 text-center text-sm text-gray-600">
+        <div className="pt-2 text-center text-sm text-gray-600 dark:text-slate-400">
           {mode === 'login' ? (
             <>
               Don't have an account?{' '}

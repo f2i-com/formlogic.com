@@ -36,6 +36,7 @@ import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
 import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal, TemplateSelector } from '../components/builder';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { FormTemplate } from '../data/formTemplates';
 
 interface DashboardStats {
@@ -99,8 +100,8 @@ function QuickActionButton({
         : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50'
         }`}
     >
-      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-500'}`} />
-      <span className={`text-sm font-medium ${primary ? 'text-white' : 'text-gray-700'}`}>
+      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-500 dark:text-slate-400'}`} />
+      <span className={`text-sm font-medium ${primary ? 'text-white' : 'text-gray-700 dark:text-slate-300'}`}>
         {label}
       </span>
     </button>
@@ -291,6 +292,7 @@ export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
   const handleCreateForm = () => {
     setShowTemplateSelector(true);
@@ -636,7 +638,7 @@ export function Dashboard() {
                             <FormActionsDropdown
                               formId={form.id}
                               formTitle={form.title}
-                              onDelete={() => deleteForm(form.id)}
+                              onDelete={() => setDeleteTarget({ id: form.id, title: form.title })}
                               onEdit={() => navigate(`/builder/${form.id}`)}
                               onPreview={() => navigate(`/preview/${form.id}`)}
                               onAnalytics={() => navigate(`/analytics/${form.id}`)}
@@ -736,6 +738,22 @@ export function Dashboard() {
         isOpen={showTemplateSelector}
         onClose={() => setShowTemplateSelector(false)}
         onSelectTemplate={handleSelectTemplate}
+      />
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteForm(deleteTarget.id);
+            setDeleteTarget(null);
+          }
+        }}
+        title="Delete Form"
+        message={`Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
+        confirmLabel="Delete"
+        variant="danger"
       />
     </div>
   );

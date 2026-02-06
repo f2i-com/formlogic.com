@@ -129,7 +129,7 @@ export function AppUserManager() {
           searchable
           actions={(inv) => (
             (inv as unknown as AppInvitation).status === 'pending' ? (
-              <button onClick={() => revokeInvitation(appId!, String(inv.id))} className="p-1 text-gray-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={() => revokeInvitation(appId!, String(inv.id))} className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
             ) : null
           )}
         />

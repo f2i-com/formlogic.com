@@ -11,6 +11,9 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, label, error, hint, id, ...props }, ref) => {
     const generatedId = React.useId();
     const textareaId = id || generatedId;
+    const errorId = error ? `${textareaId}-error` : undefined;
+    const hintId = hint && !error ? `${textareaId}-hint` : undefined;
+    const describedBy = errorId || hintId || undefined;
 
     return (
       <div className="w-full">
@@ -25,6 +28,8 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
         <textarea
           ref={ref}
           id={textareaId}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
           className={cn(
             'block w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 px-3 py-2.5',
             'text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-500',
@@ -39,7 +44,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           {...props}
         />
         {error && (
-          <p className="mt-1.5 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+          <p id={errorId} className="mt-1.5 text-sm text-red-600 dark:text-red-400 flex items-center gap-1" role="alert">
             <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
@@ -47,7 +52,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
           </p>
         )}
         {hint && !error && (
-          <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400">{hint}</p>
+          <p id={hintId} className="mt-1.5 text-sm text-gray-500 dark:text-slate-400">{hint}</p>
         )}
       </div>
     );

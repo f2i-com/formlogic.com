@@ -28,6 +28,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { Form } from '../types/form';
 
 export function FormsList() {
@@ -37,6 +38,7 @@ export function FormsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateForm = async () => {
@@ -171,7 +173,7 @@ export function FormsList() {
                     <hr className="my-1 border-gray-100 dark:border-slate-800" />
                     <button
                       onClick={() => {
-                        deleteForm(form.id);
+                        setDeleteTarget({ id: form.id, title: form.title });
                         setActiveMenu(null);
                       }}
                       className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
@@ -330,6 +332,22 @@ export function FormsList() {
           formTitle={embedModalForm.title}
         />
       )}
+
+      {/* Delete Confirmation */}
+      <ConfirmDialog
+        isOpen={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteForm(deleteTarget.id);
+            setDeleteTarget(null);
+          }
+        }}
+        title="Delete Form"
+        message={`Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
+        confirmLabel="Delete"
+        variant="danger"
+      />
     </div>
   );
 }

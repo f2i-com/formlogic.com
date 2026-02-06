@@ -20,6 +20,7 @@ import {
   Check,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -93,6 +94,7 @@ export function Settings() {
 
   // Preferences state
   const [preferences, setPreferences] = useState<UserPreferences>(getStoredPreferences);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Update form when user changes
   useEffect(() => {
@@ -127,6 +129,11 @@ export function Settings() {
   };
 
   const handleDeleteAccount = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteAccount = () => {
+    setShowDeleteConfirm(false);
     toast.warning('Not Implemented', 'Account deletion is not yet available. Contact support for assistance.');
   };
 
@@ -359,6 +366,16 @@ export function Settings() {
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={confirmDeleteAccount}
+        title="Delete Account"
+        message="Are you sure you want to delete your account? All your forms, responses, and data will be permanently removed. This action cannot be undone."
+        confirmLabel="Delete My Account"
+        variant="danger"
+      />
     </div>
   );
 }

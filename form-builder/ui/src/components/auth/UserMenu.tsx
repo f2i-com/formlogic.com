@@ -97,41 +97,41 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           'flex items-center gap-2 px-2 py-1.5 text-sm rounded-lg transition-all duration-150',
-          'hover:bg-gray-100',
-          isOpen && 'bg-gray-100'
+          'hover:bg-gray-100 dark:hover:bg-slate-800',
+          isOpen && 'bg-gray-100 dark:bg-slate-800'
         )}
       >
         <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white text-sm font-medium shadow-sm">
           {user.name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
         </div>
-        <span className="max-w-[120px] truncate hidden sm:block font-medium text-gray-700">
+        <span className="max-w-[120px] truncate hidden sm:block font-medium text-gray-700 dark:text-slate-300">
           {user.name || user.email.split('@')[0]}
         </span>
         <ChevronDown className={cn(
-          'h-4 w-4 text-gray-400 transition-transform duration-200',
+          'h-4 w-4 text-gray-400 dark:text-slate-500 transition-transform duration-200',
           isOpen && 'rotate-180'
         )} />
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-gray-200/80 py-1 z-50 animate-scale-in">
+        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
           {/* User info */}
-          <div className="px-4 py-3 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-900 truncate">
+          <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
               {user.name || 'User'}
             </p>
-            <p className="text-xs text-gray-500 truncate mt-0.5">{user.email}</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400 truncate mt-0.5">{user.email}</p>
           </div>
 
           {/* Storage mode indicator */}
-          <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50/50">
+          <div className="px-4 py-2.5 border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/50">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-gray-500">Storage Mode</span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">Storage Mode</span>
               <span className={cn(
                 'text-xs font-medium flex items-center gap-1.5 px-2 py-0.5 rounded-full',
                 storageMode === 'api'
-                  ? 'text-green-700 bg-green-100'
-                  : 'text-gray-600 bg-gray-200'
+                  ? 'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-500/10'
+                  : 'text-gray-600 dark:text-slate-300 bg-gray-200 dark:bg-slate-700'
               )}>
                 {storageMode === 'api' ? (
                   <>
@@ -152,16 +152,16 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           <div className="py-1">
             <button
               onClick={handleToggleStorageMode}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
             >
               {storageMode === 'api' ? (
                 <>
-                  <CloudOff className="h-4 w-4 text-gray-400" />
+                  <CloudOff className="h-4 w-4 text-gray-400 dark:text-slate-500" />
                   Switch to Local Storage
                 </>
               ) : (
                 <>
-                  <Cloud className="h-4 w-4 text-gray-400" />
+                  <Cloud className="h-4 w-4 text-gray-400 dark:text-slate-500" />
                   Switch to Cloud Storage
                 </>
               )}
@@ -171,9 +171,9 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
               <button
                 onClick={handleSyncToCloud}
                 disabled={isSyncing}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
               >
-                <RefreshCw className={cn('h-4 w-4 text-gray-400', isSyncing && 'animate-spin')} />
+                <RefreshCw className={cn('h-4 w-4 text-gray-400 dark:text-slate-500', isSyncing && 'animate-spin')} />
                 {isSyncing ? 'Syncing...' : 'Sync to Cloud'}
               </button>
             )}
@@ -183,18 +183,18 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
                 setIsOpen(false);
                 navigate('/settings');
               }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
             >
-              <Settings className="h-4 w-4 text-gray-400" />
+              <Settings className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Settings
             </button>
           </div>
 
           {/* Logout */}
-          <div className="border-t border-gray-100 py-1">
+          <div className="border-t border-gray-100 dark:border-slate-800 py-1">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
             >
               <LogOut className="h-4 w-4" />
               Sign Out

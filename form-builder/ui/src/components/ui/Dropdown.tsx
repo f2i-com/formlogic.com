@@ -135,7 +135,7 @@ export function Dropdown({
             'w-full flex items-center justify-between gap-2 px-3 py-2',
             'bg-white dark:bg-slate-900/50 border border-gray-300 dark:border-slate-700 rounded-lg text-left',
             'text-gray-900 dark:text-white',
-            'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:border-transparent',
             disabled && 'bg-gray-50 dark:bg-slate-800/50 cursor-not-allowed opacity-50',
             error && 'border-red-500'
           )}

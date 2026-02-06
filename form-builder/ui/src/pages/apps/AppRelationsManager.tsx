@@ -193,7 +193,7 @@ export function AppRelationsManager() {
                     </button>
                     <button
                       onClick={() => setDeleteTarget(rel)}
-                      className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 transition-colors ml-auto"
+                      className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors ml-auto"
                       aria-label="Delete relation"
                     >
                       <Trash2 className="h-4 w-4" />
