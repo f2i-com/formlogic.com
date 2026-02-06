@@ -560,6 +560,41 @@ class ApiClient {
       method: 'DELETE',
     });
   }
+
+  // Linked record lookup
+  async lookupLinkedRecords(
+    slug: string,
+    formId: string,
+    options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number }
+  ): Promise<ApiResponse<{ records: LinkedRecord[]; count: number }>> {
+    const params = new URLSearchParams();
+    params.set('targetFormId', options.targetFormId);
+    if (options.displayFieldIds?.length) params.set('displayFieldIds', options.displayFieldIds.join(','));
+    if (options.searchFieldIds?.length) params.set('searchFieldIds', options.searchFieldIds.join(','));
+    if (options.q) params.set('q', options.q);
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.offset) params.set('offset', String(options.offset));
+    return this.request(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
+  }
+
+  // Related records (inverse relations)
+  async getRelatedRecords(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}/related`);
+  }
+
+  // Get app responses with resolve option
+  async getAppResponsesResolved(slug: string, formId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+    const params = new URLSearchParams();
+    params.set('resolve', 'linked');
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    return this.request(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+  }
+
+  // Get single app response with resolve
+  async getAppResponseByIdResolved(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}?resolve=linked`);
+  }
 }
 
 // Types
@@ -638,8 +673,22 @@ interface FormField {
   properties?: Record<string, unknown>;
 }
 
+interface LinkedRecord {
+  id: string;
+  display: string;
+  fields: Record<string, unknown>;
+}
+
+interface RelatedRecordGroup {
+  formId: string;
+  displayName: string;
+  fieldLabel: string;
+  records: Array<{ id: string; display: string; submittedAt: string }>;
+  count: number;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup };

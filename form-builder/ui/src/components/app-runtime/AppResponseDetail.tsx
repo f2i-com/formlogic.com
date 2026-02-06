@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X, Link2 } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -20,13 +21,17 @@ export function AppResponseDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
-  const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
+  const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>;
+  const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
   useEffect(() => {
     if (appSlug && formId && responseId) {
       setLoading(true);
       setFetchError(null);
-      api.getAppResponseById(appSlug, formId, responseId).then((result) => {
+      const fetchFn = hasLinkedFields
+        ? api.getAppResponseByIdResolved(appSlug, formId, responseId)
+        : api.getAppResponseById(appSlug, formId, responseId);
+      fetchFn.then((result) => {
         if (result.data?.response) {
           const r = result.data.response as Record<string, unknown>;
           setResponse(r);
@@ -40,6 +45,7 @@ export function AppResponseDetail() {
         setLoading(false);
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appSlug, formId, responseId]);
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
@@ -175,29 +181,102 @@ export function AppResponseDetail() {
 
       {/* Answers */}
       <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 divide-y divide-gray-200 dark:divide-slate-700/50">
-        {fields.map((field) => (
-          <div key={field.id} className="px-5 py-4">
-            <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
-              {field.label}
-            </label>
-            {editing ? (
-              <input
-                type="text"
-                value={String(editedAnswers[field.id] ?? '')}
-                onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors"
-              />
-            ) : (
-              <div className="text-sm text-gray-800 dark:text-slate-200">
-                {answers[field.id] != null
-                  ? (Array.isArray(answers[field.id]) ? (answers[field.id] as unknown[]).join(', ') : String(answers[field.id]))
-                  : <span className="text-gray-300 dark:text-slate-600 italic">No answer</span>
-                }
-              </div>
-            )}
-          </div>
-        ))}
+        {fields.map((field) => {
+          const isLinked = field.type === 'linked_record';
+          const resolved = response._resolved as Record<string, unknown> | undefined;
+          const targetFormId = field.properties?.targetFormId as string | undefined;
+
+          return (
+            <div key={field.id} className="px-5 py-4">
+              <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
+                {isLinked && <Link2 className="inline h-3 w-3 mr-1" />}
+                {field.label}
+              </label>
+              {editing && !isLinked ? (
+                <input
+                  type="text"
+                  value={String(editedAnswers[field.id] ?? '')}
+                  onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors"
+                />
+              ) : editing && isLinked ? (
+                <div>
+                  {resolved?.[field.id] ? (
+                    <div className="text-sm">
+                      {(() => {
+                        const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
+                        const items = Array.isArray(rv) ? rv : [rv];
+                        return (
+                          <div className="flex flex-wrap gap-2">
+                            {items.map((item) => (
+                              <span key={item.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400">
+                                <Link2 className="h-3 w-3" />
+                                {item.display || 'Record not found'}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-400 dark:text-slate-500 italic">No linked record</div>
+                  )}
+                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">Linked records can only be changed from the form submission view.</p>
+                </div>
+              ) : isLinked && resolved?.[field.id] ? (
+                <div className="text-sm">
+                  {(() => {
+                    const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
+                    if (Array.isArray(rv)) {
+                      return (
+                        <div className="flex flex-wrap gap-2">
+                          {rv.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {item.display || 'Record not found'}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${rv.id}`)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+                      >
+                        <Link2 className="h-3 w-3" />
+                        {rv.display || 'Record not found'}
+                      </button>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="text-sm text-gray-800 dark:text-slate-200">
+                  {answers[field.id] != null
+                    ? (Array.isArray(answers[field.id]) ? (answers[field.id] as unknown[]).join(', ') : String(answers[field.id]))
+                    : <span className="text-gray-300 dark:text-slate-600 italic">No answer</span>
+                  }
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {/* Related records (inverse relations) */}
+      {appSlug && formId && responseId && !editing && (
+        <RelatedRecordsPanel
+          appSlug={appSlug}
+          formId={formId}
+          responseId={responseId}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={showDeleteConfirm}

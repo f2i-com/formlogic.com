@@ -149,7 +149,8 @@ $container->set(AppResponseService::class, function (Container $c) {
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
         $c->get(ResponseService::class),
-        $c->get(FormLogicRuntime::class)
+        $c->get(FormLogicRuntime::class),
+        $c->get(FormService::class)
     );
 });
 
@@ -172,7 +173,9 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(AppService::class),
         $c->get(AppUserService::class),
         $c->get(AppResponseService::class),
-        $c->get(FormService::class)
+        $c->get(FormService::class),
+        $c->get(ResponseService::class),
+        $c->get(SQLiteConnection::class)
     );
 });
 
@@ -544,6 +547,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->getForm($request, $response, $getArgs($request));
     })->add($authRequired);
 
+    // Linked record lookup
+    $group->get('/forms/{formId}/lookup', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->lookupRecords($request, $response, $getArgs($request));
+    })->add($authRequired);
+
     // Response CRUD
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->createResponse($request, $response, $getArgs($request));
@@ -555,6 +563,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
 
     $group->get('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->getResponseById($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Related records (inverse relations)
+    $group->get('/forms/{formId}/responses/{id}/related', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->getRelatedRecords($request, $response, $getArgs($request));
     })->add($authRequired);
 
     $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {

@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
@@ -28,11 +29,13 @@ function FieldInput({
   value,
   onChange,
   primaryColor,
+  formId,
 }: {
   field: FormField;
   value: unknown;
   onChange: (val: unknown) => void;
   primaryColor: string;
+  formId?: string;
 }) {
   const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 dark:border-slate-600 outline-none py-2 text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-colors focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
@@ -247,6 +250,28 @@ function FieldInput({
           </div>
         )}
       </div>
+    );
+  }
+
+  if (field.type === 'linked_record' && formId) {
+    const targetFormId = field.properties?.targetFormId as string;
+    const displayFieldIds = field.properties?.displayFieldIds as string[] | undefined;
+    const searchFieldIds = field.properties?.searchFieldIds as string[] | undefined;
+    const allowMultiple = field.properties?.allowMultiple as boolean | undefined;
+    if (!targetFormId) {
+      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">Linked record field not configured</p>;
+    }
+    return (
+      <LinkedRecordInput
+        formId={formId}
+        targetFormId={targetFormId}
+        displayFieldIds={displayFieldIds}
+        searchFieldIds={searchFieldIds}
+        allowMultiple={allowMultiple}
+        value={value}
+        onChange={onChange}
+        primaryColor={primaryColor}
+      />
     );
   }
 
@@ -495,6 +520,7 @@ export function AppFormView() {
                 value={answers[currentField.id]}
                 onChange={(val) => handleSetAnswer(currentField.id, val)}
                 primaryColor={primaryColor}
+                formId={formId}
               />
 
               {/* Error */}

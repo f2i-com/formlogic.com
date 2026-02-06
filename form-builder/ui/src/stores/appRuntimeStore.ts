@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions } from '../types/app';
 
 interface AppRuntimeState {
@@ -19,10 +20,13 @@ interface AppRuntimeState {
   reset: () => void;
 
   // Response CRUD
-  fetchResponses: (formId: string, options?: { limit?: number; offset?: number }) => Promise<unknown[]>;
+  fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean }) => Promise<unknown[]>;
   createResponse: (formId: string, answers: Record<string, unknown>) => Promise<unknown>;
   updateResponse: (formId: string, responseId: string, data: Record<string, unknown>) => Promise<unknown>;
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
+
+  // Linked records
+  lookupRecords: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number }) => Promise<LinkedRecord[]>;
 
   // Permission helpers
   canSubmit: (formId: string) => boolean;
@@ -85,6 +89,10 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       fetchResponses: async (formId, options) => {
         const slug = get().appSlug;
         if (!slug) return [];
+        if (options?.resolve) {
+          const result = await api.getAppResponsesResolved(slug, formId, options);
+          return result.data?.responses ?? [];
+        }
         const result = await api.getAppResponses(slug, formId, options);
         return result.data?.responses ?? [];
       },
@@ -110,6 +118,13 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!slug) return false;
         const result = await api.deleteAppResponse(slug, formId, responseId);
         return !result.error;
+      },
+
+      lookupRecords: async (formId, options) => {
+        const slug = get().appSlug;
+        if (!slug) return [];
+        const result = await api.lookupLinkedRecords(slug, formId, options);
+        return result.data?.records ?? [];
       },
 
       // Permission helpers check both app-level and form-level permissions

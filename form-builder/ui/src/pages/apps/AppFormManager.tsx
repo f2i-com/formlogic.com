@@ -1,12 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { cn } from '../../lib/utils';
+import { api } from '../../lib/api';
 import type { AppForm } from '../../types/app';
+import type { Form, FormField } from '../../types/form';
+
+interface RelationBadge {
+  type: 'outgoing' | 'incoming';
+  formName: string;
+  fieldLabel: string;
+  allowMultiple: boolean;
+}
 
 export function AppFormManager() {
   const { appId } = useParams<{ appId: string }>();
@@ -16,12 +25,51 @@ export function AppFormManager() {
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyFormId, setBusyFormId] = useState<string | null>(null);
+  const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
 
   const loadForms = async () => {
     if (!appId) return;
     setLoading(true);
     const forms = await fetchAppForms(appId);
     setAppForms(forms);
+
+    // Build relation badges from linked_record fields
+    const nameMap: Record<string, string> = {};
+    forms.forEach((f) => { nameMap[f.formId] = f.displayName; });
+
+    const results = await Promise.all(forms.map((af) => api.getForm(af.formId)));
+    const badges: Record<string, RelationBadge[]> = {};
+
+    results.forEach((res, idx) => {
+      if (!res.data?.form) return;
+      const form = res.data.form as Form;
+      const formId = forms[idx].formId;
+
+      form.fields
+        .filter((f: FormField) => f.type === 'linked_record' && f.properties.targetFormId)
+        .forEach((field: FormField) => {
+          const targetId = field.properties.targetFormId!;
+          const multi = !!field.properties.allowMultiple;
+          // Outgoing badge on source form
+          if (!badges[formId]) badges[formId] = [];
+          badges[formId].push({
+            type: 'outgoing',
+            formName: nameMap[targetId] || targetId,
+            fieldLabel: field.label,
+            allowMultiple: multi,
+          });
+          // Incoming badge on target form
+          if (!badges[targetId]) badges[targetId] = [];
+          badges[targetId].push({
+            type: 'incoming',
+            formName: nameMap[formId] || form.title,
+            fieldLabel: field.label,
+            allowMultiple: multi,
+          });
+        });
+    });
+
+    setRelationBadges(badges);
     setLoading(false);
   };
 
@@ -111,14 +159,44 @@ export function AppFormManager() {
           ) : (
             <div className="space-y-2">
               {appForms.map((af) => (
-                <div key={af.formId} className="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                <div key={af.formId} className="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                  <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
+                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
+                    <Pencil className="h-4 w-4" />
+                  </button>
                   <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
                     {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
                   <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 disabled:opacity-50 transition-colors">
                     {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
+                  </div>
+                  {/* Relation badges */}
+                  {relationBadges[af.formId]?.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {relationBadges[af.formId].map((badge, i) => (
+                        <span
+                          key={i}
+                          className={cn(
+                            'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs',
+                            badge.type === 'outgoing'
+                              ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                              : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400'
+                          )}
+                          title={badge.type === 'outgoing'
+                            ? `"${badge.fieldLabel}" links to ${badge.formName}`
+                            : `${badge.formName} links here via "${badge.fieldLabel}"`
+                          }
+                        >
+                          {badge.type === 'outgoing' ? <Link2 className="h-3 w-3" /> : <ArrowLeftIcon className="h-3 w-3" />}
+                          <span className="font-medium">{badge.fieldLabel}</span>
+                          <span className="opacity-60">{badge.type === 'outgoing' ? '\u2192' : '\u2190'} {badge.formName}</span>
+                          <span className="opacity-50">{badge.allowMultiple ? '1:N' : '1:1'}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

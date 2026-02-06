@@ -11,3 +11,4 @@ export { FieldPalette } from './FieldPalette';
 export { ICON_MAP } from './fieldIcons';
 export { SortableFieldCard } from './SortableFieldCard';
 export { FieldSettingsPanel } from './FieldSettingsPanel';
+export { LinkedRecordSettings } from './LinkedRecordSettings';

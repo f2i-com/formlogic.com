@@ -18,11 +18,14 @@ export function AppDataTable() {
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
 
+  // Check if form has any linked_record fields
+  const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
+
   useEffect(() => {
     if (formId) {
       setLoading(true);
       setError(null);
-      fetchResponses(formId).then((data) => {
+      fetchResponses(formId, { resolve: hasLinkedFields }).then((data) => {
         const flattenedData = (data as Record<string, unknown>[]).map((r: Record<string, unknown>) => {
           const flat: Record<string, unknown> = { ...r };
           const answers = r.answers as Record<string, unknown> | undefined;
@@ -63,11 +66,27 @@ export function AppDataTable() {
       label: field.label,
       sortable: true,
       render: (r: Record<string, unknown>) => {
+        // For linked_record fields, use resolved display values
+        if (field.type === 'linked_record') {
+          const resolved = r._resolved as Record<string, unknown> | undefined;
+          if (resolved?.[field.id]) {
+            const resolvedVal = resolved[field.id] as { display?: string } | Array<{ display?: string }>;
+            if (Array.isArray(resolvedVal)) {
+              const joined = resolvedVal.map((rv) => rv.display || '?').join(', ');
+              return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
+            }
+            return (resolvedVal as { display?: string }).display || '-';
+          }
+        }
         const answers = r.answers as Record<string, unknown> | undefined;
         const val = answers?.[field.id];
         if (val == null) return '-';
-        if (Array.isArray(val)) return val.join(', ').substring(0, 50);
-        return String(val).substring(0, 50);
+        if (Array.isArray(val)) {
+          const joined = val.join(', ');
+          return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
+        }
+        const str = String(val);
+        return str.length > 50 ? str.substring(0, 50) + '\u2026' : str;
       },
     })),
     { key: 'status', label: 'Status', sortable: true, render: (r) => {
@@ -170,13 +189,30 @@ export function AppDataTable() {
                       </div>
                     </div>
                     {fields.slice(0, 3).map((field) => {
+                      // For linked_record, try resolved value
+                      if (field.type === 'linked_record') {
+                        const resolved = r._resolved as Record<string, unknown> | undefined;
+                        const rv = resolved?.[field.id] as { display?: string } | Array<{ display?: string }> | undefined;
+                        if (!rv) return null;
+                        const displayText = Array.isArray(rv)
+                          ? rv.map((v) => v.display || '?').join(', ')
+                          : (rv as { display?: string }).display;
+                        if (!displayText) return null;
+                        return (
+                          <div key={field.id} className="text-sm mb-1 last:mb-0">
+                            <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                            <span className="text-gray-700 dark:text-slate-300">{displayText.length > 60 ? displayText.substring(0, 60) + '\u2026' : displayText}</span>
+                          </div>
+                        );
+                      }
                       const answers = r.answers as Record<string, unknown> | undefined;
                       const val = answers?.[field.id];
                       if (val == null) return null;
+                      const display = Array.isArray(val) ? val.join(', ') : String(val);
                       return (
                         <div key={field.id} className="text-sm mb-1 last:mb-0">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                          <span className="text-gray-700 dark:text-slate-300">{Array.isArray(val) ? val.join(', ') : String(val).substring(0, 60)}</span>
+                          <span className="text-gray-700 dark:text-slate-300">{display.length > 60 ? display.substring(0, 60) + '\u2026' : display}</span>
                         </div>
                       );
                     })}

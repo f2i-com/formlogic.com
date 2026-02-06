@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
   Trash2,
@@ -13,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { LogicEditor } from './LogicEditor';
 import { ValidationEditor } from './ValidationEditor';
 import { CalculatedFieldEditor } from './CalculatedFieldEditor';
+import { LinkedRecordSettings } from './LinkedRecordSettings';
 import { FIELD_TYPE_INFO, type FormField, type ConditionalLogic } from '../../types/form';
 
 export function FieldSettingsPanel({
@@ -24,6 +26,9 @@ export function FieldSettingsPanel({
   allFields: FormField[];
   onUpdate: (updates: Partial<FormField>) => void;
 }) {
+  const [searchParams] = useSearchParams();
+  const appId = searchParams.get('appId');
+  const formId = searchParams.get('formId') || undefined;
   const [showLogicEditor, setShowLogicEditor] = useState(false);
 
   const handleSaveLogic = (logic: ConditionalLogic | undefined) => {
@@ -71,7 +76,7 @@ export function FieldSettingsPanel({
             onChange={(e) => onUpdate({ description: e.target.value })}
           />
 
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated'].includes(field.type) && (
+          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record'].includes(field.type) && (
             <Input
               label="Placeholder"
               value={field.placeholder || ''}
@@ -122,7 +127,7 @@ export function FieldSettingsPanel({
                   size="sm"
                   onClick={() => {
                     const newOption = {
-                      id: crypto.randomUUID(),
+                      id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
                       label: `Option ${(field.properties.options?.length || 0) + 1}`,
                       value: `option_${(field.properties.options?.length || 0) + 1}`,
                     };
@@ -221,11 +226,21 @@ export function FieldSettingsPanel({
               }
             />
           )}
+
+          {/* Linked record settings */}
+          {field.type === 'linked_record' && (
+            <LinkedRecordSettings
+              properties={field.properties}
+              onChange={(props) => onUpdate({ properties: props })}
+              appId={appId}
+              currentFormId={formId}
+            />
+          )}
         </TabsContent>
 
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
-          {['statement', 'welcome_screen', 'thank_you', 'calculated'].includes(field.type) ? (
+          {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record'].includes(field.type) ? (
             <div className="text-center py-8 text-slate-500">
               <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-slate-600" />
               <p>Validation is not applicable for this field type.</p>

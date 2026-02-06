@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket } from 'lucide-react';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -173,6 +173,7 @@ export function AppSettings() {
               { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
               { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
               { label: 'Roles', desc: 'Configure roles and permissions', icon: Shield, path: 'roles' },
+              { label: 'Relations', desc: 'Define links between forms', icon: Link2, path: 'relations' },
               { label: 'Deploy', desc: 'Share link and PWA settings', icon: Rocket, path: 'deploy' },
             ].map((item) => (
               <button

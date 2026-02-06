@@ -101,13 +101,16 @@ export default function FormBuilder() {
       welcome_screen: 'Welcome',
       thank_you: 'Thank you!',
       calculated: 'Calculated value',
+      linked_record: 'Linked record',
     };
+
+    const genId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
 
     const defaultOptions = ['dropdown', 'multiple_choice', 'checkboxes'].includes(type)
       ? [
-        { id: crypto.randomUUID(), label: 'Option 1', value: 'option_1' },
-        { id: crypto.randomUUID(), label: 'Option 2', value: 'option_2' },
-        { id: crypto.randomUUID(), label: 'Option 3', value: 'option_3' },
+        { id: genId(), label: 'Option 1', value: 'option_1' },
+        { id: genId(), label: 'Option 2', value: 'option_2' },
+        { id: genId(), label: 'Option 3', value: 'option_3' },
       ]
       : undefined;
 

@@ -7,3 +7,5 @@ export { AppFormView } from './AppFormView';
 export { AppDataTable } from './AppDataTable';
 export { AppResponseDetail } from './AppResponseDetail';
 export { AppUserProfile } from './AppUserProfile';
+export { LinkedRecordInput } from './LinkedRecordInput';
+export { RelatedRecordsPanel } from './RelatedRecordsPanel';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Globe } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
@@ -124,7 +124,13 @@ export function AppCreateWizard() {
           <div>
             <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later.</p>
             {forms.length === 0 ? (
-              <p className="text-center text-gray-400 dark:text-slate-500 py-8">No forms available. Create some forms first.</p>
+              <div className="text-center py-8">
+                <FileText className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
+                <p className="text-gray-400 dark:text-slate-500 mb-4">No forms available yet.</p>
+                <Button size="sm" variant="outline" onClick={() => navigate('/builder')} leftIcon={<Plus className="h-4 w-4" />}>
+                  Create a Form
+                </Button>
+              </div>
             ) : (
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {forms.map((form) => (

@@ -19,7 +19,8 @@ export type FieldType =
   | 'statement'
   | 'welcome_screen'
   | 'thank_you'
-  | 'calculated';
+  | 'calculated'
+  | 'linked_record';
 
 export interface FieldOption {
   id: string;
@@ -58,6 +59,10 @@ export interface FieldProperties {
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
   buttonText?: string;
+  // Linked record properties
+  targetFormId?: string;
+  displayFieldIds?: string[];
+  searchFieldIds?: string[];
 }
 
 export interface FormField {
@@ -167,6 +172,7 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   signature: { label: 'Signature', icon: 'PenTool', category: 'advanced' },
   payment: { label: 'Payment', icon: 'CreditCard', category: 'advanced' },
   calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced' },
+  linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced' },
   statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout' },
   welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout' },
   thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout' },

@@ -26,6 +26,7 @@ const AppFormManager = React.lazy(() => import('./pages/apps/AppFormManager').th
 const AppUserManager = React.lazy(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
 const AppRoleEditor = React.lazy(() => import('./pages/apps/AppRoleEditor').then(m => ({ default: m.AppRoleEditor })));
 const AppDeploySettings = React.lazy(() => import('./pages/apps/AppDeploySettings').then(m => ({ default: m.AppDeploySettings })));
+const AppRelationsManager = React.lazy(() => import('./pages/apps/AppRelationsManager').then(m => ({ default: m.AppRelationsManager })));
 
 // Lazy load app runtime
 const AppRuntimeRoot = React.lazy(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
@@ -110,6 +111,7 @@ function AppRoutes() {
         <Route path="/apps/:appId/forms" element={<AppFormManager />} />
         <Route path="/apps/:appId/users" element={<AppUserManager />} />
         <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
+        <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
       </Route>
 

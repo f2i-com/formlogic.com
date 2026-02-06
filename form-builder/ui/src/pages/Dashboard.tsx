@@ -70,7 +70,7 @@ function StatCard({
               <p className="text-xs text-slate-500 mt-0.5">{subtext}</p>
             )}
           </div>
-          <div className={`p-3 rounded-xl ${iconBg.replace('bg-', 'bg-opacity-10 bg-')}`}>
+          <div className={`p-3 rounded-xl ${iconBg}`}>
             <Icon className={`h-6 w-6 ${iconColor}`} />
           </div>
         </div>
@@ -324,7 +324,9 @@ export function Dashboard() {
       0
     );
     const formsWithResponses = forms.filter(form => getResponsesByFormId(form.id).length > 0);
-    const avgCompletionRate = formsWithResponses.length > 0 ? 100 : 0;
+    const avgCompletionRate = forms.length > 0
+      ? Math.round((formsWithResponses.length / forms.length) * 100)
+      : 0;
     return { totalResponses, avgCompletionRate };
   }, [forms, responses, getResponsesByFormId]);
 
@@ -337,8 +339,10 @@ export function Dashboard() {
           let totalCompletionRate = 0;
           let formsWithAnalytics = 0;
 
-          for (const form of forms) {
-            const result = await api.getFormAnalytics(form.id);
+          const analyticsResults = await Promise.all(
+            forms.map((form) => api.getFormAnalytics(form.id))
+          );
+          for (const result of analyticsResults) {
             if (result.data?.analytics) {
               totalResponses += result.data.analytics.totalResponses;
               if (result.data.analytics.completionRate > 0) {
@@ -415,32 +419,32 @@ export function Dashboard() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatCard
             icon={FileText}
-            iconBg="bg-indigo-100"
-            iconColor="text-indigo-600"
+            iconBg="bg-indigo-50 dark:bg-indigo-500/10"
+            iconColor="text-indigo-600 dark:text-indigo-400"
             value={totalForms}
             label="Total Forms"
             subtext={totalForms === 1 ? '1 form created' : `${totalForms} forms created`}
           />
           <StatCard
             icon={Globe}
-            iconBg="bg-green-100"
-            iconColor="text-green-600"
+            iconBg="bg-green-50 dark:bg-green-500/10"
+            iconColor="text-green-600 dark:text-green-400"
             value={publishedForms}
             label="Published"
             subtext={totalForms > 0 ? `${Math.round((publishedForms / totalForms) * 100)}% of forms` : 'No forms yet'}
           />
           <StatCard
             icon={Inbox}
-            iconBg="bg-blue-500"
-            iconColor="text-blue-200"
+            iconBg="bg-blue-50 dark:bg-blue-500/10"
+            iconColor="text-blue-600 dark:text-blue-400"
             value={totalResponses}
             label="Total Responses"
             subtext="Across all forms"
           />
           <StatCard
             icon={TrendingUp}
-            iconBg="bg-amber-500"
-            iconColor="text-amber-200"
+            iconBg="bg-amber-50 dark:bg-amber-500/10"
+            iconColor="text-amber-600 dark:text-amber-400"
             value={`${avgCompletionRate}%`}
             label="Completion Rate"
             subtext="Average across forms"

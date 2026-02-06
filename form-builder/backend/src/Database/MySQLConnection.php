@@ -267,6 +267,21 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Response links (denormalized linked record references for fast inverse lookups)
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS response_links (
+                id VARCHAR(36) PRIMARY KEY,
+                source_form_id VARCHAR(36) NOT NULL,
+                source_response_id VARCHAR(36) NOT NULL,
+                target_form_id VARCHAR(36) NOT NULL,
+                target_response_id VARCHAR(36) NOT NULL,
+                field_id VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_source (source_form_id, source_response_id),
+                INDEX idx_target (target_form_id, target_response_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // App invitations
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS app_invitations (
