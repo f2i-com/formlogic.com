@@ -524,6 +524,7 @@ export function FormResponses() {
                             onClick={() => handleView(response)}
                             className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
                             title="View details"
+                            aria-label="View response details"
                           >
                             <Eye className="h-4 w-4" />
                           </button>
@@ -531,6 +532,7 @@ export function FormResponses() {
                             onClick={() => handleEdit(response)}
                             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors"
                             title="Edit response"
+                            aria-label="Edit response"
                           >
                             <Edit2 className="h-4 w-4" />
                           </button>
@@ -538,6 +540,7 @@ export function FormResponses() {
                             onClick={() => handleDeleteConfirm(response)}
                             className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
                             title="Delete response"
+                            aria-label="Delete response"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -667,7 +670,7 @@ export function FormResponses() {
                 .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
                 .map((field) => (
                   <div key={field.id}>
-                    <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
                       {field.label}
                     </label>
                     {renderEditField(field, editedAnswers[field.id], (value) =>
@@ -676,7 +679,7 @@ export function FormResponses() {
                   </div>
                 ))}
             </div>
-            <div className="px-6 py-4 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-2">
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
                 Cancel
               </Button>
@@ -698,15 +701,15 @@ export function FormResponses() {
       >
         <div className="p-6">
           <div className="flex items-center gap-4 mb-4">
-            <div className="p-3 bg-red-100 rounded-full">
-              <AlertTriangle className="h-6 w-6 text-red-600" />
+            <div className="p-3 bg-red-100 dark:bg-red-500/10 rounded-full">
+              <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-white">Delete Response</h2>
-              <p className="text-sm text-slate-500">This action cannot be undone</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Delete Response</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-500">This action cannot be undone</p>
             </div>
           </div>
-          <p className="text-slate-400 mb-6">
+          <p className="text-gray-600 dark:text-slate-400 mb-6">
             Are you sure you want to delete this response? All data associated with this
             submission will be permanently removed.
           </p>
@@ -740,7 +743,7 @@ function renderEditField(
   onChange: (value: unknown) => void
 ) {
   const currentValue = value ?? '';
-  const inputClasses = "w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-white";
+  const inputClasses = "w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white";
 
   switch (field.type) {
     case 'short_text':
@@ -830,7 +833,7 @@ function renderEditField(
       return (
         <div className="space-y-2">
           {field.properties.options?.map((opt) => (
-            <label key={opt.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
+            <label key={opt.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 dark:hover:bg-slate-800 rounded-lg cursor-pointer">
               <input
                 type="checkbox"
                 checked={selectedValues.includes(opt.value)}
@@ -841,9 +844,9 @@ function renderEditField(
                     onChange(selectedValues.filter((v: string) => v !== opt.value));
                   }
                 }}
-                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
               />
-              <span className="text-gray-700">{opt.label}</span>
+              <span className="text-gray-700 dark:text-slate-300">{opt.label}</span>
             </label>
           ))}
         </div>

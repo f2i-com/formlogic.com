@@ -347,8 +347,8 @@ export function Settings() {
             />
             <div className="ml-0 sm:ml-14">
               <div className="p-4 bg-red-500/5 rounded-lg border border-red-500/20">
-                <h3 className="font-medium text-red-400 mb-1">Delete Account</h3>
-                <p className="text-sm text-red-300/70 mb-4">
+                <h3 className="font-medium text-red-600 dark:text-red-400 mb-1">Delete Account</h3>
+                <p className="text-sm text-red-600/70 dark:text-red-300/70 mb-4">
                   Once you delete your account, there is no going back. All your forms, responses, and data will be permanently removed.
                 </p>
                 <Button variant="danger" onClick={handleDeleteAccount}>

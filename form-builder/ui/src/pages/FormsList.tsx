@@ -37,11 +37,15 @@ export function FormsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   const handleCreateForm = async () => {
+    if (isCreating) return;
+    setIsCreating(true);
     const form = await createForm('Untitled Form');
     setActiveForm(form.id);
     navigate(`/builder/${form.id}`);
+    setIsCreating(false);
   };
 
   const handleDuplicate = async (id: string) => {
@@ -84,6 +88,7 @@ export function FormsList() {
               <Button
                 variant="ghost"
                 size="sm"
+                aria-label={`Actions for ${form.title}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   setActiveMenu(
@@ -109,7 +114,7 @@ export function FormsList() {
                     className="absolute w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/5 overflow-hidden"
                     style={{
                       top: activeMenu.rect.bottom + 4,
-                      left: activeMenu.rect.right - 192, // Align right edge (192px = w-48)
+                      left: Math.max(8, activeMenu.rect.right - 192), // Align right edge, clamp to viewport
                     }}
                   >
                     <button
@@ -217,7 +222,7 @@ export function FormsList() {
       <Header
         title="My Forms"
         actions={
-          <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />}>
+          <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
             <span className="hidden sm:inline">New Form</span>
             <span className="sm:hidden">New</span>
           </Button>
