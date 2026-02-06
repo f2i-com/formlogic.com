@@ -93,7 +93,8 @@ export const useAppStore = create<AppState>()(
         // Ensure the form exists on the server (may only be in local storage)
         const form = useFormStore.getState().forms.find((f) => f.id === formId);
         if (form) {
-          await api.createForm(form);
+          const syncResult = await api.createForm(form);
+          if (syncResult.error) return;
         }
         const result = await api.addAppForm(appId, formId, displayName);
         if (result.error) return;

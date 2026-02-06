@@ -91,7 +91,7 @@ export function DataTable<T extends Record<string, unknown>>({
       <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-slate-700">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700">
+            <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -125,9 +125,12 @@ export function DataTable<T extends Record<string, unknown>>({
                 <tr
                   key={String(item[keyField])}
                   onClick={() => onRowClick?.(item)}
+                  role={onRowClick ? 'button' : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(item); } } : undefined}
                   className={cn(
                     'border-b border-gray-100 dark:border-slate-700/50 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors',
-                    onRowClick && 'cursor-pointer'
+                    onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-500/10'
                   )}
                 >
                   {columns.map((col) => (

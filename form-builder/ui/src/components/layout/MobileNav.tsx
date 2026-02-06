@@ -31,7 +31,7 @@ export function MobileNav() {
                 onClick={item.action}
                 className="flex flex-col items-center justify-center gap-1 px-3 py-2 -mt-6 group"
               >
-                <div className="w-14 h-14 bg-gradient-to-br from-indigo-500 to-indigo-600 dark:from-primary-400 dark:to-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-indigo-500/30 dark:shadow-primary-500/40 transition-transform duration-200 group-hover:scale-105 group-active:scale-95 border-4 border-white dark:border-slate-950">
+                <div className="w-14 h-14 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 dark:shadow-primary-500/40 transition-transform duration-200 group-hover:scale-105 group-active:scale-95 border-4 border-white dark:border-slate-950">
                   <item.icon className="h-6 w-6 text-white" />
                 </div>
               </button>
@@ -47,7 +47,7 @@ export function MobileNav() {
                   'flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl',
                   'transition-all duration-200',
                   isActive
-                    ? 'text-indigo-600 dark:text-primary-400 bg-indigo-50 dark:bg-primary-500/10'
+                    ? 'text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-500/10'
                     : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 active:bg-gray-100 dark:active:bg-slate-800'
                 )
               }

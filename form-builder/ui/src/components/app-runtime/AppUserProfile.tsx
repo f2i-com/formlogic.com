@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, User, LogOut } from 'lucide-react';
+import { ArrowLeft, User, LogOut, Shield, Mail } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 
@@ -9,34 +9,60 @@ export function AppUserProfile() {
   const user = useAuthStore((s) => s.user);
   const { config, reset } = useAppRuntimeStore();
 
+  const roleName = 'Member';
+
   return (
     <div className="max-w-md mx-auto">
       <button
         onClick={() => navigate(`/app/${appSlug}`)}
-        className="flex items-center gap-2 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 mb-6 text-sm transition-colors"
+        className="flex items-center gap-2 text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 mb-6 text-sm transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 px-2 py-1 -ml-2"
       >
         <ArrowLeft className="h-4 w-4" /> Back
       </button>
 
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-8 text-center">
-        <div className="w-16 h-16 mx-auto rounded-full app-bg-primary-light flex items-center justify-center mb-4">
-          <User className="h-8 w-8 app-text-primary" />
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
+        {/* Profile header with gradient accent */}
+        <div className="h-20 app-bg-primary-light relative">
+          <div className="absolute -bottom-10 left-1/2 -translate-x-1/2">
+            <div className="w-20 h-20 rounded-2xl bg-white dark:bg-slate-800 border-4 border-white dark:border-slate-900 flex items-center justify-center shadow-sm">
+              <User className="h-9 w-9 app-text-primary" />
+            </div>
+          </div>
         </div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{user?.name || 'User'}</h2>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{user?.email}</p>
+
+        <div className="pt-14 pb-6 px-6 text-center">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">{user?.name || 'User'}</h2>
+
+          <div className="flex items-center justify-center gap-1.5 mt-1.5 text-sm text-gray-500 dark:text-slate-400">
+            <Mail className="h-3.5 w-3.5" />
+            <span>{user?.email}</span>
+          </div>
+
+          <div className="mt-3">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium app-bg-primary-light app-text-primary">
+              <Shield className="h-3 w-3" />
+              {roleName}
+            </span>
+          </div>
+        </div>
 
         {config && (
-          <div className="mt-5 pt-5 border-t border-gray-100 dark:border-slate-700">
-            <p className="text-xs text-gray-400 dark:text-slate-500">App: {config.app.name}</p>
+          <div className="mx-6 py-4 border-t border-gray-100 dark:border-slate-700/50">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400 dark:text-slate-500">App</span>
+              <span className="font-medium text-gray-700 dark:text-slate-300">{config.app.name}</span>
+            </div>
           </div>
         )}
 
-        <button
-          onClick={() => { reset(); navigate('/'); }}
-          className="mt-6 inline-flex items-center gap-2 px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
-        >
-          <LogOut className="h-4 w-4" /> Exit App
-        </button>
+        <div className="px-6 pb-6">
+          <button
+            onClick={() => { reset(); navigate('/'); }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-500 transition-all"
+          >
+            <LogOut className="h-4 w-4" /> Exit App
+          </button>
+        </div>
       </div>
     </div>
   );

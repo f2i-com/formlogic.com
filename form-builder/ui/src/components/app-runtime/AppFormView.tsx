@@ -34,7 +34,7 @@ function FieldInput({
   onChange: (val: unknown) => void;
   primaryColor: string;
 }) {
-  const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 dark:border-slate-600 outline-none py-2 text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-colors';
+  const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 dark:border-slate-600 outline-none py-2 text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-colors focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
   if (['short_text', 'email', 'phone', 'url'].includes(field.type)) {
@@ -190,14 +190,17 @@ function FieldInput({
     const maxStars = (field.properties?.maxStars as number) ?? 5;
     const currentRating = (value as number) ?? 0;
     return (
-      <div className="flex gap-2">
+      <div className="flex gap-2" role="radiogroup" aria-label={field.label}>
         {Array.from({ length: maxStars }, (_, i) => (
           <button
             key={i}
             type="button"
+            role="radio"
+            aria-checked={currentRating === i + 1}
+            aria-label={`${i + 1} out of ${maxStars} stars`}
             onClick={() => onChange(i + 1)}
             className={cn(
-              'text-4xl transition-all hover:scale-110',
+              'text-4xl transition-all duration-150 hover:scale-125',
               currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-600'
             )}
           >
@@ -222,9 +225,12 @@ function FieldInput({
               <button
                 key={num}
                 type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${num} out of ${max}`}
                 onClick={() => onChange(num)}
                 className={cn(
-                  'aspect-square rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all',
+                  'aspect-square rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
                   selected ? 'text-white shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
                 style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
@@ -356,7 +362,7 @@ export function AppFormView() {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading form" />
       </div>
     );
   }

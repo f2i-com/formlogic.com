@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, Trash2, ChevronRight, Inbox } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { cn } from '../../lib/utils';
 
 export function AppDataTable() {
   const { appSlug, formId } = useParams();
@@ -11,6 +13,7 @@ export function AppDataTable() {
   const [responses, setResponses] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
@@ -40,12 +43,13 @@ export function AppDataTable() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formId]);
 
-  const handleDelete = async (responseId: string) => {
-    if (!formId || !confirm('Delete this response?')) return;
-    const success = await deleteResponse(formId, responseId);
+  const handleDelete = async () => {
+    if (!formId || !deleteId) return;
+    const success = await deleteResponse(formId, deleteId);
     if (success) {
-      setResponses(responses.filter((r) => r.id !== responseId));
+      setResponses(responses.filter((r) => r.id !== deleteId));
     }
+    setDeleteId(null);
   };
 
   // Build columns from form fields
@@ -66,7 +70,17 @@ export function AppDataTable() {
         return String(val).substring(0, 50);
       },
     })),
-    { key: 'status', label: 'Status', sortable: true },
+    { key: 'status', label: 'Status', sortable: true, render: (r) => {
+      const s = String(r.status ?? 'submitted');
+      return (
+        <span className={cn(
+          'px-2 py-0.5 rounded-full text-xs font-medium',
+          s === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+        )}>
+          {s.charAt(0).toUpperCase() + s.slice(1)}
+        </span>
+      );
+    }},
   ];
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
@@ -79,16 +93,20 @@ export function AppDataTable() {
 
   return (
     <div>
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate(`/app/${appSlug}`)}
           aria-label="Back to dashboard"
-          className="text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+          className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <h1 className="text-xl font-bold flex-1 text-gray-900 dark:text-white">{runtimeForm?.displayName || 'Responses'}</h1>
-        <span className="text-sm text-gray-500 dark:text-slate-400">{responses.length} responses</span>
+        <div className="flex-1">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">{runtimeForm?.displayName || 'Responses'}</h1>
+        </div>
+        <span className="text-sm font-medium text-gray-400 dark:text-slate-500 tabular-nums">
+          {responses.length} {responses.length === 1 ? 'response' : 'responses'}
+        </span>
       </div>
 
       {error ? (
@@ -111,9 +129,9 @@ export function AppDataTable() {
               onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
               actions={formId && canDelete(formId) ? (r) => (
                 <button
-                  onClick={(e) => { e.stopPropagation(); handleDelete(String(r.id)); }}
+                  onClick={(e) => { e.stopPropagation(); setDeleteId(String(r.id)); }}
                   aria-label="Delete response"
-                  className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -122,41 +140,63 @@ export function AppDataTable() {
           </div>
 
           {/* Mobile card layout */}
-          <div className="md:hidden space-y-3">
+          <div className="md:hidden space-y-2">
             {responses.length === 0 ? (
-              <p className="text-center text-gray-400 dark:text-slate-500 py-8">No responses yet</p>
+              <div className="text-center py-16">
+                <Inbox className="h-10 w-10 mx-auto text-gray-300 dark:text-slate-600 mb-3" />
+                <p className="text-gray-400 dark:text-slate-500 text-sm">No responses yet</p>
+              </div>
             ) : (
-              responses.map((r) => (
-                <div
-                  key={String(r.id)}
-                  onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
-                  className="bg-white dark:bg-slate-900/50 rounded-lg border border-gray-200 dark:border-slate-700 p-4 active:bg-gray-50 dark:active:bg-slate-800 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-400 dark:text-slate-500">
-                      {r.submittedAt ? new Date(String(r.submittedAt)).toLocaleString() : '-'}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400">
-                      {String(r.status)}
-                    </span>
-                  </div>
-                  {fields.slice(0, 3).map((field) => {
-                    const answers = r.answers as Record<string, unknown> | undefined;
-                    const val = answers?.[field.id];
-                    if (val == null) return null;
-                    return (
-                      <div key={field.id} className="text-sm mb-1">
-                        <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                        <span className="text-gray-700 dark:text-slate-300">{Array.isArray(val) ? val.join(', ') : String(val).substring(0, 60)}</span>
+              responses.map((r) => {
+                const status = String(r.status ?? 'submitted');
+                return (
+                  <button
+                    key={String(r.id)}
+                    onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
+                    className="w-full text-left bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700/80 p-4 active:bg-gray-50 dark:active:bg-slate-800 cursor-pointer transition-all hover:shadow-sm group"
+                  >
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-xs text-gray-400 dark:text-slate-500">
+                        {r.submittedAt ? new Date(String(r.submittedAt)).toLocaleString() : '-'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          'text-xs px-2 py-0.5 rounded-full font-medium',
+                          status === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+                        )}>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </span>
+                        <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-400 dark:group-hover:text-slate-500 transition-colors" />
                       </div>
-                    );
-                  })}
-                </div>
-              ))
+                    </div>
+                    {fields.slice(0, 3).map((field) => {
+                      const answers = r.answers as Record<string, unknown> | undefined;
+                      const val = answers?.[field.id];
+                      if (val == null) return null;
+                      return (
+                        <div key={field.id} className="text-sm mb-1 last:mb-0">
+                          <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                          <span className="text-gray-700 dark:text-slate-300">{Array.isArray(val) ? val.join(', ') : String(val).substring(0, 60)}</span>
+                        </div>
+                      );
+                    })}
+                  </button>
+                );
+              })
             )}
           </div>
         </>
       )}
+
+      <ConfirmDialog
+        isOpen={deleteId !== null}
+        onClose={() => setDeleteId(null)}
+        onConfirm={handleDelete}
+        title="Delete Response"
+        message="Are you sure you want to delete this response? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+      />
     </div>
   );
 }

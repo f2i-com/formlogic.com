@@ -5,6 +5,8 @@ import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { cn } from '../../lib/utils';
 import type { AppUser, AppInvitation, AppRole } from '../../types/app';
@@ -22,6 +24,7 @@ export function AppUserManager() {
   const [newGroupName, setNewGroupName] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'removeUser' | 'deleteGroup'; id: string; label: string } | null>(null);
 
   useEffect(() => {
     if (!appId) return;
@@ -108,8 +111,8 @@ export function AppUserManager() {
           searchable
           searchPlaceholder="Search users..."
           actions={(user) => (
-            <button onClick={() => { if (confirm('Remove this user?')) removeUser(appId!, (user as unknown as AppUser).id); }}
-              className="p-1 text-gray-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+            <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
+              className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
           )}
         />
       )}
@@ -147,8 +150,8 @@ export function AppUserManager() {
               { key: 'memberCount', label: 'Members', sortable: true },
             ] as Column<Record<string, unknown>>[]}
             actions={(group) => (
-              <button onClick={() => { if (confirm('Delete this group?')) deleteGroup(appId!, String(group.id)); }}
-                className="p-1 text-gray-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+              <button onClick={() => setConfirmAction({ type: 'deleteGroup', id: String(group.id), label: String((group as Record<string, unknown>).name || 'this group') })}
+                className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors" aria-label="Delete group"><Trash2 className="h-4 w-4" /></button>
             )}
           />
         </div>
@@ -157,38 +160,49 @@ export function AppUserManager() {
     </div>
     </div>
 
-      {/* Invite Modal */}
-      {showInviteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Invite User</h3>
-            {inviteError && (
-              <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20 mb-4">
-                <span>{inviteError}</span>
-              </div>
-            )}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
-                <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
-                <select value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white">
-                  <option value="">Select role...</option>
-                  {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              </div>
+      <Modal isOpen={showInviteModal} onClose={() => { setShowInviteModal(false); setInviteError(null); }} title="Invite User" size="sm">
+        <div className="p-6 space-y-4">
+          {inviteError && (
+            <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
+              <span>{inviteError}</span>
             </div>
-            <div className="flex justify-end gap-2 mt-6">
-              <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
-              <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
-            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
+            <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
+            <select value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+              <option value="">Select role...</option>
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
+            <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
           </div>
         </div>
-      )}
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (!confirmAction || !appId) return;
+          if (confirmAction.type === 'removeUser') removeUser(appId, confirmAction.id);
+          else if (confirmAction.type === 'deleteGroup') deleteGroup(appId, confirmAction.id);
+          setConfirmAction(null);
+        }}
+        title={confirmAction?.type === 'removeUser' ? 'Remove User' : 'Delete Group'}
+        message={confirmAction?.type === 'removeUser'
+          ? `Are you sure you want to remove "${confirmAction?.label}" from this app?`
+          : `Are you sure you want to delete the group "${confirmAction?.label}"?`}
+        confirmLabel={confirmAction?.type === 'removeUser' ? 'Remove' : 'Delete'}
+        variant="danger"
+      />
     </div>
   );
 }

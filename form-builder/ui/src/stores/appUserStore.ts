@@ -82,7 +82,8 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
   },
 
   acceptInvitation: async (token) => {
-    await api.acceptAppInvitation(token);
+    const result = await api.acceptAppInvitation(token);
+    if (result.error) throw new Error(result.error);
   },
 
   fetchGroups: async (appId) => {
@@ -117,11 +118,15 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
 
   addGroupMember: async (appId, groupId, appUserId) => {
     const result = await api.addAppGroupMember(appId, groupId, appUserId);
-    return !result.error;
+    if (result.error) return false;
+    await get().fetchGroups(appId);
+    return true;
   },
 
   removeGroupMember: async (appId, groupId, appUserId) => {
     const result = await api.removeAppGroupMember(appId, groupId, appUserId);
-    return !result.error;
+    if (result.error) return false;
+    await get().fetchGroups(appId);
+    return true;
   },
 }));

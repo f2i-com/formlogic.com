@@ -45,11 +45,11 @@ export function Switch({
         onClick={() => !disabled && onChange(!checked)}
         className={cn(
           'relative inline-flex shrink-0 rounded-full transition-all duration-200',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
           sizes[size].track,
           checked
             ? 'bg-primary-600 shadow-inner'
-            : 'bg-gray-300 hover:bg-gray-400'
+            : 'bg-gray-300 dark:bg-slate-600 hover:bg-gray-400 dark:hover:bg-slate-500'
         )}
       >
         <span
@@ -66,10 +66,10 @@ export function Switch({
       {(label || description) && (
         <div className="flex flex-col pt-0.5">
           {label && (
-            <span className="text-sm font-medium text-gray-900 leading-tight">{label}</span>
+            <span className="text-sm font-medium text-gray-900 dark:text-white leading-tight">{label}</span>
           )}
           {description && (
-            <span className="text-sm text-gray-500 leading-snug mt-0.5">{description}</span>
+            <span className="text-sm text-gray-500 dark:text-slate-400 leading-snug mt-0.5">{description}</span>
           )}
         </div>
       )}

@@ -4,6 +4,7 @@ import { ArrowLeft, Plus, Trash2, Shield, X } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { PermissionMatrix } from '../../components/ui/PermissionMatrix';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
@@ -21,6 +22,7 @@ export function AppRoleEditor() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!appId) return;
@@ -119,8 +121,8 @@ export function AppRoleEditor() {
                   {role.isSystem && <span className="text-xs text-gray-400">(system)</span>}
                 </button>
                 {!role.isSystem && (
-                  <button onClick={() => { if (confirm('Delete this role?')) handleDeleteRole(role.id); }}
-                    className="p-1 text-gray-400 hover:text-red-600"><Trash2 className="h-3 w-3" /></button>
+                  <button onClick={() => setDeleteRoleId(role.id)}
+                    className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors" aria-label="Delete role"><Trash2 className="h-3 w-3" /></button>
                 )}
               </div>
             ))}
@@ -161,6 +163,16 @@ export function AppRoleEditor() {
       </div>
     </div>
     </div>
+
+      <ConfirmDialog
+        isOpen={deleteRoleId !== null}
+        onClose={() => setDeleteRoleId(null)}
+        onConfirm={() => { if (deleteRoleId) { handleDeleteRole(deleteRoleId); setDeleteRoleId(null); } }}
+        title="Delete Role"
+        message={`Are you sure you want to delete the role "${roles.find((r) => r.id === deleteRoleId)?.name}"? Users with this role will need to be reassigned.`}
+        confirmLabel="Delete Role"
+        variant="danger"
+      />
     </div>
   );
 }

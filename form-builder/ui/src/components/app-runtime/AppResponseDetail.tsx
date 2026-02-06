@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 
@@ -16,6 +17,7 @@ export function AppResponseDetail() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
@@ -84,9 +86,10 @@ export function AppResponseDetail() {
   };
 
   const handleDelete = async () => {
-    if (!formId || !responseId || !confirm('Delete this response?')) return;
+    if (!formId || !responseId) return;
     const success = await deleteResponse(formId, responseId);
     if (success) navigate(`/app/${appSlug}/form/${formId}/responses`);
+    setShowDeleteConfirm(false);
   };
 
   const answers = (editing ? editedAnswers : (response.answers as Record<string, unknown>)) ?? {};
@@ -134,7 +137,7 @@ export function AppResponseDetail() {
           )}
           {canDelete(formId) && !editing && (
             <button
-              onClick={handleDelete}
+              onClick={() => setShowDeleteConfirm(true)}
               aria-label="Delete response"
               className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
             >
@@ -154,15 +157,15 @@ export function AppResponseDetail() {
       )}
 
       {/* Metadata card */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4 mb-4 flex flex-wrap gap-4 text-sm">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 p-4 mb-4 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-5 text-sm">
         <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
-          <Clock className="h-4 w-4" />
+          <Clock className="h-4 w-4 flex-shrink-0" />
           {response.submittedAt ? new Date(String(response.submittedAt)).toLocaleString() : '-'}
         </div>
         <div className="flex items-center gap-2">
-          <CheckCircle2 className={cn('h-4 w-4', status === 'submitted' ? 'text-green-500' : 'text-gray-400 dark:text-slate-500')} />
+          <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0', status === 'submitted' ? 'text-green-500' : 'text-gray-400 dark:text-slate-500')} />
           <span className={cn(
-            'px-2 py-0.5 rounded-full text-xs font-medium',
+            'px-2.5 py-0.5 rounded-full text-xs font-medium',
             status === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
           )}>
             {status.charAt(0).toUpperCase() + status.slice(1)}
@@ -171,10 +174,10 @@ export function AppResponseDetail() {
       </div>
 
       {/* Answers */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 divide-y divide-gray-100 dark:divide-slate-700/50">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 divide-y divide-gray-200 dark:divide-slate-700/50">
         {fields.map((field) => (
           <div key={field.id} className="px-5 py-4">
-            <label className="block text-xs font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
+            <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
               {field.label}
             </label>
             {editing ? (
@@ -195,6 +198,16 @@ export function AppResponseDetail() {
           </div>
         ))}
       </div>
+
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDelete}
+        title="Delete Response"
+        message="Are you sure you want to delete this response? This action cannot be undone."
+        confirmLabel="Delete"
+        variant="danger"
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, GripVertical, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Plus, X, Eye, EyeOff } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
@@ -94,7 +94,7 @@ export function AppFormManager() {
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
                     <span className="ml-2 text-xs text-gray-400">{form.status}</span>
                   </div>
-                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} className="p-1 rounded-md hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50">
+                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="p-1.5 rounded-md hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors">
                     {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
                   </button>
                 </div>
@@ -112,12 +112,11 @@ export function AppFormManager() {
             <div className="space-y-2">
               {appForms.map((af) => (
                 <div key={af.formId} className="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
-                  <GripVertical className="h-4 w-4 text-gray-400 flex-shrink-0" />
                   <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
-                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} className={cn('p-1 rounded-md disabled:opacity-50', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
+                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
                     {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
-                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 disabled:opacity-50">
+                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 disabled:opacity-50 transition-colors">
                     {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
                 </div>

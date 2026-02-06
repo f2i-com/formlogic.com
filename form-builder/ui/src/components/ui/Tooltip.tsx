@@ -45,10 +45,10 @@ export function Tooltip({
   };
 
   const arrows = {
-    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-800',
-    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-800',
-    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-800',
-    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-800',
+    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-800 dark:border-t-slate-700',
+    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-800 dark:border-b-slate-700',
+    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-800 dark:border-l-slate-700',
+    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-800 dark:border-r-slate-700',
   };
 
   return (
@@ -65,7 +65,7 @@ export function Tooltip({
           role="tooltip"
           className={cn(
             'absolute z-50 px-2.5 py-1.5 text-xs font-medium text-white',
-            'bg-gray-800 rounded-lg shadow-lg',
+            'bg-gray-800 dark:bg-slate-700 rounded-lg shadow-lg',
             'whitespace-nowrap animate-scale-in',
             positions[position]
           )}

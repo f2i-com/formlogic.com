@@ -19,8 +19,22 @@ export function AppCreateWizard() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedFormIds, setSelectedFormIds] = useState<string[]>([]);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   const canNext = step === 0 ? name.trim().length > 0 : true;
+
+  const validateName = () => {
+    if (!name.trim()) {
+      setNameError('App name is required');
+      return false;
+    }
+    if (name.trim().length < 2) {
+      setNameError('Name must be at least 2 characters');
+      return false;
+    }
+    setNameError(null);
+    return true;
+  };
 
   const handleCreate = async () => {
     setIsCreating(true);
@@ -55,19 +69,21 @@ export function AppCreateWizard() {
       <div className="max-w-2xl mx-auto">
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2 mb-8">
+      <div className="flex items-center mb-8">
         {steps.map((label, i) => (
-          <div key={label} className="flex items-center gap-2">
-            <div className={cn(
-              'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors',
-              i < step ? 'bg-primary-600 text-white' :
-              i === step ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400 ring-2 ring-primary-600' :
-              'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
-            )}>
-              {i < step ? <Check className="h-4 w-4" /> : i + 1}
+          <div key={label} className="flex items-center flex-1 last:flex-none">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all',
+                i < step ? 'bg-primary-600 text-white shadow-sm' :
+                i === step ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400 ring-2 ring-primary-600' :
+                'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
+              )}>
+                {i < step ? <Check className="h-4 w-4" /> : i + 1}
+              </div>
+              <span className={cn('text-sm hidden sm:inline', i === step ? 'text-gray-900 dark:text-white font-medium' : i < step ? 'text-gray-600 dark:text-slate-300' : 'text-gray-400 dark:text-slate-500')}>{label}</span>
             </div>
-            <span className={cn('text-sm hidden sm:inline', i === step ? 'text-gray-900 dark:text-white font-medium' : 'text-gray-400 dark:text-slate-500')}>{label}</span>
-            {i < steps.length - 1 && <div className="w-8 h-px bg-gray-200 dark:bg-slate-700" />}
+            {i < steps.length - 1 && <div className={cn('flex-1 h-px mx-3', i < step ? 'bg-primary-400' : 'bg-gray-200 dark:bg-slate-700')} />}
           </div>
         ))}
       </div>
@@ -80,11 +96,16 @@ export function AppCreateWizard() {
               <input
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => { setName(e.target.value); if (nameError) setNameError(null); }}
+                onBlur={validateName}
                 placeholder="My Application"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                className={cn(
+                  'w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+                  nameError ? 'border-red-500' : 'border-gray-300 dark:border-slate-600'
+                )}
                 autoFocus
               />
+              {nameError && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{nameError}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
@@ -180,7 +201,7 @@ export function AppCreateWizard() {
 
         {step < steps.length - 1 ? (
           <Button
-            onClick={() => setStep(step + 1)}
+            onClick={() => { if (step === 0 && !validateName()) return; setStep(step + 1); }}
             disabled={!canNext}
             rightIcon={<ArrowRight className="h-4 w-4" />}
           >
