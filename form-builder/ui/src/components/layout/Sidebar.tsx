@@ -51,6 +51,7 @@ export function Sidebar() {
           onClick={handleCreateForm}
           className={cn('w-full', sidebarCollapsed && 'px-0')}
           leftIcon={<Plus className="h-4 w-4" />}
+          aria-label={sidebarCollapsed ? 'Create Form' : undefined}
         >
           {!sidebarCollapsed && 'Create Form'}
         </Button>

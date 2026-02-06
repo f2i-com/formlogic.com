@@ -569,6 +569,7 @@ export function AppFormView() {
             type="button"
             onClick={handlePrev}
             disabled={safeStep === 0}
+            aria-label="Previous field"
             className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors border border-gray-100 dark:border-slate-700"
           >
             <ChevronUp className="h-4 w-4" />
@@ -577,6 +578,7 @@ export function AppFormView() {
             type="button"
             onClick={handleNext}
             disabled={submitting}
+            aria-label="Next field"
             className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-colors border border-gray-100 dark:border-slate-700"
           >
             <ChevronDown className="h-4 w-4" />

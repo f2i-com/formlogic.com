@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, FileText, Plus, Settings } from 'lucide-react';
+import { LayoutDashboard, FileText, Plus, Globe, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFormStore } from '../../stores/formStore';
 
@@ -17,6 +17,7 @@ export function MobileNav() {
     { path: '/', icon: LayoutDashboard, label: 'Home' },
     { path: '/forms', icon: FileText, label: 'Forms' },
     { action: handleCreateForm, icon: Plus, label: 'Create', isAction: true },
+    { path: '/apps', icon: Globe, label: 'Apps' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
