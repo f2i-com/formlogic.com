@@ -39,7 +39,7 @@ function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
             style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
             autoFocus
           />
@@ -52,7 +52,7 @@ function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
             rows={4}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl resize-none transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl resize-none transition-colors"
             autoFocus
           />
         );
@@ -64,7 +64,7 @@ function FieldResponse({
             value={(value as number) || ''}
             onChange={(e) => onChange(parseFloat(e.target.value))}
             placeholder={field.placeholder || '0'}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
             autoFocus
           />
         );
@@ -75,7 +75,7 @@ function FieldResponse({
             type="date"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
           />
         );
 
@@ -85,7 +85,7 @@ function FieldResponse({
             type="time"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
           />
         );
 
@@ -95,7 +95,7 @@ function FieldResponse({
             type="datetime-local"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
           />
         );
 
@@ -111,13 +111,13 @@ function FieldResponse({
                 className={cn(
                   'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
                   value === option.value
-                    ? 'border-primary-500 bg-primary-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-current/20 hover:border-current/30'
                 )}
                 style={value === option.value ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
               >
                 <span
-                  className="w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm font-bold"
+                  className="w-8 h-8 rounded-full border-2 border-current/30 flex items-center justify-center text-sm font-bold"
                   style={value === option.value ? { borderColor: primaryColor, color: primaryColor } : {}}
                 >
                   {String.fromCharCode(65 + index)}
@@ -149,8 +149,8 @@ function FieldResponse({
                 className={cn(
                   'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
                   selectedValues.includes(option.value)
-                    ? 'border-primary-500 bg-primary-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-current/20 hover:border-current/30'
                 )}
                 style={selectedValues.includes(option.value) ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
               >
@@ -175,7 +175,7 @@ function FieldResponse({
           <select
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-white border-2 border-gray-300 focus:border-primary-500 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
+            className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
             style={{ borderColor: value ? primaryColor : undefined }}
           >
             <option value="">Select an option...</option>
@@ -198,7 +198,7 @@ function FieldResponse({
                 onClick={() => onChange(i + 1)}
                 className={cn(
                   'text-5xl transition-transform hover:scale-110',
-                  i < currentRating ? 'text-yellow-400' : 'text-gray-300'
+                  i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
                 ★
@@ -215,7 +215,7 @@ function FieldResponse({
         const scaleLength = end - start + 1;
         return (
           <div>
-            <div className="flex justify-between text-sm text-gray-500 mb-3">
+            <div className="flex justify-between text-sm opacity-60 mb-3">
               <span>{field.properties.scaleStartLabel || `${start}`}</span>
               <span>{field.properties.scaleEndLabel || `${end}`}</span>
             </div>
@@ -233,7 +233,7 @@ function FieldResponse({
                       'py-4 rounded-lg border-2 font-bold text-lg transition-all',
                       scaleValue === num
                         ? 'text-white'
-                        : 'border-gray-200 hover:border-gray-300'
+                        : 'border-current/20 hover:border-current/30'
                     )}
                     style={scaleValue === num ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
                   >
@@ -262,8 +262,8 @@ function FieldResponse({
               className={cn(
                 "flex flex-col items-center justify-center w-full h-44 border-2 border-dashed rounded-xl cursor-pointer transition-all",
                 uploadedFiles.length > 0
-                  ? "border-gray-300 bg-gray-50"
-                  : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
+                  ? "border-current/30 bg-current/5"
+                  : "border-current/30 hover:border-current/40 hover:bg-current/5"
               )}
               style={uploadedFiles.length > 0 ? { borderColor: primaryColor, backgroundColor: `${primaryColor}08` } : {}}
             >
@@ -276,10 +276,10 @@ function FieldResponse({
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                 </div>
-                <p className="text-lg text-gray-600">
+                <p className="text-lg opacity-70">
                   <span className="font-semibold" style={{ color: primaryColor }}>Click to upload</span> or drag and drop
                 </p>
-                <p className="text-sm text-gray-400 mt-2">
+                <p className="text-sm opacity-50 mt-2">
                   {field.properties.acceptedFileTypes?.length
                     ? field.properties.acceptedFileTypes.join(', ')
                     : 'Any file type'}
@@ -318,7 +318,7 @@ function FieldResponse({
             {uploadedFiles.length > 0 && (
               <div className="space-y-2">
                 {uploadedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center gap-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                  <div key={index} className="flex items-center gap-3 p-4 bg-current/5 rounded-xl border border-current/15">
                     <div
                       className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0"
                       style={{ backgroundColor: `${primaryColor}15` }}
@@ -328,12 +328,12 @@ function FieldResponse({
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-700 truncate">{file.name}</p>
-                      <p className="text-sm text-gray-400">{formatFileSize(file.size)}</p>
+                      <p className="font-medium opacity-80 truncate">{file.name}</p>
+                      <p className="text-sm opacity-50">{formatFileSize(file.size)}</p>
                     </div>
                     <button
                       onClick={() => onChange(uploadedFiles.filter((_, i) => i !== index))}
-                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      className="p-2 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors"
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -353,14 +353,14 @@ function FieldResponse({
           <div className="space-y-4">
             <div
               className="w-full h-52 border-2 rounded-xl bg-white cursor-crosshair relative overflow-hidden transition-colors"
-              style={{ borderColor: value ? primaryColor : '#d1d5db' }}
+              style={{ borderColor: value ? primaryColor : `${textColor || '#1f2937'}30` }}
               onMouseDown={(e) => {
                 const canvas = e.currentTarget.querySelector('canvas');
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return;
 
-                ctx.strokeStyle = '#1f2937';
+                ctx.strokeStyle = textColor || '#1f2937';
                 ctx.lineWidth = 2.5;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
@@ -393,7 +393,7 @@ function FieldResponse({
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return;
 
-                ctx.strokeStyle = '#1f2937';
+                ctx.strokeStyle = textColor || '#1f2937';
                 ctx.lineWidth = 2.5;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
@@ -432,7 +432,7 @@ function FieldResponse({
               />
               {!value && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <p className="text-gray-400 text-lg flex items-center gap-2">
+                  <p className="text-lg opacity-40 flex items-center gap-2">
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                     </svg>
@@ -467,20 +467,20 @@ function FieldResponse({
         const paymentAmount = field.properties.min || 0;
         const paymentCurrency = field.properties.currency || 'USD';
         return (
-          <div className="p-6 border-2 border-gray-200 rounded-xl bg-gray-50">
+          <div className="p-6 border-2 border-current/20 rounded-xl bg-current/5">
             <div className="flex items-center justify-between mb-6">
-              <span className="text-lg text-gray-600">Amount due:</span>
+              <span className="text-lg opacity-70">Amount due:</span>
               <span className="text-3xl font-bold" style={{ color: primaryColor }}>
                 {new Intl.NumberFormat('en-US', { style: 'currency', currency: paymentCurrency }).format(paymentAmount)}
               </span>
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-500 mb-1.5">Card number</label>
+                <label className="block text-sm font-medium opacity-60 mb-1.5">Card number</label>
                 <input
                   type="text"
                   placeholder="1234 5678 9012 3456"
-                  className="w-full p-4 border border-gray-300 rounded-lg bg-white text-lg focus:ring-2 focus:ring-offset-0 focus:border-gray-400 outline-none transition-colors"
+                  className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                   style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
                   maxLength={19}
                   onChange={(e) => {
@@ -491,11 +491,11 @@ function FieldResponse({
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-sm font-medium text-gray-500 mb-1.5">Expiry date</label>
+                  <label className="block text-sm font-medium opacity-60 mb-1.5">Expiry date</label>
                   <input
                     type="text"
                     placeholder="MM / YY"
-                    className="w-full p-4 border border-gray-300 rounded-lg bg-white text-lg focus:ring-2 focus:ring-offset-0 focus:border-gray-400 outline-none transition-colors"
+                    className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                     maxLength={7}
                     onChange={(e) => {
                       let val = e.target.value.replace(/\D/g, '');
@@ -507,17 +507,17 @@ function FieldResponse({
                   />
                 </div>
                 <div className="w-28">
-                  <label className="block text-sm font-medium text-gray-500 mb-1.5">CVC</label>
+                  <label className="block text-sm font-medium opacity-60 mb-1.5">CVC</label>
                   <input
                     type="text"
                     placeholder="123"
-                    className="w-full p-4 border border-gray-300 rounded-lg bg-white text-lg focus:ring-2 focus:ring-offset-0 focus:border-gray-400 outline-none transition-colors"
+                    className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                     maxLength={4}
                   />
                 </div>
               </div>
             </div>
-            <p className="text-sm text-gray-400 mt-5 text-center flex items-center justify-center gap-1.5">
+            <p className="text-sm opacity-50 mt-5 text-center flex items-center justify-center gap-1.5">
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
               </svg>
@@ -529,13 +529,13 @@ function FieldResponse({
 
       case 'calculated':
         return (
-          <div className="p-6 bg-gray-100 rounded-lg text-center">
-            <p className="text-sm text-gray-500 mb-2">Calculated result:</p>
+          <div className="p-6 bg-current/5 rounded-lg text-center">
+            <p className="text-sm opacity-60 mb-2">Calculated result:</p>
             <p className="text-4xl font-bold" style={{ color: primaryColor }}>
               {value !== undefined ? String(value) : '—'}
             </p>
             {field.properties.calculationExpression && (
-              <p className="text-sm text-gray-400 mt-3">
+              <p className="text-sm opacity-50 mt-3">
                 Based on: {field.properties.calculationExpression}
               </p>
             )}
@@ -543,7 +543,7 @@ function FieldResponse({
         );
 
       default:
-        return <p className="text-gray-500">Field type not supported</p>;
+        return <p className="opacity-50">Field type not supported</p>;
     }
   };
 
@@ -648,9 +648,9 @@ export default function FormResponse() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Form Closed</h1>
-          <p className="text-gray-600">
+        <div className="text-center" style={{ color: form.theme.textColor }}>
+          <h1 className="text-2xl font-bold mb-2">Form Closed</h1>
+          <p className="opacity-70">
             {form.settings.closedMessage || 'This form is no longer accepting responses.'}
           </p>
         </div>
@@ -712,7 +712,7 @@ export default function FormResponse() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
-        <p className="text-gray-500">This form has no questions.</p>
+        <p style={{ color: form.theme.textColor, opacity: 0.5 }}>This form has no questions.</p>
       </div>
     );
   }
@@ -767,8 +767,8 @@ export default function FormResponse() {
               >
                 {isLastStep ? 'Submit' : 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
-              <span className="text-sm text-gray-500">
-                press <kbd className="px-2 py-1 bg-gray-100 rounded text-gray-700">Enter</kbd>
+              <span className="text-sm opacity-50">
+                press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>
               </span>
             </div>
           </motion.div>
@@ -781,13 +781,15 @@ export default function FormResponse() {
           <button
             onClick={prevStep}
             disabled={safeCurrentStep === 0}
-            className="p-2 bg-white rounded-lg shadow-md text-gray-600 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label="Previous question"
+            className="p-2 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity"
           >
             <ChevronUp className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
-            className="p-2 bg-white rounded-lg shadow-md text-gray-600 hover:text-gray-900"
+            aria-label="Next question"
+            className="p-2 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 transition-opacity"
           >
             <ChevronDown className="h-5 w-5" />
           </button>
@@ -795,7 +797,7 @@ export default function FormResponse() {
       )}
 
       {/* Step Counter */}
-      <div className="fixed bottom-4 left-4 text-sm text-gray-500">
+      <div className="fixed bottom-4 left-4 text-sm opacity-50">
         {safeCurrentStep + 1} / {visibleFields.length}
         {isEvaluating && <span className="ml-1 animate-pulse">...</span>}
       </div>

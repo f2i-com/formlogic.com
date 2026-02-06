@@ -200,7 +200,7 @@ function FormActionsDropdown({
         aria-label={`Actions for ${formTitle}`}
       >
         {isExporting ? (
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 dark:border-slate-600 border-t-gray-600 dark:border-t-slate-300" />
         ) : (
           <MoreVertical className="h-4 w-4" />
         )}
@@ -585,7 +585,7 @@ export function Dashboard() {
                                   {form.status}
                                 </Badge>
                               </div>
-                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-500">
+                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-500">
                                 <span className="flex items-center gap-1">
                                   <Clock className="h-3.5 w-3.5" />
                                   {formatRelativeTime(form.updatedAt)}

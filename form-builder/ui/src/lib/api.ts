@@ -232,8 +232,9 @@ class ApiClient {
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to download SQLite database');
+      let message = 'Failed to download SQLite database';
+      try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
+      throw new Error(message);
     }
 
     const blob = await response.blob();
@@ -253,8 +254,9 @@ class ApiClient {
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Failed to download JSON export');
+      let message = 'Failed to download JSON export';
+      try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
+      throw new Error(message);
     }
 
     const blob = await response.blob();

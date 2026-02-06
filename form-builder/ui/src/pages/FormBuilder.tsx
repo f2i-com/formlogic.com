@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -9,7 +9,9 @@ import {
   Share2,
   Sparkles,
   Palette,
-  Keyboard
+  Keyboard,
+  MoreVertical,
+  Layers,
 } from 'lucide-react';
 import {
   DndContext,
@@ -47,6 +49,8 @@ export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     getForm,
@@ -60,7 +64,15 @@ export default function FormBuilder() {
     duplicateField,
   } = useFormStore();
 
-  const { isMobile, mobilePanel, setMobilePanel } = useUIStore();
+  const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
+
+  // Keep isMobile in sync with window size (FormBuilder is outside AppShell)
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, [setIsMobile]);
 
   const form = formId ? getForm(formId) : undefined;
 
@@ -74,6 +86,14 @@ export default function FormBuilder() {
   const selectedField = form?.fields.find((f) => f.id === selectedFieldId);
   const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
   const formFields = form?.fields ?? [];
+
+  // On mobile, switch to settings panel when a field is selected
+  const handleSelectField = useCallback((fieldId: string) => {
+    setSelectedField(fieldId);
+    if (isMobile) {
+      setMobilePanel('settings');
+    }
+  }, [setSelectedField, isMobile, setMobilePanel]);
 
   // Add field handler (defined first for use in shortcuts)
   const handleAddField = useCallback((type: FieldType) => {
@@ -127,7 +147,12 @@ export default function FormBuilder() {
     });
 
     setSelectedField(field.id);
-  }, [form, addField, setSelectedField]);
+
+    // On mobile, switch to canvas to show the newly added field
+    if (isMobile) {
+      setMobilePanel('canvas');
+    }
+  }, [form, addField, setSelectedField, isMobile, setMobilePanel]);
 
   // Keyboard shortcuts
   const handleSave = useCallback(() => {
@@ -202,6 +227,18 @@ export default function FormBuilder() {
   ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
 
   useKeyboardShortcuts({ shortcuts });
+
+  // Close mobile menu on outside click
+  useEffect(() => {
+    if (!showMobileMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (mobileMenuRef.current && !mobileMenuRef.current.contains(e.target as Node)) {
+        setShowMobileMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMobileMenu]);
 
   useEffect(() => {
     if (!form && formId) {
@@ -364,6 +401,38 @@ export default function FormBuilder() {
             <Keyboard className="h-4 w-4" />
           </Button>
 
+          {/* Mobile overflow menu */}
+          <div className="relative sm:hidden" ref={mobileMenuRef}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowMobileMenu(!showMobileMenu)}
+              aria-label="More options"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+            {showMobileMenu && (
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-900 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 py-1 z-50">
+                {[
+                  { label: 'Form Settings', icon: Settings, modal: 'settings' as ModalType },
+                  { label: 'Theme', icon: Palette, modal: 'theme' as ModalType },
+                  { label: 'Script', icon: Code2, modal: 'script' as ModalType, badge: !!form?.logicScript },
+                  { label: 'Share & Embed', icon: Share2, modal: 'embed' as ModalType },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => { setActiveModal(item.modal); setShowMobileMenu(false); }}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    <item.icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                    {item.label}
+                    {item.badge && <span className="ml-auto h-2 w-2 rounded-full bg-green-500" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Publish */}
           <Button
             size="sm"
@@ -377,30 +446,36 @@ export default function FormBuilder() {
 
       {/* Mobile Tabs */}
       {isMobile && (
-        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-4 py-2 flex-shrink-0">
-          <div className="flex gap-2">
-            <Button
-              variant={mobilePanel === 'palette' ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => setMobilePanel('palette')}
-            >
-              Fields
-            </Button>
-            <Button
-              variant={mobilePanel === 'canvas' ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => setMobilePanel('canvas')}
-            >
-              Canvas
-            </Button>
-            <Button
-              variant={mobilePanel === 'settings' ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => setMobilePanel('settings')}
-              disabled={!selectedField}
-            >
-              Settings
-            </Button>
+        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-2 flex-shrink-0">
+          <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
+            {([
+              { key: 'palette' as const, label: 'Fields', icon: Plus },
+              { key: 'canvas' as const, label: 'Canvas', icon: Layers, badge: formFields.length || undefined },
+              { key: 'settings' as const, label: 'Settings', icon: Settings, disabled: !selectedField },
+            ]).map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setMobilePanel(tab.key)}
+                disabled={tab.disabled}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 text-sm font-medium rounded-md transition-all ${
+                  mobilePanel === tab.key
+                    ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
+                    : 'text-gray-500 dark:text-slate-400'
+                } ${tab.disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+              >
+                <tab.icon className="h-4 w-4" />
+                {tab.label}
+                {tab.badge && (
+                  <span className={`text-xs rounded-full px-1.5 min-w-[1.25rem] text-center ${
+                    mobilePanel === tab.key
+                      ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300'
+                      : 'bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-400'
+                  }`}>
+                    {tab.badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -428,7 +503,7 @@ export default function FormBuilder() {
                     Add your first field
                   </h3>
                   <p className="text-gray-500 mb-4">
-                    Click a field type from the left panel to get started
+                    {isMobile ? 'Tap the Fields tab above to get started' : 'Click a field type from the left panel to get started'}
                   </p>
                   <div className="flex items-center justify-center gap-2">
                     <span className="text-gray-400">or</span>
@@ -457,7 +532,7 @@ export default function FormBuilder() {
                           key={field.id}
                           field={field}
                           isSelected={field.id === selectedFieldId}
-                          onSelect={() => setSelectedField(field.id)}
+                          onSelect={() => handleSelectField(field.id)}
                           onDelete={() => deleteField(form.id, field.id)}
                         />
                       ))}

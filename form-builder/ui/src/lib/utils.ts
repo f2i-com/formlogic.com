@@ -6,7 +6,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function generateId(): string {
-  return crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export function formatDate(date: string | Date): string {
@@ -22,6 +30,7 @@ export function formatRelativeTime(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
+  if (diffMs < 0) return 'just now';
   const diffSec = Math.floor(diffMs / 1000);
   const diffMin = Math.floor(diffSec / 60);
   const diffHour = Math.floor(diffMin / 60);
@@ -71,13 +80,20 @@ export function labelToVariableName(label: string): string {
   if (words.length === 0) return '';
 
   // Convert to camelCase
-  return words
+  let result = words
     .map((word, index) => {
       const lower = word.toLowerCase();
       if (index === 0) return lower;
       return lower.charAt(0).toUpperCase() + lower.slice(1);
     })
     .join('');
+
+  // Ensure the name doesn't start with a digit (invalid JS identifier)
+  if (/^\d/.test(result)) {
+    result = '_' + result;
+  }
+
+  return result;
 }
 
 /**
@@ -114,6 +130,10 @@ export function createFieldVariableMap(
   return { toId, toVar };
 }
 
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Replace variable names with field IDs in an expression
  */
@@ -129,7 +149,7 @@ export function replaceVariablesWithIds(
 
   for (const varName of sortedVars) {
     // Match whole words only (not part of another word)
-    const regex = new RegExp(`\\b${varName}\\b`, 'g');
+    const regex = new RegExp(`\\b${escapeRegExp(varName)}\\b`, 'g');
     result = result.replace(regex, varToId[varName]);
   }
 
@@ -146,8 +166,7 @@ export function replaceIdsWithVariables(
   let result = expression;
 
   for (const [id, varName] of Object.entries(idToVar)) {
-    // UUIDs are unique enough to replace directly
-    result = result.replace(new RegExp(id, 'g'), varName);
+    result = result.replace(new RegExp(escapeRegExp(id), 'g'), varName);
   }
 
   return result;

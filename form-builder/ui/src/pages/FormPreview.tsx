@@ -33,7 +33,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
         );
 
@@ -55,7 +55,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             value={(value as number) || ''}
             onChange={(e) => onChange(parseFloat(e.target.value))}
             placeholder={field.placeholder || '0'}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
         );
 
@@ -65,7 +65,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             type="date"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
         );
 
@@ -75,7 +75,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             type="time"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
         );
 
@@ -85,7 +85,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             type="datetime-local"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
         );
 
@@ -101,8 +101,8 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 className={cn(
                   'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all',
                   value === option.value
-                    ? 'border-primary-500 bg-primary-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-current/20 hover:border-current/40'
                 )}
               >
                 <span className="w-6 h-6 rounded-full border-2 border-current flex items-center justify-center text-sm font-medium">
@@ -132,15 +132,15 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 className={cn(
                   'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all',
                   selectedValues.includes(option.value)
-                    ? 'border-primary-500 bg-primary-50'
-                    : 'border-gray-200 hover:border-gray-300'
+                    ? 'border-primary-500 bg-primary-500/10'
+                    : 'border-current/20 hover:border-current/40'
                 )}
               >
                 <span className={cn(
                   'w-6 h-6 rounded border-2 flex items-center justify-center',
                   selectedValues.includes(option.value)
                     ? 'bg-primary-500 border-primary-500 text-white'
-                    : 'border-gray-400'
+                    : 'border-current/40'
                 )}>
                   {selectedValues.includes(option.value) && '✓'}
                 </span>
@@ -156,7 +156,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
           <select
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-white border-2 border-gray-300 focus:border-primary-500 outline-none py-3 px-4 rounded-lg text-lg transition-colors"
+            className="w-full bg-transparent border-2 border-current/30 focus:border-primary-500 outline-none py-3 px-4 rounded-lg text-lg transition-colors"
           >
             <option value="">Select an option...</option>
             {field.properties.options?.map((option) => (
@@ -176,9 +176,10 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
               <button
                 key={i}
                 onClick={() => onChange(i + 1)}
+                title={`Rate ${i + 1} of ${maxStars}`}
                 className={cn(
                   'text-4xl transition-transform hover:scale-110',
-                  i < currentRating ? 'text-yellow-400' : 'text-gray-300'
+                  i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
                 ★
@@ -195,7 +196,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         const scaleLength = end - start + 1;
         return (
           <div>
-            <div className="flex justify-between text-sm text-gray-500 mb-2">
+            <div className="flex justify-between text-sm opacity-60 mb-2">
               <span>{field.properties.scaleStartLabel || start}</span>
               <span>{field.properties.scaleEndLabel || end}</span>
             </div>
@@ -213,7 +214,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                       'py-3 rounded-lg border-2 font-medium transition-all',
                       scaleValue === num
                         ? 'border-primary-500 bg-primary-500 text-white'
-                        : 'border-gray-200 hover:border-gray-300'
+                        : 'border-current/20 hover:border-current/40'
                     )}
                   >
                     {num}
@@ -227,7 +228,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
 
       case 'statement':
         return (
-          <p className="text-lg text-gray-600">{field.description || 'Statement content'}</p>
+          <p className="text-lg opacity-70">{field.description || 'Statement content'}</p>
         );
 
       case 'file_upload': {
@@ -440,45 +441,45 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         const amount = field.properties.min || 0;
         const currency = field.properties.currency || 'USD';
         return (
-          <div className="p-5 border-2 border-gray-200 rounded-xl bg-gray-50">
+          <div className="p-5 border-2 border-current/20 rounded-xl bg-current/5">
             <div className="flex items-center justify-between mb-5">
-              <span className="text-gray-600">Amount:</span>
-              <span className="text-2xl font-bold text-gray-900">
+              <span className="opacity-70">Amount:</span>
+              <span className="text-2xl font-bold">
                 {new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)}
               </span>
             </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Card number</label>
+                <label className="block text-xs font-medium opacity-60 mb-1">Card number</label>
                 <input
                   type="text"
                   placeholder="1234 5678 9012 3456"
-                  className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-400"
+                  className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
                   disabled
                 />
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Expiry</label>
+                  <label className="block text-xs font-medium opacity-60 mb-1">Expiry</label>
                   <input
                     type="text"
                     placeholder="MM / YY"
-                    className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-400"
+                    className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
                     disabled
                   />
                 </div>
                 <div className="w-24">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">CVC</label>
+                  <label className="block text-xs font-medium opacity-60 mb-1">CVC</label>
                   <input
                     type="text"
                     placeholder="123"
-                    className="w-full p-3 border border-gray-300 rounded-lg bg-white text-gray-400"
+                    className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
                     disabled
                   />
                 </div>
               </div>
             </div>
-            <p className="text-xs text-gray-400 mt-4 text-center flex items-center justify-center gap-1">
+            <p className="text-xs opacity-50 mt-4 text-center flex items-center justify-center gap-1">
               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
               </svg>
@@ -490,13 +491,13 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
 
       case 'calculated':
         return (
-          <div className="p-4 bg-gray-100 rounded-lg">
-            <p className="text-sm text-gray-500 mb-1">Calculated value:</p>
-            <p className="text-2xl font-semibold text-gray-800">
+          <div className="p-4 bg-current/5 rounded-lg">
+            <p className="text-sm opacity-60 mb-1">Calculated value:</p>
+            <p className="text-2xl font-semibold">
               {value !== undefined ? String(value) : '—'}
             </p>
             {field.properties.calculationExpression && (
-              <p className="text-xs text-gray-400 mt-2">
+              <p className="text-xs opacity-50 mt-2">
                 Formula: {field.properties.calculationExpression}
               </p>
             )}
@@ -609,6 +610,7 @@ export default function FormPreview() {
           <div className="hidden md:flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-1 transition-colors duration-300">
             <button
               onClick={() => setPreviewDevice('desktop')}
+              aria-label="Desktop preview"
               className={cn(
                 'p-2 rounded-md transition-all duration-200',
                 previewDevice === 'desktop'
@@ -620,6 +622,7 @@ export default function FormPreview() {
             </button>
             <button
               onClick={() => setPreviewDevice('mobile')}
+              aria-label="Mobile preview"
               className={cn(
                 'p-2 rounded-md transition-all duration-200',
                 previewDevice === 'mobile'
@@ -698,7 +701,7 @@ export default function FormPreview() {
           }}
         >
           {visibleFields.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-500">
+            <div className="h-full flex items-center justify-center opacity-50">
               <p>Add some fields to preview your form</p>
             </div>
           ) : previewMode === 'focused' ? (
@@ -736,10 +739,11 @@ export default function FormPreview() {
               </div>
 
               {/* Navigation */}
-              <div className="p-4 flex items-center justify-between border-t border-gray-100">
+              <div className="p-4 flex items-center justify-between border-t border-current/10">
                 <button
                   onClick={handlePrev}
                   disabled={safeCurrentStep === 0}
+                  aria-label="Previous question"
                   className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
                 >
                   <ChevronUp className="h-6 w-6" />
@@ -750,6 +754,7 @@ export default function FormPreview() {
                 <button
                   onClick={handleNext}
                   disabled={isLastStep}
+                  aria-label="Next question"
                   className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
                 >
                   <ChevronDown className="h-6 w-6" />
@@ -763,12 +768,12 @@ export default function FormPreview() {
                 <div className="text-center mb-8">
                   <h1 className="text-3xl font-bold">{form.title}</h1>
                   {form.description && (
-                    <p className="text-gray-600 mt-2">{form.description}</p>
+                    <p className="opacity-70 mt-2">{form.description}</p>
                   )}
                 </div>
 
                 {visibleFields.map((field) => (
-                  <div key={field.id} className="pb-6 border-b border-gray-100 last:border-0">
+                  <div key={field.id} className="pb-6 border-b border-current/10 last:border-0">
                     <FieldPreview
                       field={field}
                       value={answers[field.id]}

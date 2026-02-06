@@ -43,16 +43,18 @@ export function SortableFieldCard({
         isDragging && 'opacity-50 shadow-lg'
       )}
     >
-      <div className="flex items-start gap-3 p-4">
+      <div className="flex items-start gap-3 p-4 cursor-pointer" onClick={onSelect}>
         <button
           {...attributes}
           {...listeners}
-          className="mt-1 p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing"
+          onClick={(e) => e.stopPropagation()}
+          className="mt-1 p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none"
+          aria-label="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
         </button>
 
-        <div className="flex-1 min-w-0" onClick={onSelect}>
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <IconComponent className="h-4 w-4 text-gray-400 dark:text-slate-500" />
             <span className="text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
@@ -67,9 +69,14 @@ export function SortableFieldCard({
         </div>
 
         <button
-          onClick={onDelete}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
           aria-label="Delete field"
-          className="p-1 text-gray-400 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+          className={cn(
+            'p-1.5 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all',
+            isSelected
+              ? 'text-gray-400 dark:text-slate-500 opacity-100'
+              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 sm:opacity-0 max-sm:opacity-60'
+          )}
         >
           <Trash2 className="h-4 w-4" />
         </button>

@@ -252,6 +252,8 @@ export function Settings() {
                     return (
                       <button
                         key={theme.id}
+                        aria-label={`Select ${theme.label} accent color`}
+                        aria-pressed={isSelected}
                         onClick={() => {
                           useUIStore.getState().setThemeColor(theme.id as any);
                           toast.success('Theme Updated', `Accent color changed to ${theme.label}`);

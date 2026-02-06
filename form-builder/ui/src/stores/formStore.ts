@@ -218,6 +218,8 @@ export const useFormStore = create<FormState>()(
           try {
             const result = await api.createForm(form);
             if (result.error) {
+              // Rollback optimistic update
+              set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
               console.error('Failed to create form on server:', result.error);
             } else if (result.data) {
               // Update with server response (may have different ID)
@@ -229,6 +231,8 @@ export const useFormStore = create<FormState>()(
               return result.data.form as Form;
             }
           } catch (error) {
+            // Rollback optimistic update
+            set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
             console.error('Failed to create form on server:', error);
           }
         }
