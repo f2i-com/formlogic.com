@@ -214,6 +214,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
         }
 
+        if (isset($data['roleId']) && !$this->appUserService->roleBelongsToApp($data['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
+        }
+
         try {
             $this->appUserService->updateAppUser($args['id'], $data);
             $users = $this->appUserService->getAppUsers($appId);
@@ -280,6 +284,14 @@ class AppUserController
         $data = $request->getParsedBody();
         if (empty($data['email']) || empty($data['roleId'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Email and roleId are required'], 400);
+        }
+
+        if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid email format'], 400);
+        }
+
+        if (!$this->appUserService->roleBelongsToApp($data['roleId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
         try {
@@ -430,6 +442,10 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
         }
 
+        if (!$this->appUserService->appUserBelongsToApp($args['memberId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
+        }
+
         $this->appUserService->addGroupMember($args['id'], $args['memberId']);
         return $this->jsonResponse($response, ['success' => true]);
     }
@@ -448,6 +464,10 @@ class AppUserController
 
         if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
+        }
+
+        if (!$this->appUserService->appUserBelongsToApp($args['memberId'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
         }
 
         $this->appUserService->removeGroupMember($args['id'], $args['memberId']);

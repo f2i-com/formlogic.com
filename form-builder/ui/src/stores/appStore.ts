@@ -122,15 +122,17 @@ export const useAppStore = create<AppState>()(
       createRole: async (appId, data) => {
         const result = await api.createAppRole(appId, data);
         if (result.error) return null;
-        return result.data?.role as AppRole;
+        return (result.data?.role as AppRole) ?? null;
       },
 
       updateRole: async (appId, roleId, data) => {
-        await api.updateAppRole(appId, roleId, data);
+        const result = await api.updateAppRole(appId, roleId, data);
+        if (result.error) return;
       },
 
       deleteRole: async (appId, roleId) => {
-        await api.deleteAppRole(appId, roleId);
+        const result = await api.deleteAppRole(appId, roleId);
+        if (result.error) throw new Error(result.error);
       },
     }),
     {

@@ -129,6 +129,9 @@ class AppService
         }
 
         if (isset($data['status'])) {
+            if (!in_array($data['status'], ['draft', 'published', 'archived'], true)) {
+                throw new \RuntimeException('Invalid status value');
+            }
             $updates[] = "status = :status";
             $params['status'] = $data['status'];
         }

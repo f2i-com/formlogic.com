@@ -116,10 +116,13 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
 
   if (error || !config) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
         <div className="text-center max-w-md mx-auto px-4">
-          <h2 className="text-xl font-semibold mb-2">Access Denied</h2>
-          <p className="text-gray-500 mb-4">{error || 'Unable to load app. You may not have access.'}</p>
+          <div className="w-12 h-12 mx-auto rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center mb-4">
+            <AlertCircle className="h-6 w-6 text-red-500 dark:text-red-400" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">Access Denied</h2>
+          <p className="text-gray-500 dark:text-slate-400 mb-4">{error || 'Unable to load app. You may not have access.'}</p>
           <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>
         </div>
       </div>

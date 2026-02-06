@@ -43,7 +43,7 @@ export function AppResponseDetail() {
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
-        <p className="text-gray-500">You don&apos;t have permission to view this response.</p>
+        <p className="text-gray-500 dark:text-slate-400">You don&apos;t have permission to view this response.</p>
       </div>
     );
   }
@@ -52,7 +52,7 @@ export function AppResponseDetail() {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
-          <p className="text-red-600 mb-4">{fetchError}</p>
+          <p className="text-red-600 dark:text-red-400 mb-4">{fetchError}</p>
           <button onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)} className="text-sm app-text-primary hover:underline">
             Back to Responses
           </button>
@@ -64,7 +64,7 @@ export function AppResponseDetail() {
   if (loading || !response || !formId) {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading response" />
       </div>
     );
   }
@@ -98,18 +98,19 @@ export function AppResponseDetail() {
       <div className="flex items-center gap-3 mb-6">
         <button
           onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
-          className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+          aria-label="Back to responses"
+          className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="flex-1">
-          <h1 className="text-xl font-bold">{runtimeForm?.displayName || 'Response'}</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white">{runtimeForm?.displayName || 'Response'}</h1>
         </div>
         <div className="flex items-center gap-2">
           {canEdit(formId) && !editing && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-colors"
             >
               <Pencil className="h-3.5 w-3.5" /> Edit
             </button>
@@ -117,8 +118,8 @@ export function AppResponseDetail() {
           {editing && (
             <>
               <button
-                onClick={() => { setEditing(false); setEditedAnswers((response.answers as Record<string, unknown>) ?? {}); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+                onClick={() => { setEditing(false); setEditedAnswers((response.answers as Record<string, unknown>) ?? {}); setSaveError(null); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-colors"
               >
                 <X className="h-3.5 w-3.5" /> Cancel
               </button>
@@ -134,7 +135,8 @@ export function AppResponseDetail() {
           {canDelete(formId) && !editing && (
             <button
               onClick={handleDelete}
-              className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors"
+              aria-label="Delete response"
+              className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -143,22 +145,25 @@ export function AppResponseDetail() {
       </div>
 
       {saveError && (
-        <div className="text-sm text-red-600 bg-red-50 px-4 py-3 rounded-lg mb-4 border border-red-100">
-          {saveError}
+        <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
+          <span>{saveError}</span>
+          <button onClick={() => setSaveError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300">
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
       {/* Metadata card */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex flex-wrap gap-4 text-sm">
-        <div className="flex items-center gap-2 text-gray-500">
+      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4 mb-4 flex flex-wrap gap-4 text-sm">
+        <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
           <Clock className="h-4 w-4" />
           {response.submittedAt ? new Date(String(response.submittedAt)).toLocaleString() : '-'}
         </div>
         <div className="flex items-center gap-2">
-          <CheckCircle2 className={cn('h-4 w-4', status === 'submitted' ? 'text-green-500' : 'text-gray-400')} />
+          <CheckCircle2 className={cn('h-4 w-4', status === 'submitted' ? 'text-green-500' : 'text-gray-400 dark:text-slate-500')} />
           <span className={cn(
             'px-2 py-0.5 rounded-full text-xs font-medium',
-            status === 'submitted' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'
+            status === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
           )}>
             {status.charAt(0).toUpperCase() + status.slice(1)}
           </span>
@@ -166,10 +171,10 @@ export function AppResponseDetail() {
       </div>
 
       {/* Answers */}
-      <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 divide-y divide-gray-100 dark:divide-slate-700/50">
         {fields.map((field) => (
           <div key={field.id} className="px-5 py-4">
-            <label className="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">
+            <label className="block text-xs font-medium text-gray-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
               {field.label}
             </label>
             {editing ? (
@@ -177,13 +182,13 @@ export function AppResponseDetail() {
                 type="text"
                 value={String(editedAnswers[field.id] ?? '')}
                 onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors"
               />
             ) : (
-              <div className="text-sm text-gray-800">
+              <div className="text-sm text-gray-800 dark:text-slate-200">
                 {answers[field.id] != null
                   ? (Array.isArray(answers[field.id]) ? (answers[field.id] as unknown[]).join(', ') : String(answers[field.id]))
-                  : <span className="text-gray-300 italic">No answer</span>
+                  : <span className="text-gray-300 dark:text-slate-600 italic">No answer</span>
                 }
               </div>
             )}

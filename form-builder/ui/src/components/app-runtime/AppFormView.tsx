@@ -34,7 +34,7 @@ function FieldInput({
   onChange: (val: unknown) => void;
   primaryColor: string;
 }) {
-  const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 outline-none py-2 text-xl transition-colors';
+  const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 dark:border-slate-600 outline-none py-2 text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-colors';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
   if (['short_text', 'email', 'phone', 'url'].includes(field.type)) {
@@ -110,17 +110,20 @@ function FieldInput({
               onClick={() => onChange(option.value)}
               className={cn(
                 'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
-                selected ? 'shadow-sm' : 'border-gray-200 hover:border-gray-300'
+                selected ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
               )}
               style={selected ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
             >
               <span
-                className="w-8 h-8 rounded border-2 flex items-center justify-center text-sm font-bold flex-shrink-0"
-                style={selected ? { borderColor: primaryColor, color: primaryColor } : { borderColor: '#d1d5db' }}
+                className={cn(
+                  'w-8 h-8 rounded border-2 flex items-center justify-center text-sm font-bold flex-shrink-0',
+                  !selected && 'border-gray-300 dark:border-slate-500 text-gray-500 dark:text-slate-400'
+                )}
+                style={selected ? { borderColor: primaryColor, color: primaryColor } : {}}
               >
                 {String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-lg">{option.label}</span>
+              <span className="flex-1 text-lg text-gray-900 dark:text-white">{option.label}</span>
               {selected && <Check className="h-5 w-5 flex-shrink-0" style={{ color: primaryColor }} />}
             </button>
           );
@@ -135,7 +138,7 @@ function FieldInput({
       <select
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-white border-2 border-gray-300 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
+        className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-xl text-gray-900 dark:text-white transition-colors"
         style={{ borderColor: value ? primaryColor : undefined }}
       >
         <option value="">Select...</option>
@@ -162,17 +165,20 @@ function FieldInput({
               }}
               className={cn(
                 'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
-                checked ? 'shadow-sm' : 'border-gray-200 hover:border-gray-300'
+                checked ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
               )}
               style={checked ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
             >
               <span
-                className="w-8 h-8 rounded border-2 flex items-center justify-center text-sm font-bold flex-shrink-0"
-                style={checked ? { borderColor: primaryColor, color: primaryColor } : { borderColor: '#d1d5db' }}
+                className={cn(
+                  'w-8 h-8 rounded border-2 flex items-center justify-center text-sm font-bold flex-shrink-0',
+                  !checked && 'border-gray-300 dark:border-slate-500 text-gray-500 dark:text-slate-400'
+                )}
+                style={checked ? { borderColor: primaryColor, color: primaryColor } : {}}
               >
                 {checked ? <Check className="h-4 w-4" /> : String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-lg">{option.label}</span>
+              <span className="flex-1 text-lg text-gray-900 dark:text-white">{option.label}</span>
             </button>
           );
         })}
@@ -192,7 +198,7 @@ function FieldInput({
             onClick={() => onChange(i + 1)}
             className={cn(
               'text-4xl transition-all hover:scale-110',
-              currentRating > i ? 'text-yellow-400' : 'text-gray-300'
+              currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-600'
             )}
           >
             ★
@@ -219,7 +225,7 @@ function FieldInput({
                 onClick={() => onChange(num)}
                 className={cn(
                   'aspect-square rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all',
-                  selected ? 'text-white shadow-sm' : 'border-gray-200 hover:border-gray-300'
+                  selected ? 'text-white shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
                 style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
               >
@@ -229,7 +235,7 @@ function FieldInput({
           })}
         </div>
         {Boolean(field.properties?.minLabel || field.properties?.maxLabel) && (
-          <div className="flex justify-between text-sm text-gray-500">
+          <div className="flex justify-between text-sm text-gray-500 dark:text-slate-400">
             <span>{String(field.properties?.minLabel ?? '')}</span>
             <span>{String(field.properties?.maxLabel ?? '')}</span>
           </div>
@@ -359,7 +365,7 @@ export function AppFormView() {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
-          <p className="text-red-600 mb-4">{fetchError}</p>
+          <p className="text-red-600 dark:text-red-400 mb-4">{fetchError}</p>
           <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline">
             Back to Dashboard
           </button>
@@ -372,7 +378,7 @@ export function AppFormView() {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
-          <p className="text-gray-500 mb-4">You don&apos;t have permission to submit responses to this form.</p>
+          <p className="text-gray-500 dark:text-slate-400 mb-4">You don&apos;t have permission to submit responses to this form.</p>
           <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline">
             Back to Dashboard
           </button>
@@ -396,12 +402,12 @@ export function AppFormView() {
           >
             <CheckCircle className="h-10 w-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold mb-3">Thank you!</h1>
-          <p className="text-lg text-gray-500 mb-8">Your response has been submitted successfully.</p>
+          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white">Thank you!</h1>
+          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8">Your response has been submitted successfully.</p>
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => { setSubmitted(false); setAnswers({}); setCurrentStep(0); setError(null); }}
-              className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+              className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
             >
               Submit Another
             </button>
@@ -421,7 +427,7 @@ export function AppFormView() {
     return (
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
-          <p className="text-gray-500">This form has no fields.</p>
+          <p className="text-gray-500 dark:text-slate-400">This form has no fields.</p>
           <button onClick={() => navigate(`/app/${appSlug}`)} className="mt-4 text-sm app-text-primary hover:underline">
             Back to Dashboard
           </button>
@@ -446,7 +452,7 @@ export function AppFormView() {
       <div className="pt-2 pb-0 px-1">
         <button
           onClick={() => navigate(`/app/${appSlug}`)}
-          className="flex items-center gap-1.5 text-gray-400 hover:text-gray-600 text-sm transition-colors"
+          className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors"
         >
           <ArrowLeft className="h-4 w-4" /> {runtimeForm?.displayName || 'Back'}
         </button>
@@ -466,12 +472,12 @@ export function AppFormView() {
             >
               {/* Field label & description */}
               <div className="mb-8">
-                <h2 className="text-2xl md:text-3xl font-bold mb-2">
+                <h2 className="text-2xl md:text-3xl font-bold mb-2 text-gray-900 dark:text-white">
                   {currentField.label}
                   {currentField.required && <span className="text-red-500 ml-1">*</span>}
                 </h2>
                 {currentField.description && (
-                  <p className="text-base md:text-lg opacity-60">
+                  <p className="text-base md:text-lg text-gray-500 dark:text-slate-400">
                     {currentField.description}
                   </p>
                 )}
@@ -490,7 +496,7 @@ export function AppFormView() {
                 <motion.p
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="mt-4 text-sm text-red-600"
+                  className="mt-4 text-sm text-red-600 dark:text-red-400"
                 >
                   {error}
                 </motion.p>
@@ -509,8 +515,8 @@ export function AppFormView() {
                   {!submitting && <Check className="h-4 w-4" />}
                 </button>
                 {!submitting && (
-                  <span className="text-sm text-gray-400">
-                    press <kbd className="px-1.5 py-0.5 bg-gray-100 rounded text-xs text-gray-600 font-mono">Enter ↵</kbd>
+                  <span className="text-sm text-gray-400 dark:text-slate-500">
+                    press <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-slate-800 rounded text-xs text-gray-600 dark:text-slate-400 font-mono">Enter ↵</kbd>
                   </span>
                 )}
               </div>
@@ -520,7 +526,7 @@ export function AppFormView() {
       </div>
 
       {/* Step counter (bottom-left) */}
-      <div className="absolute bottom-4 left-4 text-sm text-gray-400">
+      <div className="absolute bottom-4 left-4 text-sm text-gray-400 dark:text-slate-500">
         {safeStep + 1} / {fields.length}
       </div>
 
@@ -531,7 +537,7 @@ export function AppFormView() {
             type="button"
             onClick={handlePrev}
             disabled={safeStep === 0}
-            className="p-2 bg-white rounded-lg shadow-md text-gray-500 hover:text-gray-900 disabled:opacity-30 disabled:cursor-not-allowed transition-colors border border-gray-100"
+            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors border border-gray-100 dark:border-slate-700"
           >
             <ChevronUp className="h-4 w-4" />
           </button>
@@ -539,7 +545,7 @@ export function AppFormView() {
             type="button"
             onClick={handleNext}
             disabled={submitting}
-            className="p-2 bg-white rounded-lg shadow-md text-gray-500 hover:text-gray-900 disabled:opacity-30 transition-colors border border-gray-100"
+            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-colors border border-gray-100 dark:border-slate-700"
           >
             <ChevronDown className="h-4 w-4" />
           </button>

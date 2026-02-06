@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, Check } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -16,6 +16,7 @@ export function AppSettings() {
   const [activeTab, setActiveTab] = useState(0);
   const [app, setApp] = useState<App | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -33,8 +34,11 @@ export function AppSettings() {
   const handleSave = async () => {
     if (!appId) return;
     setSaving(true);
+    setSaveSuccess(false);
     await updateApp(appId, app);
     setSaving(false);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2000);
   };
 
   return (
@@ -46,8 +50,8 @@ export function AppSettings() {
             <Button variant="ghost" size="sm" onClick={() => navigate('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={<Save className="h-4 w-4" />}>
-              {saving ? 'Saving...' : 'Save'}
+            <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
+              {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save'}
             </Button>
           </>
         }

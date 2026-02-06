@@ -20,6 +20,8 @@ export function AppUserManager() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!appId) return;
@@ -53,10 +55,17 @@ export function AppUserManager() {
 
   const handleInvite = async () => {
     if (!appId || !inviteEmail || !inviteRoleId) return;
-    await inviteUser(appId, inviteEmail, inviteRoleId);
-    setShowInviteModal(false);
-    setInviteEmail('');
-    setInviteRoleId('');
+    setInviteLoading(true);
+    setInviteError(null);
+    const success = await inviteUser(appId, inviteEmail, inviteRoleId);
+    setInviteLoading(false);
+    if (success) {
+      setShowInviteModal(false);
+      setInviteEmail('');
+      setInviteRoleId('');
+    } else {
+      setInviteError('Failed to send invitation. Please check the email and try again.');
+    }
   };
 
   const handleCreateGroup = async () => {
@@ -153,6 +162,11 @@ export function AppUserManager() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-6 w-full max-w-md mx-4">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Invite User</h3>
+            {inviteError && (
+              <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20 mb-4">
+                <span>{inviteError}</span>
+              </div>
+            )}
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
@@ -169,8 +183,8 @@ export function AppUserManager() {
               </div>
             </div>
             <div className="flex justify-end gap-2 mt-6">
-              <Button variant="ghost" onClick={() => setShowInviteModal(false)}>Cancel</Button>
-              <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId}>Send Invitation</Button>
+              <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
+              <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
             </div>
           </div>
         </div>

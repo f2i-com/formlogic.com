@@ -39,18 +39,25 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     setMobileMenuOpen(false);
   };
 
+  const isActive = (id: string) =>
+    id === activeFormId || (id === 'dashboard' && !activeFormId);
+
   return (
     <div className="min-h-screen flex">
       {/* Desktop Sidebar */}
       <aside className={cn(
-        'hidden md:flex flex-col border-r border-gray-200 bg-white transition-all duration-300 flex-shrink-0',
+        'hidden md:flex flex-col border-r border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 transition-all duration-300 flex-shrink-0',
         sidebarCollapsed ? 'w-16' : 'w-64'
       )}>
-        <div className="h-14 flex items-center px-4 border-b border-gray-200">
+        <div className="h-14 flex items-center px-4 border-b border-gray-200 dark:border-slate-700">
           {!sidebarCollapsed && (
             <h2 className="font-semibold truncate app-text-primary">{config.app.name}</h2>
           )}
-          <button onClick={toggleSidebar} className="ml-auto p-1 rounded hover:bg-gray-100">
+          <button
+            onClick={toggleSidebar}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="ml-auto p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-500 dark:text-slate-400"
+          >
             <ChevronLeft className={cn('h-4 w-4 transition-transform', sidebarCollapsed && 'rotate-180')} />
           </button>
         </div>
@@ -61,9 +68,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               onClick={() => handleNav(item)}
               className={cn(
                 'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors text-left',
-                (item.id === activeFormId || (item.id === 'dashboard' && !activeFormId))
+                isActive(item.id)
                   ? 'app-bg-primary-light app-text-primary font-medium'
-                  : 'text-gray-600 hover:bg-gray-50',
+                  : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800',
                 sidebarCollapsed && 'justify-center px-0'
               )}
             >
@@ -72,10 +79,13 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             </button>
           ))}
         </nav>
-        <div className="p-2 border-t border-gray-200">
+        <div className="p-2 border-t border-gray-200 dark:border-slate-700">
           <button
             onClick={() => navigate(`${basePath}/profile`)}
-            className={cn('flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50', sidebarCollapsed && 'justify-center px-0')}
+            className={cn(
+              'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800',
+              sidebarCollapsed && 'justify-center px-0'
+            )}
           >
             <User className="h-4 w-4" />
             {!sidebarCollapsed && <span>Profile</span>}
@@ -86,8 +96,12 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
       {/* Main content */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Mobile header */}
-        <header className="md:hidden h-14 flex items-center px-4 border-b border-gray-200 bg-white">
-          <button onClick={() => setMobileMenuOpen(true)} className="p-1 rounded hover:bg-gray-100">
+        <header className="md:hidden h-14 flex items-center px-4 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open navigation menu"
+            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400"
+          >
             <Menu className="h-5 w-5" />
           </button>
           <h2 className="ml-3 font-semibold truncate app-text-primary">{config.app.name}</h2>
@@ -99,16 +113,16 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         </main>
 
         {/* Mobile bottom nav */}
-        <nav className="md:hidden flex border-t border-gray-200 bg-white">
+        <nav className="md:hidden flex border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900">
           {navItems.slice(0, 4).map((item) => (
             <button
               key={item.id}
               onClick={() => handleNav(item)}
               className={cn(
                 'flex-1 flex flex-col items-center py-2 text-xs transition-colors',
-                (item.id === activeFormId || (item.id === 'dashboard' && !activeFormId))
+                isActive(item.id)
                   ? 'app-text-primary font-medium'
-                  : 'text-gray-400'
+                  : 'text-gray-400 dark:text-slate-500'
               )}
             >
               <item.icon className="h-5 w-5 mb-0.5" />
@@ -122,10 +136,14 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileMenuOpen(false)} />
-          <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-xl">
-            <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200">
+          <div className="absolute left-0 top-0 bottom-0 w-72 bg-white dark:bg-slate-900 shadow-xl">
+            <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200 dark:border-slate-700">
               <h2 className="font-semibold app-text-primary">{config.app.name}</h2>
-              <button onClick={() => setMobileMenuOpen(false)} className="p-1 rounded hover:bg-gray-100">
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Close navigation menu"
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-500 dark:text-slate-400"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -136,9 +154,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                   onClick={() => handleNav(item)}
                   className={cn(
                     'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors text-left',
-                    (item.id === activeFormId || (item.id === 'dashboard' && !activeFormId))
+                    isActive(item.id)
                       ? 'app-bg-primary-light app-text-primary font-medium'
-                      : 'text-gray-600 hover:bg-gray-50'
+                      : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
                   )}
                 >
                   <item.icon className="h-4 w-4" />

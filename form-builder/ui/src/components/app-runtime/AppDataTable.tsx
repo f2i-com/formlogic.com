@@ -62,7 +62,7 @@ export function AppDataTable() {
         const answers = r.answers as Record<string, unknown> | undefined;
         const val = answers?.[field.id];
         if (val == null) return '-';
-        if (Array.isArray(val)) return val.join(', ');
+        if (Array.isArray(val)) return val.join(', ').substring(0, 50);
         return String(val).substring(0, 50);
       },
     })),
@@ -72,7 +72,7 @@ export function AppDataTable() {
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">You don't have permission to view responses for this form.</p>
+        <p className="text-gray-500 dark:text-slate-400">You don&apos;t have permission to view responses for this form.</p>
       </div>
     );
   }
@@ -80,20 +80,24 @@ export function AppDataTable() {
   return (
     <div>
       <div className="flex items-center gap-4 mb-6">
-        <button onClick={() => navigate(`/app/${appSlug}`)} className="text-gray-500 hover:text-gray-700">
+        <button
+          onClick={() => navigate(`/app/${appSlug}`)}
+          aria-label="Back to dashboard"
+          className="text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+        >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <h1 className="text-xl font-bold flex-1">{runtimeForm?.displayName || 'Responses'}</h1>
-        <span className="text-sm text-gray-500">{responses.length} responses</span>
+        <h1 className="text-xl font-bold flex-1 text-gray-900 dark:text-white">{runtimeForm?.displayName || 'Responses'}</h1>
+        <span className="text-sm text-gray-500 dark:text-slate-400">{responses.length} responses</span>
       </div>
 
       {error ? (
         <div className="text-center py-12">
-          <p className="text-red-600">{error}</p>
+          <p className="text-red-600 dark:text-red-400">{error}</p>
         </div>
       ) : loading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" />
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading responses" />
         </div>
       ) : (
         <>
@@ -106,8 +110,11 @@ export function AppDataTable() {
               pageSize={15}
               onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
               actions={formId && canDelete(formId) ? (r) => (
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(String(r.id)); }}
-                  className="p-1 text-gray-400 hover:text-red-600">
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleDelete(String(r.id)); }}
+                  aria-label="Delete response"
+                  className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               ) : undefined}
@@ -117,19 +124,21 @@ export function AppDataTable() {
           {/* Mobile card layout */}
           <div className="md:hidden space-y-3">
             {responses.length === 0 ? (
-              <p className="text-center text-gray-400 py-8">No responses yet</p>
+              <p className="text-center text-gray-400 dark:text-slate-500 py-8">No responses yet</p>
             ) : (
               responses.map((r) => (
                 <div
                   key={String(r.id)}
                   onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
-                  className="bg-white rounded-lg border border-gray-200 p-4 active:bg-gray-50"
+                  className="bg-white dark:bg-slate-900/50 rounded-lg border border-gray-200 dark:border-slate-700 p-4 active:bg-gray-50 dark:active:bg-slate-800 cursor-pointer transition-colors"
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-gray-400">
+                    <span className="text-xs text-gray-400 dark:text-slate-500">
                       {r.submittedAt ? new Date(String(r.submittedAt)).toLocaleString() : '-'}
                     </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{String(r.status)}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400">
+                      {String(r.status)}
+                    </span>
                   </div>
                   {fields.slice(0, 3).map((field) => {
                     const answers = r.answers as Record<string, unknown> | undefined;
@@ -137,8 +146,8 @@ export function AppDataTable() {
                     if (val == null) return null;
                     return (
                       <div key={field.id} className="text-sm mb-1">
-                        <span className="text-gray-400">{field.label}: </span>
-                        <span className="text-gray-700">{Array.isArray(val) ? val.join(', ') : String(val).substring(0, 60)}</span>
+                        <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                        <span className="text-gray-700 dark:text-slate-300">{Array.isArray(val) ? val.join(', ') : String(val).substring(0, 60)}</span>
                       </div>
                     );
                   })}

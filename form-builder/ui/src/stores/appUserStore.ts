@@ -9,20 +9,20 @@ interface AppUserState {
   isLoading: boolean;
 
   fetchUsers: (appId: string) => Promise<void>;
-  updateUser: (appId: string, appUserId: string, data: Partial<AppUser>) => Promise<void>;
-  removeUser: (appId: string, appUserId: string) => Promise<void>;
+  updateUser: (appId: string, appUserId: string, data: Partial<AppUser>) => Promise<boolean>;
+  removeUser: (appId: string, appUserId: string) => Promise<boolean>;
 
   fetchInvitations: (appId: string) => Promise<void>;
   inviteUser: (appId: string, email: string, roleId: string) => Promise<AppInvitation | null>;
-  revokeInvitation: (appId: string, invitationId: string) => Promise<void>;
+  revokeInvitation: (appId: string, invitationId: string) => Promise<boolean>;
   acceptInvitation: (token: string) => Promise<void>;
 
   fetchGroups: (appId: string) => Promise<void>;
   createGroup: (appId: string, data: { name: string; description?: string }) => Promise<AppUserGroup | null>;
-  updateGroup: (appId: string, groupId: string, data: Partial<AppUserGroup>) => Promise<void>;
-  deleteGroup: (appId: string, groupId: string) => Promise<void>;
-  addGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<void>;
-  removeGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<void>;
+  updateGroup: (appId: string, groupId: string, data: Partial<AppUserGroup>) => Promise<boolean>;
+  deleteGroup: (appId: string, groupId: string) => Promise<boolean>;
+  addGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<boolean>;
+  removeGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<boolean>;
 }
 
 export const useAppUserStore = create<AppUserState>()((set, get) => ({
@@ -45,13 +45,17 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
   },
 
   updateUser: async (appId, appUserId, data) => {
-    await api.updateAppUser(appId, appUserId, data);
+    const result = await api.updateAppUser(appId, appUserId, data);
+    if (result.error) return false;
     await get().fetchUsers(appId);
+    return true;
   },
 
   removeUser: async (appId, appUserId) => {
-    await api.removeAppUser(appId, appUserId);
+    const result = await api.removeAppUser(appId, appUserId);
+    if (result.error) return false;
     await get().fetchUsers(appId);
+    return true;
   },
 
   fetchInvitations: async (appId) => {
@@ -67,12 +71,14 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
     const result = await api.createAppInvitation(appId, email, roleId);
     if (result.error) return null;
     await get().fetchInvitations(appId);
-    return result.data?.invitation as AppInvitation;
+    return (result.data?.invitation as AppInvitation) ?? null;
   },
 
   revokeInvitation: async (appId, invitationId) => {
-    await api.revokeAppInvitation(appId, invitationId);
+    const result = await api.revokeAppInvitation(appId, invitationId);
+    if (result.error) return false;
     await get().fetchInvitations(appId);
+    return true;
   },
 
   acceptInvitation: async (token) => {
@@ -92,24 +98,30 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
     const result = await api.createAppGroup(appId, data);
     if (result.error) return null;
     await get().fetchGroups(appId);
-    return result.data?.group as AppUserGroup;
+    return (result.data?.group as AppUserGroup) ?? null;
   },
 
   updateGroup: async (appId, groupId, data) => {
-    await api.updateAppGroup(appId, groupId, data);
+    const result = await api.updateAppGroup(appId, groupId, data);
+    if (result.error) return false;
     await get().fetchGroups(appId);
+    return true;
   },
 
   deleteGroup: async (appId, groupId) => {
-    await api.deleteAppGroup(appId, groupId);
+    const result = await api.deleteAppGroup(appId, groupId);
+    if (result.error) return false;
     await get().fetchGroups(appId);
+    return true;
   },
 
   addGroupMember: async (appId, groupId, appUserId) => {
-    await api.addAppGroupMember(appId, groupId, appUserId);
+    const result = await api.addAppGroupMember(appId, groupId, appUserId);
+    return !result.error;
   },
 
   removeGroupMember: async (appId, groupId, appUserId) => {
-    await api.removeAppGroupMember(appId, groupId, appUserId);
+    const result = await api.removeAppGroupMember(appId, groupId, appUserId);
+    return !result.error;
   },
 }));

@@ -15,6 +15,7 @@ export function AppFormManager() {
   const { forms: allForms, refreshForms } = useFormStore();
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busyFormId, setBusyFormId] = useState<string | null>(null);
 
   const loadForms = async () => {
     if (!appId) return;
@@ -38,20 +39,26 @@ export function AppFormManager() {
 
   const handleAdd = async (formId: string) => {
     if (!appId) return;
+    setBusyFormId(formId);
     await addFormToApp(appId, formId);
     await loadForms();
+    setBusyFormId(null);
   };
 
   const handleRemove = async (formId: string) => {
     if (!appId) return;
+    setBusyFormId(formId);
     await removeFormFromApp(appId, formId);
     await loadForms();
+    setBusyFormId(null);
   };
 
   const handleToggleVisibility = async (formId: string, currentlyVisible: boolean) => {
     if (!appId) return;
+    setBusyFormId(formId);
     await updateAppForm(appId, formId, { isVisible: !currentlyVisible });
     await loadForms();
+    setBusyFormId(null);
   };
 
   if (loading) {
@@ -87,8 +94,8 @@ export function AppFormManager() {
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
                     <span className="ml-2 text-xs text-gray-400">{form.status}</span>
                   </div>
-                  <button onClick={() => handleAdd(form.id)} className="p-1 rounded-md hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400">
-                    <Plus className="h-4 w-4" />
+                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} className="p-1 rounded-md hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50">
+                    {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
                   </button>
                 </div>
               ))}
@@ -107,11 +114,11 @@ export function AppFormManager() {
                 <div key={af.formId} className="flex items-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
                   <GripVertical className="h-4 w-4 text-gray-400 flex-shrink-0" />
                   <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
-                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} className={cn('p-1 rounded-md', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
+                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} className={cn('p-1 rounded-md disabled:opacity-50', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
                     {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
-                  <button onClick={() => handleRemove(af.formId)} className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600">
-                    <X className="h-4 w-4" />
+                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 disabled:opacity-50">
+                    {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
                 </div>
               ))}
