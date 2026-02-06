@@ -429,11 +429,19 @@ export default function FormAnalytics() {
             <div className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2">
               {dailyResponses.map((day) => (
                 <div key={day.day} className="flex-1 flex flex-col items-center gap-1 sm:gap-2">
+                  <span className="text-xs text-gray-500 dark:text-slate-500 font-medium tabular-nums">
+                    {day.count > 0 ? day.count : ''}
+                  </span>
                   <div
                     className="w-full bg-primary-600 rounded-t-lg transition-all hover:bg-primary-500 min-h-[4px]"
                     style={{ height: `${Math.max((day.count / maxCount) * 100, 2)}%` }}
+                    title={`${day.day}: ${day.count} response${day.count !== 1 ? 's' : ''}`}
+                    aria-label={`${day.day}: ${day.count} response${day.count !== 1 ? 's' : ''}`}
                   />
-                  <span className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 transition-colors">{day.day.slice(0, 1)}</span>
+                  <span className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 transition-colors">
+                    <span className="sm:hidden">{day.day.slice(0, 2)}</span>
+                    <span className="hidden sm:inline">{day.day}</span>
+                  </span>
                 </div>
               ))}
             </div>

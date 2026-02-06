@@ -187,6 +187,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           </div>
           <button
             onClick={resetAndClose}
+            aria-label="Close"
             className="p-2 hover:bg-white/80 dark:hover:bg-slate-800 rounded-lg transition-colors"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />

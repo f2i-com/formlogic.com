@@ -32,7 +32,7 @@ export function AppSettings() {
   }, [appId, fetchApps]);
 
   if (!app) {
-    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" /></div>;
+    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading app settings" /></div>;
   }
 
   const handleSave = async () => {

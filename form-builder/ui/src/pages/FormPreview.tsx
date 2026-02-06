@@ -44,7 +44,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
             rows={4}
-            className="w-full bg-transparent border-b-2 border-gray-300 focus:border-primary-500 outline-none py-2 text-lg resize-none transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg resize-none transition-colors"
           />
         );
 
@@ -243,19 +243,19 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             <label className={cn(
               "flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl cursor-pointer transition-all",
               uploadedFiles.length > 0
-                ? "border-primary-300 bg-primary-50 hover:bg-primary-100"
-                : "border-gray-300 bg-gray-50 hover:bg-gray-100 hover:border-gray-400"
+                ? "border-primary-300 bg-primary-500/10 hover:bg-primary-500/15"
+                : "border-current/30 bg-current/5 hover:bg-current/10 hover:border-current/40"
             )}>
               <div className="flex flex-col items-center justify-center py-4">
-                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                  <svg className="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="w-12 h-12 rounded-full bg-current/10 flex items-center justify-center mb-3">
+                  <svg className="w-6 h-6 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                 </div>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm opacity-70">
                   <span className="font-semibold text-primary-600">Click to upload</span> or drag and drop
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs opacity-50 mt-1">
                   {field.properties.acceptedFileTypes?.length
                     ? field.properties.acceptedFileTypes.join(', ')
                     : 'Any file type'}
@@ -293,19 +293,19 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             {uploadedFiles.length > 0 && (
               <div className="space-y-2">
                 {uploadedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="w-10 h-10 rounded-lg bg-primary-100 flex items-center justify-center flex-shrink-0">
+                  <div key={index} className="flex items-center gap-3 p-3 bg-current/5 rounded-lg border border-current/15">
+                    <div className="w-10 h-10 rounded-lg bg-primary-500/15 flex items-center justify-center flex-shrink-0">
                       <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-700 truncate">{file.name}</p>
-                      <p className="text-xs text-gray-400">{formatFileSize(file.size)}</p>
+                      <p className="text-sm font-medium opacity-80 truncate">{file.name}</p>
+                      <p className="text-xs opacity-50">{formatFileSize(file.size)}</p>
                     </div>
                     <button
                       onClick={() => onChange(uploadedFiles.filter((_, i) => i !== index))}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      className="p-1.5 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -325,8 +325,8 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
           <div className="space-y-3">
             <div
               className={cn(
-                "w-full h-40 border-2 rounded-lg bg-white cursor-crosshair relative overflow-hidden transition-colors",
-                value ? "border-primary-500" : "border-gray-300"
+                "w-full h-40 border-2 rounded-lg cursor-crosshair relative overflow-hidden transition-colors",
+                value ? "border-primary-500" : "border-current/30"
               )}
               onMouseDown={(e) => {
                 const canvas = e.currentTarget.querySelector('canvas');
@@ -334,7 +334,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return;
 
-                ctx.strokeStyle = '#1f2937';
+                ctx.strokeStyle = textColor || '#1f2937';
                 ctx.lineWidth = 2;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
@@ -367,7 +367,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return;
 
-                ctx.strokeStyle = '#1f2937';
+                ctx.strokeStyle = textColor || '#1f2937';
                 ctx.lineWidth = 2;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
@@ -406,7 +406,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
               />
               {!value && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <p className="text-gray-400 flex items-center gap-2">
+                  <p className="opacity-40 flex items-center gap-2">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                     </svg>
@@ -506,7 +506,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
 
       default:
         return (
-          <p className="text-gray-500 italic">Preview not available for this field type</p>
+          <p className="opacity-50 italic">Preview not available for this field type</p>
         );
     }
   };
@@ -710,7 +710,7 @@ export default function FormPreview() {
               {/* Progress */}
               <div className="p-4">
                 <ProgressBar value={progress} size="sm" />
-                <p className="text-sm text-gray-500 mt-2 text-right">
+                <p className="text-sm opacity-50 mt-2 text-right">
                   {safeCurrentStep + 1} of {visibleFields.length}
                   {isEvaluating && <span className="ml-2 animate-pulse">...</span>}
                 </p>
@@ -744,7 +744,7 @@ export default function FormPreview() {
                   onClick={handlePrev}
                   disabled={safeCurrentStep === 0}
                   aria-label="Previous question"
-                  className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity"
                 >
                   <ChevronUp className="h-6 w-6" />
                 </button>
@@ -755,7 +755,7 @@ export default function FormPreview() {
                   onClick={handleNext}
                   disabled={isLastStep}
                   aria-label="Next question"
-                  className="p-2 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity"
                 >
                   <ChevronDown className="h-6 w-6" />
                 </button>

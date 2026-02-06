@@ -10,12 +10,13 @@ export function ThemeToggle() {
             variant="ghost"
             size="sm"
             onClick={toggleTheme}
+            className="group"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (
                 <Sun className="h-5 w-5 text-gray-400 group-hover:text-yellow-400 transition-colors" />
             ) : (
-                <Moon className="h-5 w-5 text-gray-500 group-hover:text-slate-900 transition-colors" />
+                <Moon className="h-5 w-5 text-gray-500 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
             )}
             <span className="sr-only">Toggle theme</span>
         </Button>

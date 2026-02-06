@@ -98,6 +98,7 @@ export function Sidebar() {
       <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
         <button
           onClick={toggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className={cn(
             'flex items-center gap-3 px-3 py-2 w-full rounded-lg',
             'text-gray-500 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-300 transition-all duration-200',

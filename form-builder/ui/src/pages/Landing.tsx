@@ -172,6 +172,7 @@ export function Landing() {
             </div>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
               className="md:hidden p-2 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-900 rounded-lg transition-colors"
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -685,7 +686,7 @@ export function Landing() {
             </div>
           </div>
           <div className="border-t border-gray-200 dark:border-slate-900 pt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
-            <p className="text-gray-500 dark:text-slate-600 text-sm">&copy; 2025 FormLogic. All rights reserved.</p>
+            <p className="text-gray-500 dark:text-slate-600 text-sm">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
             <div className="flex items-center gap-6">
               <a
                 href="https://github.com/formlogic"
