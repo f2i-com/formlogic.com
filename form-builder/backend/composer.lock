@@ -131,7 +131,7 @@
             "dist": {
                 "type": "path",
                 "url": "../../formlogic-php",
-                "reference": "9881dcbf24ea4b8531c61794847b51c66a3d7d1d"
+                "reference": "0e4d93432c603190ec73c11fab71c499186fd4b1"
             },
             "require": {
                 "php": ">=8.1"
@@ -142,15 +142,13 @@
             "type": "library",
             "autoload": {
                 "psr-4": {
-                    "FormLogic\\Lang\\": "src/",
-                    "FormLogic\\Lang\\AST\\": "src/AST/",
-                    "FormLogic\\Lang\\Objects\\": "src/Objects/"
+                    "FormLogic\\Lang\\": "src/"
                 },
                 "files": [
                     "src/Token.php",
                     "src/Code.php",
-                    "src/Objects/BaseObject.php",
-                    "src/AST/Node.php",
+                    "src/Objects.php",
+                    "src/AST.php",
                     "src/Compiler.php"
                 ]
             },
