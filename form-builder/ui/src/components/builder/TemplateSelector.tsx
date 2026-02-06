@@ -44,6 +44,10 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [hoveredTemplate, setHoveredTemplate] = useState<string | null>(null);
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') onClose();
+  };
+
   if (!isOpen) return null;
 
   const filteredTemplates = selectedCategory === 'all'
@@ -51,12 +55,13 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
     : formTemplates.filter(t => t.category === selectedCategory);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
+      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-labelledby="template-selector-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-white dark:from-slate-900 dark:to-slate-800/50">
           <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Create New Form</h2>
+            <h2 id="template-selector-title" className="text-xl font-semibold text-gray-900 dark:text-white">Create New Form</h2>
             <p className="text-sm text-gray-500 dark:text-slate-400">Start from scratch or choose a template</p>
           </div>
           <button
@@ -64,7 +69,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
             className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
             aria-label="Close"
           >
-            <X className="h-5 w-5 text-gray-500" />
+            <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 

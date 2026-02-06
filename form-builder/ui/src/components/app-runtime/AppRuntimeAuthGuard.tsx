@@ -19,7 +19,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading app" />
       </div>
     );
   }

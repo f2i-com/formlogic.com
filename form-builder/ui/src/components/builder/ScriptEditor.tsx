@@ -216,6 +216,10 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') onClose();
+  };
+
   if (!isOpen) return null;
 
   const handleSave = () => {
@@ -360,8 +364,9 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
@@ -369,7 +374,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
               <Code2 className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Backend Logic Script</h2>
+              <h2 id="script-editor-title" className="text-lg font-semibold text-gray-900 dark:text-white">Backend Logic Script</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400">Write code that runs when forms are submitted</p>
             </div>
           </div>

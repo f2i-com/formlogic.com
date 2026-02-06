@@ -168,9 +168,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="absolute inset-0" onClick={resetAndClose} />
-      <div className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={(e) => { if (e.key === 'Escape') resetAndClose(); }}>
+      <div className="absolute inset-0" onClick={resetAndClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-labelledby="ai-generator-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-purple-50/50 via-violet-50/30 to-blue-50/50 dark:from-slate-900 dark:via-slate-800/50 dark:to-slate-900">
           <div className="flex items-center gap-4">
@@ -181,7 +181,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               </div>
             </div>
             <div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Create with AI</h2>
+              <h2 id="ai-generator-title" className="text-xl font-bold text-gray-900 dark:text-white">Create with AI</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400">Generate form fields automatically</p>
             </div>
           </div>

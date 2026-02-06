@@ -108,7 +108,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
         )}
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
             Email <span className="text-red-500">*</span>
           </label>
           <div className="relative">
@@ -126,7 +126,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
             Password <span className="text-red-500">*</span>
           </label>
           <div className="relative">

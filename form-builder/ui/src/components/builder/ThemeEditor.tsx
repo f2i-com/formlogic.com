@@ -147,6 +147,10 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') onClose();
+  };
+
   if (!isOpen) return null;
 
   const updateTheme = (updates: Partial<FormTheme>) => {
@@ -205,8 +209,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+      <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-labelledby="theme-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
@@ -214,7 +219,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
               <Palette className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Theme Customization</h2>
+              <h2 id="theme-editor-title" className="text-lg font-semibold text-gray-900 dark:text-white">Theme Customization</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400">Customize your form's appearance</p>
             </div>
           </div>
@@ -405,6 +410,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 <button
                   onClick={() => removeImage('backgroundImage')}
                   className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                  aria-label="Remove background image"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -443,6 +449,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 <button
                   onClick={() => removeImage('logo')}
                   className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                  aria-label="Remove logo"
                 >
                   <Trash2 className="h-3 w-3" />
                 </button>

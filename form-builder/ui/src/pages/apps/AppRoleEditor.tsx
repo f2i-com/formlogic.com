@@ -100,7 +100,7 @@ export function AppRoleEditor() {
       {roleError && (
         <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
           <span>{roleError}</span>
-          <button onClick={() => setRoleError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300">
+          <button onClick={() => setRoleError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300" aria-label="Dismiss error">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -130,7 +130,7 @@ export function AppRoleEditor() {
           <div className="flex gap-2">
             <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role"
               className="flex-1 min-w-0 px-2 py-1 border border-gray-300 dark:border-slate-600 rounded text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white" />
-            <button onClick={handleCreateRole} disabled={!newRoleName.trim()} className="p-1 text-primary-600 hover:text-primary-700 disabled:opacity-50">
+            <button onClick={handleCreateRole} disabled={!newRoleName.trim()} className="p-1 text-primary-600 hover:text-primary-700 disabled:opacity-50" aria-label="Create role">
               <Plus className="h-4 w-4" />
             </button>
           </div>

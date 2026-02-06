@@ -109,7 +109,7 @@ export function AppRelationsManager() {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" /></div>;
+    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading relations" /></div>;
   }
 
   return (
@@ -133,7 +133,7 @@ export function AppRelationsManager() {
           {deleteError && (
             <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
               <span>{deleteError}</span>
-              <button onClick={() => setDeleteError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300">
+              <button onClick={() => setDeleteError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300" aria-label="Dismiss error">
                 <X className="h-4 w-4" />
               </button>
             </div>
