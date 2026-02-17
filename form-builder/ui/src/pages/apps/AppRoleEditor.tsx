@@ -8,6 +8,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { PermissionMatrix } from '../../components/ui/PermissionMatrix';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import type { AppRole, AppForm, PermissionAction } from '../../types/app';
 
 export function AppRoleEditor() {
@@ -45,6 +46,7 @@ export function AppRoleEditor() {
       }
     }).catch(() => {
       setPermissions([]);
+      toast.error('Load failed', 'Could not load permissions for this role');
     });
   }, [appId, selectedRoleId]);
 

@@ -146,6 +146,8 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
             >
               {/* Rule Header */}
               <div
+                role="button"
+                aria-expanded={expandedRuleId === rule.id}
                 className={cn(
                   'flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800/50 cursor-pointer',
                   expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-800'

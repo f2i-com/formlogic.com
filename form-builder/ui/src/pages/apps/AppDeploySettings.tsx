@@ -4,6 +4,7 @@ import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink } from 'lucide-
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
 export function AppDeploySettings() {
@@ -37,7 +38,14 @@ export function AppDeploySettings() {
   const handlePublish = async () => {
     if (!appId) return;
     await updateApp(appId, { status: 'published' });
-    setApp({ ...app, status: 'published' });
+    // Re-read from store to verify the update succeeded
+    const updated = useAppStore.getState().getApp(appId);
+    if (updated && (updated as App).status === 'published') {
+      setApp({ ...app, status: 'published' });
+      toast.success('Published', 'Your app is now live');
+    } else {
+      toast.error('Publish failed', 'Could not publish the app. Please try again.');
+    }
   };
 
   return (

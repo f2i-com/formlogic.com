@@ -6,6 +6,7 @@ import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { cn } from '../../lib/utils';
 import type { App } from '../../types/app';
+import { DEFAULT_APP_THEME } from '../../types/app';
 
 const tabs = [
   { label: 'General', icon: Settings },
@@ -26,7 +27,11 @@ export function AppSettings() {
     fetchApps().then(() => {
       if (appId) {
         const found = useAppStore.getState().getApp(appId);
-        if (found) setApp(found as App);
+        if (found) {
+          const appData = found as App;
+          // Ensure theme has defaults to prevent undefined spread
+          setApp({ ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } });
+        }
       }
     });
   }, [appId, fetchApps]);

@@ -324,7 +324,7 @@ export function LogicEditor({
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label="Remove condition"
+                        aria-label={`Remove condition ${index + 1}`}
                         onClick={() => handleRemoveCondition(cond.id)}
                         className="self-end sm:self-center"
                       >

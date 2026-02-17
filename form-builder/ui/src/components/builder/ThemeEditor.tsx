@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X, Palette, RotateCcw, Upload, Image, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
@@ -147,9 +147,14 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -199,6 +204,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
+      // Validate data URL is actually an image to prevent injection
+      if (!dataUrl.startsWith('data:image/')) {
+        toast.error('Invalid image', 'The uploaded file is not a valid image');
+        return;
+      }
       updateTheme({ [type]: dataUrl });
     };
     reader.readAsDataURL(file);
@@ -209,7 +219,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div role="dialog" aria-modal="true" aria-labelledby="theme-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}

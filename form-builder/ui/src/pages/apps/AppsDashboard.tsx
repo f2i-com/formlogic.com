@@ -73,7 +73,7 @@ export function AppsDashboard() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={() => { if (deleteTarget) { deleteApp(deleteTarget.id); setDeleteTarget(null); } }}
         title="Delete App"
-        message={`Are you sure you want to delete "${deleteTarget?.name}"? This will remove all associated data and cannot be undone.`}
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This will permanently remove all forms, users, roles, and data associated with this app. This action cannot be undone.`}
         confirmLabel="Delete App"
         variant="danger"
       />
