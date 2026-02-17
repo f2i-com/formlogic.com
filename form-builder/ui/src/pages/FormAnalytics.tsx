@@ -11,7 +11,7 @@ import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
-import { formatDate } from '../lib/utils';
+import { formatDate, sanitizeFilename } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 
 interface DailyResponse {
@@ -253,7 +253,7 @@ export default function FormAnalytics() {
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `${form.title}-responses.csv`;
+          a.download = `${sanitizeFilename(form.title)}-responses.csv`;
           a.click();
           URL.revokeObjectURL(url);
           return;
@@ -276,12 +276,12 @@ export default function FormAnalytics() {
         ...form.fields.map((f) => JSON.stringify(r.answers[f.id] || '')),
       ]);
 
-      const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const csv = [headers.join(','), ...rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${form.title}-responses.csv`;
+      a.download = `${sanitizeFilename(form.title)}-responses.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } finally {

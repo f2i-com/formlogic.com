@@ -29,7 +29,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
-import { cn } from '../lib/utils';
+import { cn, sanitizeFilename } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import type { Form, FormField, FormResponse } from '../types/form';
 
@@ -74,7 +74,7 @@ function StatCard({
   );
 }
 
-export function FormResponses() {
+function FormResponses() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const storageMode = useFormStore((state) => state.storageMode);
@@ -287,13 +287,13 @@ export function FormResponses() {
       ...displayFields.map((f) => formatValue(r.answers[f.id])),
     ]);
 
-    const csv = [headers.join(','), ...rows.map((row) => row.map((cell) => `"${cell}"`).join(','))].join('\n');
+    const csv = [headers.join(','), ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${form.title}-responses.csv`;
+    a.download = `${sanitizeFilename(form.title)}-responses.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -336,6 +336,7 @@ export function FormResponses() {
       setSortField(field);
       setSortDirection('desc');
     }
+    setCurrentPage(1);
   };
 
   if (isLoading) {

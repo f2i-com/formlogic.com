@@ -34,7 +34,7 @@ import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
-import { formatRelativeTime } from '../lib/utils';
+import { formatRelativeTime, sanitizeFilename } from '../lib/utils';
 import { EmbedModal, TemplateSelector } from '../components/builder';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { FormTemplate } from '../data/formTemplates';
@@ -176,7 +176,7 @@ function FormActionsDropdown({
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${formTitle}-responses.csv`;
+      link.download = `${sanitizeFilename(formTitle)}-responses.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

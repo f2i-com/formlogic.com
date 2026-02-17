@@ -54,6 +54,10 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
   };
 }
 
+export function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*]+/g, '').replace(/\s+/g, '-').trim() || 'export';
+}
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()

@@ -81,8 +81,7 @@ export function Sidebar() {
               <>
                 <div className={cn(
                   'flex-shrink-0 p-1 rounded-md transition-colors',
-                  isActive && !sidebarCollapsed && 'bg-primary-100 dark:bg-primary-500/20',
-                  sidebarCollapsed && isActive && 'bg-primary-100 dark:bg-primary-500/20'
+                  isActive && 'bg-primary-100 dark:bg-primary-500/20'
                 )}>
                   <item.icon className="h-5 w-5" />
                 </div>
