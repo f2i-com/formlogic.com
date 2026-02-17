@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { useFormStore } from './formStore';
+import { toast } from './toastStore';
 import type { App, AppForm, AppRole } from '../types/app';
 
 interface AppState {
@@ -74,26 +75,33 @@ export const useAppStore = create<AppState>()(
       updateApp: async (id, data) => {
         try {
           const result = await api.updateApp(id, data);
-          if (!result.error && result.data) {
+          if (result.error) {
+            toast.error('Update failed', result.error);
+            return;
+          }
+          if (result.data) {
             set((s) => ({
               apps: s.apps.map((a) => (a.id === id ? (result.data!.app as App) : a)),
             }));
           }
-        } catch (e) {
-          console.error('Failed to update app:', e);
+        } catch {
+          toast.error('Update failed', 'Could not update the app. Please try again.');
         }
       },
 
       deleteApp: async (id) => {
         try {
           const result = await api.deleteApp(id);
-          if (result.error) return;
+          if (result.error) {
+            toast.error('Delete failed', result.error);
+            return;
+          }
           set((s) => ({
             apps: s.apps.filter((a) => a.id !== id),
             activeAppId: s.activeAppId === id ? null : s.activeAppId,
           }));
-        } catch (e) {
-          console.error('Failed to delete app:', e);
+        } catch {
+          toast.error('Delete failed', 'Could not delete the app. Please try again.');
         }
       },
 
@@ -107,29 +115,51 @@ export const useAppStore = create<AppState>()(
       },
 
       addFormToApp: async (appId, formId, displayName) => {
-        // Ensure the form exists on the server (may only be in local storage)
-        const form = useFormStore.getState().forms.find((f) => f.id === formId);
-        if (form) {
-          const syncResult = await api.createForm(form);
-          if (syncResult.error) return;
+        try {
+          // Ensure the form exists on the server (may only be in local storage)
+          const form = useFormStore.getState().forms.find((f) => f.id === formId);
+          if (form) {
+            const syncResult = await api.createForm(form);
+            // Ignore "already exists" errors — the form is already on the server
+            if (syncResult.error && !syncResult.error.toLowerCase().includes('already exists')) {
+              toast.error('Sync failed', syncResult.error);
+              return;
+            }
+          }
+          const result = await api.addAppForm(appId, formId, displayName);
+          if (result.error) {
+            toast.error('Failed to add form', result.error);
+          }
+        } catch {
+          toast.error('Failed to add form', 'An unexpected error occurred.');
         }
-        const result = await api.addAppForm(appId, formId, displayName);
-        if (result.error) return;
       },
 
       removeFormFromApp: async (appId, formId) => {
-        const result = await api.removeAppForm(appId, formId);
-        if (result.error) return;
+        try {
+          const result = await api.removeAppForm(appId, formId);
+          if (result.error) toast.error('Remove failed', result.error);
+        } catch {
+          toast.error('Remove failed', 'Could not remove the form. Please try again.');
+        }
       },
 
       updateAppForm: async (appId, formId, data) => {
-        const result = await api.updateAppForm(appId, formId, data);
-        if (result.error) return;
+        try {
+          const result = await api.updateAppForm(appId, formId, data);
+          if (result.error) toast.error('Update failed', result.error);
+        } catch {
+          toast.error('Update failed', 'Could not update the form. Please try again.');
+        }
       },
 
       reorderAppForms: async (appId, formIds) => {
-        const result = await api.reorderAppForms(appId, formIds);
-        if (result.error) return;
+        try {
+          const result = await api.reorderAppForms(appId, formIds);
+          if (result.error) toast.error('Reorder failed', result.error);
+        } catch {
+          toast.error('Reorder failed', 'Could not reorder forms. Please try again.');
+        }
       },
 
       fetchRoles: async (appId) => {

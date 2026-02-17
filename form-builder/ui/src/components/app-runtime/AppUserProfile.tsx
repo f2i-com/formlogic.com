@@ -7,9 +7,9 @@ export function AppUserProfile() {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const { config, reset } = useAppRuntimeStore();
+  const { config, reset, roleName: storeRoleName } = useAppRuntimeStore();
 
-  const roleName = 'Member';
+  const roleName = storeRoleName || 'Member';
 
   return (
     <div className="max-w-md mx-auto">

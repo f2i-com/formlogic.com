@@ -12,6 +12,7 @@ interface AppRuntimeState {
   isLoading: boolean;
   error: string | null;
   permissions: AppUserPermissions | null;
+  roleName: string | null;
 
   // Actions
   initialize: (appSlug: string) => Promise<void>;
@@ -47,6 +48,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       isLoading: false,
       error: null,
       permissions: null,
+      roleName: null,
 
       initialize: async (appSlug: string) => {
         set({ isLoading: true, error: null, appSlug });
@@ -65,9 +67,11 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               forms,
               userPermissions: perms?.formLevel ?? {},
             };
+            const appUser = data.user as Record<string, unknown> | undefined;
             set({
               config,
               permissions: perms ?? null,
+              roleName: (appUser?.roleName as string) ?? null,
               isLoading: false,
               activeFormId: forms[0]?.formId ?? null,
             });
@@ -88,6 +92,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         isLoading: false,
         error: null,
         permissions: null,
+        roleName: null,
       }),
 
       fetchResponses: async (formId, options) => {

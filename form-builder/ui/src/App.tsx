@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { NotFound } from './pages/NotFound';
@@ -115,6 +115,10 @@ function AppRoutes() {
         <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
       </Route>
+
+      {/* Redirect authenticated users from auth pages */}
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/signup" element={<Navigate to="/" replace />} />
 
       {/* Builder route (full screen, no sidebar) */}
       <Route path="/builder/:formId" element={<FormBuilder />} />

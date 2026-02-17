@@ -22,8 +22,11 @@ export function CalculatedFieldEditor({
   const { result, isTesting, testExpression } = useExpressionTester();
 
   // Available fields for calculations (excluding layout fields)
-  const availableFields = allFields.filter(
-    (f) => !['welcome_screen', 'thank_you', 'statement', 'calculated'].includes(f.type)
+  const availableFields = useMemo(
+    () => allFields.filter(
+      (f) => !['welcome_screen', 'thank_you', 'statement', 'calculated'].includes(f.type)
+    ),
+    [allFields]
   );
 
   // Create variable name mappings

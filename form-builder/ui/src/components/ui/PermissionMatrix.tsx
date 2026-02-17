@@ -44,6 +44,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
                 checked={hasPermission(null, perm)}
                 onChange={() => togglePermission(null, perm)}
                 disabled={disabled}
+                aria-label={APP_PERMISSION_LABELS[perm]}
                 className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />
               <span className="text-gray-700 dark:text-slate-300">{APP_PERMISSION_LABELS[perm]}</span>
@@ -79,6 +80,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
                           checked={hasPermission(form.formId, perm)}
                           onChange={() => togglePermission(form.formId, perm)}
                           disabled={disabled}
+                          aria-label={`${APP_PERMISSION_LABELS[perm]} for ${form.displayName}`}
                           className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                         />
                       </td>

@@ -14,15 +14,20 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   const navigate = useNavigate();
   const [related, setRelated] = useState<Record<string, RelatedRecordGroup>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     api.getRelatedRecords(appSlug, formId, responseId).then((result) => {
-      if (result.data?.related) {
+      if (result.error) {
+        setError(result.error);
+      } else if (result.data?.related) {
         setRelated(result.data.related);
       }
       setLoading(false);
-    }).catch(() => {
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load related records');
       setLoading(false);
     });
   }, [appSlug, formId, responseId]);
@@ -33,6 +38,14 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
     return (
       <div className="flex items-center justify-center py-6">
         <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mt-4 text-center py-4">
+        <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
       </div>
     );
   }
