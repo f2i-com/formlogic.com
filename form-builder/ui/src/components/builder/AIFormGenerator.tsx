@@ -57,6 +57,11 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
 
     setSelectedFile(file);
 
+    // Revoke previous URL to prevent memory leak
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
     if (type === 'image' || file.type.startsWith('image/')) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);

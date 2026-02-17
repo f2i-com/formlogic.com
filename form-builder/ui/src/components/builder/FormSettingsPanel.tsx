@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Settings, Layout, Bell, Shield, Link2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -20,10 +20,14 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
   const [editedSettings, setEditedSettings] = useState<FormSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>('presentation');
 
-  // Close on Escape key
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -45,7 +49,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}
@@ -87,8 +91,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
           ))}
         </div>
 
-        {/* Content - Fixed height to prevent resizing when switching tabs */}
-        <div className="h-[400px] overflow-y-auto p-6">
+        {/* Content */}
+        <div className="min-h-[250px] max-h-[60vh] overflow-y-auto p-6">
           {/* Presentation Tab */}
           {activeTab === 'presentation' && (
             <div className="space-y-6">
@@ -126,7 +130,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                       <select
                         value={editedSettings.defaultPresentationMode}
                         onChange={(e) => updateSettings({ defaultPresentationMode: e.target.value as 'focused' | 'classic' })}
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-gray-900 dark:text-white"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 text-gray-900 dark:text-white text-sm transition-all duration-150 ease-in-out appearance-none cursor-pointer"
                       >
                         <option value="focused">Focused (One at a time)</option>
                         <option value="classic">Classic (Scrollable)</option>
@@ -269,7 +273,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                         value={editedSettings.closedMessage || ''}
                         onChange={(e) => updateSettings({ closedMessage: e.target.value })}
                         placeholder="This form is no longer accepting responses."
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 min-h-[80px]"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-150 ease-in-out min-h-[80px]"
                       />
                     </div>
                   )}

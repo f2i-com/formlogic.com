@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
@@ -44,9 +44,14 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [hoveredTemplate, setHoveredTemplate] = useState<string | null>(null);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose();
-  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -55,7 +60,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
     : formTemplates.filter(t => t.category === selectedCategory);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div role="dialog" aria-modal="true" aria-labelledby="template-selector-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}

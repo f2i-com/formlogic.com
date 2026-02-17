@@ -100,6 +100,7 @@ export function Login() {
               placeholder="you@company.com"
               leftIcon={<Mail className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="username"
               required
             />
 
@@ -111,6 +112,7 @@ export function Login() {
               placeholder="Your password"
               leftIcon={<Lock className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="current-password"
               required
             />
 

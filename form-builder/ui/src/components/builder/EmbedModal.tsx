@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../ui/Button';
@@ -24,6 +24,15 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle }: EmbedModalPro
   const [copied, setCopied] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
   const qrRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -205,7 +214,7 @@ function closeFormPopup() {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div role="dialog" aria-modal="true" aria-labelledby="embed-modal-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
         {/* Header */}

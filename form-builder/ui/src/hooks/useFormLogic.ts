@@ -201,6 +201,11 @@ export function useCalculatedField(
     return dependencies.map(dep => JSON.stringify(formData[dep])).join('|');
   }, [dependencies, formData]);
 
+  // Use a ref for formData to avoid re-creating calculate on every formData change.
+  // The dependencyKey already tracks the relevant dependency values.
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+
   const calculate = useCallback(async () => {
     if (!expression) {
       setValue(null);
@@ -211,7 +216,7 @@ export function useCalculatedField(
     setError(null);
 
     try {
-      const result = await calculateValue(expression, formData);
+      const result = await calculateValue(expression, formDataRef.current);
       setValue(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Calculation error');
@@ -219,7 +224,7 @@ export function useCalculatedField(
     }
 
     setIsCalculating(false);
-  }, [expression, formData]);
+  }, [expression]);
 
   useEffect(() => {
     calculate();

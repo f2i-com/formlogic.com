@@ -127,6 +127,7 @@ export function Signup() {
               placeholder="Your name"
               leftIcon={<User className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="name"
             />
 
             <Input
@@ -137,6 +138,7 @@ export function Signup() {
               placeholder="you@company.com"
               leftIcon={<Mail className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="email"
               required
             />
 
@@ -148,6 +150,7 @@ export function Signup() {
               placeholder="At least 8 characters"
               leftIcon={<Lock className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="new-password"
               required
             />
 
@@ -159,6 +162,7 @@ export function Signup() {
               placeholder="Confirm your password"
               leftIcon={<Lock className="h-4 w-4" />}
               disabled={isLoading}
+              autoComplete="new-password"
               required
             />
 

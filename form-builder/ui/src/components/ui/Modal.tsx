@@ -123,12 +123,13 @@ export function Modal({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-md"
-            onClick={onClose}
+            onMouseDown={onClose}
           />
           <motion.div
             ref={modalRef}
             role="dialog"
             aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
             aria-labelledby={title ? 'modal-title' : undefined}
             aria-describedby={description ? 'modal-description' : undefined}
             initial={{ opacity: 0, scale: 0.95 }}

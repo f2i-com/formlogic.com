@@ -108,6 +108,13 @@ function clearDebounceTimer(formId: string) {
   }
 }
 
+function clearAllDebounceTimers() {
+  for (const formId of Object.keys(debounceTimers)) {
+    clearTimeout(debounceTimers[formId]);
+    delete debounceTimers[formId];
+  }
+}
+
 export const useFormStore = create<FormState>()(
   persist(
     (set, get) => {
@@ -170,6 +177,7 @@ export const useFormStore = create<FormState>()(
       },
 
       setStorageMode: (mode: StorageMode) => {
+        clearAllDebounceTimers();
         set({ storageMode: mode, isInitialized: false });
         localStorage.setItem('formlogic_storage_mode', mode);
         get().initialize();
