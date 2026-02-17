@@ -61,8 +61,11 @@ function FieldResponse({
         return (
           <input
             type="number"
-            value={(value as number) || ''}
-            onChange={(e) => onChange(parseFloat(e.target.value))}
+            value={(value as number) ?? ''}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              onChange(isNaN(val) ? undefined : val);
+            }}
             placeholder={field.placeholder || '0'}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
             autoFocus
@@ -600,6 +603,7 @@ export default function FormResponse() {
     currentStep,
     nextStep,
     prevStep,
+    goToStep,
     submitResponse,
     resetCurrentResponse,
   } = useResponseStore();
@@ -626,6 +630,13 @@ export default function FormResponse() {
       return isFieldVisible(f.id);
     });
   }, [form, isFieldVisible]);
+
+  // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
+  useEffect(() => {
+    if (visibleFields.length > 0 && currentStep >= visibleFields.length) {
+      goToStep(visibleFields.length - 1);
+    }
+  }, [visibleFields.length, currentStep, goToStep]);
 
   useEffect(() => {
     if (formId) {
@@ -678,9 +689,9 @@ export default function FormResponse() {
         updateForm(form.id, { responseCount: form.responseCount + 1 });
         setIsSubmitted(true);
 
-        // Handle redirectUrl
+        // Handle redirectUrl (validate to prevent javascript: XSS)
         const redirectUrl = form.settings?.redirectUrl;
-        if (redirectUrl) {
+        if (redirectUrl && /^https?:\/\//i.test(redirectUrl)) {
           setIsRedirecting(true);
           setTimeout(() => {
             window.location.href = redirectUrl;

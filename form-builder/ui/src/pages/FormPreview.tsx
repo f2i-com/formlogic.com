@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -52,8 +52,11 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         return (
           <input
             type="number"
-            value={(value as number) || ''}
-            onChange={(e) => onChange(parseFloat(e.target.value))}
+            value={(value as number) ?? ''}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              onChange(isNaN(val) ? undefined : val);
+            }}
             placeholder={field.placeholder || '0'}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
           />
@@ -557,6 +560,13 @@ export default function FormPreview() {
       return isFieldVisible(f.id);
     });
   }, [form, isFieldVisible]);
+
+  // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
+  useEffect(() => {
+    if (visibleFields.length > 0 && currentStep >= visibleFields.length) {
+      setCurrentStep(visibleFields.length - 1);
+    }
+  }, [visibleFields.length, currentStep]);
 
   if (!form) {
     return (
