@@ -40,7 +40,11 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
       const result = await login(email, password);
       if (result.success && appSlug) {
         // Re-initialize the app after login
-        await initialize(appSlug);
+        try {
+          await initialize(appSlug);
+        } catch {
+          setLoginError('Login succeeded but failed to load the app. Please refresh.');
+        }
       } else if (!result.success) {
         setLoginError('Invalid email or password');
       }

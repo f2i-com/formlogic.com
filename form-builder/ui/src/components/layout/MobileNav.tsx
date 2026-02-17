@@ -2,15 +2,20 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, FileText, Plus, Globe, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 
 export function MobileNav() {
   const navigate = useNavigate();
   const { createForm, setActiveForm } = useFormStore();
 
   const handleCreateForm = async () => {
-    const form = await createForm('Untitled Form');
-    setActiveForm(form.id);
-    navigate(`/builder/${form.id}`);
+    try {
+      const form = await createForm('Untitled Form');
+      setActiveForm(form.id);
+      navigate(`/builder/${form.id}`);
+    } catch {
+      toast.error('Creation failed', 'Could not create a new form. Please try again.');
+    }
   };
 
   const navItems = [

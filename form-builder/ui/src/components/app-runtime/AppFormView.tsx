@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -72,10 +72,10 @@ function FieldInput({
     return (
       <input
         type="number"
-        value={value !== undefined && value !== '' ? String(value) : ''}
+        value={(value as number) ?? ''}
         onChange={(e) => {
-          const val = e.target.valueAsNumber;
-          onChange(isNaN(val) ? '' : val);
+          const val = parseFloat(e.target.value);
+          onChange(isNaN(val) ? undefined : val);
         }}
         placeholder={field.placeholder || 'Type a number...'}
         className={inputClass}
@@ -338,18 +338,22 @@ export function AppFormView() {
     setAnswers((prev) => ({ ...prev, [fieldId]: val }));
   }, []);
 
-  const handleSubmit = async () => {
+  // Use ref to avoid stale closure when handleSubmit is called from memoized handleNext
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+
+  const handleSubmit = useCallback(async () => {
     if (!formId) return;
     setSubmitting(true);
     setError(null);
     try {
-      await createResponse(formId, answers);
+      await createResponse(formId, answersRef.current);
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit');
     }
     setSubmitting(false);
-  };
+  }, [formId, createResponse]);
 
   const handleNext = useCallback(() => {
     if (currentField?.required) {
@@ -365,8 +369,7 @@ export function AppFormView() {
     } else {
       setCurrentStep((s) => Math.min(s + 1, fields.length - 1));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentField, answers, isLastStep, fields.length]);
+  }, [currentField, answers, isLastStep, fields.length, handleSubmit]);
 
   const handlePrev = useCallback(() => {
     setError(null);

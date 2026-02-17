@@ -11,6 +11,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 
@@ -27,9 +28,13 @@ export function Sidebar() {
   const { createForm, setActiveForm } = useFormStore();
 
   const handleCreateForm = async () => {
-    const form = await createForm('Untitled Form');
-    setActiveForm(form.id);
-    navigate(`/builder/${form.id}`);
+    try {
+      const form = await createForm('Untitled Form');
+      setActiveForm(form.id);
+      navigate(`/builder/${form.id}`);
+    } catch {
+      toast.error('Creation failed', 'Could not create a new form. Please try again.');
+    }
   };
 
   return (

@@ -97,6 +97,8 @@ function registerFormModules(engine: FormLogicEngine): void {
       const pattern = getValue(args[1]);
       if (typeof value !== 'string') return falseObject;
       if (typeof pattern !== 'string') return falseObject;
+      // Limit pattern length to mitigate ReDoS from complex expressions
+      if (pattern.length > 500) return falseObject;
       try {
         const regex = new RegExp(pattern);
         return regex.test(value) ? trueObject : falseObject;

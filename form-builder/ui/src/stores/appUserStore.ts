@@ -33,13 +33,17 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
 
   fetchUsers: async (appId) => {
     set({ isLoading: true });
-    const result = await api.getAppUsers(appId);
-    if (!result.error && result.data) {
-      set((s) => ({
-        users: { ...s.users, [appId]: result.data!.users as AppUser[] },
-        isLoading: false,
-      }));
-    } else {
+    try {
+      const result = await api.getAppUsers(appId);
+      if (!result.error && result.data) {
+        set((s) => ({
+          users: { ...s.users, [appId]: result.data!.users as AppUser[] },
+          isLoading: false,
+        }));
+      } else {
+        set({ isLoading: false });
+      }
+    } catch {
       set({ isLoading: false });
     }
   },

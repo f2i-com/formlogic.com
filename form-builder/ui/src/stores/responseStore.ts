@@ -134,6 +134,10 @@ export const useResponseStore = create<ResponseState>()(
     }),
     {
       name: 'formlogic-responses',
+      partialize: (state) => ({
+        // Only persist the most recent 500 responses to prevent unbounded localStorage growth
+        responses: state.responses.slice(-500),
+      }),
     }
   )
 );
