@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { cn } from '../../lib/utils';
@@ -38,13 +39,19 @@ export function AppCreateWizard() {
 
   const handleCreate = async () => {
     setIsCreating(true);
-    const app = await createApp({ name, description: description || undefined });
-    if (app) {
-      // Add selected forms
-      for (const formId of selectedFormIds) {
-        await useAppStore.getState().addFormToApp(app.id, formId);
+    try {
+      const app = await createApp({ name, description: description || undefined });
+      if (app) {
+        // Add selected forms
+        for (const formId of selectedFormIds) {
+          await useAppStore.getState().addFormToApp(app.id, formId);
+        }
+        navigate(`/apps/${app.id}/settings`);
+      } else {
+        toast.error('Creation failed', 'Could not create the app. Please try again.');
       }
-      navigate(`/apps/${app.id}/settings`);
+    } catch {
+      toast.error('Creation failed', 'An unexpected error occurred. Please try again.');
     }
     setIsCreating(false);
   };

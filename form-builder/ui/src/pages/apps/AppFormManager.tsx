@@ -37,12 +37,12 @@ export function AppFormManager() {
     const nameMap: Record<string, string> = {};
     forms.forEach((f) => { nameMap[f.formId] = f.displayName; });
 
-    const results = await Promise.all(forms.map((af) => api.getForm(af.formId)));
+    const results = await Promise.allSettled(forms.map((af) => api.getForm(af.formId)));
     const badges: Record<string, RelationBadge[]> = {};
 
-    results.forEach((res, idx) => {
-      if (!res.data?.form) return;
-      const form = res.data.form as Form;
+    results.forEach((result, idx) => {
+      if (result.status !== 'fulfilled' || !result.value.data?.form) return;
+      const form = result.value.data!.form as Form;
       const formId = forms[idx].formId;
 
       form.fields

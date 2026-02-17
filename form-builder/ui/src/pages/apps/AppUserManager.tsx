@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, UserPlus, Trash2 } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
+import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -28,13 +29,16 @@ export function AppUserManager() {
 
   useEffect(() => {
     if (!appId) return;
-    Promise.all([
+    Promise.allSettled([
       fetchUsers(appId),
       fetchInvitations(appId),
       fetchGroups(appId),
       fetchRoles(appId).then(setRoles),
-    ]).catch(() => {
-      // Errors handled by individual store methods
+    ]).then((results) => {
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        toast.error('Load error', 'Some data could not be loaded. Please refresh the page.');
+      }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);

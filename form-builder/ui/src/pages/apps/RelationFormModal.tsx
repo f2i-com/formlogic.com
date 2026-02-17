@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Switch } from '../../components/ui/Switch';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import type { Form, FormField } from '../../types/form';
 
 interface RelationFormModalProps {
@@ -51,6 +52,10 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
         setTargetFields(fields);
       }
       setLoadingTarget(false);
+    }).catch(() => {
+      setTargetFields([]);
+      setLoadingTarget(false);
+      toast.error('Load failed', 'Could not load target form fields.');
     });
   }, [targetFormId]);
 
@@ -58,29 +63,35 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
     if (!sourceFormId || !targetFormId || !label.trim()) return;
     setSaving(true);
 
-    const sourceRes = await api.getForm(sourceFormId);
-    if (!sourceRes.data?.form) {
+    try {
+      const sourceRes = await api.getForm(sourceFormId);
+      if (!sourceRes.data?.form) {
+        toast.error('Load failed', 'Could not load the source form.');
+        setSaving(false);
+        return;
+      }
+      const sourceForm = sourceRes.data.form as Form;
+
+      const newField: FormField = {
+        id: crypto.randomUUID(),
+        type: 'linked_record',
+        label: label.trim(),
+        required: false,
+        properties: {
+          targetFormId,
+          displayFieldIds,
+          allowMultiple,
+        },
+        order: sourceForm.fields.length,
+      };
+
+      await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
       setSaving(false);
-      return;
+      onSave();
+    } catch {
+      toast.error('Save failed', 'Could not create the relation. Please try again.');
+      setSaving(false);
     }
-    const sourceForm = sourceRes.data.form as Form;
-
-    const newField: FormField = {
-      id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
-      type: 'linked_record',
-      label: label.trim(),
-      required: false,
-      properties: {
-        targetFormId,
-        displayFieldIds,
-        allowMultiple,
-      },
-      order: sourceForm.fields.length,
-    };
-
-    await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
-    setSaving(false);
-    onSave();
   };
 
   const availableTargets = appForms.filter((f) => f.formId !== sourceFormId);

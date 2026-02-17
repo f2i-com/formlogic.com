@@ -42,14 +42,14 @@ export function AppRelationsManager() {
     forms.forEach((f) => { nameMap[f.formId] = f.displayName; });
 
     // Fetch full form data for each app form to find linked_record fields
-    const results = await Promise.all(
+    const results = await Promise.allSettled(
       forms.map((af) => api.getForm(af.formId))
     );
 
     const rels: Relation[] = [];
-    results.forEach((res, idx) => {
-      if (!res.data?.form) return;
-      const form = res.data.form as Form;
+    results.forEach((result, idx) => {
+      if (result.status !== 'fulfilled' || !result.value.data?.form) return;
+      const form = result.value.data!.form as Form;
       form.fields
         .filter((f) => f.type === 'linked_record' && f.properties.targetFormId)
         .forEach((field) => {
