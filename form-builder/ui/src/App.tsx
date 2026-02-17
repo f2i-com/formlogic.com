@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
+import { NotFound } from './pages/NotFound';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
@@ -88,8 +89,8 @@ function AppRoutes() {
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
-        {/* Redirect all other routes to landing */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        {/* 404 catch-all */}
+        <Route path="*" element={<NotFound />} />
       </Routes>
     );
   }
@@ -126,6 +127,9 @@ function AppRoutes() {
 
       {/* App runtime (full screen, separate layout) */}
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
+
+      {/* 404 catch-all */}
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

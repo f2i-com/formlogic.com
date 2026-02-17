@@ -38,19 +38,25 @@ export default function FormAnalytics() {
       ? Math.round(localResponses.reduce((sum, r) => sum + r.completionTime, 0) / localResponses.length / 1000)
       : 0;
 
-    // Group responses by day for chart
+    // Group responses by day for chart (last 7 days)
     const responseCounts: Record<string, number> = {};
     localResponses.forEach(r => {
       const date = new Date(r.submittedAt);
-      const dayKey = date.toLocaleDateString('en-US', { weekday: 'short' });
+      const dayKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
       responseCounts[dayKey] = (responseCounts[dayKey] || 0) + 1;
     });
 
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const dailyResponses: DailyResponse[] = days.map(day => ({
-      day,
-      count: responseCounts[day] || 0,
-    }));
+    const last7Days: DailyResponse[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dayKey = date.toISOString().split('T')[0];
+      last7Days.push({
+        day: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        count: responseCounts[dayKey] || 0,
+      });
+    }
+    const dailyResponses: DailyResponse[] = last7Days;
 
     // Calculate week-over-week change
     const now = new Date();
@@ -227,7 +233,7 @@ export default function FormAnalytics() {
   // Process daily responses for chart
   const dailyResponses: DailyResponse[] = analytics?.responsesByDate
     ? analytics.responsesByDate.slice(-7).map(item => ({
-      day: new Date(item.date).toLocaleDateString('en-US', { weekday: 'short' }),
+      day: new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
       count: item.count,
     }))
     : localAnalytics.dailyResponses;

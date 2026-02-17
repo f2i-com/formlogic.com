@@ -140,7 +140,7 @@ export function FormResponses() {
     if (!form) return [];
     return form.fields
       .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-      .slice(0, 4);
+      .slice(0, 6);
   }, [form]);
 
   // Calculate stats
@@ -746,6 +746,19 @@ function renderEditField(
 ) {
   const currentValue = value ?? '';
   const inputClasses = "w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white";
+  const disabledClasses = "w-full px-3 py-2.5 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-500 dark:text-slate-400 cursor-not-allowed";
+
+  // Read-only for calculated fields
+  if (field.type === 'calculated') {
+    return (
+      <input
+        type="text"
+        value={String(currentValue)}
+        disabled
+        className={disabledClasses}
+      />
+    );
+  }
 
   switch (field.type) {
     case 'short_text':

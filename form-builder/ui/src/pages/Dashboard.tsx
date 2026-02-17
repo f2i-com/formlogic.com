@@ -448,9 +448,9 @@ export function Dashboard() {
             icon={TrendingUp}
             iconBg="bg-amber-50 dark:bg-amber-500/10"
             iconColor="text-amber-600 dark:text-amber-400"
-            value={`${avgCompletionRate}%`}
+            value={totalForms > 0 ? `${avgCompletionRate}%` : '—'}
             label="Completion Rate"
-            subtext="Average across forms"
+            subtext={totalForms > 0 ? 'Average across forms' : 'No forms yet'}
           />
         </div>
 

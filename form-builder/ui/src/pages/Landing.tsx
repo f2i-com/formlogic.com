@@ -151,13 +151,8 @@ export function Landing() {
               <a href="#pricing" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Pricing
               </a>
-              <a
-                href="https://github.com/formlogic"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-              >
-                Docs
+              <a href="#pricing" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+                Pricing
               </a>
             </div>
             <div className="hidden sm:flex items-center gap-4">
@@ -618,49 +613,34 @@ export function Landing() {
               <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Product</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
-                  <a href="#features" className="hover:text-indigo-400 transition-colors">
+                  <a href="#features" className="hover:text-primary-400 dark:hover:text-white transition-colors">
                     Features
                   </a>
                 </li>
                 <li>
-                  <a href="#pricing" className="hover:text-indigo-400 transition-colors">
+                  <a href="#pricing" className="hover:text-primary-400 dark:hover:text-white transition-colors">
                     Pricing
                   </a>
                 </li>
                 <li>
-                  <a href="#solutions" className="hover:text-indigo-400 transition-colors">
+                  <a href="#solutions" className="hover:text-primary-400 dark:hover:text-white transition-colors">
                     Solutions
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Documentation
                   </a>
                 </li>
               </ul>
             </div>
             <div>
-              <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Company</h4>
+              <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Get Started</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    About
-                  </a>
+                  <Link to="/signup" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                    Sign Up
+                  </Link>
                 </li>
                 <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Blog
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Careers
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Contact
-                  </a>
+                  <Link to="/login" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                    Sign In
+                  </Link>
                 </li>
               </ul>
             </div>
@@ -668,19 +648,10 @@ export function Landing() {
               <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Legal</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Privacy Policy
-                  </a>
+                  <span className="cursor-default">Privacy Policy</span>
                 </li>
                 <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Terms of Service
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-indigo-400 transition-colors">
-                    Security
-                  </a>
+                  <span className="cursor-default">Terms of Service</span>
                 </li>
               </ul>
             </div>
@@ -689,19 +660,10 @@ export function Landing() {
             <p className="text-gray-500 dark:text-slate-600 text-sm">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
             <div className="flex items-center gap-6">
               <a
-                href="https://github.com/formlogic"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-500 hover:text-white transition-colors"
-                aria-label="GitHub"
-              >
-                <Globe className="h-5 w-5" />
-              </a>
-              <a
                 href="https://twitter.com/formlogic"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-500 hover:text-white transition-colors"
+                className="text-slate-500 hover:text-primary-400 dark:hover:text-white transition-colors"
                 aria-label="Twitter"
               >
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">

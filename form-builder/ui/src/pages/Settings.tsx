@@ -10,7 +10,6 @@ import {
   User,
   Bell,
   Settings2,
-  AlertTriangle,
   Mail,
   Calendar,
   LayoutGrid,
@@ -18,9 +17,9 @@ import {
   Shield,
   Palette,
   Check,
+  Lock,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
-import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -97,7 +96,13 @@ export function Settings() {
 
   // Preferences state
   const [preferences, setPreferences] = useState<UserPreferences>(getStoredPreferences);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Password change state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
   // Update form when user changes
   useEffect(() => {
@@ -131,13 +136,34 @@ export function Settings() {
     toast.success('Preference Saved', 'Your preference has been updated.');
   };
 
-  const handleDeleteAccount = () => {
-    setShowDeleteConfirm(true);
-  };
+  const handleChangePassword = async () => {
+    setPasswordError('');
 
-  const confirmDeleteAccount = () => {
-    setShowDeleteConfirm(false);
-    toast.warning('Not Implemented', 'Account deletion is not yet available. Contact support for assistance.');
+    if (!currentPassword) {
+      setPasswordError('Current password is required');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    const result = await updateProfile({ currentPassword, password: newPassword } as any);
+    setIsChangingPassword(false);
+
+    if (result.success) {
+      toast.success('Password Changed', 'Your password has been updated successfully.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } else {
+      setPasswordError(result.error || 'Failed to change password');
+    }
   };
 
   return (
@@ -337,50 +363,48 @@ export function Settings() {
               iconBg="bg-purple-500/10"
               iconColor="text-purple-400"
             />
-            <div className="ml-0 sm:ml-14">
-              <div className="p-4 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-gray-200 dark:border-slate-800">
-                <p className="text-sm text-gray-500 dark:text-slate-400">
-                  Password management and two-factor authentication settings coming soon.
-                </p>
+            <div className="space-y-4 ml-0 sm:ml-14">
+              <div className="flex items-center gap-2 mb-2">
+                <Lock className="h-4 w-4 text-gray-500 dark:text-slate-400" />
+                <h3 className="font-medium text-gray-900 dark:text-white">Change Password</h3>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Danger Zone */}
-        <Card className="overflow-hidden border-red-500/20">
-          <CardContent className="p-6">
-            <SectionHeader
-              icon={AlertTriangle}
-              title="Danger Zone"
-              description="Irreversible and destructive actions"
-              iconBg="bg-red-500/10"
-              iconColor="text-red-500"
-            />
-            <div className="ml-0 sm:ml-14">
-              <div className="p-4 bg-red-500/5 rounded-lg border border-red-500/20">
-                <h3 className="font-medium text-red-600 dark:text-red-400 mb-1">Delete Account</h3>
-                <p className="text-sm text-red-600/70 dark:text-red-300/70 mb-4">
-                  Once you delete your account, there is no going back. All your forms, responses, and data will be permanently removed.
-                </p>
-                <Button variant="danger" onClick={handleDeleteAccount}>
-                  Delete Account
+              <Input
+                label="Current Password"
+                type="password"
+                placeholder="Enter current password"
+                value={currentPassword}
+                onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); }}
+              />
+              <Input
+                label="New Password"
+                type="password"
+                placeholder="Enter new password (min 8 characters)"
+                value={newPassword}
+                onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); }}
+              />
+              <Input
+                label="Confirm New Password"
+                type="password"
+                placeholder="Confirm new password"
+                value={confirmPassword}
+                onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); }}
+              />
+              {passwordError && (
+                <p className="text-sm text-red-500">{passwordError}</p>
+              )}
+              <div className="pt-2">
+                <Button
+                  onClick={handleChangePassword}
+                  disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword}
+                  isLoading={isChangingPassword}
+                >
+                  Change Password
                 </Button>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
-
-      <ConfirmDialog
-        isOpen={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={confirmDeleteAccount}
-        title="Delete Account"
-        message="Are you sure you want to delete your account? All your forms, responses, and data will be permanently removed. This action cannot be undone."
-        confirmLabel="Delete My Account"
-        variant="danger"
-      />
     </div>
   );
 }

@@ -567,7 +567,7 @@ function FieldResponse({
 }
 
 // Success Screen
-function SuccessScreen({ form }: { form: { title: string; theme: { primaryColor: string; textColor: string } } }) {
+function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean }) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -582,6 +582,9 @@ function SuccessScreen({ form }: { form: { title: string; theme: { primaryColor:
       </div>
       <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>Thank you!</h1>
       <p className="text-xl" style={{ color: form.theme.textColor, opacity: 0.7 }}>Your response has been submitted successfully.</p>
+      {isRedirecting && (
+        <p className="text-lg mt-4 animate-pulse" style={{ color: form.theme.textColor, opacity: 0.5 }}>Redirecting...</p>
+      )}
     </motion.div>
   );
 }
@@ -602,6 +605,9 @@ export default function FormResponse() {
   } = useResponseStore();
 
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
 
   const form = formId ? getForm(formId) : undefined;
 
@@ -665,18 +671,35 @@ export default function FormResponse() {
   const isLastStep = safeCurrentStep === visibleFields.length - 1;
 
   const handleSubmit = () => {
-    const response = submitResponse();
-    if (response) {
-      updateForm(form.id, { responseCount: form.responseCount + 1 });
-      setIsSubmitted(true);
+    setSubmitError(null);
+    try {
+      const response = submitResponse();
+      if (response) {
+        updateForm(form.id, { responseCount: form.responseCount + 1 });
+        setIsSubmitted(true);
+
+        // Handle redirectUrl
+        const redirectUrl = form.settings?.redirectUrl;
+        if (redirectUrl) {
+          setIsRedirecting(true);
+          setTimeout(() => {
+            window.location.href = redirectUrl;
+          }, 2000);
+        }
+      }
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Failed to submit response. Please try again.');
     }
   };
 
   const handleNext = () => {
+    setFieldError(null);
+    setSubmitError(null);
+
     if (currentField && getFieldRequired(currentField)) {
       const answer = currentAnswers[currentField.id];
       if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
-        toast.warning('Required Field', 'Please fill in this field before continuing');
+        setFieldError('This field is required');
         return;
       }
     }
@@ -701,7 +724,7 @@ export default function FormResponse() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
-        <SuccessScreen form={form} />
+        <SuccessScreen form={form} isRedirecting={isRedirecting} />
       </div>
     );
   }
@@ -757,6 +780,11 @@ export default function FormResponse() {
               isRequired={getFieldRequired(currentField)}
             />
 
+            {/* Inline validation error */}
+            {fieldError && (
+              <p className="mt-3 text-red-500 text-sm">{fieldError}</p>
+            )}
+
             {/* OK Button */}
             <div className="mt-8 flex items-center gap-4 justify-center">
               <Button
@@ -771,6 +799,11 @@ export default function FormResponse() {
                 press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>
               </span>
             </div>
+
+            {/* Submission error */}
+            {submitError && (
+              <p className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
+            )}
           </motion.div>
         </AnimatePresence>
       </div>

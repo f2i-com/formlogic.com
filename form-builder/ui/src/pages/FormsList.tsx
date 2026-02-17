@@ -36,6 +36,7 @@ export function FormsList() {
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -59,9 +60,19 @@ export function FormsList() {
     setActiveMenu(null);
   };
 
-  const filteredForms = forms.filter((form) =>
-    form.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredForms = forms
+    .filter((form) => form.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'name':
+          return a.title.localeCompare(b.title);
+        case 'responses':
+          return getResponsesByFormId(b.id).length - getResponsesByFormId(a.id).length;
+        case 'modified':
+        default:
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      }
+    });
 
   const draftForms = filteredForms.filter((f) => f.status === 'draft');
   const publishedForms = filteredForms.filter((f) => f.status === 'published');
@@ -232,8 +243,8 @@ export function FormsList() {
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
-        {/* Search */}
-        <div className="mb-4 sm:mb-6">
+        {/* Search and Sort */}
+        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3">
           <Input
             placeholder="Search forms..."
             value={searchQuery}
@@ -241,6 +252,15 @@ export function FormsList() {
             leftIcon={<Search className="h-4 w-4" />}
             className="w-full sm:max-w-md"
           />
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
+            className="px-3 py-2 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            <option value="modified">Last Modified</option>
+            <option value="name">Name A-Z</option>
+            <option value="responses">Most Responses</option>
+          </select>
         </div>
 
         {/* Tabs */}
