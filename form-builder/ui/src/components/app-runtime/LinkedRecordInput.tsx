@@ -127,25 +127,25 @@ export function LinkedRecordInput({
     }
   };
 
+  const filteredResults = results.filter((r) => !selectedIds.includes(r.id));
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightIndex((i) => Math.min(i + 1, results.length - 1));
+      setHighlightIndex((i) => Math.min(i + 1, filteredResults.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
       e.stopPropagation();
-      if (results[highlightIndex]) {
-        handleSelect(results[highlightIndex]);
+      if (filteredResults[highlightIndex]) {
+        handleSelect(filteredResults[highlightIndex]);
       }
     } else if (e.key === 'Escape') {
       setIsOpen(false);
     }
   };
-
-  const filteredResults = results.filter((r) => !selectedIds.includes(r.id));
 
   return (
     <div ref={containerRef} className="relative">

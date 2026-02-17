@@ -56,13 +56,21 @@ export function DataTable<T extends Record<string, unknown>>({
     return [...filtered].sort((a, b) => {
       const aVal = a[sortKey] ?? '';
       const bVal = b[sortKey] ?? '';
-      const cmp = String(aVal).localeCompare(String(bVal));
+      const aNum = Number(aVal);
+      const bNum = Number(bVal);
+      let cmp: number;
+      if (aVal !== '' && bVal !== '' && !isNaN(aNum) && !isNaN(bNum)) {
+        cmp = aNum - bNum;
+      } else {
+        cmp = String(aVal).localeCompare(String(bVal));
+      }
       return sortDir === 'asc' ? cmp : -cmp;
     });
   }, [filtered, sortKey, sortDir]);
 
   const totalPages = Math.ceil(sorted.length / pageSize);
-  const paged = sorted.slice(page * pageSize, (page + 1) * pageSize);
+  const safePage = totalPages > 0 ? Math.min(page, totalPages - 1) : 0;
+  const paged = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -156,21 +164,21 @@ export function DataTable<T extends Record<string, unknown>>({
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-slate-400">
           <span>
-            Showing {page * pageSize + 1}–{Math.min((page + 1) * pageSize, sorted.length)} of {sorted.length}
+            Showing {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, sorted.length)} of {sorted.length}
           </span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage(Math.max(0, page - 1))}
-              disabled={page === 0}
+              onClick={() => setPage(Math.max(0, safePage - 1))}
+              disabled={safePage === 0}
               aria-label="Previous page"
               className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="tabular-nums">Page {page + 1} of {totalPages}</span>
+            <span className="tabular-nums">Page {safePage + 1} of {totalPages}</span>
             <button
-              onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
-              disabled={page >= totalPages - 1}
+              onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
+              disabled={safePage >= totalPages - 1}
               aria-label="Next page"
               className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >

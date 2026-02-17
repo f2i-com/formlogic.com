@@ -19,13 +19,14 @@ export function AppResponseDetail() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>;
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
   useEffect(() => {
-    if (appSlug && formId && responseId) {
+    if (appSlug && formId && responseId && config) {
       setLoading(true);
       setFetchError(null);
       const fetchFn = hasLinkedFields
@@ -45,8 +46,7 @@ export function AppResponseDetail() {
         setLoading(false);
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appSlug, formId, responseId]);
+  }, [appSlug, formId, responseId, config, hasLinkedFields]);
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
@@ -93,7 +93,9 @@ export function AppResponseDetail() {
 
   const handleDelete = async () => {
     if (!formId || !responseId) return;
+    setDeleting(true);
     const success = await deleteResponse(formId, responseId);
+    setDeleting(false);
     if (success) navigate(`/app/${appSlug}/form/${formId}/responses`);
     setShowDeleteConfirm(false);
   };
@@ -286,6 +288,7 @@ export function AppResponseDetail() {
         message="Are you sure you want to delete this response? This action cannot be undone."
         confirmLabel="Delete"
         variant="danger"
+        isLoading={deleting}
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Play, Book, AlertCircle, CheckCircle, Code2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -211,6 +211,11 @@ const custom = ctx.http.request({
 export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: ScriptEditorProps) {
   const [editedScript, setEditedScript] = useState(script);
   const [activeTab, setActiveTab] = useState<'editor' | 'ai' | 'docs' | 'fields'>('editor');
+
+  // Sync editedScript when the script prop changes (e.g. switching forms)
+  useEffect(() => {
+    setEditedScript(script);
+  }, [script]);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);

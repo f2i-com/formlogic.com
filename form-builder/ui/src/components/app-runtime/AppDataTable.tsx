@@ -14,6 +14,7 @@ export function AppDataTable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
@@ -22,7 +23,7 @@ export function AppDataTable() {
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
   useEffect(() => {
-    if (formId) {
+    if (formId && config) {
       setLoading(true);
       setError(null);
       fetchResponses(formId, { resolve: hasLinkedFields }).then((data) => {
@@ -43,15 +44,16 @@ export function AppDataTable() {
         setLoading(false);
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formId]);
+  }, [formId, config, hasLinkedFields, fetchResponses]);
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;
+    setDeleting(true);
     const success = await deleteResponse(formId, deleteId);
     if (success) {
       setResponses(responses.filter((r) => r.id !== deleteId));
     }
+    setDeleting(false);
     setDeleteId(null);
   };
 
@@ -232,6 +234,7 @@ export function AppDataTable() {
         message="Are you sure you want to delete this response? This action cannot be undone."
         confirmLabel="Delete"
         variant="danger"
+        isLoading={deleting}
       />
     </div>
   );

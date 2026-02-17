@@ -65,9 +65,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     id === activeFormId || (id === 'dashboard' && !activeFormId);
 
   // Bottom nav: show up to 4 items, with "More" if overflow
-  const maxBottomItems = navItems.length > 5 ? 3 : 4;
+  const maxBottomItems = navItems.length > 4 ? 3 : 4;
   const bottomNavItems = navItems.slice(0, maxBottomItems);
-  const hasMoreItems = navItems.length > maxBottomItems + 1;
+  const hasMoreItems = navItems.length > maxBottomItems;
 
   return (
     <div className="min-h-screen flex bg-gray-50 dark:bg-slate-950">
