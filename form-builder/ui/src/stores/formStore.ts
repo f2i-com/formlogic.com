@@ -53,6 +53,7 @@ interface FormState {
   deleteForm: (id: string) => Promise<void>;
   duplicateForm: (id: string) => Promise<Form | null>;
   getForm: (id: string) => Form | undefined;
+  loadFullForm: (id: string) => Promise<Form | undefined>;
   setActiveForm: (id: string | null) => void;
   refreshForms: () => Promise<void>;
 
@@ -361,6 +362,31 @@ export const useFormStore = create<FormState>()(
       },
 
       getForm: (id) => get().forms.find((f) => f.id === id),
+
+      loadFullForm: async (id) => {
+        const state = get();
+        // In local mode, the form is already fully loaded
+        if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
+
+        // Check if the form already has fields loaded
+        const existing = state.forms.find((f) => f.id === id);
+        if (existing && existing.fields.length > 0) return existing;
+
+        // Fetch full form (with fields) from API
+        try {
+          const result = await api.getForm(id);
+          if (!result.error && result.data?.form) {
+            const fullForm = result.data.form as Form;
+            set((s) => ({
+              forms: s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f)),
+            }));
+            return fullForm;
+          }
+        } catch (error) {
+          console.error('Failed to load full form:', error);
+        }
+        return existing;
+      },
 
       setActiveForm: (id) => set({ activeFormId: id, selectedFieldId: null }),
 

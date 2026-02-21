@@ -28,7 +28,7 @@ interface AuthState {
   clearError: () => void;
 }
 
-let sessionExpiredRegistered = false;
+let _authSessionCallback: (() => void) | null = null;
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -42,16 +42,17 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
         if (state.isInitialized || state.isLoading) return;
 
-        // Register session expiry callback once so the store is notified on 401
-        if (!sessionExpiredRegistered) {
-          sessionExpiredRegistered = true;
-          api.onSessionExpired(() => {
-            const current = get();
-            if (current.user) {
-              set({ user: null, error: null });
-            }
-          });
+        // Register session expiry callback (replace previous to avoid stale closures on HMR)
+        if (_authSessionCallback) {
+          api.removeSessionExpiredCallback(_authSessionCallback);
         }
+        _authSessionCallback = () => {
+          const current = get();
+          if (current.user) {
+            set({ user: null, error: null });
+          }
+        };
+        api.onSessionExpired(_authSessionCallback);
 
         set({ isLoading: true });
 

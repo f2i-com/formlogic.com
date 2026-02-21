@@ -54,6 +54,7 @@ export default function FormBuilder() {
 
   const {
     getForm,
+    loadFullForm,
     updateForm,
     addField,
     updateField,
@@ -73,6 +74,11 @@ export default function FormBuilder() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, [setIsMobile]);
+
+  // Load full form data (with fields) from API when entering the builder
+  useEffect(() => {
+    if (formId) loadFullForm(formId);
+  }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
 

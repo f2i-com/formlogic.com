@@ -586,13 +586,18 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
 export default function FormPreview() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
-  const { getForm } = useFormStore();
+  const { getForm, loadFullForm } = useFormStore();
   const { previewDevice, setPreviewDevice, previewMode, setPreviewMode } = useUIStore();
 
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showNigo, setShowNigo] = useState(false);
+
+  // Load full form data (with fields) from API when entering preview
+  useEffect(() => {
+    if (formId) loadFullForm(formId);
+  }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
 

@@ -38,7 +38,7 @@ interface AppRuntimeState {
   canExport: (formId: string) => boolean;
 }
 
-let sessionExpiredRegistered = false;
+let _appRuntimeSessionCallback: (() => void) | null = null;
 
 export const useAppRuntimeStore = create<AppRuntimeState>()(
   persist(
@@ -53,13 +53,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       roleName: null,
 
       initialize: async (appSlug: string) => {
-        // Register cleanup callback once so app state is cleared on session expiry (401)
-        if (!sessionExpiredRegistered) {
-          sessionExpiredRegistered = true;
-          api.onSessionExpired(() => {
-            get().reset();
-          });
+        // Register cleanup callback (replace previous to avoid stale closures on HMR)
+        if (_appRuntimeSessionCallback) {
+          api.removeSessionExpiredCallback(_appRuntimeSessionCallback);
         }
+        _appRuntimeSessionCallback = () => {
+          get().reset();
+        };
+        api.onSessionExpired(_appRuntimeSessionCallback);
 
         set({ isLoading: true, error: null, appSlug });
         try {

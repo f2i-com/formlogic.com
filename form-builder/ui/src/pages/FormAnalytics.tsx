@@ -22,12 +22,17 @@ interface DailyResponse {
 export default function FormAnalytics() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
-  const { getForm, storageMode } = useFormStore();
+  const { getForm, loadFullForm, storageMode } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const user = useAuthStore((state) => state.user);
 
   const [analytics, setAnalytics] = useState<FormAnalyticsType | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Load full form data (with fields) from API
+  useEffect(() => {
+    if (formId) loadFullForm(formId);
+  }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
   const localResponses = formId ? getResponsesByFormId(formId) : [];

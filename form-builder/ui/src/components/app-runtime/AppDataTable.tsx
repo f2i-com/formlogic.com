@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trash2, ChevronRight, ChevronLeft, Inbox } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils';
 
 const MOBILE_PAGE_SIZE = 15;
 
-function MobileCardList({
+const MobileCardList = memo(function MobileCardList({
   responses,
   fields,
   appSlug,
@@ -118,7 +118,7 @@ function MobileCardList({
       )}
     </div>
   );
-}
+});
 
 export function AppDataTable() {
   const { appSlug, formId } = useParams();

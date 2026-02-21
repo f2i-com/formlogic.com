@@ -30,6 +30,10 @@ class ApiClient {
     this._onSessionExpiredCallbacks.add(callback);
   }
 
+  removeSessionExpiredCallback(callback: () => void): void {
+    this._onSessionExpiredCallbacks.delete(callback);
+  }
+
   /**
    * Handle a 401 response — clear local auth state and notify listeners.
    * Only triggers callbacks if we were previously authenticated,

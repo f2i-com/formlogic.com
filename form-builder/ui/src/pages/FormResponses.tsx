@@ -108,15 +108,18 @@ function FormResponses() {
     const loadData = async () => {
       setIsLoading(true);
 
-      // Load form
-      const localForm = getForm(formId);
-      if (localForm) {
-        setForm(localForm);
-      } else if (storageMode === 'api') {
+      // Load form — prefer API to get full form with fields
+      if (storageMode === 'api') {
         const result = await api.getForm(formId);
         if (result.data?.form) {
           setForm(result.data.form);
+        } else {
+          const localForm = getForm(formId);
+          if (localForm) setForm(localForm);
         }
+      } else {
+        const localForm = getForm(formId);
+        if (localForm) setForm(localForm);
       }
 
       // Load responses
