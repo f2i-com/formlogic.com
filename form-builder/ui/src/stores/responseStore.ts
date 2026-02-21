@@ -77,7 +77,7 @@ export const useResponseStore = create<ResponseState>()(
           formId: state.currentFormId,
           answers: state.currentAnswers,
           submittedAt: new Date().toISOString(),
-          completionTime: Date.now() - state.startTime,
+          completionTime: Math.max(0, Date.now() - state.startTime),
           metadata: {
             userAgent: navigator.userAgent,
             referrer: document.referrer || undefined,

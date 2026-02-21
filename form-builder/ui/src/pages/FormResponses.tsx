@@ -178,8 +178,8 @@ function FormResponses() {
       let bVal: number;
 
       if (sortField === 'submittedAt') {
-        aVal = new Date(a.submittedAt).getTime();
-        bVal = new Date(b.submittedAt).getTime();
+        aVal = new Date(a.submittedAt).getTime() || 0;
+        bVal = new Date(b.submittedAt).getTime() || 0;
       } else {
         aVal = a.completionTime || 0;
         bVal = b.completionTime || 0;

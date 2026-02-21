@@ -469,6 +469,7 @@ function FieldResponse({
       case 'payment': {
         const paymentAmount = field.properties.min || 0;
         const paymentCurrency = field.properties.currency || 'USD';
+        const paymentData = (value as Record<string, string>) || {};
         return (
           <div className="p-6 border-2 border-current/20 rounded-xl bg-current/5">
             <div className="flex items-center justify-between mb-6">
@@ -486,9 +487,10 @@ function FieldResponse({
                   className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                   style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
                   maxLength={19}
+                  value={paymentData.cardNumber || ''}
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '').replace(/(.{4})/g, '$1 ').trim();
-                    e.target.value = val;
+                    onChange({ ...paymentData, cardNumber: val });
                   }}
                 />
               </div>
@@ -500,12 +502,13 @@ function FieldResponse({
                     placeholder="MM / YY"
                     className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                     maxLength={7}
+                    value={paymentData.expiry || ''}
                     onChange={(e) => {
                       let val = e.target.value.replace(/\D/g, '');
                       if (val.length >= 2) {
                         val = val.slice(0, 2) + ' / ' + val.slice(2, 4);
                       }
-                      e.target.value = val;
+                      onChange({ ...paymentData, expiry: val });
                     }}
                   />
                 </div>
@@ -516,6 +519,10 @@ function FieldResponse({
                     placeholder="123"
                     className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
                     maxLength={4}
+                    value={paymentData.cvc || ''}
+                    onChange={(e) => {
+                      onChange({ ...paymentData, cvc: e.target.value.replace(/\D/g, '') });
+                    }}
                   />
                 </div>
               </div>

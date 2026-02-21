@@ -71,7 +71,7 @@ export default function FormAnalytics() {
 
     const weeklyChange = lastWeekResponses > 0
       ? Math.round(((thisWeekResponses - lastWeekResponses) / lastWeekResponses) * 100)
-      : thisWeekResponses > 0 ? 100 : 0;
+      : null; // null = no prior data to compare against
 
     return {
       totalResponses: localResponses.length,
@@ -110,13 +110,14 @@ export default function FormAnalytics() {
   const exportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!exportMenuOpen) return;
     function handleClickOutside(event: MouseEvent) {
       if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
         setExportMenuOpen(false);
       }
     }
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape' && exportMenuOpen) {
+      if (event.key === 'Escape') {
         setExportMenuOpen(false);
       }
     }
@@ -426,8 +427,8 @@ export default function FormAnalytics() {
                 <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-500" />
               </div>
               <div className="min-w-0">
-                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
-                  {weeklyChange >= 0 ? '+' : ''}{weeklyChange}%
+                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange === null ? 'text-gray-500 dark:text-slate-400' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
+                  {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
                 </p>
                 <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">This Week</p>
               </div>
