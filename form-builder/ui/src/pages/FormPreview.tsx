@@ -867,6 +867,7 @@ export default function FormPreview() {
                   <Button
                     className="w-full"
                     size="lg"
+                    onClick={() => toast.success('Preview Submitted', 'Form submitted! (This is a preview)')}
                     style={{ backgroundColor: form.theme.primaryColor }}
                   >
                     {form.settings.submitButtonText || 'Submit'}

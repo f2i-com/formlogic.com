@@ -170,6 +170,18 @@ class WebhookService
         $errorMessage = null;
 
         try {
+            // SSRF protection: resolve hostname and block private/reserved IPs
+            $parsedUrl = parse_url($webhook['url']);
+            $host = $parsedUrl['host'] ?? '';
+            $resolvedIps = gethostbynamel($host);
+            if ($resolvedIps !== false) {
+                foreach ($resolvedIps as $ip) {
+                    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                        throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
+                    }
+                }
+            }
+
             $ch = curl_init($webhook['url']);
             curl_setopt_array($ch, [
                 CURLOPT_POST => true,

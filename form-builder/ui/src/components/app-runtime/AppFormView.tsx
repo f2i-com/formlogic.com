@@ -405,7 +405,7 @@ function FieldInput({
         </div>
         {Boolean(value) && (
           <button
-            onClick={() => { const c = document.getElementById(sigId) as HTMLCanvasElement; c?.getContext('2d')?.clearRect(0, 0, c.width, c.height); onChange(null); }}
+            onClick={(e) => { const c = (e.currentTarget.parentElement?.querySelector('canvas')) as HTMLCanvasElement | null; if (c) { c.getContext('2d')?.clearRect(0, 0, c.width, c.height); } onChange(null); }}
             className="text-sm text-red-500 hover:text-red-700"
           >
             Clear signature

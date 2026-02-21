@@ -283,11 +283,15 @@ function FormResponses() {
   const handleExportCsv = () => {
     if (!form || responses.length === 0) return;
 
-    const headers = ['ID', 'Submitted At', ...displayFields.map((f) => f.label)];
+    // Export all fields, not just displayFields (which is limited to 6 for the table UI)
+    const allExportFields = form.fields.filter(
+      (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
+    );
+    const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];
     const rows = responses.map((r) => [
       r.id,
       new Date(r.submittedAt).toLocaleString(),
-      ...displayFields.map((f) => formatValue(r.answers[f.id])),
+      ...allExportFields.map((f) => formatValue(r.answers[f.id])),
     ]);
 
     const csv = [headers.join(','), ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');

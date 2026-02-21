@@ -53,6 +53,12 @@ class ResponseService
             $params['status'] = $options['status'];
         }
 
+        // Scope filter: restrict to responses submitted by a specific user
+        if (!empty($options['submittedByUserId'])) {
+            $conditions[] = "json_extract(metadata, '$.submittedByUserId') = :submitted_by";
+            $params['submitted_by'] = $options['submittedByUserId'];
+        }
+
         // Date range filter
         if (!empty($options['from'])) {
             $conditions[] = "submitted_at >= :from";
@@ -148,10 +154,12 @@ class ResponseService
 
             if (!empty($searchFieldIds)) {
                 foreach ($searchFieldIds as $i => $fieldId) {
-                    $safeField = '$.' . $fieldId;
+                    // Sanitize field ID to prevent SQL injection (allow only alphanumeric and underscore)
+                    $safeFieldId = preg_replace('/[^a-zA-Z0-9_]/', '', $fieldId);
+                    if ($safeFieldId === '') continue;
                     $paramName = 'search_' . $i;
-                    $searchConditions[] = "json_extract(answers, :field_$paramName) LIKE :val_$paramName";
-                    $params['field_' . $paramName] = $safeField;
+                    // json_extract path must be a literal, not a bound parameter
+                    $searchConditions[] = "json_extract(answers, '\$.$safeFieldId') LIKE :val_$paramName";
                     $params['val_' . $paramName] = $searchParam;
                 }
             } else {
@@ -265,12 +273,12 @@ class ResponseService
         $stmt->execute([
             'id' => $id,
             'answers' => json_encode($data['answers'] ?? []),
-            'metadata' => json_encode([
+            'metadata' => json_encode(array_merge($data['metadata'] ?? [], [
                 'userAgent' => $data['userAgent'] ?? null,
                 'referrer' => $data['referrer'] ?? null,
                 'completionTime' => $data['completionTime'] ?? null,
                 'ipAddress' => $data['ipAddress'] ?? null,
-            ]),
+            ])),
             'status' => $status,
             'submitted_at' => $now,
             'updated_at' => $now,
@@ -502,16 +510,22 @@ class ResponseService
     /**
      * Get response count for a form
      */
-    public function getResponseCount(string $formId): int
+    public function getResponseCount(string $formId, ?string $submittedByUserId = null): int
     {
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
 
         $db = $this->sqlite->getFormDatabase($formId);
-        $stmt = $db->query("SELECT COUNT(*) as count FROM responses");
-        $row = $stmt->fetch();
 
+        if ($submittedByUserId !== null) {
+            $stmt = $db->prepare("SELECT COUNT(*) as count FROM responses WHERE json_extract(metadata, '$.submittedByUserId') = :submitted_by");
+            $stmt->execute(['submitted_by' => $submittedByUserId]);
+        } else {
+            $stmt = $db->query("SELECT COUNT(*) as count FROM responses");
+        }
+
+        $row = $stmt->fetch();
         return (int)($row['count'] ?? 0);
     }
 

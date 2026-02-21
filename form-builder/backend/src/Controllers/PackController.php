@@ -51,7 +51,7 @@ class PackController
                     'pack',
                     $packData['packMeta']['name'] ?? 'unknown',
                     $userId,
-                    $this->ipResolver->resolve($request),
+                    $this->ipResolver->getClientIp($request),
                     [
                         'packName' => $packData['packMeta']['name'] ?? null,
                         'formsCreated' => count($result['forms']),

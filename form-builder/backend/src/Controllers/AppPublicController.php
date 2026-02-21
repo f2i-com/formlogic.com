@@ -176,13 +176,17 @@ class AppPublicController
         $form = $this->formService->getForm($formId);
         $script = $form['logicScript'] ?? null;
 
-        $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
+        try {
+            $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
 
-        if ($result instanceof \FormLogic\Services\ScriptRejection) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $result->message, 'rejected' => true], 422);
+            if ($result instanceof \FormLogic\Services\ScriptRejection) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $result->message, 'rejected' => true], 422);
+            }
+
+            return $this->jsonResponse($response, ['response' => $result], 201);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to save response'], 500);
         }
-
-        return $this->jsonResponse($response, ['response' => $result], 201);
     }
 
     public function listResponses(Request $request, Response $response, array $args): Response
@@ -464,8 +468,11 @@ class AppPublicController
                 'limit' => $limit,
                 'offset' => $offset,
             ]);
-            // Get total count for pagination
-            $totalCount = $this->responseService->getResponseCount($targetFormId);
+            // Get total count for pagination (scoped to user if scope=own)
+            $totalCount = $this->responseService->getResponseCount(
+                $targetFormId,
+                $scope === 'own' ? $userId : null
+            );
         }
 
         // Build display labels for results

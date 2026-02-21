@@ -35,7 +35,7 @@ function FieldResponse({
       case 'url':
         return (
           <input
-            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'}
+            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -731,6 +731,8 @@ export default function FormResponse() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      // Allow newlines in long_text fields
+      if (currentField?.type === 'long_text') return;
       e.preventDefault();
       handleNext();
     }

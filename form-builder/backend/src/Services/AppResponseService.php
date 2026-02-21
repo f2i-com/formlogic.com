@@ -50,15 +50,12 @@ class AppResponseService
 
     public function getResponses(string $formId, string $scope, string $userId, array $options = []): array
     {
-        $responses = $this->responseService->getFormResponses($formId, $options);
-
+        // Push scope filtering into SQL for correct pagination
         if ($scope === 'own') {
-            $responses = array_values(array_filter($responses, function ($response) use ($userId) {
-                return ($response['metadata']['submittedByUserId'] ?? null) === $userId;
-            }));
+            $options['submittedByUserId'] = $userId;
         }
 
-        return $responses;
+        return $this->responseService->getFormResponses($formId, $options);
     }
 
     public function getResponse(string $formId, string $responseId): ?array

@@ -42,7 +42,8 @@ class AuditService
             $sequenceNumber = (int) $this->mysql->lastInsertId();
 
             // Clean up the sequence row to prevent unbounded growth
-            $this->mysql->exec("DELETE FROM audit_sequence WHERE id < {$sequenceNumber}");
+            $cleanupStmt = $this->mysql->prepare("DELETE FROM audit_sequence WHERE id < :seq");
+            $cleanupStmt->execute(['seq' => $sequenceNumber]);
 
             // Fetch the most recent entry's integrity hash (handles sequence gaps from rollbacks)
             $stmt = $this->mysql->query("

@@ -85,7 +85,7 @@ export const useResponseStore = create<ResponseState>()(
         };
 
         set((state) => ({
-          responses: [...state.responses, response],
+          responses: [...state.responses, response].slice(-500),
           currentFormId: null,
           currentAnswers: {},
           currentStep: 0,

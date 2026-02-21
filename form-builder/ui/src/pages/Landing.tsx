@@ -151,9 +151,6 @@ export function Landing() {
               <a href="#pricing" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Pricing
               </a>
-              <a href="#pricing" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-                Pricing
-              </a>
             </div>
             <div className="hidden sm:flex items-center gap-4">
               <Link to="/login" className="text-sm font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">

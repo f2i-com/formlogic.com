@@ -63,8 +63,15 @@ export function useConditionalLogic(
       }
     }
 
-    setVisibleFields(visible);
-    setRequiredFields(required);
+    // Only update state if the actual contents changed (prevents cascading re-renders)
+    setVisibleFields((prev) => {
+      if (prev.size === visible.size && [...visible].every((id) => prev.has(id))) return prev;
+      return visible;
+    });
+    setRequiredFields((prev) => {
+      if (prev.size === required.size && [...required].every((id) => prev.has(id))) return prev;
+      return required;
+    });
     setIsEvaluating(false);
   }, [fields, formData]);
 
