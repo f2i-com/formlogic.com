@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\FormService;
+use FormLogic\Services\FormVersionService;
+use FormLogic\Services\AuditService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -14,11 +16,19 @@ class FormController
 {
     private FormService $formService;
     private LoggerInterface $logger;
+    private ?FormVersionService $versionService;
+    private ?AuditService $auditService;
 
-    public function __construct(FormService $formService, ?LoggerInterface $logger = null)
-    {
+    public function __construct(
+        FormService $formService,
+        ?LoggerInterface $logger = null,
+        ?FormVersionService $versionService = null,
+        ?AuditService $auditService = null
+    ) {
         $this->formService = $formService;
         $this->logger = $logger ?? new NullLogger();
+        $this->versionService = $versionService;
+        $this->auditService = $auditService;
     }
 
     /**
@@ -124,6 +134,7 @@ class FormController
 
         try {
             $form = $this->formService->createForm($data);
+            $this->audit($request, 'form.create', 'form', $form['id'] ?? '');
             return $this->jsonResponse($response, ['form' => $form], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
@@ -159,6 +170,13 @@ class FormController
         $data = $request->getParsedBody();
 
         try {
+            // Snapshot current state before updating
+            if ($this->versionService !== null) {
+                $changelog = $data['_changelog'] ?? null;
+                unset($data['_changelog']);
+                $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
+            }
+
             $updatedForm = $this->formService->updateForm($formId, $data);
 
             if (!$updatedForm) {
@@ -167,6 +185,9 @@ class FormController
                     'message' => 'Form not found',
                 ], 404);
             }
+
+            $action = (isset($data['status']) && $data['status'] === 'published') ? 'form.publish' : 'form.update';
+            $this->audit($request, $action, 'form', $formId);
 
             return $this->jsonResponse($response, ['form' => $updatedForm]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
@@ -208,6 +229,8 @@ class FormController
                 'message' => 'Form not found',
             ], 404);
         }
+
+        $this->audit($request, 'form.delete', 'form', $formId);
 
         return $this->jsonResponse($response, [
             'success' => true,
@@ -251,6 +274,7 @@ class FormController
                 ], 400);
             }
 
+            $this->audit($request, 'form.duplicate', 'form', $duplicatedForm['id'] ?? '', ['sourceFormId' => $formId]);
             return $this->jsonResponse($response, ['form' => $duplicatedForm], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
@@ -264,6 +288,95 @@ class FormController
                 'message' => 'An unexpected error occurred',
             ], 500);
         }
+    }
+
+    /**
+     * List form versions
+     * GET /api/forms/{id}/versions
+     */
+    public function listVersions(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['id'];
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+
+        if (!$this->versionService) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Versioning not available'], 501);
+        }
+
+        $queryParams = $request->getQueryParams();
+        $limit = max(1, min((int)($queryParams['limit'] ?? 50), 100));
+        $offset = max(0, (int)($queryParams['offset'] ?? 0));
+
+        $versions = $this->versionService->getVersions($formId, $limit, $offset);
+        return $this->jsonResponse($response, ['versions' => $versions]);
+    }
+
+    /**
+     * Get a specific form version
+     * GET /api/forms/{id}/versions/{version}
+     */
+    public function getVersion(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['id'];
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+
+        if (!$this->versionService) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Versioning not available'], 501);
+        }
+
+        $version = (int)$args['version'];
+        $versionData = $this->versionService->getVersion($formId, $version);
+        if (!$versionData) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Version not found'], 404);
+        }
+
+        return $this->jsonResponse($response, ['version' => $versionData]);
+    }
+
+    /**
+     * Restore a form to a specific version
+     * POST /api/forms/{id}/versions/{version}/restore
+     */
+    public function restoreVersion(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['id'];
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+
+        if (!$this->versionService) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Versioning not available'], 501);
+        }
+
+        $version = (int)$args['version'];
+        $userId = $request->getAttribute('userId');
+        $restoredForm = $this->versionService->restoreVersion($formId, $version, $userId);
+
+        if (!$restoredForm) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Version not found'], 404);
+        }
+
+        $this->audit($request, 'form.update', 'form', $formId, ['restoredFromVersion' => $version]);
+
+        return $this->jsonResponse($response, ['form' => $restoredForm]);
+    }
+
+    /**
+     * Log an audit event (silently fails if audit service unavailable)
+     */
+    private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $userId = $request->getAttribute('userId');
+        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 
     /**

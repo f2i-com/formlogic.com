@@ -76,6 +76,20 @@ export default function FormBuilder() {
 
   const form = formId ? getForm(formId) : undefined;
 
+  // Track latest form for cleanup ref (avoids stale closure in unmount effect)
+  const formRef = useRef(form);
+  useEffect(() => { formRef.current = form; }, [form]);
+
+  // Clean up empty/untouched forms when navigating away
+  useEffect(() => {
+    return () => {
+      const f = formRef.current;
+      if (f && f.fields.length === 0 && f.title === 'Untitled Form' && !f.description && !f.logicScript) {
+        useFormStore.getState().deleteForm(f.id);
+      }
+    };
+  }, []);
+
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {

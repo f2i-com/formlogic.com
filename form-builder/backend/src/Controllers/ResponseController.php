@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ScriptRejection;
+use FormLogic\Services\AuditService;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -21,14 +22,16 @@ class ResponseController
     private SQLiteConnection $sqlite;
     private IpResolver $ipResolver;
     private LoggerInterface $logger;
+    private ?AuditService $auditService;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
         $this->sqlite = $sqlite;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
+        $this->auditService = $auditService;
     }
 
     /**
@@ -176,6 +179,7 @@ class ResponseController
                 ], 422);
             }
 
+            $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId]);
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
@@ -459,6 +463,8 @@ class ResponseController
             ], 404);
         }
 
+        $this->audit($request, 'response.delete', 'response', $responseId, ['formId' => $formId]);
+
         return $this->jsonResponse($response, [
             'success' => true,
             'message' => 'Response deleted successfully',
@@ -511,6 +517,8 @@ class ResponseController
         }
 
         $csv = $this->responseService->exportResponses($formId, $form['fields']);
+
+        $this->audit($request, 'response.export', 'form', $formId, ['format' => 'csv']);
 
         $response->getBody()->write($csv);
 
@@ -566,6 +574,14 @@ class ResponseController
                 'message' => 'An unexpected error occurred',
             ], 500);
         }
+    }
+
+    private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $userId = $request->getAttribute('userId');
+        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 
     /**

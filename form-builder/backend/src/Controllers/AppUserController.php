@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AuditService;
 use FormLogic\Constants\AppPermissions;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -14,11 +15,13 @@ class AppUserController
 {
     private AppUserService $appUserService;
     private AppService $appService;
+    private ?AuditService $auditService;
 
-    public function __construct(AppUserService $appUserService, AppService $appService)
+    public function __construct(AppUserService $appUserService, AppService $appService, ?AuditService $auditService = null)
     {
         $this->appUserService = $appUserService;
         $this->appService = $appService;
+        $this->auditService = $auditService;
     }
 
     private function requireAuth(Request $request): ?string
@@ -69,6 +72,7 @@ class AppUserController
 
         try {
             $role = $this->appUserService->createRole($appId, $data);
+            $this->audit($request, 'role.create', 'role', $role['id'] ?? '', ['appId' => $appId]);
             return $this->jsonResponse($response, ['role' => $role], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -95,6 +99,7 @@ class AppUserController
 
         try {
             $this->appUserService->updateRole($args['roleId'], $data);
+            $this->audit($request, 'role.update', 'role', $args['roleId'], ['appId' => $appId]);
             $roles = $this->appUserService->getRoles($appId);
             return $this->jsonResponse($response, ['roles' => $roles]);
         } catch (\Exception $e) {
@@ -120,6 +125,7 @@ class AppUserController
 
         try {
             $this->appUserService->deleteRole($args['roleId']);
+            $this->audit($request, 'role.delete', 'role', $args['roleId'], ['appId' => $appId]);
             return $this->jsonResponse($response, ['success' => true, 'message' => 'Role deleted']);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -171,6 +177,7 @@ class AppUserController
 
         try {
             $this->appUserService->setRolePermissions($args['roleId'], $data['permissions']);
+            $this->audit($request, 'permission.update', 'role', $args['roleId'], ['appId' => $appId]);
             $permissions = $this->appUserService->getRolePermissions($args['roleId']);
             return $this->jsonResponse($response, ['permissions' => $permissions]);
         } catch (\Exception $e) {
@@ -245,6 +252,7 @@ class AppUserController
 
         try {
             $this->appUserService->removeAppUser($args['id']);
+            $this->audit($request, 'user.remove', 'app', $appId, ['appUserId' => $args['id']]);
             return $this->jsonResponse($response, ['success' => true, 'message' => 'User removed']);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -296,6 +304,7 @@ class AppUserController
 
         try {
             $invitation = $this->appUserService->createInvitation($appId, $data['email'], $data['roleId'], $userId);
+            $this->audit($request, 'user.invite', 'app', $appId, ['email' => $data['email']]);
             return $this->jsonResponse($response, ['invitation' => $invitation], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -472,6 +481,14 @@ class AppUserController
 
         $this->appUserService->removeGroupMember($args['id'], $args['memberId']);
         return $this->jsonResponse($response, ['success' => true]);
+    }
+
+    private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $userId = $request->getAttribute('userId');
+        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

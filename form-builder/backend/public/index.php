@@ -31,9 +31,13 @@ use FormLogic\Services\DocumentConverter;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppResponseService;
+use FormLogic\Services\WebhookService;
+use FormLogic\Services\FormVersionService;
+use FormLogic\Services\AuditService;
 use FormLogic\Controllers\AppController;
 use FormLogic\Controllers\AppUserController;
 use FormLogic\Controllers\AppPublicController;
+use FormLogic\Controllers\WebhookController;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -100,10 +104,35 @@ $container->set(AuthService::class, function (Container $c) {
     );
 });
 
+// Register webhook service (early, used by FormService and ResponseService)
+$container->set(WebhookService::class, function (Container $c) {
+    return new WebhookService(
+        $c->get(MySQLConnection::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
+// Register audit service
+$container->set(AuditService::class, function (Container $c) {
+    return new AuditService(
+        $c->get(MySQLConnection::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
 $container->set(FormService::class, function (Container $c) {
     return new FormService(
         $c->get(MySQLConnection::class),
-        $c->get(SQLiteConnection::class)
+        $c->get(SQLiteConnection::class),
+        $c->get(WebhookService::class)
+    );
+});
+
+// Register form version service
+$container->set(FormVersionService::class, function (Container $c) {
+    return new FormVersionService(
+        $c->get(MySQLConnection::class),
+        $c->get(FormService::class)
     );
 });
 
@@ -121,7 +150,8 @@ $container->set(ResponseService::class, function (Container $c) {
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
         $c->get(FormLogicRuntime::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(WebhookService::class)
     );
 });
 
@@ -132,14 +162,24 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(AuthService::class),
         $settings['cookie'] ?? [],
         $settings['jwt']['expiry'] ?? 86400,
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(AuditService::class)
     );
 });
 
 $container->set(FormController::class, function (Container $c) {
     return new FormController(
         $c->get(FormService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(FormVersionService::class),
+        $c->get(AuditService::class)
+    );
+});
+
+$container->set(WebhookController::class, function (Container $c) {
+    return new WebhookController(
+        $c->get(WebhookService::class),
+        $c->get(FormService::class)
     );
 });
 
@@ -148,7 +188,8 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(ResponseService::class),
         $c->get(FormService::class),
         $c->get(SQLiteConnection::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(AuditService::class)
     );
 });
 
@@ -198,14 +239,16 @@ $container->set(AppResponseService::class, function (Container $c) {
 $container->set(AppController::class, function (Container $c) {
     return new AppController(
         $c->get(AppService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(AuditService::class)
     );
 });
 
 $container->set(AppUserController::class, function (Container $c) {
     return new AppUserController(
         $c->get(AppUserService::class),
-        $c->get(AppService::class)
+        $c->get(AppService::class),
+        $c->get(AuditService::class)
     );
 });
 
@@ -216,6 +259,7 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(AppResponseService::class),
         $c->get(FormService::class),
         $c->get(ResponseService::class),
+        $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class)
     );
 });
@@ -393,6 +437,38 @@ $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container,
         return $container->get(FormController::class)->duplicate($request, $response, $getArgs($request));
     });
 })->add($authRequired);  // Require authentication for form management
+
+// Webhook routes (protected - require authentication + form ownership)
+$app->group('/api/forms/{id}/webhooks', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(WebhookController::class)->listWebhooks($request, $response, $getArgs($request));
+    });
+    $group->post('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(WebhookController::class)->createWebhook($request, $response, $getArgs($request));
+    });
+    $group->put('/{webhookId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(WebhookController::class)->updateWebhook($request, $response, $getArgs($request));
+    });
+    $group->delete('/{webhookId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(WebhookController::class)->deleteWebhook($request, $response, $getArgs($request));
+    });
+    $group->get('/{webhookId}/deliveries', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(WebhookController::class)->getDeliveries($request, $response, $getArgs($request));
+    });
+})->add($authRequired);
+
+// Form version routes (protected)
+$app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(FormController::class)->listVersions($request, $response, $getArgs($request));
+    });
+    $group->get('/{version}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(FormController::class)->getVersion($request, $response, $getArgs($request));
+    });
+    $group->post('/{version}/restore', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(FormController::class)->restoreVersion($request, $response, $getArgs($request));
+    });
+})->add($authRequired);
 
 // Create rate limiter for public endpoints (30 submissions per minute per IP)
 $submissionRateLimiter = new RateLimitMiddleware(30, 60, 'submission');

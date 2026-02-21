@@ -13,11 +13,13 @@ class FormService
 {
     private PDO $mysql;
     private SQLiteConnection $sqlite;
+    private ?WebhookService $webhookService;
 
-    public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite)
+    public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null)
     {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
+        $this->webhookService = $webhookService;
     }
 
     /**
@@ -199,7 +201,14 @@ class FormService
             $this->saveFormFields($formId, $data['fields']);
         }
 
-        return $this->getForm($formId);
+        $updatedForm = $this->getForm($formId);
+
+        // Dispatch webhook when form is published
+        if ($this->webhookService !== null && isset($data['status']) && $data['status'] === 'published' && $existing['status'] !== 'published' && $updatedForm) {
+            $this->webhookService->dispatch($formId, 'form.published', $updatedForm);
+        }
+
+        return $updatedForm;
     }
 
     /**

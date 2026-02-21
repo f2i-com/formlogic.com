@@ -657,6 +657,50 @@ class ApiClient {
   async getAppResponseByIdResolved(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}?resolve=linked`);
   }
+
+  // Webhook endpoints
+  async getWebhooks(formId: string): Promise<ApiResponse<{ webhooks: Webhook[] }>> {
+    return this.request(`/forms/${formId}/webhooks`);
+  }
+
+  async createWebhook(formId: string, data: { url: string; events: string[]; description?: string }): Promise<ApiResponse<{ webhook: Webhook & { secret: string } }>> {
+    return this.request(`/forms/${formId}/webhooks`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateWebhook(formId: string, webhookId: string, data: Partial<{ url: string; events: string[]; is_active: boolean; description: string }>): Promise<ApiResponse<{ webhook: Webhook }>> {
+    return this.request(`/forms/${formId}/webhooks/${webhookId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteWebhook(formId: string, webhookId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/forms/${formId}/webhooks/${webhookId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getWebhookDeliveries(formId: string, webhookId: string): Promise<ApiResponse<{ deliveries: WebhookDelivery[] }>> {
+    return this.request(`/forms/${formId}/webhooks/${webhookId}/deliveries`);
+  }
+
+  // Form version endpoints
+  async getFormVersions(formId: string): Promise<ApiResponse<{ versions: FormVersion[] }>> {
+    return this.request(`/forms/${formId}/versions`);
+  }
+
+  async getFormVersion(formId: string, version: number): Promise<ApiResponse<{ version: FormVersion }>> {
+    return this.request(`/forms/${formId}/versions/${version}`);
+  }
+
+  async restoreFormVersion(formId: string, version: number): Promise<ApiResponse<{ form: Form }>> {
+    return this.request(`/forms/${formId}/versions/${version}/restore`, {
+      method: 'POST',
+    });
+  }
 }
 
 // Types
@@ -749,8 +793,41 @@ interface RelatedRecordGroup {
   count: number;
 }
 
+interface Webhook {
+  id: string;
+  formId: string;
+  userId: string;
+  url: string;
+  events: string[];
+  isActive: boolean;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface WebhookDelivery {
+  id: string;
+  webhookId: string;
+  event: string;
+  responseStatus: number | null;
+  durationMs: number | null;
+  success: boolean;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+interface FormVersion {
+  id: string;
+  formId: string;
+  version: number;
+  changelog: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  data?: Record<string, unknown>;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion };

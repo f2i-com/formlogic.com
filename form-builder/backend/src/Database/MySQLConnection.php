@@ -282,6 +282,63 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Webhooks
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS webhooks (
+                id VARCHAR(36) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                url VARCHAR(2000) NOT NULL,
+                secret VARCHAR(64) NOT NULL,
+                events JSON NOT NULL,
+                is_active TINYINT(1) DEFAULT 1,
+                description VARCHAR(255) DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_webhooks_form_id (form_id),
+                INDEX idx_webhooks_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Webhook delivery logs
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS webhook_deliveries (
+                id VARCHAR(36) PRIMARY KEY,
+                webhook_id VARCHAR(36) NOT NULL,
+                event VARCHAR(50) NOT NULL,
+                payload JSON,
+                response_status INT DEFAULT NULL,
+                response_body TEXT DEFAULT NULL,
+                duration_ms INT DEFAULT NULL,
+                success TINYINT(1) DEFAULT 0,
+                error_message TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE,
+                INDEX idx_deliveries_webhook_id (webhook_id),
+                INDEX idx_deliveries_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Audit log
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) DEFAULT NULL,
+                action VARCHAR(50) NOT NULL,
+                resource_type VARCHAR(50) NOT NULL,
+                resource_id VARCHAR(36) DEFAULT NULL,
+                details JSON DEFAULT NULL,
+                ip_address VARCHAR(45) DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_audit_user_id (user_id),
+                INDEX idx_audit_action (action),
+                INDEX idx_audit_resource (resource_type, resource_id),
+                INDEX idx_audit_created_at (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // App invitations
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS app_invitations (

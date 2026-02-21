@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { X, Settings, Layout, Bell, Shield, Link2 } from 'lucide-react';
+import { X, Settings, Layout, Bell, Shield, Link2, Zap } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Switch } from '../ui/Switch';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
+import { WebhookManager } from './WebhookManager';
 import type { FormSettings } from '../../types/form';
 
 interface FormSettingsModalProps {
@@ -12,11 +13,12 @@ interface FormSettingsModalProps {
   onClose: () => void;
   settings: FormSettings;
   onSave: (settings: FormSettings) => void;
+  formId?: string;
 }
 
-type SettingsTab = 'presentation' | 'behavior' | 'notifications' | 'access';
+type SettingsTab = 'presentation' | 'behavior' | 'notifications' | 'access' | 'webhooks';
 
-export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSettingsModalProps) {
+export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }: FormSettingsModalProps) {
   const [editedSettings, setEditedSettings] = useState<FormSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>('presentation');
 
@@ -46,6 +48,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
     { id: 'behavior' as const, label: 'Behavior', icon: <Settings className="h-4 w-4" /> },
     { id: 'notifications' as const, label: 'Notifications', icon: <Bell className="h-4 w-4" /> },
     { id: 'access' as const, label: 'Access', icon: <Shield className="h-4 w-4" /> },
+    ...(formId ? [{ id: 'webhooks' as const, label: 'Webhooks', icon: <Zap className="h-4 w-4" /> }] : []),
   ];
 
   return (
@@ -292,6 +295,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                 </div>
               )}
             </div>
+          )}
+
+          {/* Webhooks Tab */}
+          {activeTab === 'webhooks' && formId && (
+            <WebhookManager formId={formId} />
           )}
         </div>
 

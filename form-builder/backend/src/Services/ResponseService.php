@@ -15,18 +15,21 @@ class ResponseService
     private PDO $mysql;
     private SQLiteConnection $sqlite;
     private ?FormLogicRuntime $runtime;
+    private ?WebhookService $webhookService;
     private LoggerInterface $logger;
 
     public function __construct(
         MySQLConnection $mysql,
         SQLiteConnection $sqlite,
         ?FormLogicRuntime $runtime = null,
-        ?LoggerInterface $logger = null
+        ?LoggerInterface $logger = null,
+        ?WebhookService $webhookService = null
     ) {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->runtime = $runtime;
         $this->logger = $logger ?? new NullLogger();
+        $this->webhookService = $webhookService;
     }
 
     /**
@@ -80,12 +83,108 @@ class ResponseService
         $stmt->bindValue('offset', (int)$offset, PDO::PARAM_INT);
         $stmt->execute();
 
-        $responses = [];
-        while ($row = $stmt->fetch()) {
-            $responses[] = $this->formatResponse($db, $row);
+        $rows = $stmt->fetchAll();
+        return $this->formatResponses($db, $rows);
+    }
+
+    /**
+     * Get responses by specific IDs (batch fetch)
+     */
+    public function getResponsesByIds(string $formId, array $responseIds): array
+    {
+        if (empty($responseIds) || !$this->sqlite->formDatabaseExists($formId)) {
+            return [];
         }
 
-        return $responses;
+        $db = $this->sqlite->getFormDatabase($formId);
+        $allRows = [];
+
+        // Chunk to stay within SQLite variable limits
+        foreach (array_chunk($responseIds, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $stmt = $db->prepare("SELECT * FROM responses WHERE id IN ($placeholders)");
+            $stmt->execute($chunk);
+            while ($row = $stmt->fetch()) {
+                $allRows[] = $row;
+            }
+        }
+
+        return $this->formatResponses($db, $allRows);
+    }
+
+    /**
+     * Search responses using SQL json_extract for efficient filtering
+     */
+    public function getFormResponsesSearchable(
+        string $formId,
+        string $searchQuery,
+        array $searchFieldIds,
+        array $options = []
+    ): array {
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            return ['responses' => [], 'total' => 0];
+        }
+
+        $db = $this->sqlite->getFormDatabase($formId);
+        $params = [];
+        $conditions = [];
+
+        // Status filter
+        if (!empty($options['status'])) {
+            $conditions[] = "status = :status";
+            $params['status'] = $options['status'];
+        }
+
+        // Build search conditions using json_extract
+        if ($searchQuery !== '') {
+            $searchConditions = [];
+            $searchParam = '%' . $searchQuery . '%';
+
+            if (!empty($searchFieldIds)) {
+                foreach ($searchFieldIds as $i => $fieldId) {
+                    $safeField = '$.' . $fieldId;
+                    $paramName = 'search_' . $i;
+                    $searchConditions[] = "json_extract(answers, :field_$paramName) LIKE :val_$paramName";
+                    $params['field_' . $paramName] = $safeField;
+                    $params['val_' . $paramName] = $searchParam;
+                }
+            } else {
+                // Fallback: search the entire answers JSON string
+                $searchConditions[] = "answers LIKE :search_all";
+                $params['search_all'] = $searchParam;
+            }
+
+            if (!empty($searchConditions)) {
+                $conditions[] = '(' . implode(' OR ', $searchConditions) . ')';
+            }
+        }
+
+        $whereClause = !empty($conditions) ? " WHERE " . implode(' AND ', $conditions) : '';
+
+        // Get total count
+        $countSql = "SELECT COUNT(*) as total FROM responses" . $whereClause;
+        $countStmt = $db->prepare($countSql);
+        foreach ($params as $key => $value) {
+            $countStmt->bindValue($key, $value);
+        }
+        $countStmt->execute();
+        $total = (int)$countStmt->fetch()['total'];
+
+        // Get paginated results
+        $limit = max(1, min((int)($options['limit'] ?? 20), 100));
+        $offset = max(0, (int)($options['offset'] ?? 0));
+
+        $sql = "SELECT * FROM responses" . $whereClause . " ORDER BY submitted_at DESC LIMIT :limit OFFSET :offset";
+        $stmt = $db->prepare($sql);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
+        $stmt->bindValue('limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue('offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $rows = $stmt->fetchAll();
+        return ['responses' => $this->formatResponses($db, $rows), 'total' => $total];
     }
 
     /**
@@ -200,7 +299,14 @@ class ResponseService
         // 7. Update analytics
         $this->updateAnalytics($formId, 'completion');
 
-        return $this->getResponse($formId, $id);
+        $createdResponse = $this->getResponse($formId, $id);
+
+        // 8. Dispatch webhook
+        if ($this->webhookService !== null && $createdResponse) {
+            $this->webhookService->dispatch($formId, 'response.created', $createdResponse);
+        }
+
+        return $createdResponse;
     }
 
     /**
@@ -347,7 +453,14 @@ class ResponseService
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
 
-        return $this->getResponse($formId, $responseId);
+        $updatedResponse = $this->getResponse($formId, $responseId);
+
+        // Dispatch webhook
+        if ($this->webhookService !== null && $updatedResponse) {
+            $this->webhookService->dispatch($formId, 'response.updated', $updatedResponse);
+        }
+
+        return $updatedResponse;
     }
 
     /**
@@ -370,6 +483,11 @@ class ResponseService
         if ($deleted) {
             $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id");
             $mysqlStmt->execute(['id' => $responseId]);
+
+            // Dispatch webhook
+            if ($this->webhookService !== null) {
+                $this->webhookService->dispatch($formId, 'response.deleted', ['id' => $responseId]);
+            }
         }
 
         return $deleted;
@@ -613,52 +731,75 @@ class ResponseService
     }
 
     /**
-     * Format a response row for output
+     * Batch-format multiple response rows (2 queries total instead of 2-per-row)
+     */
+    private function formatResponses(PDO $db, array $rows): array
+    {
+        if (empty($rows)) {
+            return [];
+        }
+
+        $responseIds = array_column($rows, 'id');
+
+        // Batch-load computed fields
+        $computedMap = []; // responseId => [field_name => value]
+        try {
+            foreach (array_chunk($responseIds, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $stmt = $db->prepare("SELECT response_id, field_name, field_value FROM computed WHERE response_id IN ($placeholders)");
+                $stmt->execute($chunk);
+                while ($field = $stmt->fetch()) {
+                    $value = $field['field_value'];
+                    $decoded = json_decode($value, true);
+                    $computedMap[$field['response_id']][$field['field_name']] =
+                        json_last_error() === JSON_ERROR_NONE ? $decoded : $value;
+                }
+            }
+        } catch (\PDOException $e) {
+            $this->logger->warning('Computed fields table not ready', ['exception' => $e->getMessage()]);
+        }
+
+        // Batch-load tags
+        $tagsMap = []; // responseId => [tag, ...]
+        try {
+            foreach (array_chunk($responseIds, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $stmt = $db->prepare("SELECT response_id, tag FROM tags WHERE response_id IN ($placeholders)");
+                $stmt->execute($chunk);
+                while ($tagRow = $stmt->fetch()) {
+                    $tagsMap[$tagRow['response_id']][] = $tagRow['tag'];
+                }
+            }
+        } catch (\PDOException $e) {
+            $this->logger->warning('Tags table not ready', ['exception' => $e->getMessage()]);
+        }
+
+        // Assemble results
+        $responses = [];
+        foreach ($rows as $row) {
+            $responseId = $row['id'];
+            $responses[] = [
+                'id' => $responseId,
+                'answers' => json_decode($row['answers'], true),
+                'status' => $row['status'],
+                'submittedAt' => $row['submitted_at'],
+                'updatedAt' => $row['updated_at'],
+                'metadata' => json_decode($row['metadata'] ?? '{}', true),
+                'computed' => $computedMap[$responseId] ?? [],
+                'tags' => $tagsMap[$responseId] ?? [],
+            ];
+        }
+
+        return $responses;
+    }
+
+    /**
+     * Format a single response row for output (delegates to batch for consistency)
      */
     private function formatResponse(PDO $db, array $row): array
     {
-        $metadata = json_decode($row['metadata'] ?? '{}', true);
-        $responseId = $row['id'];
-
-        // Get computed fields
-        $computed = [];
-        try {
-            $stmt = $db->prepare("SELECT field_name, field_value FROM computed WHERE response_id = :id");
-            $stmt->execute(['id' => $responseId]);
-            while ($field = $stmt->fetch()) {
-                $value = $field['field_value'];
-                // Try to decode JSON values
-                $decoded = json_decode($value, true);
-                $computed[$field['field_name']] = json_last_error() === JSON_ERROR_NONE ? $decoded : $value;
-            }
-        } catch (\PDOException $e) {
-            // Table may not exist yet - log at debug level
-            $this->logger->warning('Computed fields table not ready', ['responseId' => $responseId, 'exception' => $e->getMessage()]);
-        }
-
-        // Get tags
-        $tags = [];
-        try {
-            $stmt = $db->prepare("SELECT tag FROM tags WHERE response_id = :id");
-            $stmt->execute(['id' => $responseId]);
-            while ($tagRow = $stmt->fetch()) {
-                $tags[] = $tagRow['tag'];
-            }
-        } catch (\PDOException $e) {
-            // Table may not exist yet - log at debug level
-            $this->logger->warning('Tags table not ready', ['responseId' => $responseId, 'exception' => $e->getMessage()]);
-        }
-
-        return [
-            'id' => $responseId,
-            'answers' => json_decode($row['answers'], true),
-            'status' => $row['status'],
-            'submittedAt' => $row['submitted_at'],
-            'updatedAt' => $row['updated_at'],
-            'metadata' => $metadata,
-            'computed' => $computed,
-            'tags' => $tags,
-        ];
+        $result = $this->formatResponses($db, [$row]);
+        return $result[0];
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\AppService;
+use FormLogic\Services\AuditService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -14,11 +15,13 @@ class AppController
 {
     private AppService $appService;
     private LoggerInterface $logger;
+    private ?AuditService $auditService;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
+        $this->auditService = $auditService;
     }
 
     private function authorizeAppOwnership(Request $request, string $appId): ?array
@@ -61,6 +64,7 @@ class AppController
 
         try {
             $app = $this->appService->createApp($data, $userId);
+            $this->audit($request, 'app.create', 'app', $app['id'] ?? '');
             return $this->jsonResponse($response, ['app' => $app], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -91,6 +95,7 @@ class AppController
 
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
+            $this->audit($request, 'app.update', 'app', $args['id']);
             return $this->jsonResponse($response, ['app' => $updatedApp]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -108,6 +113,7 @@ class AppController
         }
 
         $this->appService->deleteApp($args['id']);
+        $this->audit($request, 'app.delete', 'app', $args['id']);
         return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully']);
     }
 
@@ -188,6 +194,14 @@ class AppController
         $this->appService->reorderAppForms($args['id'], $data['formIds']);
         $forms = $this->appService->getAppForms($args['id']);
         return $this->jsonResponse($response, ['forms' => $forms]);
+    }
+
+    private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $userId = $request->getAttribute('userId');
+        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

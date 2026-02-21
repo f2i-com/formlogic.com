@@ -31,7 +31,18 @@ export function AppDeploySettings() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(appUrl);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(appUrl);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = appUrl;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {

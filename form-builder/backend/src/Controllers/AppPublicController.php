@@ -9,10 +9,12 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
+use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Constants\AppPermissions;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use PDO;
 
 class AppPublicController
 {
@@ -21,6 +23,7 @@ class AppPublicController
     private AppResponseService $appResponseService;
     private FormService $formService;
     private ResponseService $responseService;
+    private PDO $mysql;
     private SQLiteConnection $sqlite;
 
     public function __construct(
@@ -29,6 +32,7 @@ class AppPublicController
         AppResponseService $appResponseService,
         FormService $formService,
         ResponseService $responseService,
+        MySQLConnection $mysql,
         SQLiteConnection $sqlite
     ) {
         $this->appService = $appService;
@@ -36,6 +40,7 @@ class AppPublicController
         $this->appResponseService = $appResponseService;
         $this->formService = $formService;
         $this->responseService = $responseService;
+        $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
     }
 
@@ -434,18 +439,43 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Target form not found'], 404);
         }
 
-        // Fetch responses from target form
+        // Use SQL-level search when a query is provided
         $scope = $canViewAll ? 'all' : 'own';
-        $allResponses = $this->appResponseService->getResponses($targetFormId, $scope, $userId, [
-            'limit' => 500, // reasonable upper bound for lookup
-        ]);
 
-        // Build display labels and filter by search query
+        if ($searchQuery !== '') {
+            // Push search to SQL via json_extract
+            $effectiveSearchFields = !empty($searchFieldIds) ? $searchFieldIds : [];
+            $result = $this->responseService->getFormResponsesSearchable(
+                $targetFormId,
+                $searchQuery,
+                $effectiveSearchFields,
+                ['limit' => $limit, 'offset' => $offset]
+            );
+            $matchedResponses = $result['responses'];
+            $totalCount = $result['total'];
+
+            // Filter by scope if needed
+            if ($scope === 'own') {
+                $matchedResponses = array_values(array_filter($matchedResponses, function ($r) use ($userId) {
+                    return ($r['metadata']['submittedByUserId'] ?? null) === $userId;
+                }));
+                $totalCount = count($matchedResponses);
+            }
+        } else {
+            // No search — use existing pagination at SQL level
+            $matchedResponses = $this->appResponseService->getResponses($targetFormId, $scope, $userId, [
+                'limit' => $limit,
+                'offset' => $offset,
+            ]);
+            // Get total count for pagination
+            $totalCount = $this->responseService->getResponseCount($targetFormId);
+        }
+
+        // Build display labels for results
         $records = [];
-        foreach ($allResponses as $resp) {
+        foreach ($matchedResponses as $resp) {
             $answers = $resp['answers'] ?? [];
 
-            // Build display string from display fields
             $displayParts = [];
             if (!empty($displayFieldIds)) {
                 foreach ($displayFieldIds as $fieldId) {
@@ -455,7 +485,6 @@ class AppPublicController
                     }
                 }
             } else {
-                // Default: use first 2 text fields
                 $count = 0;
                 foreach ($targetForm['fields'] as $field) {
                     if ($count >= 2) break;
@@ -469,38 +498,6 @@ class AppPublicController
                 }
             }
 
-            $display = implode(' - ', $displayParts) ?: ('Record ' . substr($resp['id'], 0, 8));
-
-            // Search filter
-            if ($searchQuery !== '') {
-                $matchFound = mb_stripos($display, $searchQuery) !== false;
-
-                if (!$matchFound) {
-                    if (!empty($searchFieldIds)) {
-                        // Search only in the configured search fields
-                        foreach ($searchFieldIds as $sfid) {
-                            $val = $answers[$sfid] ?? null;
-                            if ($val !== null && !is_array($val) && mb_stripos((string)$val, $searchQuery) !== false) {
-                                $matchFound = true;
-                                break;
-                            }
-                        }
-                    } else {
-                        // Fallback: search across all answer values
-                        foreach ($answers as $val) {
-                            if ($val !== null && !is_array($val) && mb_stripos((string)$val, $searchQuery) !== false) {
-                                $matchFound = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if (!$matchFound) {
-                    continue;
-                }
-            }
-
             $fieldData = [];
             foreach ($displayFieldIds as $fid) {
                 $fieldData[$fid] = $answers[$fid] ?? null;
@@ -508,15 +505,10 @@ class AppPublicController
 
             $records[] = [
                 'id' => $resp['id'],
-                'display' => $display,
+                'display' => implode(' - ', $displayParts) ?: ('Record ' . substr($resp['id'], 0, 8)),
                 'fields' => $fieldData,
             ];
         }
-
-        $totalCount = count($records);
-
-        // Apply pagination
-        $records = array_slice($records, $offset, $limit);
 
         return $this->jsonResponse($response, [
             'records' => array_values($records),
@@ -551,82 +543,96 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
-        // Discover inverse relations: scan app forms for linked_record fields pointing at this form
+        // Use response_links table for efficient inverse lookup
+        $stmt = $this->mysql->prepare(
+            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :target_form_id AND target_response_id = :target_response_id"
+        );
+        $stmt->execute(['target_form_id' => $formId, 'target_response_id' => $responseId]);
+        $links = $stmt->fetchAll();
+
+        if (empty($links)) {
+            return $this->jsonResponse($response, ['related' => []]);
+        }
+
+        // Group links by source form
+        $linksByForm = [];
+        foreach ($links as $link) {
+            $linksByForm[$link['source_form_id']][] = $link;
+        }
+
+        // Build app forms lookup for display names
         $appForms = $this->appService->getAppForms($app['id']);
+        $appFormMap = [];
+        foreach ($appForms as $af) {
+            $appFormMap[$af['formId']] = $af;
+        }
+
         $related = [];
+        foreach ($linksByForm as $sourceFormId => $formLinks) {
+            // Only include forms that belong to this app
+            if (!isset($appFormMap[$sourceFormId])) continue;
 
-        foreach ($appForms as $appForm) {
-            $otherFormId = $appForm['formId'];
-            if ($otherFormId === $formId) continue;
+            // Check if user has permission to view the source form's responses
+            $canViewOther = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $sourceFormId)
+                || $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $sourceFormId);
+            if (!$canViewOther) continue;
 
-            $otherForm = $this->formService->getForm($otherFormId);
-            if (!$otherForm) continue;
+            $sourceForm = $this->formService->getForm($sourceFormId);
+            if (!$sourceForm) continue;
 
-            foreach ($otherForm['fields'] as $field) {
-                if ($field['type'] !== 'linked_record') continue;
-                $targetId = $field['properties']['targetFormId'] ?? null;
-                if ($targetId !== $formId) continue;
+            // Get the field info for display
+            $fieldId = $formLinks[0]['field_id'];
+            $fieldLabel = $fieldId;
+            $displayFieldIds = [];
+            foreach ($sourceForm['fields'] as $f) {
+                if ($f['id'] === $fieldId) {
+                    $fieldLabel = $f['label'] ?? $fieldId;
+                    $displayFieldIds = $f['properties']['displayFieldIds'] ?? [];
+                    break;
+                }
+            }
 
-                // This form has a linked_record field pointing at our form
-                // Check if user has permission to view the other form's responses
-                $canViewOther = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $otherFormId)
-                    || $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $otherFormId);
-                if (!$canViewOther) continue;
+            // Batch-fetch source responses
+            $sourceResponseIds = array_unique(array_column($formLinks, 'source_response_id'));
+            $sourceResponses = $this->responseService->getResponsesByIds($sourceFormId, $sourceResponseIds);
 
-                // Search responses of otherForm for ones that reference $responseId
-                $otherResponses = $this->appResponseService->getResponses($otherFormId, 'all', $userId, ['limit' => 500]);
-                $matchingRecords = [];
-
-                foreach ($otherResponses as $otherResp) {
-                    $answers = $otherResp['answers'] ?? [];
-                    $linkedVal = $answers[$field['id']] ?? null;
-
-                    $matches = false;
-                    if (is_array($linkedVal)) {
-                        $matches = in_array($responseId, $linkedVal);
-                    } else {
-                        $matches = $linkedVal === $responseId;
+            $matchingRecords = [];
+            foreach ($sourceResponses as $sr) {
+                $answers = $sr['answers'] ?? [];
+                $parts = [];
+                if (!empty($displayFieldIds)) {
+                    foreach ($displayFieldIds as $dfid) {
+                        $val = $answers[$dfid] ?? null;
+                        if ($val !== null) $parts[] = is_array($val) ? implode(', ', $val) : (string)$val;
                     }
-
-                    if ($matches) {
-                        // Build display
-                        $displayFieldIds = $field['properties']['displayFieldIds'] ?? [];
-                        $parts = [];
-                        if (!empty($displayFieldIds)) {
-                            foreach ($displayFieldIds as $dfid) {
-                                $val = $answers[$dfid] ?? null;
-                                if ($val !== null) $parts[] = is_array($val) ? implode(', ', $val) : (string)$val;
-                            }
+                }
+                if (empty($parts)) {
+                    $count = 0;
+                    foreach ($sourceForm['fields'] as $f) {
+                        if ($count >= 2) break;
+                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'number'])) {
+                            $val = $answers[$f['id']] ?? null;
+                            if ($val !== null) { $parts[] = (string)$val; $count++; }
                         }
-                        // Use first text fields as fallback
-                        if (empty($parts)) {
-                            $count = 0;
-                            foreach ($otherForm['fields'] as $f) {
-                                if ($count >= 2) break;
-                                if (in_array($f['type'], ['short_text', 'long_text', 'email', 'number'])) {
-                                    $val = $answers[$f['id']] ?? null;
-                                    if ($val !== null) { $parts[] = (string)$val; $count++; }
-                                }
-                            }
-                        }
-
-                        $matchingRecords[] = [
-                            'id' => $otherResp['id'],
-                            'display' => implode(' - ', $parts) ?: ('Record ' . substr($otherResp['id'], 0, 8)),
-                            'submittedAt' => $otherResp['submittedAt'] ?? '',
-                        ];
                     }
                 }
 
-                if (!empty($matchingRecords)) {
-                    $related[$otherFormId] = [
-                        'formId' => $otherFormId,
-                        'displayName' => $appForm['displayName'] ?? $otherForm['title'],
-                        'fieldLabel' => $field['label'],
-                        'records' => $matchingRecords,
-                        'count' => count($matchingRecords),
-                    ];
-                }
+                $matchingRecords[] = [
+                    'id' => $sr['id'],
+                    'display' => implode(' - ', $parts) ?: ('Record ' . substr($sr['id'], 0, 8)),
+                    'submittedAt' => $sr['submittedAt'] ?? '',
+                ];
+            }
+
+            if (!empty($matchingRecords)) {
+                $appForm = $appFormMap[$sourceFormId];
+                $related[$sourceFormId] = [
+                    'formId' => $sourceFormId,
+                    'displayName' => $appForm['displayName'] ?? $sourceForm['title'],
+                    'fieldLabel' => $fieldLabel,
+                    'records' => $matchingRecords,
+                    'count' => count($matchingRecords),
+                ];
             }
         }
 
@@ -701,11 +707,10 @@ class AppPublicController
                 }
             }
 
-            $targetResponses = $this->appResponseService->getResponses($targetFormId, 'all', $userId, ['limit' => 500]);
+            $targetResponses = $this->responseService->getResponsesByIds($targetFormId, array_keys($idMap));
             $resolvedCache[$targetFormId] = [];
 
             foreach ($targetResponses as $tr) {
-                if (!isset($idMap[$tr['id']])) continue;
 
                 $answers = $tr['answers'] ?? [];
                 $parts = [];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\AuthService;
+use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Middleware\CsrfMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -19,12 +20,14 @@ class AuthController
     private array $cookieConfig;
     private int $jwtExpiry;
     private LoggerInterface $logger;
+    private ?AuditService $auditService;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
+        $this->auditService = $auditService;
         $this->cookieConfig = array_merge([
             'name' => 'formlogic_auth',
             'httpOnly' => true,
@@ -75,6 +78,8 @@ class AuthController
             // Set HttpOnly cookie with the token
             $response = $this->setAuthCookie($response, $result['token']);
 
+            $this->audit($request, 'auth.register', 'user', $result['user']['id'] ?? null);
+
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
                 'user' => $result['user'],
@@ -117,6 +122,8 @@ class AuthController
 
             // Set HttpOnly cookie with the token
             $response = $this->setAuthCookie($response, $result['token']);
+
+            $this->audit($request, 'auth.login', 'user', $result['user']['id'] ?? null);
 
             // Return user data without token (token is in cookie)
             return $this->jsonResponse($response, [
@@ -216,6 +223,8 @@ class AuthController
      */
     public function logout(Request $request, Response $response): Response
     {
+        $this->audit($request, 'auth.logout', 'user', $request->getAttribute('userId'));
+
         // Clear the auth cookie by setting it to expire in the past
         $response = $this->clearAuthCookie($response);
 
@@ -330,6 +339,13 @@ class AuthController
         }
 
         return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+    }
+
+    private function audit(Request $request, string $action, string $resourceType, ?string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $ip = $this->getClientIp($request);
+        $this->auditService->log($action, $resourceType, $resourceId, $request->getAttribute('userId'), $ip, $details);
     }
 
     /**

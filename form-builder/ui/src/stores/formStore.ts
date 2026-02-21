@@ -130,6 +130,21 @@ export const useFormStore = create<FormState>()(
       }
     };
 
+    // Remove empty/untouched forms (no fields, default title, no content)
+    const purgeEmptyForms = () => {
+      const { forms, storageMode } = get();
+      const emptyIds = forms
+        .filter(f => f.fields.length === 0 && f.title === 'Untitled Form' && !f.description && !f.logicScript)
+        .map(f => f.id);
+      if (emptyIds.length === 0) return;
+      set(s => ({ forms: s.forms.filter(f => !emptyIds.includes(f.id)) }));
+      if (storageMode === 'api') {
+        for (const id of emptyIds) {
+          api.deleteForm(id).catch(() => {});
+        }
+      }
+    };
+
     return ({
       forms: [],
       activeFormId: null,
@@ -159,6 +174,7 @@ export const useFormStore = create<FormState>()(
                 isLoading: false,
                 isInitialized: true,
               });
+              purgeEmptyForms();
               return;
             }
           }
@@ -174,6 +190,7 @@ export const useFormStore = create<FormState>()(
             isInitialized: true,
           });
         }
+        purgeEmptyForms();
       },
 
       setStorageMode: (mode: StorageMode) => {

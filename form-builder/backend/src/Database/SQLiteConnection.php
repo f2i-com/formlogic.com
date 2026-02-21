@@ -269,6 +269,11 @@ class SQLiteConnection
             )
         ");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
+
+        // Compound indexes for common query patterns
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_status_submitted ON responses(status, submitted_at)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response_field ON computed(response_id, field_name)");
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response_tag ON tags(response_id, tag)");
     }
 
     /**
