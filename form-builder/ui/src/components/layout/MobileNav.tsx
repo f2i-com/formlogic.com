@@ -49,6 +49,7 @@ export function MobileNav() {
             <NavLink
               key={item.path}
               to={item.path!}
+              end={item.path === '/'}
               className={({ isActive }) =>
                 cn(
                   'flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl',
