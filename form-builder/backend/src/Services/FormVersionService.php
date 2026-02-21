@@ -28,11 +28,6 @@ class FormVersionService
             throw new \RuntimeException('Form not found');
         }
 
-        // Get next version number
-        $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id");
-        $stmt->execute(['form_id' => $formId]);
-        $nextVersion = (int)$stmt->fetch()['next_version'];
-
         // Snapshot form data
         $data = [
             'title' => $form['title'],
@@ -43,19 +38,35 @@ class FormVersionService
             'logicScript' => $form['logicScript'] ?? null,
         ];
 
+        // Retry loop to handle concurrent version creation race condition
         $id = $this->generateUuid();
-        $stmt = $this->mysql->prepare("
-            INSERT INTO form_versions (id, form_id, version, data, created_by, changelog)
-            VALUES (:id, :form_id, :version, :data, :created_by, :changelog)
-        ");
-        $stmt->execute([
-            'id' => $id,
-            'form_id' => $formId,
-            'version' => $nextVersion,
-            'data' => json_encode($data),
-            'created_by' => $userId,
-            'changelog' => $changelog,
-        ]);
+        $maxRetries = 3;
+        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+            $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id");
+            $stmt->execute(['form_id' => $formId]);
+            $nextVersion = (int)$stmt->fetch()['next_version'];
+
+            try {
+                $stmt = $this->mysql->prepare("
+                    INSERT INTO form_versions (id, form_id, version, data, created_by, changelog)
+                    VALUES (:id, :form_id, :version, :data, :created_by, :changelog)
+                ");
+                $stmt->execute([
+                    'id' => $id,
+                    'form_id' => $formId,
+                    'version' => $nextVersion,
+                    'data' => json_encode($data),
+                    'created_by' => $userId,
+                    'changelog' => $changelog,
+                ]);
+                break; // Success
+            } catch (\PDOException $e) {
+                if ($attempt >= $maxRetries - 1 || strpos($e->getMessage(), 'Duplicate') === false) {
+                    throw $e;
+                }
+                // Duplicate key — retry with new version number
+            }
+        }
 
         return [
             'id' => $id,

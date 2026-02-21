@@ -300,15 +300,21 @@ class ResponseService
             VALUES (:id, :form_id, :status, :submitted_at, :ip_address, :user_agent, :completion_time)
         ");
 
-        $mysqlStmt->execute([
-            'id' => $id,
-            'form_id' => $formId,
-            'status' => $status,
-            'submitted_at' => $now,
-            'ip_address' => $data['ipAddress'] ?? null,
-            'user_agent' => $data['userAgent'] ?? null,
-            'completion_time' => $data['completionTime'] ?? null,
-        ]);
+        try {
+            $mysqlStmt->execute([
+                'id' => $id,
+                'form_id' => $formId,
+                'status' => $status,
+                'submitted_at' => $now,
+                'ip_address' => $data['ipAddress'] ?? null,
+                'user_agent' => $data['userAgent'] ?? null,
+                'completion_time' => $data['completionTime'] ?? null,
+            ]);
+        } catch (\Exception $mysqlErr) {
+            // Compensating delete on SQLite if MySQL insert fails
+            $db->exec("DELETE FROM responses WHERE id = " . $db->quote($id));
+            throw $mysqlErr;
+        }
 
         // 7. Update analytics
         $this->updateAnalytics($formId, 'completion');

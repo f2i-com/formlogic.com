@@ -552,6 +552,13 @@ function FieldResponse({
           </div>
         );
 
+      case 'linked_record':
+        return (
+          <p className="opacity-50 text-sm">
+            Linked record fields are available in published apps only.
+          </p>
+        );
+
       default:
         return <p className="opacity-50">Field type not supported</p>;
     }

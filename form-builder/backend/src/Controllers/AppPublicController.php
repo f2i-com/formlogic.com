@@ -86,8 +86,14 @@ class AppPublicController
             }
         }
 
+        // Strip internal fields from app data for non-owner users
+        $safeApp = $app;
+        if ($userId !== ($app['ownerId'] ?? null)) {
+            unset($safeApp['ownerId']);
+        }
+
         return $this->jsonResponse($response, [
-            'app' => $app,
+            'app' => $safeApp,
             'forms' => $runtimeForms,
             'user' => $appUser,
             'permissions' => $permissions,
@@ -141,6 +147,9 @@ class AppPublicController
         if (!$form) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
         }
+
+        // Strip sensitive fields from runtime response
+        unset($form['logicScript'], $form['logicPrompt']);
 
         return $this->jsonResponse($response, ['form' => $form]);
     }

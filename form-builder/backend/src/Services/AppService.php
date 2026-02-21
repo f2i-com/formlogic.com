@@ -375,7 +375,10 @@ class AppService
             $slug = 'app';
         }
 
-        // Check uniqueness
+        // Add short random suffix to prevent TOCTOU race on concurrent creation
+        $slug .= '-' . substr(bin2hex(random_bytes(3)), 0, 6);
+
+        // Check uniqueness (still needed for edge cases)
         $baseSlug = $slug;
         $counter = 1;
         while ($this->slugExists($slug)) {
