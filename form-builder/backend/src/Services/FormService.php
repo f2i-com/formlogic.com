@@ -184,10 +184,27 @@ class FormService
         }
 
         if (isset($data['status'])) {
-            $updates[] = "status = :status";
-            $params['status'] = $data['status'];
+            // Validate status transition
+            $validTransitions = [
+                'draft' => ['published', 'archived'],
+                'published' => ['draft', 'archived'],
+                'archived' => ['draft'],
+            ];
+            $currentStatus = $existing['status'] ?? 'draft';
+            $newStatus = $data['status'];
+            if ($newStatus !== $currentStatus) {
+                $allowed = $validTransitions[$currentStatus] ?? [];
+                if (!in_array($newStatus, $allowed, true)) {
+                    throw new \InvalidArgumentException(
+                        "Cannot transition from '{$currentStatus}' to '{$newStatus}'"
+                    );
+                }
+            }
 
-            if ($data['status'] === 'published' && $existing['status'] !== 'published') {
+            $updates[] = "status = :status";
+            $params['status'] = $newStatus;
+
+            if ($newStatus === 'published' && $currentStatus !== 'published') {
                 $updates[] = "published_at = :published_at";
                 $params['published_at'] = date('Y-m-d H:i:s');
             }
@@ -321,6 +338,12 @@ class FormService
      */
     private function saveFormFields(string $formId, array $fields): void
     {
+        // Validate field ID uniqueness
+        $fieldIds = array_filter(array_column($fields, 'id'));
+        if (count($fieldIds) !== count(array_unique($fieldIds))) {
+            throw new \InvalidArgumentException('Field IDs must be unique within a form');
+        }
+
         $db = $this->sqlite->getFormDatabase($formId);
 
         // Clear existing fields

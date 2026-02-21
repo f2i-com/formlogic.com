@@ -690,15 +690,15 @@ VITE_API_URL=http://localhost:8080/api
 ## Implementation Notes
 
 ### Quick Wins (can be done in a single PR each)
-- 1.6 (redirect URL validation) — 5 min
-- 1.10 (slug format validation) — 5 min
-- 1.11 (CSRF cookie parsing) — 5 min
-- 1.12 (timing attack fix) — 5 min
-- 2.13 (field ID uniqueness) — 10 min
-- 2.11 (status transition validation) — 15 min
-- 4.5 (ARIA live region) — 5 min
-- 4.10 (theme color validation) — 10 min
-- 5.8 (frontend .env.example) — 2 min
+- [x] 1.6 (redirect URL validation) — DONE
+- [x] 1.10 (slug format validation) — DONE
+- [x] 1.11 (CSRF cookie parsing) — DONE (already correct)
+- [x] 1.12 (timing attack fix) — DONE
+- [x] 2.13 (field ID uniqueness) — DONE
+- [x] 2.11 (status transition validation) — DONE
+- [x] 4.5 (ARIA live region) — DONE
+- [x] 4.10 (theme color validation) — DONE
+- [x] 5.8 (frontend .env.example) — DONE (already existed)
 
 ### Requires Careful Testing
 - 1.3 (dual-database consistency) — affects core data flow

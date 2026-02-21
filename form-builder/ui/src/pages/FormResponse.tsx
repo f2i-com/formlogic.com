@@ -719,13 +719,20 @@ export default function FormResponse() {
         updateForm(form.id, { responseCount: form.responseCount + 1 });
         setIsSubmitted(true);
 
-        // Handle redirectUrl (validate to prevent javascript: XSS)
+        // Handle redirectUrl (strict URL validation to prevent XSS)
         const redirectUrl = form.settings?.redirectUrl;
-        if (redirectUrl && /^https?:\/\//i.test(redirectUrl)) {
-          setIsRedirecting(true);
-          setTimeout(() => {
-            window.location.href = redirectUrl;
-          }, 2000);
+        if (redirectUrl) {
+          try {
+            const url = new URL(redirectUrl);
+            if (['http:', 'https:'].includes(url.protocol)) {
+              setIsRedirecting(true);
+              setTimeout(() => {
+                window.location.href = url.toString();
+              }, 2000);
+            }
+          } catch {
+            // Invalid URL — don't redirect
+          }
         }
       }
     } catch (error) {
@@ -825,7 +832,7 @@ export default function FormResponse() {
 
             {/* Inline validation error */}
             {fieldError && (
-              <p className="mt-3 text-red-500 text-sm">{fieldError}</p>
+              <p role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
             )}
 
             {/* OK Button */}
@@ -845,7 +852,7 @@ export default function FormResponse() {
 
             {/* Submission error */}
             {submitError && (
-              <p className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
+              <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
             )}
           </motion.div>
         </AnimatePresence>

@@ -158,6 +158,8 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
 
   if (!isOpen) return null;
 
+  const isValidColor = (color: string) => /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/.test(color);
+
   const updateTheme = (updates: Partial<FormTheme>) => {
     setEditedTheme((prev) => ({ ...prev, ...updates }));
     setActivePreset(null); // Clear active preset when manually changing
@@ -177,6 +179,15 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   };
 
   const handleSave = () => {
+    // Validate color values before saving
+    const colorKeys = ['primaryColor', 'backgroundColor', 'textColor'] as const;
+    for (const key of colorKeys) {
+      if (editedTheme[key] && !isValidColor(editedTheme[key])) {
+        toast.error('Invalid color', `${key} must be a valid hex color (e.g., #6366f1)`);
+        return;
+      }
+    }
+
     onSave(editedTheme);
     toast.success('Theme saved', 'Your theme changes have been applied');
     onClose();

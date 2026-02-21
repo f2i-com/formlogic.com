@@ -63,7 +63,9 @@ class CsrfMiddleware implements MiddlewareInterface
         $csrfCookie = $cookies[$this->cookieName] ?? '';
         $csrfHeader = $request->getHeaderLine($this->headerName);
 
-        if (empty($csrfCookie) || empty($csrfHeader) || !hash_equals($csrfCookie, $csrfHeader)) {
+        // Always use hash_equals to prevent timing attacks (avoid early empty() checks
+        // that leak whether the token is missing vs. invalid)
+        if (!hash_equals($csrfCookie ?: "\0", $csrfHeader ?: '')) {
             return $this->forbidden('CSRF token validation failed');
         }
 

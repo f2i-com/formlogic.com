@@ -45,9 +45,20 @@ class AppPublicController
         $this->sqlite = $sqlite;
     }
 
+    /**
+     * Validate app slug format to avoid unnecessary DB queries.
+     */
+    private function validateSlug(string $slug): bool
+    {
+        return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug);
+    }
+
     public function getApp(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $app = $this->appService->getAppBySlug($slug);
 
         if (!$app || $app['status'] !== 'published') {
@@ -104,6 +115,9 @@ class AppPublicController
     public function getMyPermissions(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $app = $this->appService->getAppBySlug($slug);
 
         if (!$app || $app['status'] !== 'published') {
@@ -122,6 +136,9 @@ class AppPublicController
     public function getForm(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
@@ -158,6 +175,9 @@ class AppPublicController
     public function createResponse(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
@@ -202,6 +222,9 @@ class AppPublicController
     public function listResponses(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
@@ -249,6 +272,9 @@ class AppPublicController
     public function getResponseById(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
@@ -296,6 +322,9 @@ class AppPublicController
     public function updateResponseById(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
@@ -330,6 +359,9 @@ class AppPublicController
     public function deleteResponseById(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
@@ -362,6 +394,9 @@ class AppPublicController
     public function manifest(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $app = $this->appService->getAppBySlug($slug);
 
         if (!$app) {
@@ -405,6 +440,9 @@ class AppPublicController
     public function lookupRecords(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $app = $this->appService->getAppBySlug($slug);
 
@@ -533,6 +571,9 @@ class AppPublicController
     public function getRelatedRecords(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
         $formId = $args['formId'];
         $responseId = $args['id'];
         $app = $this->appService->getAppBySlug($slug);
