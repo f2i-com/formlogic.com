@@ -7,14 +7,18 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\AppService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class AppController
 {
     private AppService $appService;
+    private LoggerInterface $logger;
 
-    public function __construct(AppService $appService)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null)
     {
         $this->appService = $appService;
+        $this->logger = $logger ?? new NullLogger();
     }
 
     private function authorizeAppOwnership(Request $request, string $appId): ?array
@@ -61,7 +65,7 @@ class AppController
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
-            error_log('App creation error: ' . $e->getMessage());
+            $this->logger->error('App creation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
     }
@@ -91,7 +95,7 @@ class AppController
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
-            error_log('App update error: ' . $e->getMessage());
+            $this->logger->error('App update error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
     }

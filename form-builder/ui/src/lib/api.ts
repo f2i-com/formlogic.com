@@ -15,11 +15,40 @@ class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
   private _isAuthenticated: boolean = false;
+  // Callback invoked when a 401 response invalidates the session
+  private _onSessionExpired: (() => void) | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
-    // Check if we have a session by trying to fetch user profile
-    // This will be done lazily on first authenticated request
+  }
+
+  /**
+   * Register a callback to be invoked when a 401 response is received,
+   * allowing the auth store to clear user state and redirect.
+   */
+  onSessionExpired(callback: () => void): void {
+    this._onSessionExpired = callback;
+  }
+
+  /**
+   * Handle a 401 response — clear local auth state and notify listeners.
+   * Only triggers the callback if we were previously authenticated,
+   * to avoid spurious notifications during login/initialization.
+   */
+  private handleUnauthorized(): void {
+    const wasAuthenticated = this._isAuthenticated;
+    this._isAuthenticated = false;
+    if (wasAuthenticated && this._onSessionExpired) {
+      this._onSessionExpired();
+    }
+  }
+
+  /**
+   * Read the CSRF token from the non-HttpOnly cookie set by the server.
+   */
+  private getCsrfToken(): string | null {
+    const match = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : null;
   }
 
   /**
@@ -48,6 +77,15 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
+    // Include CSRF token on state-changing requests
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+    }
+
     try {
       const response = await fetch(url, {
         ...options,
@@ -62,7 +100,7 @@ class ApiClient {
       } catch {
         if (!response.ok) {
           if (response.status === 401) {
-            this._isAuthenticated = false;
+            this.handleUnauthorized();
           }
           return { error: `Server error (${response.status})` };
         }
@@ -70,9 +108,8 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        // If we get a 401, update auth state
         if (response.status === 401) {
-          this._isAuthenticated = false;
+          this.handleUnauthorized();
         }
         return { error: (data as Record<string, unknown>)?.message as string || 'An error occurred' };
       }
@@ -307,9 +344,16 @@ class ApiClient {
     }
 
     try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
       const response = await fetch(url, {
         method: 'POST',
         body: formData,
+        headers: fetchHeaders,
         // Include cookies for HttpOnly cookie authentication
         credentials: 'include',
       });
@@ -318,7 +362,7 @@ class ApiClient {
 
       if (!response.ok) {
         if (response.status === 401) {
-          this._isAuthenticated = false;
+          this.handleUnauthorized();
         }
         return { error: data.error || data.message || 'An error occurred' };
       }

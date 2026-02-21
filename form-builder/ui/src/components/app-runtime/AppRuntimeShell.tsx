@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Home, FileText, User, Menu, X, ChevronLeft, MoreHorizontal } from 'lucide-react';
+import { Home, FileText, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
 
 interface AppRuntimeShellProps {
@@ -13,6 +14,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const navigate = useNavigate();
   const { config, activeFormId, setActiveForm, sidebarCollapsed, toggleSidebar } = useAppRuntimeStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isOnline = useOnlineStatus();
 
   // Close drawer on Escape key
   useEffect(() => {
@@ -144,6 +146,16 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             <User className="h-5 w-5" />
           </button>
         </header>
+
+        {/* Offline banner */}
+        {!isOnline && (
+          <div className="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/50 px-4 py-2 flex items-center gap-2">
+            <WifiOff className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              You're offline. Submissions will be saved and sent when you reconnect.
+            </p>
+          </div>
+        )}
 
         {/* Page content */}
         <main className="flex-1 p-4 md:p-6 overflow-auto bg-gray-50 dark:bg-slate-950">

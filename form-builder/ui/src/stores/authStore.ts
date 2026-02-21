@@ -37,6 +37,14 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
         if (state.isInitialized || state.isLoading) return;
 
+        // Register session expiry callback so the store is notified on 401
+        api.onSessionExpired(() => {
+          const current = get();
+          if (current.user) {
+            set({ user: null, error: null });
+          }
+        });
+
         set({ isLoading: true });
 
         // Check if we have a valid session by calling getMe()

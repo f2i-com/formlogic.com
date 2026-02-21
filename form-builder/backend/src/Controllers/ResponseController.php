@@ -11,6 +11,8 @@ use FormLogic\Database\SQLiteConnection;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class ResponseController
 {
@@ -18,13 +20,15 @@ class ResponseController
     private FormService $formService;
     private SQLiteConnection $sqlite;
     private IpResolver $ipResolver;
+    private LoggerInterface $logger;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
         $this->sqlite = $sqlite;
         $this->ipResolver = IpResolver::fromEnvironment();
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
@@ -179,7 +183,7 @@ class ResponseController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Response creation error: ' . $e->getMessage());
+            $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -246,7 +250,7 @@ class ResponseController
             if (!isset($fieldMap[$fieldId])) {
                 // Unknown field - could be injection attempt, silently ignore
                 // but log for monitoring
-                error_log("Unknown field submitted: {$fieldId}");
+                $this->logger->warning('Unknown field submitted', ['fieldId' => $fieldId]);
             }
         }
 
@@ -420,7 +424,7 @@ class ResponseController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Response update error: ' . $e->getMessage());
+            $this->logger->error('Response update error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -556,7 +560,7 @@ class ResponseController
                 'instructionCount' => $result->instructionCount,
             ]);
         } catch (\Exception $e) {
-            error_log('Recompute error: ' . $e->getMessage());
+            $this->logger->error('Recompute error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',

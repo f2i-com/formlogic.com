@@ -6,6 +6,8 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 use PDO;
 
 class ResponseService
@@ -13,15 +15,18 @@ class ResponseService
     private PDO $mysql;
     private SQLiteConnection $sqlite;
     private ?FormLogicRuntime $runtime;
+    private LoggerInterface $logger;
 
     public function __construct(
         MySQLConnection $mysql,
         SQLiteConnection $sqlite,
-        ?FormLogicRuntime $runtime = null
+        ?FormLogicRuntime $runtime = null,
+        ?LoggerInterface $logger = null
     ) {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->runtime = $runtime;
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
@@ -445,7 +450,7 @@ class ResponseService
                 $avgTime = $timeCount > 0 ? $totalTime / $timeCount : 0;
             } catch (\Exception $e) {
                 // Log but continue - avgTime will remain 0
-                error_log('Analytics avgTime calculation error for form ' . $formId . ': ' . $e->getMessage());
+                $this->logger->warning('Analytics avgTime calculation error', ['formId' => $formId, 'exception' => $e->getMessage()]);
             }
 
             // Responses by date (last 30 days)
@@ -467,7 +472,7 @@ class ResponseService
                 }
             } catch (\Exception $e) {
                 // Log but continue - responsesByDate will remain empty
-                error_log('Analytics responsesByDate error for form ' . $formId . ': ' . $e->getMessage());
+                $this->logger->warning('Analytics responsesByDate error', ['formId' => $formId, 'exception' => $e->getMessage()]);
             }
 
             // Get aggregate stats from MySQL
@@ -496,7 +501,7 @@ class ResponseService
             ];
         } catch (\Exception $e) {
             // Log the error but return default analytics
-            error_log('Analytics error for form ' . $formId . ': ' . $e->getMessage());
+            $this->logger->error('Analytics error', ['formId' => $formId, 'exception' => $e->getMessage()]);
             return $defaultAnalytics;
         }
     }
@@ -575,7 +580,7 @@ class ResponseService
         // we won't have SQL injection
         $allowedColumns = ['views', 'starts', 'completions'];
         if (!in_array($column, $allowedColumns, true)) {
-            error_log("Invalid analytics column attempted: " . $column);
+            $this->logger->warning('Invalid analytics column attempted', ['column' => $column]);
             return;
         }
 
@@ -628,7 +633,7 @@ class ResponseService
             }
         } catch (\PDOException $e) {
             // Table may not exist yet - log at debug level
-            error_log('Computed fields table not ready for response ' . $responseId . ': ' . $e->getMessage());
+            $this->logger->warning('Computed fields table not ready', ['responseId' => $responseId, 'exception' => $e->getMessage()]);
         }
 
         // Get tags
@@ -641,7 +646,7 @@ class ResponseService
             }
         } catch (\PDOException $e) {
             // Table may not exist yet - log at debug level
-            error_log('Tags table not ready for response ' . $responseId . ': ' . $e->getMessage());
+            $this->logger->warning('Tags table not ready', ['responseId' => $responseId, 'exception' => $e->getMessage()]);
         }
 
         return [

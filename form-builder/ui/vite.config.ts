@@ -42,6 +42,7 @@ export default defineConfig({
         navigateFallback: '/index.html',
         navigateFallbackAllowlist: [/^\/app\//],
         runtimeCaching: [
+          // Cache app config with stale-while-revalidate
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+$/,
             handler: 'StaleWhileRevalidate',
@@ -53,6 +54,47 @@ export default defineConfig({
               },
             },
           },
+          // Cache form definitions for offline viewing
+          {
+            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+$/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'app-forms-cache',
+              expiration: {
+                maxEntries: 50,
+                maxAgeSeconds: 60 * 60, // 1 hour
+              },
+            },
+          },
+          // Queue failed form submissions for background sync
+          {
+            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+\/responses$/,
+            handler: 'NetworkOnly',
+            method: 'POST',
+            options: {
+              backgroundSync: {
+                name: 'formSubmissionQueue',
+                options: {
+                  maxRetentionTime: 24 * 60, // Retry for up to 24 hours (in minutes)
+                },
+              },
+            },
+          },
+          // Also queue public form submissions
+          {
+            urlPattern: /^https?:\/\/.*\/api\/forms\/[^/]+\/responses$/,
+            handler: 'NetworkOnly',
+            method: 'POST',
+            options: {
+              backgroundSync: {
+                name: 'publicFormSubmissionQueue',
+                options: {
+                  maxRetentionTime: 24 * 60,
+                },
+              },
+            },
+          },
+          // Cache responses with network-first
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+\/responses/,
             handler: 'NetworkFirst',

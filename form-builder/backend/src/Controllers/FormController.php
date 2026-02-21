@@ -7,14 +7,18 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\FormService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class FormController
 {
     private FormService $formService;
+    private LoggerInterface $logger;
 
-    public function __construct(FormService $formService)
+    public function __construct(FormService $formService, ?LoggerInterface $logger = null)
     {
         $this->formService = $formService;
+        $this->logger = $logger ?? new NullLogger();
     }
 
     /**
@@ -127,7 +131,7 @@ class FormController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Form creation error: ' . $e->getMessage());
+            $this->logger->error('Form creation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -171,7 +175,7 @@ class FormController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Form update error: ' . $e->getMessage());
+            $this->logger->error('Form update error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -254,7 +258,7 @@ class FormController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Form duplication error: ' . $e->getMessage());
+            $this->logger->error('Form duplication error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',

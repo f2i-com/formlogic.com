@@ -5,6 +5,11 @@ declare(strict_types=1);
 use DI\Container;
 use DI\Bridge\Slim\Bridge as SlimBridge;
 use Slim\Routing\RouteCollectorProxy;
+use Monolog\Logger;
+use Monolog\Handler\RotatingFileHandler;
+use Monolog\Handler\StreamHandler;
+use Monolog\Formatter\LineFormatter;
+use Psr\Log\LoggerInterface;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AuthService;
@@ -16,6 +21,7 @@ use FormLogic\Controllers\FormController;
 use FormLogic\Controllers\ResponseController;
 use FormLogic\Controllers\AIController;
 use FormLogic\Middleware\CorsMiddleware;
+use FormLogic\Middleware\CsrfMiddleware;
 use FormLogic\Middleware\AuthMiddleware;
 use FormLogic\Middleware\SecurityHeadersMiddleware;
 use FormLogic\Middleware\RateLimitMiddleware;
@@ -43,6 +49,33 @@ $container = new Container();
 
 // Register settings
 $container->set('settings', $settings['settings']);
+
+// Register Monolog logger
+$container->set(LoggerInterface::class, function (Container $c) {
+    $logSettings = $c->get('settings')['logger'];
+    $logger = new Logger($logSettings['name']);
+
+    // Rotating file handler — one file per day, keep 30 days
+    $fileHandler = new RotatingFileHandler(
+        $logSettings['path'],
+        30,
+        $logSettings['level']
+    );
+    $fileHandler->setFormatter(new LineFormatter(
+        "[%datetime%] %channel%.%level_name%: %message% %context% %extra%\n",
+        'Y-m-d H:i:s'
+    ));
+    $logger->pushHandler($fileHandler);
+
+    // Also log errors to stderr in development for immediate visibility
+    $isProduction = $c->get('settings')['isProduction'] ?? false;
+    if (!$isProduction) {
+        $stderrHandler = new StreamHandler('php://stderr', Logger::ERROR);
+        $logger->pushHandler($stderrHandler);
+    }
+
+    return $logger;
+});
 
 // Register database connections
 $container->set(MySQLConnection::class, function (Container $c) {
@@ -87,7 +120,8 @@ $container->set(ResponseService::class, function (Container $c) {
     return new ResponseService(
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
-        $c->get(FormLogicRuntime::class)
+        $c->get(FormLogicRuntime::class),
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -97,19 +131,24 @@ $container->set(AuthController::class, function (Container $c) {
     return new AuthController(
         $c->get(AuthService::class),
         $settings['cookie'] ?? [],
-        $settings['jwt']['expiry'] ?? 86400
+        $settings['jwt']['expiry'] ?? 86400,
+        $c->get(LoggerInterface::class)
     );
 });
 
 $container->set(FormController::class, function (Container $c) {
-    return new FormController($c->get(FormService::class));
+    return new FormController(
+        $c->get(FormService::class),
+        $c->get(LoggerInterface::class)
+    );
 });
 
 $container->set(ResponseController::class, function (Container $c) {
     return new ResponseController(
         $c->get(ResponseService::class),
         $c->get(FormService::class),
-        $c->get(SQLiteConnection::class)
+        $c->get(SQLiteConnection::class),
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -126,7 +165,8 @@ $container->set(AIController::class, function (Container $c) {
     return new AIController(
         $c->get(AIService::class),
         $c->get(DocumentConverter::class),
-        $c->get('settings')['uploads'] ?? []
+        $c->get('settings')['uploads'] ?? [],
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -157,7 +197,8 @@ $container->set(AppResponseService::class, function (Container $c) {
 // Register App controllers
 $container->set(AppController::class, function (Container $c) {
     return new AppController(
-        $c->get(AppService::class)
+        $c->get(AppService::class),
+        $c->get(LoggerInterface::class)
     );
 });
 
@@ -194,13 +235,23 @@ $errorMiddleware = $app->addErrorMiddleware(
 
 // Custom JSON error handler
 $errorHandler = $errorMiddleware->getDefaultErrorHandler();
+$appLogger = $container->get(LoggerInterface::class);
 $errorMiddleware->setDefaultErrorHandler(function (
     \Psr\Http\Message\ServerRequestInterface $request,
     \Throwable $exception,
     bool $displayErrorDetails,
     bool $logErrors,
     bool $logErrorDetails
-) use ($app) {
+) use ($app, $appLogger) {
+    // Log unhandled exceptions through Monolog
+    if ($logErrors) {
+        $appLogger->error('Unhandled exception: ' . $exception->getMessage(), [
+            'exception' => get_class($exception),
+            'file' => $exception->getFile() . ':' . $exception->getLine(),
+            'uri' => (string) $request->getUri(),
+            'method' => $request->getMethod(),
+        ]);
+    }
     $payload = [
         'error' => true,
         'message' => $displayErrorDetails ? $exception->getMessage() : 'Internal Server Error',
@@ -228,6 +279,9 @@ $errorMiddleware->setDefaultErrorHandler(function (
         ->withStatus($statusCode)
         ->withHeader('Content-Type', 'application/json');
 });
+
+// Add CSRF middleware (validates tokens on state-changing requests)
+$app->add(new CsrfMiddleware());
 
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];
@@ -527,8 +581,11 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     });
 })->add($authRequired);
 
+// Rate limiter for app runtime submissions (30 per minute per IP, same as public submission)
+$appSubmissionRateLimiter = new RateLimitMiddleware(30, 60, 'app_submission');
+
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
@@ -557,7 +614,7 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Response CRUD
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->createResponse($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($appSubmissionRateLimiter)->add($authRequired);
 
     $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->listResponses($request, $response, $getArgs($request));

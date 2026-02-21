@@ -8,17 +8,21 @@ use FormLogic\Services\AIService;
 use FormLogic\Services\DocumentConverter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class AIController
 {
     private AIService $aiService;
     private DocumentConverter $documentConverter;
     private array $uploadSettings;
+    private LoggerInterface $logger;
 
-    public function __construct(AIService $aiService, DocumentConverter $documentConverter, array $uploadSettings = [])
+    public function __construct(AIService $aiService, DocumentConverter $documentConverter, array $uploadSettings = [], ?LoggerInterface $logger = null)
     {
         $this->aiService = $aiService;
         $this->documentConverter = $documentConverter;
+        $this->logger = $logger ?? new NullLogger();
         $this->uploadSettings = array_merge([
             'maxFileSize' => 10 * 1024 * 1024, // 10MB default
             'allowedTypes' => [
@@ -78,7 +82,7 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            error_log('AI form generation error: ' . $e->getMessage());
+            $this->logger->error('AI form generation error', ['exception' => $e->getMessage()]);
             $response->getBody()->write(json_encode([
                 'error' => 'An unexpected error occurred',
             ]));
@@ -163,7 +167,7 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            error_log('AI file generation error: ' . $e->getMessage());
+            $this->logger->error('AI file generation error', ['exception' => $e->getMessage()]);
             $response->getBody()->write(json_encode([
                 'error' => 'An unexpected error occurred',
             ]));
@@ -212,7 +216,7 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            error_log('AI image generation error: ' . $e->getMessage());
+            $this->logger->error('AI image generation error', ['exception' => $e->getMessage()]);
             $response->getBody()->write(json_encode([
                 'error' => 'An unexpected error occurred',
             ]));
@@ -255,7 +259,7 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            error_log('AI script generation error: ' . $e->getMessage());
+            $this->logger->error('AI script generation error', ['exception' => $e->getMessage()]);
             $response->getBody()->write(json_encode([
                 'error' => 'An unexpected error occurred',
             ]));
@@ -299,7 +303,7 @@ class AIController
             ]));
             return $response->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            error_log('AI script improvement error: ' . $e->getMessage());
+            $this->logger->error('AI script improvement error', ['exception' => $e->getMessage()]);
             $response->getBody()->write(json_encode([
                 'error' => 'An unexpected error occurred',
             ]));

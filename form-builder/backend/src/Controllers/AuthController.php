@@ -6,8 +6,11 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\AuthService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Middleware\CsrfMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class AuthController
 {
@@ -15,11 +18,13 @@ class AuthController
     private IpResolver $ipResolver;
     private array $cookieConfig;
     private int $jwtExpiry;
+    private LoggerInterface $logger;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null)
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
+        $this->logger = $logger ?? new NullLogger();
         $this->cookieConfig = array_merge([
             'name' => 'formlogic_auth',
             'httpOnly' => true,
@@ -81,7 +86,7 @@ class AuthController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Registration error: ' . $e->getMessage());
+            $this->logger->error('Registration error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -125,7 +130,7 @@ class AuthController
                 'message' => $e->getMessage(),
             ], $statusCode);
         } catch (\Exception $e) {
-            error_log('Login error: ' . $e->getMessage());
+            $this->logger->error('Login error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -197,7 +202,7 @@ class AuthController
                 'message' => $e->getMessage(),
             ], 400);
         } catch (\Exception $e) {
-            error_log('Profile update error: ' . $e->getMessage());
+            $this->logger->error('Profile update error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
@@ -240,7 +245,12 @@ class AuthController
             $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
         }
 
-        return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+        $response = $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+
+        // Set CSRF token as a non-HttpOnly cookie so JS can read it
+        $response = $this->setCsrfCookie($response);
+
+        return $response;
     }
 
     /**
@@ -252,6 +262,60 @@ class AuthController
             $this->cookieConfig['name'] . '=',
             'Path=' . $this->cookieConfig['path'],
             'HttpOnly',
+            'SameSite=' . $this->cookieConfig['sameSite'],
+            'Max-Age=0',
+            'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        ];
+
+        if ($this->cookieConfig['secure']) {
+            $cookieParts[] = 'Secure';
+        }
+
+        if (!empty($this->cookieConfig['domain'])) {
+            $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
+        }
+
+        $response = $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+
+        // Clear the CSRF cookie too
+        $response = $this->clearCsrfCookie($response);
+
+        return $response;
+    }
+
+    /**
+     * Set CSRF token cookie (non-HttpOnly so frontend JS can read it)
+     */
+    private function setCsrfCookie(Response $response): Response
+    {
+        $csrfToken = CsrfMiddleware::generateToken();
+
+        $cookieParts = [
+            'formlogic_csrf=' . $csrfToken,
+            'Path=' . $this->cookieConfig['path'],
+            'SameSite=' . $this->cookieConfig['sameSite'],
+            'Max-Age=' . $this->jwtExpiry,
+        ];
+
+        if ($this->cookieConfig['secure']) {
+            $cookieParts[] = 'Secure';
+        }
+
+        if (!empty($this->cookieConfig['domain'])) {
+            $cookieParts[] = 'Domain=' . $this->cookieConfig['domain'];
+        }
+
+        return $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
+    }
+
+    /**
+     * Clear the CSRF cookie
+     */
+    private function clearCsrfCookie(Response $response): Response
+    {
+        $cookieParts = [
+            'formlogic_csrf=',
+            'Path=' . $this->cookieConfig['path'],
             'SameSite=' . $this->cookieConfig['sameSite'],
             'Max-Age=0',
             'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
