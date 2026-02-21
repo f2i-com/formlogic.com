@@ -67,9 +67,9 @@ class ResponseService
 
         $sql .= " ORDER BY submitted_at DESC";
 
-        // Pagination
-        $limit = $options['limit'] ?? 100;
-        $offset = $options['offset'] ?? 0;
+        // Pagination (clamp to safe ranges)
+        $limit = max(1, min((int)($options['limit'] ?? 100), 1000));
+        $offset = max(0, (int)($options['offset'] ?? 0));
         $sql .= " LIMIT :limit OFFSET :offset";
 
         $stmt = $db->prepare($sql);

@@ -210,8 +210,8 @@ class AppPublicController
         $scope = $canViewAll ? 'all' : 'own';
         $queryParams = $request->getQueryParams();
         $options = [
-            'limit' => (int)($queryParams['limit'] ?? 100),
-            'offset' => (int)($queryParams['offset'] ?? 0),
+            'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
+            'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
 
         $responses = $this->appResponseService->getResponses($formId, $scope, $userId, $options);
@@ -425,8 +425,8 @@ class AppPublicController
         $displayFieldIds = !empty($queryParams['displayFieldIds']) ? explode(',', $queryParams['displayFieldIds']) : [];
         $searchFieldIds = !empty($queryParams['searchFieldIds']) ? explode(',', $queryParams['searchFieldIds']) : [];
         $searchQuery = $queryParams['q'] ?? '';
-        $limit = min((int)($queryParams['limit'] ?? 20), 100);
-        $offset = (int)($queryParams['offset'] ?? 0);
+        $limit = max(1, min((int)($queryParams['limit'] ?? 20), 100));
+        $offset = max(0, (int)($queryParams['offset'] ?? 0));
 
         // Get target form to know field structure
         $targetForm = $this->formService->getForm($targetFormId);

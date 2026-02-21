@@ -15,8 +15,8 @@ class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
   private _isAuthenticated: boolean = false;
-  // Callback invoked when a 401 response invalidates the session
-  private _onSessionExpired: (() => void) | null = null;
+  // Callbacks invoked when a 401 response invalidates the session
+  private _onSessionExpiredCallbacks: Array<() => void> = [];
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -24,22 +24,24 @@ class ApiClient {
 
   /**
    * Register a callback to be invoked when a 401 response is received,
-   * allowing the auth store to clear user state and redirect.
+   * allowing stores to clear user state. Multiple callbacks can be registered.
    */
   onSessionExpired(callback: () => void): void {
-    this._onSessionExpired = callback;
+    this._onSessionExpiredCallbacks.push(callback);
   }
 
   /**
    * Handle a 401 response — clear local auth state and notify listeners.
-   * Only triggers the callback if we were previously authenticated,
+   * Only triggers callbacks if we were previously authenticated,
    * to avoid spurious notifications during login/initialization.
    */
   private handleUnauthorized(): void {
     const wasAuthenticated = this._isAuthenticated;
     this._isAuthenticated = false;
-    if (wasAuthenticated && this._onSessionExpired) {
-      this._onSessionExpired();
+    if (wasAuthenticated && this._onSessionExpiredCallbacks.length > 0) {
+      for (const cb of this._onSessionExpiredCallbacks) {
+        cb();
+      }
     }
   }
 
@@ -267,6 +269,7 @@ class ApiClient {
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
       const errorText = await response.text();
       throw new Error(errorText || 'Failed to export responses');
     }
@@ -280,6 +283,7 @@ class ApiClient {
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
       let message = 'Failed to download SQLite database';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);
@@ -302,6 +306,7 @@ class ApiClient {
     const response = await fetch(url, { credentials: 'include' });
 
     if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
       let message = 'Failed to download JSON export';
       try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
       throw new Error(message);

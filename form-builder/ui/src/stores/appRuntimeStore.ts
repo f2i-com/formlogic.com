@@ -38,6 +38,8 @@ interface AppRuntimeState {
   canExport: (formId: string) => boolean;
 }
 
+let sessionExpiredRegistered = false;
+
 export const useAppRuntimeStore = create<AppRuntimeState>()(
   persist(
     (set, get) => ({
@@ -51,6 +53,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       roleName: null,
 
       initialize: async (appSlug: string) => {
+        // Register cleanup callback once so app state is cleared on session expiry (401)
+        if (!sessionExpiredRegistered) {
+          sessionExpiredRegistered = true;
+          api.onSessionExpired(() => {
+            get().reset();
+          });
+        }
+
         set({ isLoading: true, error: null, appSlug });
         try {
           const result = await api.getAppRuntime(appSlug);

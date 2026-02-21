@@ -79,8 +79,8 @@ class ResponseController
             'status' => $queryParams['status'] ?? null,
             'from' => $queryParams['from'] ?? null,
             'to' => $queryParams['to'] ?? null,
-            'limit' => (int)($queryParams['limit'] ?? 100),
-            'offset' => (int)($queryParams['offset'] ?? 0),
+            'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
+            'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
 
         $responses = $this->responseService->getFormResponses($formId, $options);

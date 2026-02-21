@@ -67,8 +67,8 @@ class FormController
 
         $options = [
             'status' => $queryParams['status'] ?? null,
-            'limit' => (int)($queryParams['limit'] ?? 50),
-            'offset' => (int)($queryParams['offset'] ?? 0),
+            'limit' => max(1, min((int)($queryParams['limit'] ?? 50), 1000)),
+            'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
 
         $forms = $this->formService->getAllForms($userId, $options);

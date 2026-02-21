@@ -124,6 +124,17 @@ export const useAuthStore = create<AuthState>()(
           // Even if the API call fails, clear local state
         }
         set({ user: null, error: null });
+
+        // Clear user-specific data from persisted stores to prevent data
+        // leakage if another user logs in on the same browser
+        try {
+          localStorage.removeItem('formlogic-forms');
+          localStorage.removeItem('formlogic-apps');
+          localStorage.removeItem('formlogic-responses');
+          localStorage.removeItem('formlogic-app-runtime');
+        } catch {
+          // localStorage may be unavailable (e.g. private browsing)
+        }
       },
 
       updateProfile: async (data: Partial<User>) => {
