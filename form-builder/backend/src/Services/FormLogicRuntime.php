@@ -732,7 +732,7 @@ class FormLogicRuntime
     {
         $host = strtolower($host);
 
-        // Check for localhost variants
+        // Check for localhost variants and cloud metadata endpoints
         $localhostPatterns = [
             'localhost',
             '127.0.0.1',
@@ -743,6 +743,9 @@ class FormLogicRuntime
             '[::ffff:127.0.0.1]',
             'localhost.localdomain',
             '127.0.0.1.nip.io', // Common DNS rebinding service
+            '169.254.169.254',  // AWS/GCP metadata
+            'metadata.google.internal', // GCP metadata
+            'metadata.internal', // Generic cloud metadata
         ];
 
         foreach ($localhostPatterns as $pattern) {

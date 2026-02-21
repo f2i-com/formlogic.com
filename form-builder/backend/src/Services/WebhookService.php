@@ -182,9 +182,18 @@ class WebhookService
             // SSRF protection: resolve hostname and block private/reserved IPs
             $parsedUrl = parse_url($webhook['url']);
             $host = $parsedUrl['host'] ?? '';
+            $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
             if ($host === '') {
                 throw new \RuntimeException('Webhook URL has no valid host');
             }
+
+            // Block known metadata endpoints and localhost
+            $blockedHosts = ['localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal', '0.0.0.0', '::1'];
+            if (in_array(strtolower($host), $blockedHosts, true)) {
+                throw new \RuntimeException('Webhook URL host is not allowed');
+            }
+
+            $resolvedIp = null;
             $resolvedIps = gethostbynamel($host);
             if ($resolvedIps !== false) {
                 foreach ($resolvedIps as $ip) {
@@ -192,22 +201,29 @@ class WebhookService
                         throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
                     }
                 }
+                $resolvedIp = $resolvedIps[0] ?? null;
             }
 
             $ch = curl_init($webhook['url']);
-            curl_setopt_array($ch, [
+            $curlOpts = [
                 CURLOPT_POST => true,
                 CURLOPT_POSTFIELDS => $body,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_TIMEOUT => 5,
                 CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_FOLLOWLOCATION => false, // Block redirects to prevent SSRF via redirect
                 CURLOPT_HTTPHEADER => [
                     'Content-Type: application/json',
                     'X-FormLogic-Event: ' . $event,
                     'X-FormLogic-Signature: ' . $signature,
                     'X-FormLogic-Delivery: ' . $deliveryId,
                 ],
-            ]);
+            ];
+            // DNS pinning: connect to the resolved IP to prevent TOCTOU DNS rebinding
+            if ($resolvedIp !== null) {
+                $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
+            }
+            curl_setopt_array($ch, $curlOpts);
 
             try {
                 $responseBody = curl_exec($ch);
