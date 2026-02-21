@@ -27,10 +27,14 @@ export function AppRoleEditor() {
 
   const loadData = async () => {
     if (!appId) return;
-    const [r, f] = await Promise.all([fetchRoles(appId), fetchAppForms(appId)]);
-    setRoles(r);
-    setAppForms(f);
-    if (r.length > 0 && !selectedRoleId) setSelectedRoleId(r[0].id);
+    try {
+      const [r, f] = await Promise.all([fetchRoles(appId), fetchAppForms(appId)]);
+      setRoles(r);
+      setAppForms(f);
+      if (r.length > 0 && !selectedRoleId) setSelectedRoleId(r[0].id);
+    } catch {
+      toast.error('Load failed', 'Could not load roles. Please refresh the page.');
+    }
   };
 
   useEffect(() => { loadData(); }, [appId]);
@@ -57,10 +61,18 @@ export function AppRoleEditor() {
     setSaving(true);
     setSaveSuccess(false);
     setRoleError(null);
-    await api.setAppRolePermissions(appId, selectedRoleId, permissions);
+    try {
+      const result = await api.setAppRolePermissions(appId, selectedRoleId, permissions);
+      if (result.error) {
+        toast.error('Save failed', result.error);
+      } else {
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2000);
+      }
+    } catch {
+      toast.error('Save failed', 'Could not save permissions. Please try again.');
+    }
     setSaving(false);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2000);
   };
 
   const handleCreateRole = async () => {

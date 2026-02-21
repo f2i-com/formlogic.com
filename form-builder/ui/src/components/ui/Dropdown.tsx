@@ -37,6 +37,8 @@ export function Dropdown({
   const selectedOption = options.find((opt) => opt.value === value);
 
   useEffect(() => {
+    if (!isOpen) return;
+
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
@@ -45,7 +47,7 @@ export function Dropdown({
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {

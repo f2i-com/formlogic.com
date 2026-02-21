@@ -141,9 +141,15 @@ export function useFieldValidation(
             return false;
           }
         } else if (rule.type === 'pattern' && typeof value === 'string') {
-          const regex = new RegExp(rule.value as string);
-          if (!regex.test(value)) {
-            setError(rule.message || 'Invalid format');
+          try {
+            const regex = new RegExp(rule.value as string);
+            if (!regex.test(value)) {
+              setError(rule.message || 'Invalid format');
+              setIsValidating(false);
+              return false;
+            }
+          } catch {
+            setError(rule.message || 'Invalid validation pattern');
             setIsValidating(false);
             return false;
           }

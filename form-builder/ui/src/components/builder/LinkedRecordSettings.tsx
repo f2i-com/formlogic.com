@@ -43,6 +43,8 @@ export function LinkedRecordSettings({
         setAppForms(forms);
       }
       setLoading(false);
+    }).catch(() => {
+      setLoading(false);
     });
   }, [appId, currentFormId]);
 
@@ -61,6 +63,8 @@ export function LinkedRecordSettings({
         );
         setTargetFields(dataFields);
       }
+    }).catch(() => {
+      setTargetFields([]);
     });
   }, [targetFormId]);
 
