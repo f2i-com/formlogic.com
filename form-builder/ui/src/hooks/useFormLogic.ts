@@ -153,6 +153,18 @@ export function useFieldValidation(
             setIsValidating(false);
             return false;
           }
+        } else if (rule.type === 'min' && typeof value === 'number') {
+          if (value < (rule.value as number)) {
+            setError(rule.message || `Minimum value is ${rule.value}`);
+            setIsValidating(false);
+            return false;
+          }
+        } else if (rule.type === 'max' && typeof value === 'number') {
+          if (value > (rule.value as number)) {
+            setError(rule.message || `Maximum value is ${rule.value}`);
+            setIsValidating(false);
+            return false;
+          }
         }
       }
     }

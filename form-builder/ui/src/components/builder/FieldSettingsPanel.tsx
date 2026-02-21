@@ -179,8 +179,10 @@ export function FieldSettingsPanel({
                   value={field.properties.scaleStart || 1}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
+                    const start = isNaN(val) ? 1 : Math.max(0, Math.min(99, val));
+                    const end = field.properties.scaleEnd || 10;
                     onUpdate({
-                      properties: { ...field.properties, scaleStart: isNaN(val) ? 1 : Math.max(0, Math.min(99, val)) },
+                      properties: { ...field.properties, scaleStart: start, scaleEnd: Math.max(start + 1, end) },
                     });
                   }}
                 />
@@ -192,8 +194,10 @@ export function FieldSettingsPanel({
                   value={field.properties.scaleEnd || 10}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
+                    const end = isNaN(val) ? 10 : Math.max(1, Math.min(100, val));
+                    const start = field.properties.scaleStart || 1;
                     onUpdate({
-                      properties: { ...field.properties, scaleEnd: isNaN(val) ? 10 : Math.max(1, Math.min(100, val)) },
+                      properties: { ...field.properties, scaleEnd: end, scaleStart: Math.min(end - 1, start) },
                     });
                   }}
                 />

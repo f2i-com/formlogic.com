@@ -253,6 +253,158 @@ function FieldInput({
     );
   }
 
+  if (field.type === 'statement') {
+    return (
+      <p className="text-lg text-gray-600 dark:text-slate-400">{field.description || 'Statement content'}</p>
+    );
+  }
+
+  if (field.type === 'calculated') {
+    return (
+      <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
+        <p className="text-sm text-gray-500 dark:text-slate-400 mb-1">Calculated value</p>
+        <p className="text-2xl font-semibold text-gray-900 dark:text-white">
+          {value !== undefined && value !== null ? String(value) : '—'}
+        </p>
+      </div>
+    );
+  }
+
+  if (field.type === 'file_upload') {
+    const uploadedFiles = (value as File[]) || [];
+    const maxSize = field.properties?.maxFileSize as number | undefined;
+    const formatFileSize = (bytes: number) => {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    };
+    return (
+      <div className="space-y-3">
+        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl cursor-pointer hover:border-gray-400 dark:hover:border-slate-500 transition-colors">
+          <div className="flex flex-col items-center py-4">
+            <svg className="w-8 h-8 text-gray-400 dark:text-slate-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              <span className="font-medium" style={{ color: primaryColor }}>Click to upload</span> or drag and drop
+            </p>
+            {maxSize && <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Max {formatFileSize(maxSize)}</p>}
+          </div>
+          <input
+            type="file"
+            className="hidden"
+            multiple={field.properties?.allowMultiple as boolean}
+            accept={(field.properties?.acceptedFileTypes as string[])?.join(',')}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              if (maxSize) {
+                const valid = files.filter(f => f.size <= maxSize);
+                onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...valid] : valid);
+              } else {
+                onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...files] : files);
+              }
+            }}
+          />
+        </label>
+        {uploadedFiles.length > 0 && (
+          <div className="space-y-2">
+            {uploadedFiles.map((file, i) => (
+              <div key={i} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-slate-800 rounded-lg text-sm">
+                <span className="flex-1 truncate text-gray-700 dark:text-slate-300">{file.name}</span>
+                <span className="text-gray-400 dark:text-slate-500 text-xs">{formatFileSize(file.size)}</span>
+                <button onClick={() => onChange(uploadedFiles.filter((_, idx) => idx !== i))} className="text-red-500 hover:text-red-700">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === 'signature') {
+    const sigId = `sig-${field.id}`;
+    return (
+      <div className="space-y-2">
+        <div
+          className={cn(
+            'w-full h-36 border-2 rounded-lg cursor-crosshair relative overflow-hidden transition-colors',
+            value ? 'border-gray-400 dark:border-slate-500' : 'border-gray-300 dark:border-slate-600'
+          )}
+          style={{ borderColor: value ? primaryColor : undefined }}
+          onMouseDown={(e) => {
+            const canvas = e.currentTarget.querySelector('canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            const rect = canvas.getBoundingClientRect();
+            const sx = canvas.width / rect.width;
+            const sy = canvas.height / rect.height;
+            ctx.beginPath();
+            ctx.moveTo((e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy);
+            const onMove = (me: MouseEvent) => { ctx.lineTo((me.clientX - rect.left) * sx, (me.clientY - rect.top) * sy); ctx.stroke(); onChange(canvas.toDataURL()); };
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+          }}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            const canvas = e.currentTarget.querySelector('canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.strokeStyle = '#1f2937';
+            ctx.lineWidth = 2;
+            ctx.lineCap = 'round';
+            const rect = canvas.getBoundingClientRect();
+            const sx = canvas.width / rect.width;
+            const sy = canvas.height / rect.height;
+            const t = e.touches[0];
+            ctx.beginPath();
+            ctx.moveTo((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
+            const onMove = (te: TouchEvent) => { te.preventDefault(); const mt = te.touches[0]; ctx.lineTo((mt.clientX - rect.left) * sx, (mt.clientY - rect.top) * sy); ctx.stroke(); onChange(canvas.toDataURL()); };
+            const onEnd = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); };
+            document.addEventListener('touchmove', onMove, { passive: false });
+            document.addEventListener('touchend', onEnd);
+          }}
+        >
+          <canvas id={sigId} width={500} height={180} className="w-full h-full" style={{ touchAction: 'none' }} />
+          {!value && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <p className="text-gray-400 dark:text-slate-500">Sign here</p>
+            </div>
+          )}
+        </div>
+        {Boolean(value) && (
+          <button
+            onClick={() => { const c = document.getElementById(sigId) as HTMLCanvasElement; c?.getContext('2d')?.clearRect(0, 0, c.width, c.height); onChange(null); }}
+            className="text-sm text-red-500 hover:text-red-700"
+          >
+            Clear signature
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (field.type === 'payment') {
+    const amount = (field.properties?.amount as number) ?? (field.properties?.min as number) ?? 0;
+    const currency = (field.properties?.currency as string) || 'USD';
+    return (
+      <div className="p-4 border-2 border-gray-200 dark:border-slate-600 rounded-xl bg-gray-50 dark:bg-slate-800">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-gray-500 dark:text-slate-400">Amount:</span>
+          <span className="text-2xl font-bold text-gray-900 dark:text-white">
+            {new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)}
+          </span>
+        </div>
+        <p className="text-xs text-gray-400 dark:text-slate-500 text-center">Payment processing (preview only)</p>
+      </div>
+    );
+  }
+
   if (field.type === 'linked_record' && formId) {
     const targetFormId = field.properties?.targetFormId as string;
     const displayFieldIds = field.properties?.displayFieldIds as string[] | undefined;
@@ -320,7 +472,7 @@ export function AppFormView() {
     }
   }, [appSlug, formId]);
 
-  const fields = (form?.fields ?? []) as FormField[];
+  const fields = ((form?.fields ?? []) as FormField[]).filter(f => !['welcome_screen', 'thank_you'].includes(f.type));
   const formTheme = form?.theme as FormTheme | undefined;
   const formSettings = form?.settings as Record<string, unknown> | undefined;
   const primaryColor = formTheme?.primaryColor || 'var(--app-primary, #6366f1)';
@@ -356,7 +508,7 @@ export function AppFormView() {
   }, [formId, createResponse]);
 
   const handleNext = useCallback(() => {
-    if (currentField?.required) {
+    if (currentField?.required && !['statement', 'calculated'].includes(currentField.type)) {
       const answer = answers[currentField.id];
       if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');

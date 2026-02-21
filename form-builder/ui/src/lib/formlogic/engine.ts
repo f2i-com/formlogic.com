@@ -54,15 +54,18 @@ function registerFormModules(engine: FormLogicEngine): void {
     email: (args: BaseObject[]) => {
       const value = getValue(args[0]);
       if (typeof value !== 'string') return falseObject;
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      // Require local part, @, domain with at least one dot, and TLD of 2+ chars
+      const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
       return emailRegex.test(value) ? trueObject : falseObject;
     },
 
     phone: (args: BaseObject[]) => {
       const value = getValue(args[0]);
       if (typeof value !== 'string') return falseObject;
-      const phoneRegex = /^[\d\s\-+()]{7,}$/;
-      return phoneRegex.test(value) ? trueObject : falseObject;
+      // Must start with optional +, contain at least 7 digits total, allow spaces/dashes/parens
+      const stripped = value.replace(/[\s\-()]/g, '');
+      const phoneRegex = /^\+?\d{7,15}$/;
+      return phoneRegex.test(stripped) ? trueObject : falseObject;
     },
 
     url: (args: BaseObject[]) => {

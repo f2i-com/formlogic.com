@@ -29,7 +29,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
       case 'url':
         return (
           <input
-            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'}
+            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -174,12 +174,23 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
-          <div className="flex gap-2">
+          <div className="flex gap-2" role="radiogroup" aria-label={field.label}>
             {Array.from({ length: maxStars }, (_, i) => (
               <button
                 key={i}
+                role="radio"
+                aria-checked={currentRating === i + 1}
+                aria-label={`${i + 1} out of ${maxStars} stars`}
                 onClick={() => onChange(i + 1)}
-                title={`Rate ${i + 1} of ${maxStars}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    onChange(Math.min(maxStars, (currentRating || 0) + 1));
+                  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    onChange(Math.max(1, (currentRating || 2) - 1));
+                  }
+                }}
                 className={cn(
                   'text-4xl transition-transform hover:scale-110',
                   i < currentRating ? 'text-yellow-400' : 'opacity-30'
@@ -196,23 +207,39 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         const start = field.properties.scaleStart || 1;
         const end = field.properties.scaleEnd || 10;
         const scaleValue = (value as number) || null;
-        const scaleLength = end - start + 1;
+        const scaleLength = Math.max(1, end - start + 1);
         return (
           <div>
             <div className="flex justify-between text-sm opacity-60 mb-2">
               <span>{field.properties.scaleStartLabel || start}</span>
               <span>{field.properties.scaleEndLabel || end}</span>
             </div>
-            <div className={cn(
-              "grid gap-2",
-              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
-            )}>
+            <div
+              role="radiogroup"
+              aria-label={field.label}
+              className={cn(
+                "grid gap-2",
+                scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
+              )}
+            >
               {Array.from({ length: scaleLength }, (_, i) => {
                 const num = start + i;
                 return (
                   <button
                     key={num}
+                    role="radio"
+                    aria-checked={scaleValue === num}
+                    aria-label={`${num} out of ${end}`}
                     onClick={() => onChange(num)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        onChange(Math.min(end, (scaleValue || start - 1) + 1));
+                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        onChange(Math.max(start, (scaleValue || start + 1) - 1));
+                      }
+                    }}
                     className={cn(
                       'py-3 rounded-lg border-2 font-medium transition-all',
                       scaleValue === num
@@ -256,7 +283,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                   </svg>
                 </div>
                 <p className="text-sm opacity-70">
-                  <span className="font-semibold text-primary-600">Click to upload</span> or drag and drop
+                  <span className="font-semibold text-primary-600 dark:text-primary-400">Click to upload</span> or drag and drop
                 </p>
                 <p className="text-xs opacity-50 mt-1">
                   {field.properties.acceptedFileTypes?.length
