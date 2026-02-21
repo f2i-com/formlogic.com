@@ -242,7 +242,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                     onKeyDown={(e) => {
                       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
                         e.preventDefault();
-                        onChange(Math.min(end, (scaleValue || start - 1) + 1));
+                        onChange(Math.min(end, (scaleValue ?? start) + 1));
                       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                         e.preventDefault();
                         onChange(Math.max(start, (scaleValue ?? start) - 1));

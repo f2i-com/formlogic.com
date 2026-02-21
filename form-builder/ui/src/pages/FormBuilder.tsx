@@ -274,6 +274,7 @@ export default function FormBuilder() {
     if (over && active.id !== over.id) {
       const oldIndex = form.fields.findIndex((f) => f.id === active.id);
       const newIndex = form.fields.findIndex((f) => f.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return;
       const newOrder = arrayMove(
         form.fields.map((f) => f.id),
         oldIndex,

@@ -255,7 +255,7 @@ function FieldInput({
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
                     e.preventDefault();
-                    onChange(Math.min(max, ((value as number) || min - 1) + 1));
+                    onChange(Math.min(max, ((value as number) ?? min) + 1));
                   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                     e.preventDefault();
                     onChange(Math.max(min, ((value as number) ?? min) - 1));

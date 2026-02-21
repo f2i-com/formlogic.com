@@ -22,10 +22,11 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     if (!config) return;
     const formMatch = location.pathname.match(/\/form\/([^/]+)/);
     const urlFormId = formMatch ? formMatch[1] : null;
-    if (urlFormId !== activeFormId) {
+    // Only sync from URL to store; activeFormId not in deps to avoid extra renders
+    if (urlFormId !== useAppRuntimeStore.getState().activeFormId) {
       setActiveForm(urlFormId);
     }
-  }, [location.pathname, config, activeFormId, setActiveForm]);
+  }, [location.pathname, config, setActiveForm]);
 
   // Close drawer on Escape key
   useEffect(() => {

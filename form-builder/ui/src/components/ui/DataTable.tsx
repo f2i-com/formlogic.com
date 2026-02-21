@@ -106,9 +106,13 @@ export function DataTable<T extends Record<string, unknown>>({
                 <th
                   key={col.key}
                   onClick={() => col.sortable && handleSort(col.key)}
+                  onKeyDown={col.sortable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort(col.key); } } : undefined}
+                  tabIndex={col.sortable ? 0 : undefined}
+                  role={col.sortable ? 'button' : undefined}
+                  aria-sort={col.sortable && sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
                   className={cn(
                     'px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400',
-                    col.sortable && 'cursor-pointer hover:text-gray-900 dark:hover:text-slate-200 select-none',
+                    col.sortable && 'cursor-pointer hover:text-gray-900 dark:hover:text-slate-200 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50',
                     col.className
                   )}
                 >

@@ -452,6 +452,10 @@ class ResponseService
         }
 
         if (isset($data['status'])) {
+            $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'];
+            if (!in_array($data['status'], $allowedStatuses, true)) {
+                throw new \RuntimeException('Invalid status. Allowed: ' . implode(', ', $allowedStatuses));
+            }
             $updates[] = "status = :status";
             $params['status'] = $data['status'];
 
