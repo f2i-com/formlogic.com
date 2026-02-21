@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Home, FileText, User, Menu, X, ChevronLeft, MoreHorizontal } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -15,16 +15,16 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Close drawer on Escape key
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape' && mobileMenuOpen) {
-      setMobileMenuOpen(false);
-    }
-  }, [mobileMenuOpen]);
-
   useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  }, [mobileMenuOpen]);
 
   // Prevent body scroll when drawer is open
   useEffect(() => {

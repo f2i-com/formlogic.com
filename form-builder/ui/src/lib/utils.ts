@@ -19,6 +19,7 @@ export function generateId(): string {
 
 export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return 'Unknown';
   return d.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
@@ -28,6 +29,7 @@ export function formatDate(date: string | Date): string {
 
 export function formatRelativeTime(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date;
+  if (isNaN(d.getTime())) return 'Unknown';
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();
   if (diffMs < 0) return 'just now';
