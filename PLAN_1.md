@@ -58,7 +58,7 @@ These issues represent real vulnerabilities or data loss risks and should be add
 - Add a periodic cleanup job or admin endpoint to find/clean orphaned SQLite files (MySQL form missing but SQLite file exists)
 - Log all cross-database inconsistencies at ERROR level for monitoring
 
-### 1.4 Missing Permission Check in Related Records Endpoint
+### 1.4 Missing Permission Check in Related Records Endpoint [DONE]
 **Severity**: HIGH
 **File**: `backend/src/Controllers/AppPublicController.php` ~L533-654
 **Problem**: `getRelatedRecords` checks view permissions on the source form but doesn't validate that the target `responseId` actually belongs to the specified `formId`. An attacker could pass a response ID from a different form to access unauthorized data.
@@ -102,7 +102,7 @@ try {
 - Run regex in a Web Worker with a timeout (100ms)
 - Or use a regex safety analyzer (e.g., `safe-regex` npm package) to reject vulnerable patterns at save time
 
-### 1.8 Input Length Validation on Large JSON Fields
+### 1.8 Input Length Validation on Large JSON Fields [DONE]
 **Severity**: MEDIUM
 **File**: Multiple controllers (`FormController.php`, `AppController.php`)
 **Problem**: While `title` validates length (<=500 chars), large JSON fields (`settings`, `theme`, `logicScript`, `logicPrompt`, `fields`) have no size limits. A malicious user could submit multi-megabyte JSON payloads.
@@ -113,7 +113,7 @@ try {
   - `settings`/`theme`: max 10KB each
 - Return 422 with descriptive message when exceeded
 
-### 1.9 Missing Validation of Linked Record Field IDs
+### 1.9 Missing Validation of Linked Record Field IDs [DONE]
 **Severity**: HIGH
 **File**: `backend/src/Controllers/AppPublicController.php` ~L444-445, L516-517
 **Problem**: `displayFieldIds` and `searchFieldIds` query parameters are split by comma and used directly without validating they're actual field IDs in the target form.

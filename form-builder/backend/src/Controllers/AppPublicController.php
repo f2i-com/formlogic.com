@@ -491,6 +491,15 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Target form not found'], 404);
         }
 
+        // Validate that requested field IDs actually belong to the target form
+        $validFieldIds = array_column($targetForm['fields'] ?? [], 'id');
+        if (!empty($displayFieldIds)) {
+            $displayFieldIds = array_intersect($displayFieldIds, $validFieldIds);
+        }
+        if (!empty($searchFieldIds)) {
+            $searchFieldIds = array_intersect($searchFieldIds, $validFieldIds);
+        }
+
         // Use SQL-level search when a query is provided
         $scope = $canViewAll ? 'all' : 'own';
 
@@ -589,6 +598,12 @@ class AppPublicController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        // Verify the response actually belongs to this form
+        $targetResp = $this->responseService->getResponse($formId, $responseId);
+        if (!$targetResp) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
         // Check view permission

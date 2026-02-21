@@ -33,6 +33,39 @@ class FormController
     }
 
     /**
+     * Validate size limits for large form fields to prevent abuse.
+     * Returns an error message string or null if valid.
+     */
+    private function validateFieldSizes(array $data): ?string
+    {
+        if (isset($data['logicScript']) && is_string($data['logicScript']) && strlen($data['logicScript']) > 102400) {
+            return 'Logic script must be 100KB or smaller';
+        }
+        if (isset($data['logicPrompt']) && is_string($data['logicPrompt']) && strlen($data['logicPrompt']) > 10240) {
+            return 'Logic prompt must be 10KB or smaller';
+        }
+        if (isset($data['fields']) && is_array($data['fields'])) {
+            $fieldsJson = json_encode($data['fields']);
+            if ($fieldsJson !== false && strlen($fieldsJson) > 512000) {
+                return 'Fields data must be 500KB or smaller';
+            }
+        }
+        if (isset($data['settings'])) {
+            $settingsJson = json_encode($data['settings']);
+            if ($settingsJson !== false && strlen($settingsJson) > 10240) {
+                return 'Settings must be 10KB or smaller';
+            }
+        }
+        if (isset($data['theme'])) {
+            $themeJson = json_encode($data['theme']);
+            if ($themeJson !== false && strlen($themeJson) > 10240) {
+                return 'Theme must be 10KB or smaller';
+            }
+        }
+        return null;
+    }
+
+    /**
      * Check if the current user owns the form
      * Returns the form if authorized, null otherwise
      */
@@ -158,6 +191,10 @@ class FormController
         if (isset($data['fields']) && !is_array($data['fields'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
         }
+        $sizeError = $this->validateFieldSizes($data);
+        if ($sizeError !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $sizeError], 422);
+        }
 
         if (empty($data['title'])) {
             $data['title'] = 'Untitled Form';
@@ -221,6 +258,10 @@ class FormController
         }
         if (isset($data['fields']) && !is_array($data['fields'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
+        }
+        $sizeError = $this->validateFieldSizes($data);
+        if ($sizeError !== null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $sizeError], 422);
         }
 
         try {
