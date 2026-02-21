@@ -112,7 +112,7 @@ function FieldResponse({
                 aria-checked={value === option.value}
                 onClick={() => onChange(option.value)}
                 className={cn(
-                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
+                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                   value === option.value
                     ? 'border-primary-500 bg-primary-500/10'
                     : 'border-current/20 hover:border-current/30'
@@ -150,7 +150,7 @@ function FieldResponse({
                   onChange(newValues);
                 }}
                 className={cn(
-                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
+                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                   selectedValues.includes(option.value)
                     ? 'border-primary-500 bg-primary-500/10'
                     : 'border-current/20 hover:border-current/30'
@@ -347,8 +347,10 @@ function FieldResponse({
                       <p className="text-sm opacity-50">{formatFileSize(file.size)}</p>
                     </div>
                     <button
+                      type="button"
                       onClick={() => onChange(uploadedFiles.filter((_, i) => i !== index))}
-                      className="p-2 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors"
+                      aria-label="Remove file"
+                      className="p-2 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -459,6 +461,7 @@ function FieldResponse({
             </div>
             {Boolean(value) && (
               <button
+                type="button"
                 onClick={() => {
                   const canvas = document.getElementById(signatureCanvasId) as HTMLCanvasElement;
                   if (canvas) {

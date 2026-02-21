@@ -910,6 +910,11 @@ class ResponseService
                     continue;
                 }
 
+                // Report partial validation errors even if some fields were valid
+                if (!empty($rowErrors)) {
+                    $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];
+                }
+
                 try {
                     $id = $this->generateUuid();
                     $now = date('Y-m-d H:i:s');

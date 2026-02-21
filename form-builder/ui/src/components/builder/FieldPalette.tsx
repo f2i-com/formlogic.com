@@ -35,7 +35,7 @@ export function FieldPalette({ onAddField }: { onAddField: (type: FieldType) => 
                 <button
                   key={field.type}
                   onClick={() => onAddField(field.type)}
-                  className="flex items-center gap-2 p-3 sm:p-2 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 active:scale-95 transition-all"
+                  className="flex items-center gap-2 p-3 sm:p-2 text-left text-sm rounded-lg border border-gray-200 dark:border-slate-700 hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 active:scale-95 transition-all cursor-pointer"
                 >
                   <IconComponent className="h-4 w-4 text-gray-500 dark:text-slate-500" />
                   <span className="text-gray-700 dark:text-slate-300 truncate">{field.label}</span>

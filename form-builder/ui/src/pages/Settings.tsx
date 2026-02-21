@@ -311,7 +311,7 @@ export function Settings() {
                           useUIStore.getState().setThemeColor(theme.id as any);
                           toast.success('Theme Updated', `Accent color changed to ${theme.label}`);
                         }}
-                        className={`group relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-200 ${isSelected
+                        className={`group relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-200 cursor-pointer ${isSelected
                           ? 'border-primary-500 bg-primary-500/5 ring-1 ring-primary-500/50'
                           : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
                           }`}

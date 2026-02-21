@@ -672,9 +672,9 @@ class ResponseController
             ], 400);
         }
 
-        // Check if columnMapping is provided (via POST body or $_POST)
+        // Check if columnMapping is provided
         $parsedBody = $request->getParsedBody();
-        $columnMappingJson = $parsedBody['columnMapping'] ?? $_POST['columnMapping'] ?? null;
+        $columnMappingJson = $parsedBody['columnMapping'] ?? null;
 
         if ($columnMappingJson === null) {
             // No mapping provided - return preview data for the frontend mapping step

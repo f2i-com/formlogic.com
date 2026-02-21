@@ -449,6 +449,8 @@ class FormLogicRuntime
                         $parsed = json_decode($tiersJson, true);
                         if (is_array($parsed) && !empty($parsed)) {
                             $tiers = $parsed;
+                            // Ensure tiers are sorted by ceiling ascending
+                            usort($tiers, fn($a, $b) => ($a[0] ?? 0) <=> ($b[0] ?? 0));
                         }
                     }
                 }
@@ -491,6 +493,11 @@ class FormLogicRuntime
                 $equity = (int) round(20 + $t * 70);
                 $bond = (int) round(50 - $t * 42);
                 $cash = 100 - $equity - $bond;
+                // Clamp cash to prevent negative values from independent rounding
+                if ($cash < 0) {
+                    $bond += $cash;
+                    $cash = 0;
+                }
                 return new StringObject("{$equity}:{$bond}:{$cash}");
             },
 

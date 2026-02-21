@@ -192,7 +192,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                   key={evt.value}
                   onClick={() => toggleEvent(evt.value)}
                   className={cn(
-                    'p-2 rounded-lg border text-left text-xs transition-all',
+                    'p-2 rounded-lg border text-left text-xs transition-all cursor-pointer',
                     newEvents.includes(evt.value)
                       ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
                       : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300'

@@ -384,6 +384,9 @@ class AppService
         while ($this->slugExists($slug)) {
             $slug = $baseSlug . '-' . $counter;
             $counter++;
+            if ($counter > 100) {
+                throw new \RuntimeException('Unable to generate unique slug');
+            }
         }
 
         return $slug;

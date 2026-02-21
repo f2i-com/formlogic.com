@@ -210,8 +210,10 @@ function registerFormModules(engine: FormLogicEngine): void {
   engine.registerBuiltin('avg', (args: BaseObject[]) => {
     const arr = getValue(args[0]);
     if (!Array.isArray(arr) || arr.length === 0) return new FloatObject(0);
-    const total = arr.reduce((acc: number, v: unknown) => acc + (typeof v === 'number' ? v : 0), 0);
-    return new FloatObject(total / arr.length);
+    const nums = arr.filter((v: unknown): v is number => typeof v === 'number');
+    if (nums.length === 0) return new FloatObject(0);
+    const total = nums.reduce((acc, v) => acc + v, 0);
+    return new FloatObject(total / nums.length);
   });
 
   engine.registerBuiltin('count', (args: BaseObject[]) => {

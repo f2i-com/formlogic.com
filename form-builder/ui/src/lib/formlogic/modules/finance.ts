@@ -51,6 +51,8 @@ export const financeModule: Record<string, (args: BaseObject[]) => BaseObject> =
         if (Array.isArray(parsed) && parsed.length > 0 &&
             parsed.every((t: unknown) => Array.isArray(t) && t.length >= 2 && typeof t[0] === 'number' && typeof t[1] === 'number')) {
           tiers = parsed.map((t: [number, number]) => [t[0], t[1]]);
+          // Ensure tiers are sorted by ceiling ascending
+          tiers.sort((a, b) => a[0] - b[0]);
         }
       } catch {
         // Use default tiers on parse error
@@ -109,9 +111,15 @@ export const financeModule: Record<string, (args: BaseObject[]) => BaseObject> =
     const score = Math.max(1, Math.min(100, riskScore));
     const t = (score - 1) / 99; // 0 to 1
 
-    const equity = Math.round(20 + t * 70);  // 20 → 90
-    const bond = Math.round(50 - t * 42);    // 50 → 8
-    const cash = 100 - equity - bond;         // 30 → 2
+    let equity = Math.round(20 + t * 70);  // 20 → 90
+    let bond = Math.round(50 - t * 42);    // 50 → 8
+    let cash = 100 - equity - bond;         // 30 → 2
+
+    // Clamp cash to prevent negative values from independent rounding
+    if (cash < 0) {
+      bond += cash; // reduce bond by the overshoot
+      cash = 0;
+    }
 
     return new StringObject(`${equity}:${bond}:${cash}`);
   },

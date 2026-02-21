@@ -10,27 +10,45 @@ import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
 
+// Retry wrapper for lazy imports — handles stale chunk references after deploys
+function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
+  return React.lazy(() =>
+    factory().catch((error: Error) => {
+      const isChunkError =
+        error.message.includes('Failed to fetch dynamically imported module') ||
+        error.message.includes('Loading chunk') ||
+        error.message.includes('Loading CSS chunk');
+      if (isChunkError && !sessionStorage.getItem('lazy_refresh')) {
+        sessionStorage.setItem('lazy_refresh', '1');
+        window.location.reload();
+        return new Promise(() => {}) as never; // Suspend during reload
+      }
+      throw error;
+    })
+  );
+}
+
 // Lazy load pages for better performance
-const FormBuilder = React.lazy(() => import('./pages/FormBuilder'));
-const FormPreview = React.lazy(() => import('./pages/FormPreview'));
-const FormAnalytics = React.lazy(() => import('./pages/FormAnalytics'));
-const FormResponse = React.lazy(() => import('./pages/FormResponse'));
-const FormResponses = React.lazy(() => import('./pages/FormResponses'));
-const Login = React.lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
-const Signup = React.lazy(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
+const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
+const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
+const FormAnalytics = lazyWithRetry(() => import('./pages/FormAnalytics'));
+const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
+const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
+const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
+const Signup = lazyWithRetry(() => import('./pages/Signup').then(m => ({ default: m.Signup })));
 
 // Lazy load app admin pages
-const AppsDashboard = React.lazy(() => import('./pages/apps/AppsDashboard').then(m => ({ default: m.AppsDashboard })));
-const AppCreateWizard = React.lazy(() => import('./pages/apps/AppCreateWizard').then(m => ({ default: m.AppCreateWizard })));
-const AppSettingsPage = React.lazy(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
-const AppFormManager = React.lazy(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
-const AppUserManager = React.lazy(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
-const AppRoleEditor = React.lazy(() => import('./pages/apps/AppRoleEditor').then(m => ({ default: m.AppRoleEditor })));
-const AppDeploySettings = React.lazy(() => import('./pages/apps/AppDeploySettings').then(m => ({ default: m.AppDeploySettings })));
-const AppRelationsManager = React.lazy(() => import('./pages/apps/AppRelationsManager').then(m => ({ default: m.AppRelationsManager })));
+const AppsDashboard = lazyWithRetry(() => import('./pages/apps/AppsDashboard').then(m => ({ default: m.AppsDashboard })));
+const AppCreateWizard = lazyWithRetry(() => import('./pages/apps/AppCreateWizard').then(m => ({ default: m.AppCreateWizard })));
+const AppSettingsPage = lazyWithRetry(() => import('./pages/apps/AppSettings').then(m => ({ default: m.AppSettings })));
+const AppFormManager = lazyWithRetry(() => import('./pages/apps/AppFormManager').then(m => ({ default: m.AppFormManager })));
+const AppUserManager = lazyWithRetry(() => import('./pages/apps/AppUserManager').then(m => ({ default: m.AppUserManager })));
+const AppRoleEditor = lazyWithRetry(() => import('./pages/apps/AppRoleEditor').then(m => ({ default: m.AppRoleEditor })));
+const AppDeploySettings = lazyWithRetry(() => import('./pages/apps/AppDeploySettings').then(m => ({ default: m.AppDeploySettings })));
+const AppRelationsManager = lazyWithRetry(() => import('./pages/apps/AppRelationsManager').then(m => ({ default: m.AppRelationsManager })));
 
 // Lazy load app runtime
-const AppRuntimeRoot = React.lazy(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
+const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
 
 function LoadingFallback() {
   return (
@@ -54,6 +72,11 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
       document.documentElement.classList.remove('dark');
     }
   }, [theme]);
+
+  useEffect(() => {
+    // Clear chunk retry flag on successful load
+    sessionStorage.removeItem('lazy_refresh');
+  }, []);
 
   useEffect(() => {
     // Initialize auth first, then forms

@@ -186,13 +186,16 @@ class AIService
             CURLOPT_TIMEOUT => 120,
         ]);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
-        curl_close($ch);
+        try {
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $error = curl_error($ch);
+        } finally {
+            curl_close($ch);
+        }
 
-        if ($error) {
-            throw new \Exception('API request failed: ' . $error);
+        if ($response === false || $error) {
+            throw new \Exception('API request failed: ' . ($error ?: 'curl_exec returned false'));
         }
 
         if ($httpCode !== 200) {

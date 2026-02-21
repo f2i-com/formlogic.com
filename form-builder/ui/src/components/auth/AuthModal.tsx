@@ -194,7 +194,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline"
+                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
                 disabled={isLoading}
               >
                 Sign up
@@ -206,7 +206,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline"
+                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
                 disabled={isLoading}
               >
                 Sign in

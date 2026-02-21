@@ -197,7 +197,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
                 activeTab === tab.key
                   ? 'border-primary-600 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
@@ -280,7 +280,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
                   </div>
                   <p className="text-sm text-gray-600 dark:text-slate-400">
                     Drag and drop a file here, or{' '}
-                    <button onClick={() => fileInputRef.current?.click()} className="text-primary-600 dark:text-primary-400 font-medium hover:underline">
+                    <button onClick={() => fileInputRef.current?.click()} className="text-primary-600 dark:text-primary-400 font-medium hover:underline cursor-pointer">
                       browse to upload
                     </button>
                   </p>
@@ -338,7 +338,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
                   </div>
                   <p className="text-sm text-gray-600 dark:text-slate-400">
                     Take a photo of a paper form or{' '}
-                    <button onClick={() => imageInputRef.current?.click()} className="text-primary-600 dark:text-primary-400 font-medium hover:underline">
+                    <button onClick={() => imageInputRef.current?.click()} className="text-primary-600 dark:text-primary-400 font-medium hover:underline cursor-pointer">
                       upload an image
                     </button>
                   </p>

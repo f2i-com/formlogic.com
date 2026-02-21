@@ -244,8 +244,9 @@ function closeFormPopup() {
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
@@ -257,9 +258,10 @@ function closeFormPopup() {
           {tabs.map((tab) => (
             <button
               key={tab.id}
+              type="button"
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px',
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px cursor-pointer',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
@@ -338,7 +340,7 @@ function closeFormPopup() {
                       key={type.id}
                       onClick={() => setEmbedType(type.id)}
                       className={cn(
-                        'p-3 rounded-lg border-2 text-left transition-all',
+                        'p-3 rounded-lg border-2 text-left transition-all cursor-pointer',
                         embedType === type.id
                           ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                           : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -436,7 +438,7 @@ function closeFormPopup() {
                 <button
                   onClick={handleExportJson}
                   disabled={exporting === 'json'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group"
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group cursor-pointer"
                 >
                   <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/40 transition-colors">
                     <FileJson className="h-6 w-6 text-blue-600 dark:text-blue-400" />
@@ -451,7 +453,7 @@ function closeFormPopup() {
                 <button
                   onClick={handleExportCsv}
                   disabled={exporting === 'csv'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group"
+                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group cursor-pointer"
                 >
                   <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-200 dark:group-hover:bg-green-800/40 transition-colors">
                     <FileSpreadsheet className="h-6 w-6 text-green-600 dark:text-green-400" />

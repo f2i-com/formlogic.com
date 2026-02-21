@@ -70,8 +70,9 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
             <p className="text-sm text-gray-500 dark:text-slate-400">Start from scratch or choose a template</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
@@ -88,7 +89,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
                   key={category.id}
                   onClick={() => setSelectedCategory(category.id)}
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors',
+                    'w-full flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors cursor-pointer',
                     selectedCategory === category.id
                       ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400 font-medium'
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800'
@@ -108,7 +109,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
                 key={category.id}
                 onClick={() => setSelectedCategory(category.id)}
                 className={cn(
-                  'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full whitespace-nowrap transition-colors',
+                  'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full whitespace-nowrap transition-colors cursor-pointer',
                   selectedCategory === category.id
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400 font-medium'
                     : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400'
@@ -127,7 +128,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
             <div className="mb-6">
               <button
                 onClick={() => onSelectTemplate(null)}
-                className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/10 transition-all group"
+                className="w-full flex items-center gap-4 p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-primary-500 dark:hover:border-primary-500 hover:bg-primary-50 dark:hover:bg-primary-900/10 transition-all group cursor-pointer"
               >
                 <div className="p-3 bg-gray-100 dark:bg-slate-800 rounded-lg group-hover:bg-primary-100 dark:group-hover:bg-primary-900/30 transition-colors">
                   <Plus className="h-6 w-6 text-gray-600 dark:text-slate-400 group-hover:text-primary-600 dark:group-hover:text-primary-400" />
@@ -152,7 +153,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
                     onMouseEnter={() => setHoveredTemplate(template.id)}
                     onMouseLeave={() => setHoveredTemplate(null)}
                     className={cn(
-                      'text-left p-4 border rounded-xl transition-all',
+                      'text-left p-4 border rounded-xl transition-all cursor-pointer',
                       hoveredTemplate === template.id
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/10 shadow-md'
                         : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-700'

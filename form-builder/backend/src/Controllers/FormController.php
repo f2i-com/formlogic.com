@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -171,9 +172,9 @@ class FormController
 
         try {
             // Snapshot current state before updating
+            $changelog = $data['_changelog'] ?? null;
+            unset($data['_changelog']);
             if ($this->versionService !== null) {
-                $changelog = $data['_changelog'] ?? null;
-                unset($data['_changelog']);
                 $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
             }
 
@@ -375,7 +376,7 @@ class FormController
     {
         if ($this->auditService === null) return;
         $userId = $request->getAttribute('userId');
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 

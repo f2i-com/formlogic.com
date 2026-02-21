@@ -22,6 +22,15 @@ class WebhookService
 
     public function createWebhook(string $formId, string $userId, string $url, array $events, ?string $description = null): array
     {
+        // Validate URL before storing
+        $parsed = parse_url($url);
+        if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+            throw new \InvalidArgumentException('Invalid webhook URL');
+        }
+        if (!in_array($parsed['scheme'], ['http', 'https'], true)) {
+            throw new \InvalidArgumentException('Webhook URL must use HTTP or HTTPS');
+        }
+
         $id = $this->generateUuid();
         $secret = bin2hex(random_bytes(32));
 
@@ -173,6 +182,9 @@ class WebhookService
             // SSRF protection: resolve hostname and block private/reserved IPs
             $parsedUrl = parse_url($webhook['url']);
             $host = $parsedUrl['host'] ?? '';
+            if ($host === '') {
+                throw new \RuntimeException('Webhook URL has no valid host');
+            }
             $resolvedIps = gethostbynamel($host);
             if ($resolvedIps !== false) {
                 foreach ($resolvedIps as $ip) {
@@ -197,16 +209,18 @@ class WebhookService
                 ],
             ]);
 
-            $responseBody = curl_exec($ch);
-            $responseStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            try {
+                $responseBody = curl_exec($ch);
+                $responseStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-            if (curl_errno($ch)) {
-                $errorMessage = curl_error($ch);
-            } else {
-                $success = $responseStatus >= 200 && $responseStatus < 300;
+                if ($responseBody === false || curl_errno($ch)) {
+                    $errorMessage = curl_error($ch) ?: 'curl_exec failed';
+                } else {
+                    $success = $responseStatus >= 200 && $responseStatus < 300;
+                }
+            } finally {
+                curl_close($ch);
             }
-
-            curl_close($ch);
         } catch (\Exception $e) {
             $errorMessage = $e->getMessage();
         }

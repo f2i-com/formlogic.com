@@ -237,8 +237,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
@@ -256,7 +257,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                   key={preset.id}
                   onClick={() => applyPreset(preset)}
                   className={cn(
-                    'relative p-2 rounded-lg border-2 transition-all',
+                    'relative p-2 rounded-lg border-2 transition-all cursor-pointer',
                     activePreset === preset.id
                       ? 'border-primary-500 ring-2 ring-primary-200 dark:ring-primary-900'
                       : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -396,7 +397,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                     key={option.value}
                     onClick={() => updateTheme({ borderRadius: option.value })}
                     className={cn(
-                      'flex-1 py-2 px-3 border-2 transition-all text-sm',
+                      'flex-1 py-2 px-3 border-2 transition-all text-sm cursor-pointer',
                       option.class,
                       editedTheme.borderRadius === option.value
                         ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400'
@@ -422,7 +423,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 />
                 <button
                   onClick={() => removeImage('backgroundImage')}
-                  className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                  className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors cursor-pointer"
                   aria-label="Remove background image"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -431,7 +432,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             ) : (
               <button
                 onClick={() => bgInputRef.current?.click()}
-                className="w-full p-6 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex flex-col items-center gap-2 group"
+                className="w-full p-6 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex flex-col items-center gap-2 group cursor-pointer"
               >
                 <Image className="h-8 w-8 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
                 <span className="text-sm text-gray-500 dark:text-slate-400">Upload Background Image</span>
@@ -461,7 +462,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 </div>
                 <button
                   onClick={() => removeImage('logo')}
-                  className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                  className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors cursor-pointer"
                   aria-label="Remove logo"
                 >
                   <Trash2 className="h-3 w-3" />
@@ -470,7 +471,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
             ) : (
               <button
                 onClick={() => logoInputRef.current?.click()}
-                className="p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 group"
+                className="p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-lg hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 group cursor-pointer"
               >
                 <Upload className="h-6 w-6 text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
                 <div className="text-left">

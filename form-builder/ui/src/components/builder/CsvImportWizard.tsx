@@ -490,19 +490,19 @@ export function CsvImportWizard({
 
             <div className="grid grid-cols-3 gap-4 mb-6">
               <div className="text-center p-4 bg-green-50 dark:bg-green-500/10 rounded-lg border border-green-200 dark:border-green-500/30">
-                <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                <p className="text-2xl font-bold text-green-600 dark:text-green-400 tabular-nums">
                   {importResult.created}
                 </p>
                 <p className="text-sm text-green-700 dark:text-green-500">Created</p>
               </div>
               <div className="text-center p-4 bg-amber-50 dark:bg-amber-500/10 rounded-lg border border-amber-200 dark:border-amber-500/30">
-                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                <p className="text-2xl font-bold text-amber-600 dark:text-amber-400 tabular-nums">
                   {importResult.skipped}
                 </p>
                 <p className="text-sm text-amber-700 dark:text-amber-500">Skipped</p>
               </div>
               <div className="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
-                <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                <p className="text-2xl font-bold text-gray-900 dark:text-white tabular-nums">
                   {importResult.total}
                 </p>
                 <p className="text-sm text-gray-500 dark:text-slate-400">Total</p>
@@ -513,7 +513,7 @@ export function CsvImportWizard({
               <div className="mb-4">
                 <button
                   onClick={() => setShowErrors(!showErrors)}
-                  className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+                  className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors cursor-pointer"
                 >
                   <AlertTriangle className="h-4 w-4" />
                   {importResult.errors.length} row(s) had errors

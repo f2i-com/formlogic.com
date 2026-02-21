@@ -62,17 +62,17 @@ function StatCard({
   subtext?: string;
 }) {
   return (
-    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5">
+    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5 group">
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">{value}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums">{value}</p>
             <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mt-1">{label}</p>
             {subtext && (
               <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{subtext}</p>
             )}
           </div>
-          <div className={`p-2.5 rounded-xl ${iconBg}`}>
+          <div className={`p-2.5 rounded-xl ${iconBg} group-hover:scale-105 transition-transform duration-300`}>
             <Icon className={`h-5 w-5 ${iconColor}`} />
           </div>
         </div>
@@ -96,13 +96,13 @@ function QuickActionButton({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition-all duration-300 hover:-translate-y-0.5 cursor-pointer ${primary
+      className={`flex flex-col items-center justify-center gap-2.5 p-4 rounded-xl border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer group ${primary
         ? 'bg-primary-600 border-primary-500 text-white hover:bg-primary-500 shadow-md shadow-primary-600/15'
         : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/10 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
         }`}
     >
-      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-400 dark:text-slate-400'}`} />
-      <span className={`text-sm font-medium ${primary ? 'text-white' : 'text-gray-700 dark:text-slate-300'}`}>
+      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} transition-colors`} />
+      <span className={`text-[13px] font-medium ${primary ? 'text-white' : 'text-gray-600 dark:text-slate-300'}`}>
         {label}
       </span>
     </button>
@@ -212,35 +212,35 @@ function FormActionsDropdown({
           <div className="sm:hidden">
             <button
               onClick={() => { onEdit(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
               <Pencil className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Edit
             </button>
             <button
               onClick={() => { onPreview(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
               <Eye className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Preview
             </button>
             <button
               onClick={() => { onAnalytics(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
               <BarChart3 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Analytics
             </button>
             <button
               onClick={() => { onViewData(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
               <Table className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               View Data
             </button>
             <button
               onClick={() => { onShare(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
               <Share2 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Share & Embed
@@ -252,21 +252,21 @@ function FormActionsDropdown({
           </div>
           <button
             onClick={handleExportSqlite}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
           >
             <Database className="h-4 w-4 text-blue-500" />
             Download SQLite
           </button>
           <button
             onClick={handleExportJson}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
           >
             <FileJson className="h-4 w-4 text-green-500" />
             Export JSON
           </button>
           <button
             onClick={handleExportCsv}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2"
+            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
           >
             <Download className="h-4 w-4 text-purple-500" />
             Export CSV
@@ -274,7 +274,7 @@ function FormActionsDropdown({
           <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
           <button
             onClick={() => { onDelete(); setIsOpen(false); }}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2"
+            className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer"
           >
             <Trash2 className="h-4 w-4" />
             Delete Form
@@ -690,7 +690,7 @@ export function Dashboard() {
                       <button
                         key={`${response.formId}-${index}`}
                         onClick={() => navigate(`/responses/${response.formId}`)}
-                        className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors"
+                        className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
                       >
                         <div className="flex items-start gap-3">
                           <div className="p-2 bg-green-500/10 rounded-lg flex-shrink-0">

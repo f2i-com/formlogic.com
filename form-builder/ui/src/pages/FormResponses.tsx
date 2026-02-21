@@ -67,7 +67,7 @@ function StatCard({
             <Icon className={cn('h-5 w-5', iconColor)} />
           </div>
           <div>
-            <p className={cn("text-2xl font-bold tracking-tight", textColor || "text-gray-900 dark:text-white")}>{value}</p>
+            <p className={cn("text-2xl font-bold tracking-tight tabular-nums", textColor || "text-gray-900 dark:text-white")}>{value}</p>
             <p className="text-sm text-gray-500 dark:text-slate-400">{label}</p>
           </div>
         </div>
@@ -452,7 +452,7 @@ function FormResponses() {
             <button
               onClick={() => toggleSort('submittedAt')}
               className={cn(
-                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
+                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium cursor-pointer',
                 sortField === 'submittedAt'
                   ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-white shadow-sm'
                   : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -464,7 +464,7 @@ function FormResponses() {
             <button
               onClick={() => toggleSort('completionTime')}
               className={cn(
-                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium',
+                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium cursor-pointer',
                 sortField === 'completionTime'
                   ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-white shadow-sm'
                   : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -536,7 +536,7 @@ function FormResponses() {
                         <div className="flex justify-end gap-1">
                           <button
                             onClick={() => handleView(response)}
-                            className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer"
                             title="View details"
                             aria-label="View response details"
                           >
@@ -544,7 +544,7 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={() => handleEdit(response)}
-                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer"
                             title="Edit response"
                             aria-label="Edit response"
                           >
@@ -552,7 +552,7 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={() => handleDeleteConfirm(response)}
-                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
                             title="Delete response"
                             aria-label="Delete response"
                           >

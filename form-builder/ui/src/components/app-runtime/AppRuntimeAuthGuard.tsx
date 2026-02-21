@@ -130,7 +130,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
           </h2>
           <p className="text-gray-500 dark:text-slate-400 mb-4">{error || 'Unable to load this app. Please try again later.'}</p>
           <div className="flex items-center justify-center gap-3">
-            <button type="button" onClick={() => window.location.reload()} className="text-sm text-gray-600 dark:text-slate-300 hover:underline cursor-pointer">Try Again</button>
+            <button type="button" onClick={() => window.location.reload()} className="text-sm text-gray-600 dark:text-slate-300 hover:underline cursor-pointer transition-colors">Try Again</button>
             <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>
           </div>
         </div>

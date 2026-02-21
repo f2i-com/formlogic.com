@@ -52,6 +52,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           'transition-all duration-200 ease-out',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950',
           'disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none',
+          'cursor-pointer',
           'active:scale-[0.97]',
           variants[variant],
           sizes[size],

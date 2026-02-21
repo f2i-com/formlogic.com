@@ -72,7 +72,7 @@ export function SortableFieldCard({
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           aria-label={`Delete ${field.label || 'field'}`}
           className={cn(
-            'p-1.5 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all',
+            'p-1.5 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer',
             isSelected
               ? 'text-gray-400 dark:text-slate-500 opacity-100'
               : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 sm:opacity-0 max-sm:opacity-60'

@@ -106,7 +106,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 aria-checked={value === option.value}
                 onClick={() => onChange(option.value)}
                 className={cn(
-                  'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all',
+                  'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                   value === option.value
                     ? 'border-primary-500 bg-primary-500/10'
                     : 'border-current/20 hover:border-current/40'
@@ -139,7 +139,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                   onChange(newValues);
                 }}
                 className={cn(
-                  'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all',
+                  'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                   selectedValues.includes(option.value)
                     ? 'border-primary-500 bg-primary-500/10'
                     : 'border-current/20 hover:border-current/40'
@@ -458,6 +458,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
             </div>
             {Boolean(value) && (
               <button
+                type="button"
                 onClick={() => {
                   const canvas = document.getElementById(signatureId) as HTMLCanvasElement;
                   if (canvas) {
@@ -466,7 +467,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                   }
                   onChange(null);
                 }}
-                className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1"
+                className="text-sm text-red-500 hover:text-red-700 flex items-center gap-1 cursor-pointer"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -683,7 +684,7 @@ export default function FormPreview() {
               onClick={() => setPreviewDevice('desktop')}
               aria-label="Desktop preview"
               className={cn(
-                'p-2 rounded-md transition-all duration-200',
+                'p-2 rounded-md transition-all duration-200 cursor-pointer',
                 previewDevice === 'desktop'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
@@ -695,7 +696,7 @@ export default function FormPreview() {
               onClick={() => setPreviewDevice('mobile')}
               aria-label="Mobile preview"
               className={cn(
-                'p-2 rounded-md transition-all duration-200',
+                'p-2 rounded-md transition-all duration-200 cursor-pointer',
                 previewDevice === 'mobile'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
@@ -710,7 +711,7 @@ export default function FormPreview() {
             <button
               onClick={() => setPreviewMode('focused')}
               className={cn(
-                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200',
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200 cursor-pointer',
                 previewMode === 'focused'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
@@ -721,7 +722,7 @@ export default function FormPreview() {
             <button
               onClick={() => setPreviewMode('classic')}
               className={cn(
-                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200',
+                'px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md transition-all duration-200 cursor-pointer',
                 previewMode === 'classic'
                   ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white'
                   : 'hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-500 dark:text-slate-400'
@@ -826,7 +827,7 @@ export default function FormPreview() {
                   onClick={handlePrev}
                   disabled={safeCurrentStep === 0}
                   aria-label="Previous question"
-                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity"
+                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity cursor-pointer disabled:cursor-not-allowed"
                 >
                   <ChevronUp className="h-6 w-6" />
                 </button>
@@ -837,7 +838,7 @@ export default function FormPreview() {
                   onClick={handleNext}
                   disabled={isLastStep}
                   aria-label="Next question"
-                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity"
+                  className="p-2 opacity-40 hover:opacity-70 disabled:opacity-20 transition-opacity cursor-pointer disabled:cursor-not-allowed"
                 >
                   <ChevronDown className="h-6 w-6" />
                 </button>

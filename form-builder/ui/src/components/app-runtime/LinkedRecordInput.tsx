@@ -35,6 +35,7 @@ export function LinkedRecordInput({
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchIdRef = useRef(0);
 
   // Current selection(s)
   const selectedIds: string[] = allowMultiple
@@ -72,10 +73,11 @@ export function LinkedRecordInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds.join(',')]);
 
-  // Debounced search
+  // Debounced search with stale-result protection
   const doSearch = useCallback((q: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
+      const thisSearchId = ++searchIdRef.current;
       setLoading(true);
       try {
         const records = await lookupRecords(formId, {
@@ -85,12 +87,19 @@ export function LinkedRecordInput({
           q: q || undefined,
           limit: 20,
         });
-        setResults(records);
-        setHighlightIndex(0);
+        // Only apply results if this is still the latest search
+        if (thisSearchId === searchIdRef.current) {
+          setResults(records);
+          setHighlightIndex(0);
+        }
       } catch {
-        setResults([]);
+        if (thisSearchId === searchIdRef.current) {
+          setResults([]);
+        }
       }
-      setLoading(false);
+      if (thisSearchId === searchIdRef.current) {
+        setLoading(false);
+      }
     }, 300);
   }, [lookupRecords, formId, targetFormId, displayFieldIds, searchFieldIds]);
 
@@ -154,6 +163,7 @@ export function LinkedRecordInput({
       e.stopPropagation();
       if (filteredResults[highlightIndex]) {
         handleSelect(filteredResults[highlightIndex]);
+        if (allowMultiple) setQuery('');
       }
     } else if (e.key === 'Escape') {
       setIsOpen(false);
@@ -259,7 +269,7 @@ export function LinkedRecordInput({
                 onClick={() => handleSelect(record)}
                 onMouseEnter={() => setHighlightIndex(index)}
                 className={cn(
-                  'w-full text-left px-4 py-3 text-sm transition-colors',
+                  'w-full text-left px-4 py-3 text-sm transition-colors cursor-pointer',
                   index === highlightIndex
                     ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-900 dark:text-primary-100'
                     : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700/50'

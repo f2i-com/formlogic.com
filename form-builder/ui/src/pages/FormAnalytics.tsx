@@ -289,6 +289,9 @@ export default function FormAnalytics() {
       a.download = `${sanitizeFilename(form.title)}-responses.csv`;
       a.click();
       URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export CSV:', error);
+      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export CSV');
     } finally {
       setIsExporting(false);
     }
@@ -358,21 +361,21 @@ export default function FormAnalytics() {
                 <div role="menu" className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
                   <button
                     onClick={handleExportCSV}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
                     <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
                     Export CSV
                   </button>
                   <button
                     onClick={handleExportJson}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
                     <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
                     Export JSON
                   </button>
                   <button
                     onClick={handleExportSqlite}
-                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
                     <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
                     Download SQLite
@@ -393,7 +396,7 @@ export default function FormAnalytics() {
                 <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{totalResponses}</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">{totalResponses}</p>
                 <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Responses</p>
               </div>
             </CardContent>
@@ -405,7 +408,7 @@ export default function FormAnalytics() {
                 <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 text-green-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{completionRate}%</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">{completionRate}%</p>
                 <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Completion</p>
               </div>
             </CardContent>
@@ -417,7 +420,7 @@ export default function FormAnalytics() {
                 <Clock className="h-5 w-5 sm:h-6 sm:w-6 text-purple-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">
+                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">
                   {avgCompletionTime > 60
                     ? `${Math.floor(avgCompletionTime / 60)}m`
                     : `${avgCompletionTime}s`}
@@ -433,7 +436,7 @@ export default function FormAnalytics() {
                 <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-500" />
               </div>
               <div className="min-w-0">
-                <p className={`text-xl sm:text-2xl font-bold ${weeklyChange === null ? 'text-gray-500 dark:text-slate-400' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
+                <p className={`text-xl sm:text-2xl font-bold tabular-nums ${weeklyChange === null ? 'text-gray-500 dark:text-slate-400' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
                   {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
                 </p>
                 <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">This Week</p>

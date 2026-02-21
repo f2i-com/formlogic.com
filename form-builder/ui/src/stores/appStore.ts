@@ -21,7 +21,7 @@ interface AppState {
 
   // Form management
   fetchAppForms: (appId: string) => Promise<AppForm[]>;
-  addFormToApp: (appId: string, formId: string, displayName?: string) => Promise<void>;
+  addFormToApp: (appId: string, formId: string, displayName?: string) => Promise<boolean>;
   removeFormFromApp: (appId: string, formId: string) => Promise<void>;
   updateAppForm: (appId: string, formId: string, data: Partial<AppForm>) => Promise<void>;
   reorderAppForms: (appId: string, formIds: string[]) => Promise<void>;
@@ -123,15 +123,18 @@ export const useAppStore = create<AppState>()(
             // Ignore "already exists" errors — the form is already on the server
             if (syncResult.error && !syncResult.error.toLowerCase().includes('already exists')) {
               toast.error('Sync failed', syncResult.error);
-              return;
+              return false;
             }
           }
           const result = await api.addAppForm(appId, formId, displayName);
           if (result.error) {
             toast.error('Failed to add form', result.error);
+            return false;
           }
+          return true;
         } catch {
           toast.error('Failed to add form', 'An unexpected error occurred.');
+          return false;
         }
       },
 

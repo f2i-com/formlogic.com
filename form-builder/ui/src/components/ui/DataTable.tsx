@@ -171,7 +171,7 @@ export function DataTable<T extends Record<string, unknown>>({
               onClick={() => setPage(Math.max(0, safePage - 1))}
               disabled={safePage === 0}
               aria-label="Previous page"
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -180,7 +180,7 @@ export function DataTable<T extends Record<string, unknown>>({
               onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
               disabled={safePage >= totalPages - 1}
               aria-label="Next page"
-              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

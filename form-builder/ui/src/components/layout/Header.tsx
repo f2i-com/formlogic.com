@@ -13,7 +13,7 @@ export function Header({ title, actions }: HeaderProps) {
 
   return (
     <>
-      <header className="h-14 sm:h-16 bg-white/90 dark:bg-slate-900/60 backdrop-blur-xl border-b border-gray-200/80 dark:border-white/[0.06] sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4">
+      <header className="h-14 sm:h-16 bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-b border-gray-200/60 dark:border-white/[0.06] sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4">
         <div className="flex-shrink-0 min-w-0">
           {title && (
             <h1

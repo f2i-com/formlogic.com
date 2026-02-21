@@ -117,7 +117,7 @@ function FieldInput({
               aria-checked={selected}
               onClick={() => onChange(option.value)}
               className={cn(
-                'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
+                'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                 selected ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
               )}
               style={selected ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
@@ -147,6 +147,7 @@ function FieldInput({
       <select
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
+        aria-label={field.label}
         className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white transition-colors"
         style={{ borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
       >
@@ -163,18 +164,21 @@ function FieldInput({
     const current = (value as string[]) ?? [];
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
-      <div className="space-y-3">
+      <div className="space-y-3" role="group" aria-label={field.label}>
         {options.map((option, index) => {
           const checked = current.includes(option.value);
           return (
             <button
               key={option.value}
               type="button"
+              role="checkbox"
+              aria-checked={checked}
+              aria-label={option.label}
               onClick={() => {
                 onChange(checked ? current.filter((v) => v !== option.value) : [...current, option.value]);
               }}
               className={cn(
-                'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all',
+                'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
                 checked ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'
               )}
               style={checked ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}

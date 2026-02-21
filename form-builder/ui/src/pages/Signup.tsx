@@ -101,8 +101,8 @@ export function Signup() {
       </div>
 
       {/* Right panel - Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-md">
+      <div className="flex-1 flex items-center justify-center p-6 sm:p-8">
+        <div className="w-full max-w-[400px]">
           <div className="lg:hidden mb-8">
             <Link to="/">
               <Logo size="lg" />
@@ -117,9 +117,9 @@ export function Signup() {
             </Link>
           </p>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {displayError && (
-              <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20">
+              <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20 animate-shake">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{displayError}</span>
               </div>
@@ -172,9 +172,11 @@ export function Signup() {
               required
             />
 
-            <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>
-              Create Account
-            </Button>
+            <div className="pt-1">
+              <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>
+                Create Account
+              </Button>
+            </div>
           </form>
 
           <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">

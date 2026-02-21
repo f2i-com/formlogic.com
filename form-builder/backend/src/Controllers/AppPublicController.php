@@ -708,6 +708,7 @@ class AppPublicController
         // Batch-load referenced records
         $resolvedCache = []; // targetFormId => responseId => { id, display }
         foreach ($refsByForm as $targetFormId => $idMap) {
+            $resolvedCache[$targetFormId] = [];
             $targetForm = $this->formService->getForm($targetFormId);
             if (!$targetForm) continue;
 

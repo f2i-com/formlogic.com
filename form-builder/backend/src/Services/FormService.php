@@ -43,9 +43,9 @@ class FormService
 
         $sql .= " ORDER BY updated_at DESC";
 
-        // Pagination
-        $limit = $options['limit'] ?? 50;
-        $offset = $options['offset'] ?? 0;
+        // Pagination (clamp to safe ranges)
+        $limit = max(1, min((int)($options['limit'] ?? 50), 1000));
+        $offset = max(0, (int)($options['offset'] ?? 0));
         $sql .= " LIMIT :limit OFFSET :offset";
 
         $stmt = $this->mysql->prepare($sql);

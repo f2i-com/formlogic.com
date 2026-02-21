@@ -263,6 +263,10 @@ class DocumentConverter
         $imageData = ob_get_clean();
         imagedestroy($image);
 
+        if ($imageData === false) {
+            throw new \RuntimeException('Failed to capture image output');
+        }
+
         return base64_encode($imageData);
     }
 

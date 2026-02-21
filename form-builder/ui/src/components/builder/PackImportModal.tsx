@@ -189,7 +189,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           <button
             type="button"
             onClick={() => handleTabChange('catalog')}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
               activeTab === 'catalog'
                 ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
                 : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
@@ -203,7 +203,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           <button
             type="button"
             onClick={() => handleTabChange('upload')}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
               activeTab === 'upload'
                 ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
                 : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
@@ -241,7 +241,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                     key={entry.id}
                     type="button"
                     onClick={() => setSelectedEntry(isSelected ? null : entry)}
-                    className={`text-left p-3 rounded-lg border transition-all ${
+                    className={`text-left p-3 rounded-lg border transition-all cursor-pointer ${
                       isSelected
                         ? 'border-primary-500 dark:border-primary-400 bg-primary-50 dark:bg-primary-500/10 ring-1 ring-primary-500 dark:ring-primary-400'
                         : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-sm'
@@ -325,7 +325,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                       setUploadFileName('');
                       setUploadError('');
                     }}
-                    className="mt-2 text-xs text-gray-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 underline"
+                    className="mt-2 text-xs text-gray-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 underline cursor-pointer"
                   >
                     Remove file
                   </button>

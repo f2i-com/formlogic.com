@@ -79,7 +79,7 @@ function FieldRow({
     <button
       type="button"
       onClick={() => onClick?.(field.fieldId)}
-      className="w-full flex items-start gap-2 px-3 py-2 text-left rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+      className="w-full flex items-start gap-2 px-3 py-2 text-left rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
     >
       <span
         className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${STATUS_DOT_COLORS[field.status]}`}
@@ -146,7 +146,7 @@ export function NigoDashboard({
         <button
           type="button"
           onClick={handleToggle}
-          className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+          className="p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
           aria-label={isCollapsed ? 'Expand dashboard' : 'Collapse dashboard'}
           aria-expanded={!isCollapsed}
         >

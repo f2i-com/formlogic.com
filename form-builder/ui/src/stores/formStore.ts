@@ -487,6 +487,14 @@ export const useFormStore = create<FormState>()(
               })
               .filter((f): f is FormField => f !== null);
 
+            // Append any fields missing from fieldIds to prevent silent data loss
+            const reorderedSet = new Set(fieldIds);
+            for (const field of form.fields) {
+              if (!reorderedSet.has(field.id)) {
+                reorderedFields.push({ ...field, order: reorderedFields.length });
+              }
+            }
+
             return {
               ...form,
               fields: reorderedFields,
