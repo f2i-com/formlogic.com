@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2 } from 'lucide-react';
+import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
@@ -10,6 +10,7 @@ import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { NigoDashboard } from '../components/builder/NigoDashboard';
 import type { FormField } from '../types/form';
 
 // Field Preview Component
@@ -52,6 +53,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         return (
           <input
             type="number"
+            step="any"
             value={(value as number) ?? ''}
             onChange={(e) => {
               const val = parseFloat(e.target.value);
@@ -95,7 +97,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
       case 'multiple_choice':
         return (
           <div className="space-y-3" role="radiogroup" aria-label={field.label}>
-            {field.properties.options?.map((option, index) => (
+            {(field.properties.options?.length ?? 0) === 0 ? (
+              <p className="opacity-50 italic text-sm">No options configured</p>
+            ) : field.properties.options?.map((option, index) => (
               <button
                 key={option.id}
                 role="radio"
@@ -121,7 +125,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
         const selectedValues = (value as string[]) || [];
         return (
           <div className="space-y-3" role="group" aria-label={field.label}>
-            {field.properties.options?.map((option) => (
+            {(field.properties.options?.length ?? 0) === 0 ? (
+              <p className="opacity-50 italic text-sm">No options configured</p>
+            ) : field.properties.options?.map((option) => (
               <button
                 key={option.id}
                 role="checkbox"
@@ -155,7 +161,9 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
       }
 
       case 'dropdown':
-        return (
+        return (field.properties.options?.length ?? 0) === 0 ? (
+          <p className="opacity-50 italic text-sm">No options configured</p>
+        ) : (
           <select
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
@@ -534,6 +542,18 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
           </div>
         );
 
+      case 'linked_record':
+        return (
+          <div className="p-4 border-2 border-dashed border-current/20 rounded-lg">
+            <p className="text-sm opacity-60 mb-1">Linked Record</p>
+            <p className="opacity-50 text-sm">
+              {field.properties.targetFormId
+                ? 'Record selection is available in the published app'
+                : 'No target form configured'}
+            </p>
+          </div>
+        );
+
       default:
         return (
           <p className="opacity-50 italic">Preview not available for this field type</p>
@@ -568,6 +588,7 @@ export default function FormPreview() {
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const [showNigo, setShowNigo] = useState(false);
 
   const form = formId ? getForm(formId) : undefined;
 
@@ -587,6 +608,16 @@ export default function FormPreview() {
       return isFieldVisible(f.id);
     });
   }, [form, isFieldVisible]);
+
+  // Build sets for NigoDashboard
+  const visibleFieldIds = useMemo(() => new Set(visibleFields.map((f) => f.id)), [visibleFields]);
+  const requiredFieldIds = useMemo(() => {
+    const s = new Set<string>();
+    visibleFields.forEach((f) => {
+      if (f.required || isFieldRequired(f.id)) s.add(f.id);
+    });
+    return s;
+  }, [visibleFields, isFieldRequired]);
 
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
@@ -697,6 +728,17 @@ export default function FormPreview() {
             </button>
           </div>
 
+          {form.settings.showNigoDashboard && (
+            <Button
+              variant={showNigo ? 'primary' : 'outline'}
+              size="sm"
+              onClick={() => setShowNigo((v) => !v)}
+              title="NIGO Dashboard"
+            >
+              <ClipboardCheck className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">NIGO</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -726,7 +768,7 @@ export default function FormPreview() {
       />
 
       {/* Preview Area */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8 relative">
         <div
           className={cn(
             'bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-300',
@@ -834,6 +876,27 @@ export default function FormPreview() {
             </div>
           )}
         </div>
+
+        {/* NIGO Dashboard Sidebar */}
+        {showNigo && form.settings.showNigoDashboard && (
+          <div className="absolute top-4 right-4 w-72 z-20">
+            <NigoDashboard
+              fields={form.fields}
+              formData={answers}
+              visibleFields={visibleFieldIds}
+              requiredFields={requiredFieldIds}
+              onFieldClick={(fieldId) => {
+                const idx = visibleFields.findIndex((f) => f.id === fieldId);
+                if (idx >= 0) {
+                  setCurrentStep(idx);
+                  // In classic mode, scroll the field into view
+                  const el = document.getElementById(`field-${fieldId}`);
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

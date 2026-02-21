@@ -329,13 +329,16 @@ class MySQLConnection
                 action VARCHAR(50) NOT NULL,
                 resource_type VARCHAR(50) NOT NULL,
                 resource_id VARCHAR(36) DEFAULT NULL,
-                details JSON DEFAULT NULL,
+                details TEXT DEFAULT NULL,
                 ip_address VARCHAR(45) DEFAULT NULL,
+                integrity_hash VARCHAR(64) DEFAULT NULL,
+                sequence_number BIGINT UNSIGNED DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_audit_user_id (user_id),
                 INDEX idx_audit_action (action),
                 INDEX idx_audit_resource (resource_type, resource_id),
-                INDEX idx_audit_created_at (created_at)
+                INDEX idx_audit_created_at (created_at),
+                UNIQUE INDEX idx_audit_sequence_number (sequence_number)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -380,5 +383,32 @@ class MySQLConnection
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN logic_prompt TEXT DEFAULT NULL AFTER logic_script");
         }
+
+        // Convert audit_log details column from JSON to TEXT (prevents MySQL key reordering)
+        $result = $pdo->query("SHOW COLUMNS FROM audit_log LIKE 'details'");
+        $detailsCol = $result->fetch(PDO::FETCH_ASSOC);
+        if ($detailsCol && stripos($detailsCol['Type'], 'json') !== false) {
+            $pdo->exec("ALTER TABLE audit_log MODIFY COLUMN details TEXT DEFAULT NULL");
+        }
+
+        // Add integrity_hash column to audit_log if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM audit_log LIKE 'integrity_hash'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE audit_log ADD COLUMN integrity_hash VARCHAR(64) DEFAULT NULL");
+        }
+
+        // Add sequence_number column to audit_log if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM audit_log LIKE 'sequence_number'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE audit_log ADD COLUMN sequence_number BIGINT UNSIGNED DEFAULT NULL");
+            $pdo->exec("ALTER TABLE audit_log ADD UNIQUE INDEX idx_audit_sequence_number (sequence_number)");
+        }
+
+        // Create audit_sequence table for generating sequential IDs
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS audit_sequence (
+                id INT AUTO_INCREMENT PRIMARY KEY
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

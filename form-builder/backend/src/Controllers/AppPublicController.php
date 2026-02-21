@@ -445,22 +445,19 @@ class AppPublicController
         if ($searchQuery !== '') {
             // Push search to SQL via json_extract
             $effectiveSearchFields = !empty($searchFieldIds) ? $searchFieldIds : [];
+            $searchOptions = ['limit' => $limit, 'offset' => $offset];
+            // Push scope filtering into SQL to avoid post-pagination filtering
+            if ($scope === 'own') {
+                $searchOptions['submittedByUserId'] = $userId;
+            }
             $result = $this->responseService->getFormResponsesSearchable(
                 $targetFormId,
                 $searchQuery,
                 $effectiveSearchFields,
-                ['limit' => $limit, 'offset' => $offset]
+                $searchOptions
             );
             $matchedResponses = $result['responses'];
             $totalCount = $result['total'];
-
-            // Filter by scope if needed
-            if ($scope === 'own') {
-                $matchedResponses = array_values(array_filter($matchedResponses, function ($r) use ($userId) {
-                    return ($r['metadata']['submittedByUserId'] ?? null) === $userId;
-                }));
-                $totalCount = count($matchedResponses);
-            }
         } else {
             // No search — use existing pagination at SQL level
             $matchedResponses = $this->appResponseService->getResponses($targetFormId, $scope, $userId, [
@@ -610,7 +607,7 @@ class AppPublicController
                     $count = 0;
                     foreach ($sourceForm['fields'] as $f) {
                         if ($count >= 2) break;
-                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'number'])) {
+                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number'])) {
                             $val = $answers[$f['id']] ?? null;
                             if ($val !== null) { $parts[] = (string)$val; $count++; }
                         }
@@ -725,7 +722,7 @@ class AppPublicController
                     $count = 0;
                     foreach ($targetForm['fields'] as $f) {
                         if ($count >= 2) break;
-                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'number'])) {
+                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number'])) {
                             $val = $answers[$f['id']] ?? null;
                             if ($val !== null) { $parts[] = (string)$val; $count++; }
                         }

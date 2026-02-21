@@ -15,6 +15,7 @@ import {
   Inbox,
   Globe,
   Archive,
+  Package,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -28,6 +29,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { PackImportModal } from '../components/builder/PackImportModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { Form } from '../types/form';
 
@@ -41,6 +43,7 @@ export function FormsList() {
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [showPackImport, setShowPackImport] = useState(false);
 
   const handleCreateForm = async () => {
     if (isCreating) return;
@@ -235,10 +238,15 @@ export function FormsList() {
       <Header
         title="My Forms"
         actions={
-          <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
-            <span className="hidden sm:inline">New Form</span>
-            <span className="sm:hidden">New</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+              <span className="hidden sm:inline">Import Pack</span>
+            </Button>
+            <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
+              <span className="hidden sm:inline">New Form</span>
+              <span className="sm:hidden">New</span>
+            </Button>
+          </div>
         }
       />
 
@@ -352,6 +360,12 @@ export function FormsList() {
           formTitle={embedModalForm.title}
         />
       )}
+
+      {/* Pack Import Modal */}
+      <PackImportModal
+        isOpen={showPackImport}
+        onClose={() => setShowPackImport(false)}
+      />
 
       {/* Delete Confirmation */}
       <ConfirmDialog

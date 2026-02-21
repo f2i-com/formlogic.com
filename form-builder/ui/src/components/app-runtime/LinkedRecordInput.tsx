@@ -61,6 +61,8 @@ export function LinkedRecordInput({
         }
       }
       setResolvedLabels((prev) => ({ ...prev, ...labels }));
+    }).catch(() => {
+      // On error, keep existing labels; unresolved IDs will show fallback
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds.join(',')]);
@@ -70,15 +72,19 @@ export function LinkedRecordInput({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
-      const records = await lookupRecords(formId, {
-        targetFormId,
-        displayFieldIds,
-        searchFieldIds,
-        q: q || undefined,
-        limit: 20,
-      });
-      setResults(records);
-      setHighlightIndex(0);
+      try {
+        const records = await lookupRecords(formId, {
+          targetFormId,
+          displayFieldIds,
+          searchFieldIds,
+          q: q || undefined,
+          limit: 20,
+        });
+        setResults(records);
+        setHighlightIndex(0);
+      } catch {
+        setResults([]);
+      }
       setLoading(false);
     }, 300);
   }, [lookupRecords, formId, targetFormId, displayFieldIds, searchFieldIds]);
@@ -158,7 +164,7 @@ export function LinkedRecordInput({
               key={id}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30"
             >
-              {resolvedLabels[id] || id.substring(0, 8) + '...'}
+              {resolvedLabels[id] || 'Loading...'}
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handleRemove(id); }}

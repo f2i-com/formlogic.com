@@ -178,7 +178,10 @@ class AppUserService
 
     public function setRolePermissions(string $roleId, array $permissions): void
     {
-        $this->mysql->beginTransaction();
+        $inTransaction = $this->mysql->inTransaction();
+        if (!$inTransaction) {
+            $this->mysql->beginTransaction();
+        }
         try {
             // Delete existing permissions
             $stmt = $this->mysql->prepare("DELETE FROM app_role_permissions WHERE role_id = :role_id");
@@ -202,9 +205,13 @@ class AppUserService
                 ]);
             }
 
-            $this->mysql->commit();
+            if (!$inTransaction) {
+                $this->mysql->commit();
+            }
         } catch (\Exception $e) {
-            $this->mysql->rollBack();
+            if (!$inTransaction) {
+                $this->mysql->rollBack();
+            }
             throw $e;
         }
     }

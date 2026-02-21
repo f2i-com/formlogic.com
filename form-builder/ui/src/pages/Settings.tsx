@@ -15,11 +15,14 @@ import {
   LayoutGrid,
   ArrowLeft,
   Shield,
+  ShieldCheck,
   Palette,
   Check,
   Lock,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
+import { api } from '../lib/api';
+import type { AuditVerifyResult } from '../lib/api';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -104,6 +107,10 @@ export function Settings() {
   const [passwordError, setPasswordError] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  // Audit verification state
+  const [isVerifyingAudit, setIsVerifyingAudit] = useState(false);
+  const [auditResult, setAuditResult] = useState<AuditVerifyResult | null>(null);
+
   // Update form when user changes
   useEffect(() => {
     if (user) {
@@ -163,6 +170,23 @@ export function Settings() {
       setConfirmPassword('');
     } else {
       setPasswordError(result.error || 'Failed to change password');
+    }
+  };
+
+  const handleVerifyAudit = async () => {
+    setIsVerifyingAudit(true);
+    setAuditResult(null);
+    try {
+      const result = await api.verifyAuditIntegrity();
+      if (result.data) {
+        setAuditResult(result.data);
+      } else {
+        toast.error('Verification Failed', result.error || 'Could not verify audit integrity.');
+      }
+    } catch {
+      toast.error('Verification Failed', 'An unexpected error occurred.');
+    } finally {
+      setIsVerifyingAudit(false);
     }
   };
 
@@ -401,6 +425,61 @@ export function Settings() {
                   Change Password
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Audit & Compliance Section */}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Shield}
+              title="Audit & Compliance"
+              description="Verify the integrity of your audit trail"
+              iconBg="bg-emerald-500/10"
+              iconColor="text-emerald-400"
+            />
+            <div className="space-y-4 ml-0 sm:ml-14">
+              <p className="text-sm text-gray-500 dark:text-slate-500">
+                The audit log uses cryptographic hash chaining to ensure entries cannot be tampered with.
+                Run a verification to confirm the chain is intact.
+              </p>
+              <Button
+                onClick={handleVerifyAudit}
+                disabled={isVerifyingAudit}
+                isLoading={isVerifyingAudit}
+              >
+                Verify Audit Integrity
+              </Button>
+              {auditResult && (
+                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
+                  auditResult.intact
+                    ? 'bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/30'
+                    : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30'
+                }`}>
+                  <ShieldCheck className={`h-5 w-5 mt-0.5 flex-shrink-0 ${
+                    auditResult.intact
+                      ? 'text-green-600 dark:text-green-400'
+                      : 'text-red-600 dark:text-red-400'
+                  }`} />
+                  <div>
+                    {auditResult.intact ? (
+                      <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                        Chain intact: {auditResult.verified} entries verified
+                      </p>
+                    ) : (
+                      <p className="text-sm font-medium text-red-700 dark:text-red-300">
+                        Chain broken at entry #{auditResult.brokenAt?.sequenceNumber}
+                        {auditResult.brokenAt && (
+                          <span className="block text-xs font-normal mt-1 text-red-600 dark:text-red-400">
+                            Action: {auditResult.brokenAt.action} | Date: {auditResult.brokenAt.createdAt}
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

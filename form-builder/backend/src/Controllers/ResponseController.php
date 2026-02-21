@@ -576,6 +576,183 @@ class ResponseController
         }
     }
 
+    /**
+     * Import CSV responses
+     * POST /api/forms/{formId}/responses/import
+     */
+    public function importCsv(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
+        // Use $_FILES to access the uploaded file (Slim may not parse multipart for files)
+        if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'No CSV file uploaded or upload error',
+            ], 400);
+        }
+
+        $file = $_FILES['file'];
+
+        // Validate file extension
+        $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if ($extension !== 'csv') {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Only .csv files are allowed',
+            ], 400);
+        }
+
+        // Validate file size (max 5MB)
+        if ($file['size'] > 5 * 1024 * 1024) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'File size exceeds 5MB limit',
+            ], 400);
+        }
+
+        // Parse CSV
+        $handle = fopen($file['tmp_name'], 'r');
+        if ($handle === false) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Failed to open CSV file',
+            ], 400);
+        }
+
+        // Strip UTF-8 BOM if present (Excel on Windows adds this)
+        $bom = fread($handle, 3);
+        if ($bom !== "\xEF\xBB\xBF") {
+            rewind($handle);
+        }
+
+        $headers = fgetcsv($handle);
+        if ($headers === false || empty($headers)) {
+            fclose($handle);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'CSV file is empty or has no headers',
+            ], 400);
+        }
+
+        // Read all data rows
+        $rows = [];
+        while (($row = fgetcsv($handle)) !== false) {
+            if (count($row) === count($headers)) {
+                $rows[] = array_combine($headers, $row);
+            } elseif (count($row) > 0 && !(count($row) === 1 && trim($row[0]) === '')) {
+                // Pad or trim to match header count
+                $padded = array_pad($row, count($headers), '');
+                $rows[] = array_combine($headers, array_slice($padded, 0, count($headers)));
+            }
+        }
+        fclose($handle);
+
+        // Validate row count (between 1 and 1000 data rows)
+        if (count($rows) === 0) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'CSV file contains no data rows',
+            ], 400);
+        }
+
+        if (count($rows) > 1000) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'CSV file exceeds maximum of 1000 data rows',
+            ], 400);
+        }
+
+        // Check if columnMapping is provided (via POST body or $_POST)
+        $parsedBody = $request->getParsedBody();
+        $columnMappingJson = $parsedBody['columnMapping'] ?? $_POST['columnMapping'] ?? null;
+
+        if ($columnMappingJson === null) {
+            // No mapping provided - return preview data for the frontend mapping step
+            $previewRows = array_slice($rows, 0, 5);
+
+            // Build fields array from form
+            $fields = [];
+            foreach ($form['fields'] as $field) {
+                if (in_array($field['type'] ?? '', ['welcome_screen', 'thank_you', 'statement'], true)) {
+                    continue;
+                }
+                $fields[] = [
+                    'id' => $field['id'],
+                    'label' => $field['label'] ?? $field['id'],
+                    'type' => $field['type'] ?? 'short_text',
+                ];
+            }
+
+            return $this->jsonResponse($response, [
+                'headers' => $headers,
+                'rowCount' => count($rows),
+                'previewRows' => $previewRows,
+                'fields' => $fields,
+            ]);
+        }
+
+        // Column mapping provided - perform the import
+        $columnMapping = json_decode($columnMappingJson, true);
+        if (!is_array($columnMapping)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Invalid column mapping format',
+            ], 400);
+        }
+
+        // Validate mapped field IDs exist in the form
+        $validFieldIds = [];
+        foreach ($form['fields'] as $field) {
+            $validFieldIds[$field['id']] = true;
+        }
+        foreach ($columnMapping as $csvCol => $fieldId) {
+            if ($fieldId !== 'skip' && $fieldId !== '' && !isset($validFieldIds[$fieldId])) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => "Invalid field ID in column mapping: {$fieldId}",
+                ], 400);
+            }
+        }
+
+        try {
+            $result = $this->responseService->importResponses(
+                $formId,
+                $rows,
+                $columnMapping,
+                $form['fields']
+            );
+
+            $this->audit($request, 'response.import', 'form', $formId, [
+                'created' => $result['created'],
+                'skipped' => $result['skipped'],
+                'total' => $result['total'],
+            ]);
+
+            return $this->jsonResponse($response, $result);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Exception $e) {
+            $this->logger->error('CSV import error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred during import',
+            ], 500);
+        }
+    }
+
     private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
     {
         if ($this->auditService === null) return;

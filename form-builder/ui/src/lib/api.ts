@@ -687,6 +687,81 @@ class ApiClient {
     return this.request(`/forms/${formId}/webhooks/${webhookId}/deliveries`);
   }
 
+  // Pack import
+  async importPack(pack: PackData): Promise<ApiResponse<PackImportResult>> {
+    return this.request('/packs/import', {
+      method: 'POST',
+      body: JSON.stringify({ pack }),
+    });
+  }
+
+  // CSV import
+  async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
+    const url = `${this.baseUrl}/forms/${formId}/responses/import`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to parse CSV' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  async importCsv(formId: string, file: File, columnMapping: Record<string, string>): Promise<ApiResponse<CsvImportResult>> {
+    const url = `${this.baseUrl}/forms/${formId}/responses/import`;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('columnMapping', JSON.stringify(columnMapping));
+
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to import CSV' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  // Audit verification
+  async verifyAuditIntegrity(): Promise<ApiResponse<AuditVerifyResult>> {
+    return this.request('/admin/audit/verify');
+  }
+
   // Form version endpoints
   async getFormVersions(formId: string): Promise<ApiResponse<{ versions: FormVersion[] }>> {
     return this.request(`/forms/${formId}/versions`);
@@ -826,8 +901,43 @@ interface FormVersion {
   data?: Record<string, unknown>;
 }
 
+interface PackData {
+  formatVersion: number;
+  packMeta: { name: string; description: string; version: string; author?: string; tags?: string[] };
+  forms: Array<Record<string, unknown>>;
+  apps?: Array<Record<string, unknown>>;
+}
+
+interface PackImportResult {
+  success: boolean;
+  message: string;
+  forms: Array<{ id: string; title: string }>;
+  apps: Array<{ id: string; name: string }>;
+}
+
+interface CsvParseResult {
+  headers: string[];
+  rowCount: number;
+  previewRows: Array<Record<string, string>>;
+  fields: Array<{ id: string; label: string; type: string }>;
+}
+
+interface CsvImportResult {
+  created: number;
+  skipped: number;
+  total: number;
+  errors: Array<{ row: number; errors: string[] }>;
+}
+
+interface AuditVerifyResult {
+  intact: boolean;
+  verified: number;
+  total: number;
+  brokenAt: { id: string; sequenceNumber: number; action: string; createdAt: string } | null;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult };

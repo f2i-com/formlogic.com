@@ -135,6 +135,12 @@ class ResponseService
             $params['status'] = $options['status'];
         }
 
+        // Scope filter: restrict to responses submitted by a specific user
+        if (!empty($options['submittedByUserId'])) {
+            $conditions[] = "json_extract(metadata, '$.submittedByUserId') = :submitted_by";
+            $params['submitted_by'] = $options['submittedByUserId'];
+        }
+
         // Build search conditions using json_extract
         if ($searchQuery !== '') {
             $searchConditions = [];
@@ -800,6 +806,152 @@ class ResponseService
     {
         $result = $this->formatResponses($db, [$row]);
         return $result[0];
+    }
+
+    /**
+     * Import responses from CSV data
+     *
+     * @param string $formId The form to import into
+     * @param array $rows Array of associative arrays (CSV rows)
+     * @param array $columnMapping Map of CSV column name => field ID
+     * @param array $fields Form field definitions for type coercion
+     * @return array { created: int, skipped: int, total: int, errors: [{row: int, errors: string[]}] }
+     */
+    public function importResponses(string $formId, array $rows, array $columnMapping, array $fields): array
+    {
+        if (count($rows) > 1000) {
+            throw new \RuntimeException('Maximum 1000 rows allowed per import');
+        }
+
+        // Build field type map from fields array
+        $fieldTypeMap = [];
+        foreach ($fields as $field) {
+            if (isset($field['id']) && isset($field['type'])) {
+                $fieldTypeMap[$field['id']] = $field['type'];
+            }
+        }
+
+        $db = $this->sqlite->getFormDatabase($formId);
+        $this->sqlite->migrateFormDatabase($db);
+
+        $created = 0;
+        $skipped = 0;
+        $errors = [];
+        $total = count($rows);
+
+        $db->beginTransaction();
+
+        try {
+            foreach ($rows as $rowIndex => $row) {
+                $rowErrors = [];
+                $answers = [];
+
+                // Map CSV columns to field IDs using columnMapping
+                foreach ($columnMapping as $csvColumn => $fieldId) {
+                    if ($fieldId === '' || $fieldId === 'skip') {
+                        continue;
+                    }
+
+                    $value = $row[$csvColumn] ?? '';
+
+                    // Coerce types based on field type
+                    $fieldType = $fieldTypeMap[$fieldId] ?? 'short_text';
+                    switch ($fieldType) {
+                        case 'number':
+                            if ($value !== '' && !is_numeric($value)) {
+                                $rowErrors[] = "Field '{$fieldId}': non-numeric value '{$value}'";
+                                continue 2;
+                            }
+                            $value = $value !== '' ? floatval($value) : null;
+                            break;
+                        case 'checkboxes':
+                            $value = $value !== '' ? array_map('trim', explode(',', $value)) : [];
+                            break;
+                        case 'rating':
+                        case 'scale':
+                            if ($value !== '' && !is_numeric($value)) {
+                                $rowErrors[] = "Field '{$fieldId}': non-numeric value '{$value}'";
+                                continue 2;
+                            }
+                            $value = $value !== '' ? intval($value) : null;
+                            break;
+                        default:
+                            // Keep as string
+                            break;
+                    }
+
+                    $answers[$fieldId] = $value;
+                }
+
+                if (empty($answers)) {
+                    $skipped++;
+                    $rowErrors[] = 'No mapped fields had values';
+                    $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];
+                    continue;
+                }
+
+                try {
+                    $id = $this->generateUuid();
+                    $now = date('Y-m-d H:i:s');
+                    $metadata = [
+                        'source' => 'csv_import',
+                        'importedAt' => $now,
+                    ];
+
+                    // Insert into SQLite responses table
+                    $sqliteStmt = $db->prepare("
+                        INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
+                        VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
+                    ");
+
+                    $sqliteStmt->execute([
+                        'id' => $id,
+                        'answers' => json_encode($answers),
+                        'metadata' => json_encode($metadata),
+                        'status' => 'submitted',
+                        'submitted_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                    // Also insert into MySQL response_metadata table
+                    try {
+                        $mysqlStmt = $this->mysql->prepare("
+                            INSERT INTO response_metadata (id, form_id, status, submitted_at)
+                            VALUES (:id, :form_id, :status, :submitted_at)
+                        ");
+
+                        $mysqlStmt->execute([
+                            'id' => $id,
+                            'form_id' => $formId,
+                            'status' => 'submitted',
+                            'submitted_at' => $now,
+                        ]);
+                    } catch (\Exception $mysqlErr) {
+                        // Roll back the SQLite insert to keep databases in sync
+                        $db->exec("DELETE FROM responses WHERE id = " . $db->quote($id));
+                        throw $mysqlErr;
+                    }
+
+                    $created++;
+                } catch (\Exception $e) {
+                    $skipped++;
+                    $rowErrors[] = $e->getMessage();
+                    $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];
+                }
+            }
+
+            $db->commit();
+        } catch (\Exception $e) {
+            $db->rollBack();
+            throw new \RuntimeException('Import failed: ' . $e->getMessage());
+        }
+
+        return [
+            'created' => $created,
+            'skipped' => $skipped,
+            'total' => $total,
+            'errors' => $errors,
+        ];
     }
 
     /**

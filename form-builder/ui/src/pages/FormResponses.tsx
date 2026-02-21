@@ -18,6 +18,7 @@ import {
   Users,
   CalendarDays,
   Timer,
+  Upload,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
@@ -31,6 +32,7 @@ import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { CsvImportWizard } from '../components/builder';
 import type { Form, FormField, FormResponse } from '../types/form';
 
 const ITEMS_PER_PAGE = 10;
@@ -97,6 +99,7 @@ function FormResponses() {
   const [sortField, setSortField] = useState<'submittedAt' | 'completionTime'>('submittedAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showEmbedModal, setShowEmbedModal] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
 
   // Load form and responses
   useEffect(() => {
@@ -373,6 +376,10 @@ function FormResponses() {
             <Button variant="outline" onClick={() => setShowEmbedModal(true)} title="Share & Embed">
               <Share2 className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Share</span>
+            </Button>
+            <Button variant="outline" onClick={() => setShowCsvImport(true)}>
+              <Upload className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Import CSV</span>
             </Button>
             <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0}>
               <Download className="h-4 w-4 sm:mr-2" />
@@ -734,6 +741,23 @@ function FormResponses() {
         onClose={() => setShowEmbedModal(false)}
         formId={form.id}
         formTitle={form.title}
+      />
+
+      {/* CSV Import Wizard */}
+      <CsvImportWizard
+        isOpen={showCsvImport}
+        onClose={() => setShowCsvImport(false)}
+        formId={form.id}
+        fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+        onImportComplete={async () => {
+          // Reload responses after import
+          if (storageMode === 'api' && formId) {
+            const result = await api.getResponses(formId);
+            if (result.data?.responses) {
+              setResponses(result.data.responses as ResponseWithStatus[]);
+            }
+          }
+        }}
       />
     </div>
   );

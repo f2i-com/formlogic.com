@@ -38,6 +38,8 @@ use FormLogic\Controllers\AppController;
 use FormLogic\Controllers\AppUserController;
 use FormLogic\Controllers\AppPublicController;
 use FormLogic\Controllers\WebhookController;
+use FormLogic\Services\PackService;
+use FormLogic\Controllers\PackController;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -208,6 +210,23 @@ $container->set(AIController::class, function (Container $c) {
         $c->get(DocumentConverter::class),
         $c->get('settings')['uploads'] ?? [],
         $c->get(LoggerInterface::class)
+    );
+});
+
+// Register Pack service
+$container->set(PackService::class, function (Container $c) {
+    return new PackService(
+        $c->get(MySQLConnection::class),
+        $c->get(FormService::class),
+        $c->get(AppService::class),
+        $c->get(AppUserService::class)
+    );
+});
+
+$container->set(PackController::class, function (Container $c) {
+    return new PackController(
+        $c->get(PackService::class),
+        $c->get(AuditService::class)
     );
 });
 
@@ -485,6 +504,11 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
         return $container->get(ResponseController::class)->export($request, $response, $getArgs($request));
     })->add($authRequired);
 
+    // Import CSV responses (requires auth)
+    $group->post('/import', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ResponseController::class)->importCsv($request, $response, $getArgs($request));
+    })->add($authRequired);
+
     // Single response operations
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->show($request, $response, $getArgs($request));
@@ -553,6 +577,19 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);
+
+// Pack import route (protected)
+$app->post('/api/packs/import', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->import($request, $response);
+})->add($authRequired);
+
+// Audit verification route (admin, protected)
+$app->get('/api/admin/audit/verify', function ($request, $response) use ($container) {
+    $auditService = $container->get(AuditService::class);
+    $result = $auditService->verifyChain();
+    $response->getBody()->write(json_encode($result));
+    return $response->withHeader('Content-Type', 'application/json');
+})->add($authRequired);
 
 // App Admin routes (protected - require authentication + ownership)
 $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, $getArgs) {

@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { NigoDashboard } from '../builder/NigoDashboard';
+import type { FormField as FormFieldType } from '../../types/form';
 
 interface FormField {
   id: string;
@@ -15,6 +17,7 @@ interface FormField {
   placeholder?: string;
   description?: string;
   properties?: Record<string, unknown>;
+  validation?: Array<{ type: string; value?: string | number; message?: string }>;
 }
 
 interface FormTheme {
@@ -72,6 +75,7 @@ function FieldInput({
     return (
       <input
         type="number"
+        step="any"
         value={(value as number) ?? ''}
         onChange={(e) => {
           const val = parseFloat(e.target.value);
@@ -100,6 +104,7 @@ function FieldInput({
 
   if (field.type === 'multiple_choice') {
     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+    if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
       <div className="space-y-3" role="radiogroup" aria-label={field.label}>
         {options.map((option, index) => {
@@ -137,6 +142,7 @@ function FieldInput({
 
   if (field.type === 'dropdown') {
     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+    if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
       <select
         value={(value as string) || ''}
@@ -155,6 +161,7 @@ function FieldInput({
   if (field.type === 'checkboxes') {
     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
     const current = (value as string[]) ?? [];
+    if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
       <div className="space-y-3">
         {options.map((option, index) => {
@@ -202,6 +209,15 @@ function FieldInput({
             aria-checked={currentRating === i + 1}
             aria-label={`${i + 1} out of ${maxStars} stars`}
             onClick={() => onChange(i + 1)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                onChange(Math.min(maxStars, (currentRating || 0) + 1));
+              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                onChange(Math.max(1, (currentRating || 2) - 1));
+              }
+            }}
             className={cn(
               'text-4xl transition-all duration-150 hover:scale-125',
               currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-600'
@@ -232,6 +248,15 @@ function FieldInput({
                 aria-checked={selected}
                 aria-label={`${num} out of ${max}`}
                 onClick={() => onChange(num)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    onChange(Math.min(max, ((value as number) || min - 1) + 1));
+                  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    onChange(Math.max(min, ((value as number) || min + 1) - 1));
+                  }
+                }}
                 className={cn(
                   'aspect-square rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
                   selected ? 'text-white shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
@@ -323,6 +348,7 @@ function FieldInput({
 
   if (field.type === 'signature') {
     const sigId = `sig-${field.id}`;
+    const getStrokeColor = () => document.documentElement.classList.contains('dark') ? '#e2e8f0' : '#1f2937';
     return (
       <div className="space-y-2">
         <div
@@ -336,7 +362,7 @@ function FieldInput({
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
-            ctx.strokeStyle = '#1f2937';
+            ctx.strokeStyle = getStrokeColor();
             ctx.lineWidth = 2;
             ctx.lineCap = 'round';
             const rect = canvas.getBoundingClientRect();
@@ -355,7 +381,7 @@ function FieldInput({
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
             if (!ctx) return;
-            ctx.strokeStyle = '#1f2937';
+            ctx.strokeStyle = getStrokeColor();
             ctx.lineWidth = 2;
             ctx.lineCap = 'round';
             const rect = canvas.getBoundingClientRect();
@@ -453,6 +479,7 @@ export function AppFormView() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [showNigo, setShowNigo] = useState(false);
 
   useEffect(() => {
     if (appSlug && formId) {
@@ -472,12 +499,24 @@ export function AppFormView() {
     }
   }, [appSlug, formId]);
 
-  const fields = ((form?.fields ?? []) as FormField[]).filter(f => !['welcome_screen', 'thank_you'].includes(f.type));
+  const fields = useMemo(
+    () => ((form?.fields ?? []) as FormField[]).filter(f => !['welcome_screen', 'thank_you'].includes(f.type)),
+    [form]
+  );
   const formTheme = form?.theme as FormTheme | undefined;
   const formSettings = form?.settings as Record<string, unknown> | undefined;
   const primaryColor = formTheme?.primaryColor || 'var(--app-primary, #6366f1)';
   const showProgress = formSettings?.showProgressBar !== false;
   const allowBack = formSettings?.allowBackNavigation !== false;
+  const nigoEnabled = formSettings?.showNigoDashboard === true;
+
+  // Build sets for NigoDashboard
+  const visibleFieldIds = useMemo(() => new Set(fields.map((f) => f.id)), [fields]);
+  const requiredFieldIds = useMemo(() => {
+    const s = new Set<string>();
+    fields.forEach((f) => { if (f.required) s.add(f.id); });
+    return s;
+  }, [fields]);
 
   const safeStep = Math.min(currentStep, Math.max(0, fields.length - 1));
   const currentField = fields[safeStep];
@@ -716,6 +755,40 @@ export function AppFormView() {
       <div className="absolute bottom-4 left-4 text-sm text-gray-400 dark:text-slate-500">
         {safeStep + 1} / {fields.length}
       </div>
+
+      {/* NIGO Dashboard toggle & panel (bottom-left area, above step counter) */}
+      {nigoEnabled && (
+        <>
+          <button
+            type="button"
+            onClick={() => setShowNigo((v) => !v)}
+            className={cn(
+              'absolute bottom-14 left-4 p-2 rounded-lg shadow-md border transition-colors z-10',
+              showNigo
+                ? 'bg-primary-600 text-white border-primary-500'
+                : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white border-gray-100 dark:border-slate-700'
+            )}
+            aria-label="Toggle NIGO Dashboard"
+          >
+            <ClipboardCheck className="h-4 w-4" />
+          </button>
+          {showNigo && (
+            <div className="absolute bottom-24 left-4 w-72 z-20">
+              <NigoDashboard
+                fields={fields as unknown as FormFieldType[]}
+                formData={answers}
+                visibleFields={visibleFieldIds}
+                requiredFields={requiredFieldIds}
+                onFieldClick={(fieldId) => {
+                  const idx = fields.findIndex((f) => f.id === fieldId);
+                  if (idx >= 0) setCurrentStep(idx);
+                }}
+                collapsed={false}
+              />
+            </div>
+          )}
+        </>
+      )}
 
       {/* Navigation arrows (bottom-right) */}
       {allowBack && (

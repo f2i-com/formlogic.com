@@ -66,6 +66,10 @@ class FormLogicRuntime
         // Register the ctx.http module
         $this->registerHttpModule($engine);
 
+        // Register compliance and finance modules
+        $this->registerComplianceModule($engine);
+        $this->registerFinanceModule($engine);
+
         try {
             // Validate script safety before execution
             $this->validateScriptSafety($script);
@@ -314,6 +318,194 @@ class FormLogicRuntime
                 }
 
                 return $this->executeHttpRequest($method, $url, $body, $options);
+            },
+        ]);
+    }
+
+    /**
+     * Register the compliance module for regulatory checks
+     */
+    private function registerComplianceModule(FormLogicEngine $engine): void
+    {
+        $engine->registerModule('compliance', [
+            'regBICheck' => function (array $args): BaseObject {
+                if (count($args) < 2) return falseObject();
+                $riskScore = getValue($args[0]);
+                $portfolioType = getValue($args[1]);
+                if (!is_numeric($riskScore) || !is_string($portfolioType)) return falseObject();
+                $score = (float) $riskScore;
+                $ranges = [
+                    'conservative' => [0, 30],
+                    'moderate' => [20, 60],
+                    'aggressive' => [50, 85],
+                    'speculative' => [75, 100],
+                ];
+                $range = $ranges[strtolower($portfolioType)] ?? null;
+                if ($range === null) return falseObject();
+                return ($score >= $range[0] && $score <= $range[1]) ? trueObject() : falseObject();
+            },
+
+            'suitabilityScore' => function (array $args): BaseObject {
+                if (count($args) < 5) return new IntegerObject(0);
+                $age = getValue($args[0]);
+                $income = getValue($args[1]);
+                $netWorth = getValue($args[2]);
+                $riskTolerance = getValue($args[3]);
+                $timeHorizon = getValue($args[4]);
+                if (!is_numeric($age) || !is_numeric($income) || !is_numeric($netWorth)
+                    || !is_numeric($riskTolerance) || !is_numeric($timeHorizon)) {
+                    return new IntegerObject(0);
+                }
+                $ageScore = max(0, min(100, 100 - (float) $age));
+                $incomeScore = max(0, min(100, ((float) $income / 500000) * 100));
+                $nwScore = max(0, min(100, ((float) $netWorth / 5000000) * 100));
+                $tolScore = max(0, min(100, (float) $riskTolerance * 10));
+                $horizonScore = max(0, min(100, (float) $timeHorizon * 3.33));
+                $weighted = $ageScore * 0.20 + $incomeScore * 0.15 + $nwScore * 0.20
+                          + $tolScore * 0.25 + $horizonScore * 0.20;
+                return new IntegerObject((int) round(max(1, min(100, $weighted))));
+            },
+
+            'amlFlag' => function (array $args): BaseObject {
+                if (count($args) < 1) return falseObject();
+                $amount = getValue($args[0]);
+                $frequency = count($args) >= 2 ? getValue($args[1]) : 0;
+                if (!is_numeric($amount)) return falseObject();
+                $amt = (float) $amount;
+                $freq = is_numeric($frequency) ? (float) $frequency : 0;
+                if ($amt >= 10000) return trueObject();
+                if ($amt >= 8000 && $amt < 10000 && $freq > 3) return trueObject();
+                if ($freq > 50) return trueObject();
+                if ($amt * $freq > 100000) return trueObject();
+                return falseObject();
+            },
+
+            'kycComplete' => function (array $args): BaseObject {
+                if (empty($args)) return falseObject();
+                foreach ($args as $arg) {
+                    $val = getValue($arg);
+                    if ($val === null || $val === '') return falseObject();
+                    if (is_string($val) && trim($val) === '') return falseObject();
+                }
+                return trueObject();
+            },
+
+            'nigoCheck' => function (array $args): BaseObject {
+                $missing = [];
+                foreach ($args as $i => $arg) {
+                    $val = getValue($arg);
+                    if ($val === null || $val === '' || (is_string($val) && trim($val) === '')) {
+                        $missing[] = $i + 1;
+                    }
+                }
+                return new StringObject(implode(',', $missing));
+            },
+
+            'accreditedInvestor' => function (array $args): BaseObject {
+                if (count($args) < 2) return falseObject();
+                $income = getValue($args[0]);
+                $netWorth = getValue($args[1]);
+                if (!is_numeric($income) || !is_numeric($netWorth)) return falseObject();
+                if ((float) $income > 200000 || (float) $netWorth > 1000000) return trueObject();
+                return falseObject();
+            },
+        ]);
+    }
+
+    /**
+     * Register the finance module for financial calculations
+     */
+    private function registerFinanceModule(FormLogicEngine $engine): void
+    {
+        $engine->registerModule('finance', [
+            'compoundInterest' => function (array $args): BaseObject {
+                if (count($args) < 3) return new FloatObject(0.0);
+                $principal = getValue($args[0]);
+                $rate = getValue($args[1]);
+                $periods = getValue($args[2]);
+                if (!is_numeric($principal) || !is_numeric($rate) || !is_numeric($periods)) {
+                    return new FloatObject(0.0);
+                }
+                $result = (float) $principal * pow(1 + (float) $rate, (float) $periods);
+                return new FloatObject(round($result, 2));
+            },
+
+            'aumFee' => function (array $args): BaseObject {
+                if (count($args) < 1) return new FloatObject(0.0);
+                $assets = getValue($args[0]);
+                if (!is_numeric($assets) || (float) $assets <= 0) return new FloatObject(0.0);
+                $amt = (float) $assets;
+
+                $tiers = [
+                    [1000000, 0.01],
+                    [5000000, 0.0075],
+                    [10000000, 0.005],
+                    [PHP_FLOAT_MAX, 0.0035],
+                ];
+
+                if (count($args) >= 2) {
+                    $tiersJson = getValue($args[1]);
+                    if (is_string($tiersJson)) {
+                        $parsed = json_decode($tiersJson, true);
+                        if (is_array($parsed) && !empty($parsed)) {
+                            $tiers = $parsed;
+                        }
+                    }
+                }
+
+                $remaining = $amt;
+                $totalFee = 0.0;
+                $prevCeiling = 0;
+                foreach ($tiers as [$ceiling, $rate]) {
+                    $tierAmount = min($remaining, $ceiling - $prevCeiling);
+                    if ($tierAmount <= 0) break;
+                    $totalFee += $tierAmount * $rate;
+                    $remaining -= $tierAmount;
+                    $prevCeiling = $ceiling;
+                    if ($remaining <= 0) break;
+                }
+                return new FloatObject(round($totalFee, 2));
+            },
+
+            'riskScore' => function (array $args): BaseObject {
+                if (count($args) < 3) return new IntegerObject(0);
+                $age = getValue($args[0]);
+                $timeHorizon = getValue($args[1]);
+                $riskTolerance = getValue($args[2]);
+                if (!is_numeric($age) || !is_numeric($timeHorizon) || !is_numeric($riskTolerance)) {
+                    return new IntegerObject(0);
+                }
+                $ageScore = max(0, min(100, 100 - (float) $age));
+                $horizonScore = max(0, min(100, (float) $timeHorizon * 3.33));
+                $tolScore = max(0, min(100, (float) $riskTolerance * 10));
+                $weighted = $ageScore * 0.30 + $horizonScore * 0.30 + $tolScore * 0.40;
+                return new IntegerObject((int) round(max(1, min(100, $weighted))));
+            },
+
+            'portfolioAllocation' => function (array $args): BaseObject {
+                if (count($args) < 1) return new StringObject('20:50:30');
+                $riskScore = getValue($args[0]);
+                if (!is_numeric($riskScore)) return new StringObject('20:50:30');
+                $score = max(1, min(100, (float) $riskScore));
+                $t = ($score - 1) / 99;
+                $equity = (int) round(20 + $t * 70);
+                $bond = (int) round(50 - $t * 42);
+                $cash = 100 - $equity - $bond;
+                return new StringObject("{$equity}:{$bond}:{$cash}");
+            },
+
+            'transferFee' => function (array $args): BaseObject {
+                if (count($args) < 1) return new FloatObject(0.0);
+                $amount = getValue($args[0]);
+                if (!is_numeric($amount)) return new FloatObject(0.0);
+                $amt = (float) $amount;
+                $custodian = count($args) >= 2 ? getValue($args[1]) : null;
+                $zeroCost = ['schwab', 'fidelity', 'vanguard'];
+                if (is_string($custodian) && in_array(strtolower($custodian), $zeroCost, true)) {
+                    return new FloatObject(0.0);
+                }
+                if ($amt < 500) return new FloatObject(0.0);
+                return new FloatObject(75.0);
             },
         ]);
     }

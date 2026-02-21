@@ -9,30 +9,12 @@ import {
   falseObject,
   type BaseObject,
 } from 'formlogic-lang';
+import { getValue, isNullish } from './modules/helpers';
+import { complianceModule } from './modules/compliance';
+import { financeModule } from './modules/finance';
 
 // Singleton engine instance
 let engineInstance: FormLogicEngine | null = null;
-
-// Helper to get value from BaseObject
-function getValue(obj: BaseObject): unknown {
-  if (!obj) return undefined;
-  if ('value' in obj) {
-    return (obj as { value: unknown }).value;
-  }
-  return undefined;
-}
-
-// Helper to check if object is null/undefined type
-function isNullish(obj: BaseObject): boolean {
-  if (!obj) return true;
-  const typeMethod = obj.type;
-  if (typeof typeMethod === 'function') {
-    const t = typeMethod.call(obj);
-    // ObjectType.nullValue = 3, ObjectType.undefinedValue = 4
-    return t === 3 || t === 4;
-  }
-  return false;
-}
 
 /**
  * Get or create the FormLogic engine instance
@@ -186,6 +168,12 @@ function registerFormModules(engine: FormLogicEngine): void {
       return new StringObject(value.toLowerCase());
     },
   });
+
+  // Compliance module
+  engine.registerModule('compliance', complianceModule);
+
+  // Finance module
+  engine.registerModule('finance', financeModule);
 
   // Utility functions
   engine.registerBuiltin('isEmpty', (args: BaseObject[]) => {

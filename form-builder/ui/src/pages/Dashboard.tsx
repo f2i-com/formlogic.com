@@ -24,6 +24,7 @@ import {
   BookOpen,
   Zap,
   TrendingUp,
+  Package,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -35,7 +36,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
 import { formatRelativeTime, sanitizeFilename } from '../lib/utils';
-import { EmbedModal, TemplateSelector } from '../components/builder';
+import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { FormTemplate } from '../data/formTemplates';
 
@@ -293,6 +294,7 @@ export function Dashboard() {
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
+  const [showPackImport, setShowPackImport] = useState(false);
 
   const handleCreateForm = () => {
     setShowTemplateSelector(true);
@@ -459,7 +461,7 @@ export function Dashboard() {
           <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-3">
             Quick Actions
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <QuickActionButton
               icon={Plus}
               label="New Form"
@@ -475,6 +477,11 @@ export function Dashboard() {
               icon={LayoutTemplate}
               label="Templates"
               onClick={() => setShowTemplateSelector(true)}
+            />
+            <QuickActionButton
+              icon={Package}
+              label="Import Pack"
+              onClick={() => setShowPackImport(true)}
             />
             <QuickActionButton
               icon={Settings}
@@ -738,6 +745,12 @@ export function Dashboard() {
         isOpen={showTemplateSelector}
         onClose={() => setShowTemplateSelector(false)}
         onSelectTemplate={handleSelectTemplate}
+      />
+
+      {/* Pack Import Modal */}
+      <PackImportModal
+        isOpen={showPackImport}
+        onClose={() => setShowPackImport(false)}
       />
 
       {/* Delete Confirmation */}

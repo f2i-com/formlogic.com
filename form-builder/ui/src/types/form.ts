@@ -94,6 +94,7 @@ export interface FormSettings {
   quotaLimit?: number;
   closedMessage?: string;
   isClosed: boolean;
+  showNigoDashboard?: boolean;
 }
 
 export interface FormTheme {

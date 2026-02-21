@@ -5,7 +5,7 @@ export interface FormTemplate {
   id: string;
   name: string;
   description: string;
-  category: 'business' | 'feedback' | 'events' | 'hr' | 'education' | 'other';
+  category: 'business' | 'feedback' | 'events' | 'hr' | 'education' | 'finance' | 'other';
   icon: string;
   fields: Omit<FormField, 'id' | 'order'>[];
   estimatedTime?: string;
