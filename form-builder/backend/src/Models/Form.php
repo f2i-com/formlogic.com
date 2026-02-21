@@ -19,7 +19,8 @@ class Form
         public ?string $logicPrompt = null,
         public ?string $createdAt = null,
         public ?string $updatedAt = null,
-        public ?string $publishedAt = null
+        public ?string $publishedAt = null,
+        public int $fieldCount = 0
     ) {}
 
     public static function fromArray(array $data): self
@@ -43,7 +44,8 @@ class Form
             logicPrompt: $data['logic_prompt'] ?? $data['logicPrompt'] ?? null,
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null,
-            publishedAt: $data['published_at'] ?? $data['publishedAt'] ?? null
+            publishedAt: $data['published_at'] ?? $data['publishedAt'] ?? null,
+            fieldCount: (int)($data['field_count'] ?? $data['fieldCount'] ?? 0)
         );
     }
 
@@ -63,6 +65,7 @@ class Form
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
             'publishedAt' => $this->publishedAt,
+            'fieldCount' => $this->fieldCount,
         ];
     }
 

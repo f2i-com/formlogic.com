@@ -112,6 +112,7 @@ export interface Form {
   title: string;
   description?: string;
   fields: FormField[];
+  fieldCount?: number;
   settings: FormSettings;
   theme: FormTheme;
   logicScript?: string;

@@ -866,38 +866,57 @@ class ResponseController
             ], 404);
         }
 
-        // Get all responses
-        $responses = $this->responseService->getFormResponses($formId, ['limit' => 10000]);
-
-        // Build export data
-        $exportData = [
-            'exportedAt' => date('c'),
-            'form' => [
-                'id' => $form['id'],
-                'title' => $form['title'],
-                'description' => $form['description'],
-                'status' => $form['status'],
-                'fields' => $form['fields'],
-                'settings' => $form['settings'],
-                'theme' => $form['theme'],
-                'createdAt' => $form['createdAt'],
-                'updatedAt' => $form['updatedAt'],
-            ],
-            'responses' => $responses,
-            'meta' => [
-                'totalResponses' => count($responses),
-                'version' => '1.0',
-            ],
-        ];
-
+        // Stream JSON to avoid loading all responses into memory at once
         $filename = $this->sanitizeFilename($form['title']) . '-export.json';
-        $jsonContent = json_encode($exportData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        $body = $response->getBody();
 
-        $response->getBody()->write($jsonContent);
+        $formMeta = json_encode([
+            'id' => $form['id'],
+            'title' => $form['title'],
+            'description' => $form['description'],
+            'status' => $form['status'],
+            'fields' => $form['fields'],
+            'settings' => $form['settings'],
+            'theme' => $form['theme'],
+            'createdAt' => $form['createdAt'],
+            'updatedAt' => $form['updatedAt'],
+        ], JSON_UNESCAPED_UNICODE);
+
+        $body->write('{"exportedAt":' . json_encode(date('c')));
+        $body->write(',"form":' . $formMeta);
+        $body->write(',"responses":[');
+
+        // Fetch responses in batches to limit memory usage
+        $batchSize = 500;
+        $offset = 0;
+        $totalWritten = 0;
+        $isFirst = true;
+
+        do {
+            $batch = $this->responseService->getFormResponses($formId, [
+                'limit' => $batchSize,
+                'offset' => $offset,
+            ]);
+
+            foreach ($batch as $resp) {
+                if (!$isFirst) {
+                    $body->write(',');
+                }
+                $body->write(json_encode($resp, JSON_UNESCAPED_UNICODE));
+                $isFirst = false;
+                $totalWritten++;
+            }
+
+            $offset += $batchSize;
+        } while (count($batch) === $batchSize);
+
+        $body->write('],"meta":' . json_encode([
+            'totalResponses' => $totalWritten,
+            'version' => '1.0',
+        ]) . '}');
 
         return $response
             ->withHeader('Content-Type', 'application/json')
-            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"')
-            ->withHeader('Content-Length', (string)strlen($jsonContent));
+            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }
 }

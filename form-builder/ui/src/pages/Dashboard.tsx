@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 
 import {
   FileText,
@@ -109,7 +110,7 @@ function QuickActionButton({
   );
 }
 
-// Dropdown Menu component for form actions
+// Dropdown Menu component for form actions — uses createPortal to escape stacking context
 function FormActionsDropdown({
   formId,
   formTitle,
@@ -131,17 +132,29 @@ function FormActionsDropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
 
+  // Close on scroll/resize to prevent stale positioning
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+    if (!isOpen) return;
+    const close = () => setIsOpen(false);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [isOpen]);
+
+  const toggleMenu = useCallback(() => {
+    if (isOpen) {
+      setIsOpen(false);
+    } else {
+      setMenuRect(buttonRef.current?.getBoundingClientRect() ?? null);
+      setIsOpen(true);
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [isOpen]);
 
   const handleExportSqlite = async () => {
     setIsExporting(true);
@@ -192,13 +205,16 @@ function FormActionsDropdown({
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative">
       <Button
+        ref={buttonRef}
         variant="ghost"
         size="sm"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={toggleMenu}
         disabled={isExporting}
         aria-label={`Actions for ${formTitle}`}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
       >
         {isExporting ? (
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 dark:border-slate-600 border-t-gray-600 dark:border-t-slate-300" />
@@ -206,80 +222,101 @@ function FormActionsDropdown({
           <MoreVertical className="h-4 w-4" />
         )}
       </Button>
-      {isOpen && (
-        <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50 ring-1 ring-black/5 dark:ring-white/[0.06]">
-          {/* Mobile-only quick actions */}
-          <div className="sm:hidden">
+      {isOpen && menuRect && createPortal(
+        <div className="fixed inset-0" style={{ zIndex: 60 }}>
+          <div className="absolute inset-0 bg-transparent" onClick={() => setIsOpen(false)} />
+          <div
+            role="menu"
+            aria-label={`Actions for ${formTitle}`}
+            className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
+            style={{
+              top: menuRect.bottom + 4,
+              left: Math.max(8, menuRect.right - 192),
+            }}
+          >
+            {/* Mobile-only quick actions */}
+            <div className="sm:hidden">
+              <button
+                onClick={() => { onEdit(); setIsOpen(false); }}
+                role="menuitem"
+                className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+              >
+                <Pencil className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                Edit
+              </button>
+              <button
+                onClick={() => { onPreview(); setIsOpen(false); }}
+                role="menuitem"
+                className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+              >
+                <Eye className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                Preview
+              </button>
+              <button
+                onClick={() => { onAnalytics(); setIsOpen(false); }}
+                role="menuitem"
+                className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+              >
+                <BarChart3 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                Analytics
+              </button>
+              <button
+                onClick={() => { onViewData(); setIsOpen(false); }}
+                role="menuitem"
+                className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+              >
+                <Table className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                View Data
+              </button>
+              <button
+                onClick={() => { onShare(); setIsOpen(false); }}
+                role="menuitem"
+                className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
+              >
+                <Share2 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                Share & Embed
+              </button>
+              <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
+            </div>
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+              Export
+            </div>
             <button
-              onClick={() => { onEdit(); setIsOpen(false); }}
+              onClick={handleExportSqlite}
+              role="menuitem"
               className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
-              <Pencil className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Edit
+              <Database className="h-4 w-4 text-blue-500" />
+              Download SQLite
             </button>
             <button
-              onClick={() => { onPreview(); setIsOpen(false); }}
+              onClick={handleExportJson}
+              role="menuitem"
               className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
-              <Eye className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Preview
+              <FileJson className="h-4 w-4 text-green-500" />
+              Export JSON
             </button>
             <button
-              onClick={() => { onAnalytics(); setIsOpen(false); }}
+              onClick={handleExportCsv}
+              role="menuitem"
               className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
             >
-              <BarChart3 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Analytics
-            </button>
-            <button
-              onClick={() => { onViewData(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-            >
-              <Table className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              View Data
-            </button>
-            <button
-              onClick={() => { onShare(); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-            >
-              <Share2 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-              Share & Embed
+              <Download className="h-4 w-4 text-purple-500" />
+              Export CSV
             </button>
             <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
+            <button
+              onClick={() => { onDelete(); setIsOpen(false); }}
+              role="menuitem"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Form
+            </button>
           </div>
-          <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
-            Export
-          </div>
-          <button
-            onClick={handleExportSqlite}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-          >
-            <Database className="h-4 w-4 text-blue-500" />
-            Download SQLite
-          </button>
-          <button
-            onClick={handleExportJson}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-          >
-            <FileJson className="h-4 w-4 text-green-500" />
-            Export JSON
-          </button>
-          <button
-            onClick={handleExportCsv}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
-          >
-            <Download className="h-4 w-4 text-purple-500" />
-            Export CSV
-          </button>
-          <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
-          <button
-            onClick={() => { onDelete(); setIsOpen(false); }}
-            className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer"
-          >
-            <Trash2 className="h-4 w-4" />
-            Delete Form
-          </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -571,7 +608,7 @@ export function Dashboard() {
               <div className="space-y-3">
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
-                  const fieldCount = form.fields?.length || 0;
+                  const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
                   return (
                     <Card key={form.id} className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
                       <CardContent className="p-4">

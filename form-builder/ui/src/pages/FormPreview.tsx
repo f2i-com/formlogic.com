@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,8 +13,8 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import type { FormField } from '../types/form';
 
-// Field Preview Component
-function FieldPreview({ field, value, onChange, isRequired, textColor }: {
+// Field Preview Component (memoized to prevent re-renders when other fields change)
+const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
@@ -580,7 +580,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
       <div className="mt-6">{renderField()}</div>
     </div>
   );
-}
+});
 
 // Main Preview Component
 export default function FormPreview() {

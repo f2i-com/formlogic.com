@@ -66,7 +66,7 @@ if (!$targetResp) {
 - Wrapped in MySQL transaction with `SELECT ... FOR UPDATE` row lock on source form
 - Rolls back on any failure
 
-### 1.6 XSS via Redirect URL on Form Submission
+### 1.6 XSS via Redirect URL on Form Submission [DONE]
 **Severity**: HIGH
 **File**: `ui/src/pages/FormResponse.tsx` ~L722-729
 **Problem**: After form submission, redirect URL validation only checks for `https?://` prefix. Edge cases like `http:////evil.com` or encoded characters could bypass the check.
@@ -109,7 +109,7 @@ try {
 - After loading the target form, validate each field ID exists: `array_intersect($requestedIds, array_column($form['fields'], 'id'))`
 - Return 400 for any invalid field IDs
 
-### 1.10 Validate App Slug Format Before Database Query
+### 1.10 Validate App Slug Format Before Database Query [DONE]
 **Severity**: MEDIUM
 **File**: `backend/src/Controllers/AppPublicController.php` ~L50, L106, L124
 **Problem**: App slug from URL is passed directly to database queries without format validation. While PDO parameterization prevents injection, malformed slugs generate unnecessary database queries.
@@ -120,7 +120,7 @@ if (!preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug)) {
 }
 ```
 
-### 1.11 CSRF Token Cookie Parsing Fragility
+### 1.11 CSRF Token Cookie Parsing Fragility [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/lib/api.ts` ~L51-54
 **Problem**: CSRF token extraction from cookies uses regex that could match cookie names that are superstrings (e.g., `formlogic_csrf_v2` would match before `formlogic_csrf`).
@@ -130,7 +130,7 @@ const match = document.cookie.match(/(?:^|;\s*)formlogic_csrf=([^;]+)/);
 return match ? decodeURIComponent(match[1]) : null;
 ```
 
-### 1.12 Timing Attack in CSRF Empty Check
+### 1.12 Timing Attack in CSRF Empty Check [DONE]
 **Severity**: MEDIUM
 **File**: `backend/src/Middleware/CsrfMiddleware.php` ~L66
 **Problem**: The check `empty($csrfCookie) || empty($csrfHeader)` before `hash_equals()` leaks timing information about whether the token is missing vs. invalid.
@@ -171,7 +171,7 @@ const handleCreateForm = async () => {
 };
 ```
 
-### 2.3 Missing Error Handling on Export Downloads
+### 2.3 Missing Error Handling on Export Downloads [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/lib/api.ts` ~L267-278, L304-324
 **Problem**: Blob download methods (SQLite, JSON export) don't handle partial download failures. If the connection drops mid-transfer, the user gets a corrupt file with no error.
@@ -207,7 +207,7 @@ const handleCreateForm = async () => {
 - Return generic message with an error reference ID
 - Log full details server-side at ERROR level
 
-### 2.7 Missing Null Checks in FormResponses Page
+### 2.7 Missing Null Checks in FormResponses Page [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormResponses.tsx` ~L112-120
 **Problem**: `displayFields` calculation doesn't verify `form` is loaded. If async load fails, UI shows empty state without error feedback.
@@ -240,7 +240,7 @@ const handleCreateForm = async () => {
 - Deliver synchronously on first attempt, queue retries for a background process
 - Mark webhook as unhealthy after N consecutive failures
 
-### 2.11 Form Status Transition Validation
+### 2.11 Form Status Transition Validation [DONE]
 **Severity**: LOW
 **File**: `backend/src/Services/FormService.php` ~L186-194
 **Problem**: Forms can transition between any status (draft → archived → published) without validation. This allows illogical transitions.
@@ -259,7 +259,7 @@ $validTransitions = [
 **Problem**: When authorization fails (user doesn't own form), a 404 is returned but not logged. This makes security incident investigation difficult.
 **Fix**: Added `logger->warning()` for ownership check failures in FormController.authorizeFormAccess().
 
-### 2.13 Field ID Uniqueness Validation
+### 2.13 Field ID Uniqueness Validation [DONE]
 **Severity**: MEDIUM
 **File**: `backend/src/Services/FormService.php` ~L156
 **Problem**: `saveFormFields()` doesn't validate that field IDs are unique within a form. Duplicate IDs would cause ambiguous answer lookups.
@@ -412,7 +412,7 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 - Added `role="menuitem"` to all menu buttons
 - Added `aria-haspopup="menu"`, `aria-expanded` to trigger button
 
-### 4.5 Form Validation Not Announced to Screen Readers
+### 4.5 Form Validation Not Announced to Screen Readers [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormResponse.tsx` ~L827-829
 **Problem**: Inline validation errors appear visually but aren't announced to screen readers.
@@ -440,13 +440,13 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 **Problem**: When switching between local/API storage, there's no visual indicator showing current mode or sync status.
 **Fix**: Add a subtle badge in the sidebar or header: "Cloud" / "Local" with sync status icon.
 
-### 4.9 Missing Loading States in App Runtime
+### 4.9 Missing Loading States in App Runtime [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/components/app-runtime/AppFormView.tsx`
 **Problem**: During form submission in app runtime, there's no loading overlay to prevent double-submission.
 **Fix**: Disable submit button + show spinner during API call. Add `isSubmitting` state.
 
-### 4.10 Theme Color Validation
+### 4.10 Theme Color Validation [DONE]
 **Severity**: LOW
 **File**: `ui/src/components/builder/ThemeEditor.tsx`
 **Problem**: Custom theme colors are applied as inline styles without validation. Non-hex values could cause rendering issues.
@@ -458,7 +458,7 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 **Problem**: `sessionExpiredRegistered` is a module-level flag. If stores are recreated (dev hot reload, testing), the callback registration state becomes stale.
 **Fix**: Move the registration flag into Zustand state itself, or use a WeakRef pattern to avoid leaks.
 
-### 4.12 Missing Document Event Listener Cleanup
+### 4.12 Missing Document Event Listener Cleanup [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormBuilder.tsx` ~L258-268
 **Problem**: Mobile menu click-outside detection adds a `document` event listener that isn't properly cleaned up if the component unmounts while the menu is open.
@@ -553,7 +553,7 @@ useEffect(() => {
 - Auto-initialize database schema on first run
 - Include `.env.docker` with pre-configured values
 
-### 5.8 Frontend .env.example
+### 5.8 Frontend .env.example [DONE]
 **Severity**: LOW
 **Problem**: No `.env.example` for the frontend. Developers must guess what `VITE_*` variables are needed.
 **Fix**: Create `ui/.env.example`:

@@ -71,7 +71,7 @@ const FormCard = memo(function FormCard({
             <div className="min-w-0">
               <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title}</h3>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
-                {form.fields.length} fields
+                {form.fieldCount ?? form.fields?.length ?? 0} fields
               </p>
             </div>
           </div>

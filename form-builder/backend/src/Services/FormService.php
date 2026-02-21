@@ -85,13 +85,36 @@ class FormService
         $includeFields = $options['includeFields'] ?? false;
 
         $forms = [];
+        $backfillIds = [];
         while ($row = $stmt->fetch()) {
             $form = Form::fromArray($row);
             // Only load fields from SQLite when explicitly requested (avoids N+1 for list views)
             if ($includeFields) {
                 $form->fields = $this->getFormFields($form->id);
+                $form->fieldCount = count($form->fields);
+            } elseif ($form->fieldCount === 0) {
+                // Backfill field_count for forms migrated before the column existed
+                try {
+                    $db = $this->sqlite->getFormDatabase($form->id);
+                    $countResult = $db->query("SELECT COUNT(*) FROM fields");
+                    $count = (int)$countResult->fetchColumn();
+                    if ($count > 0) {
+                        $form->fieldCount = $count;
+                        $backfillIds[$form->id] = $count;
+                    }
+                } catch (\Throwable $e) {
+                    // SQLite DB may not exist yet for empty forms
+                }
             }
             $forms[] = $form->toArray();
+        }
+
+        // Persist backfilled counts so this only happens once per form
+        if (!empty($backfillIds)) {
+            $updateStmt = $this->mysql->prepare("UPDATE forms SET field_count = :cnt WHERE id = :id");
+            foreach ($backfillIds as $id => $count) {
+                $updateStmt->execute(['cnt' => $count, 'id' => $id]);
+            }
         }
 
         return $forms;
@@ -112,6 +135,7 @@ class FormService
 
         $form = Form::fromArray($row);
         $form->fields = $this->getFormFields($formId);
+        $form->fieldCount = count($form->fields);
 
         return $form->toArray();
     }
@@ -393,6 +417,10 @@ class FormService
                 'conditional_logic' => json_encode($field['conditionalLogic'] ?? null),
             ]);
         }
+
+        // Keep field_count in MySQL in sync for list views
+        $countStmt = $this->mysql->prepare("UPDATE forms SET field_count = :cnt WHERE id = :id");
+        $countStmt->execute(['cnt' => count($fields), 'id' => $formId]);
     }
 
     /**

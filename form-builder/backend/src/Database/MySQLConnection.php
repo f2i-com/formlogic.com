@@ -410,5 +410,11 @@ class MySQLConnection
                 id INT AUTO_INCREMENT PRIMARY KEY
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Add field_count column to forms table for list view performance
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'field_count'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN field_count INT UNSIGNED DEFAULT 0 AFTER status");
+        }
     }
 }
