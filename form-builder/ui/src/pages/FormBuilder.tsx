@@ -96,9 +96,13 @@ export default function FormBuilder() {
   }
 
   const flushTitle = useCallback(() => {
-    if (form && localTitle !== form.title) {
-      updateForm(form.id, { title: localTitle });
+    if (!form) return;
+    const trimmed = localTitle.trim();
+    const finalTitle = trimmed || 'Untitled Form';
+    if (finalTitle !== form.title) {
+      updateForm(form.id, { title: finalTitle });
     }
+    if (!trimmed) setLocalTitle(finalTitle);
   }, [form, localTitle, updateForm]);
 
   // Flush title to store on unmount

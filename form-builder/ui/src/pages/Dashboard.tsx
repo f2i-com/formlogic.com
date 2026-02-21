@@ -228,9 +228,11 @@ function FormActionsDropdown({
           <div
             role="menu"
             aria-label={`Actions for ${formTitle}`}
-            className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
+            className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden max-h-[80vh] overflow-y-auto"
             style={{
-              top: menuRect.bottom + 4,
+              ...(menuRect.bottom + 320 > window.innerHeight
+                ? { bottom: window.innerHeight - menuRect.top + 4 }
+                : { top: menuRect.bottom + 4 }),
               left: Math.max(8, menuRect.right - 192),
             }}
           >
@@ -619,8 +621,8 @@ export function Dashboard() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-semibold text-gray-900 dark:text-white truncate" title={form.title}>
-                                  {form.title}
+                                <h4 className="font-semibold text-gray-900 dark:text-white truncate" title={form.title || 'Untitled Form'}>
+                                  {form.title || 'Untitled Form'}
                                 </h4>
                                 <Badge
                                   variant={form.status === 'published' ? 'success' : 'default'}

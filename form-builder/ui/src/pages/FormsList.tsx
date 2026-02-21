@@ -69,7 +69,7 @@ const FormCard = memo(function FormCard({
               <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
             </div>
             <div className="min-w-0">
-              <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title}</h3>
+              <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title || 'Untitled Form'}</h3>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
                 {form.fieldCount ?? form.fields?.length ?? 0} fields
               </p>
@@ -106,9 +106,11 @@ const FormCard = memo(function FormCard({
                 <div
                   role="menu"
                   aria-label={`Actions for ${form.title}`}
-                  className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
+                  className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden max-h-[80vh] overflow-y-auto"
                   style={{
-                    top: activeMenuRect.bottom + 4,
+                    ...(activeMenuRect.bottom + 280 > window.innerHeight
+                      ? { bottom: window.innerHeight - activeMenuRect.top + 4 }
+                      : { top: activeMenuRect.bottom + 4 }),
                     left: Math.max(8, activeMenuRect.right - 192),
                   }}
                 >
