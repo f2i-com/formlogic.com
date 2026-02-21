@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { NotFound } from './pages/NotFound';
@@ -50,6 +50,16 @@ const AppRelationsManager = lazyWithRetry(() => import('./pages/apps/AppRelation
 
 // Lazy load app runtime
 const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
+
+/** Error boundary that auto-resets when the user navigates to a different route */
+function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return (
+    <ErrorBoundary key={location.pathname}>
+      {children}
+    </ErrorBoundary>
+  );
+}
 
 function LoadingFallback() {
   return (
@@ -196,9 +206,11 @@ export default function App() {
       <BrowserRouter>
         <AppInitializer>
           <ThemeManager />
-          <React.Suspense fallback={<LoadingFallback />}>
-            <AppRoutes />
-          </React.Suspense>
+          <RouteErrorBoundary>
+            <React.Suspense fallback={<LoadingFallback />}>
+              <AppRoutes />
+            </React.Suspense>
+          </RouteErrorBoundary>
           <ToastContainer />
         </AppInitializer>
       </BrowserRouter>

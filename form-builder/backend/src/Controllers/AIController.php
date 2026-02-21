@@ -45,14 +45,12 @@ class AIController
     {
         $isConfigured = $this->aiService->isConfigured();
 
-        $response->getBody()->write(json_encode([
+        return $this->jsonResponse($response, [
             'available' => $isConfigured,
             'message' => $isConfigured
                 ? 'AI service is configured and ready'
                 : 'AI service is not configured. Set OPENAI_API_KEY in environment.',
-        ]));
-
-        return $response->withHeader('Content-Type', 'application/json');
+        ]);
     }
 
     /**
@@ -67,26 +65,25 @@ class AIController
         $prompt = $body['prompt'] ?? '';
 
         if (empty($prompt)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Prompt is required',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Prompt is required',
+            ], 400);
         }
 
         try {
             $result = $this->aiService->generateFormFromPrompt($prompt);
 
-            $response->getBody()->write(json_encode([
+            return $this->jsonResponse($response, [
                 'success' => true,
                 'data' => $result,
-            ]));
-            return $response->withHeader('Content-Type', 'application/json');
+            ]);
         } catch (\Exception $e) {
             $this->logger->error('AI form generation error', ['exception' => $e->getMessage()]);
-            $response->getBody()->write(json_encode([
-                'error' => 'An unexpected error occurred',
-            ]));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -109,22 +106,22 @@ class AIController
             if ($file && $file->getError() === UPLOAD_ERR_INI_SIZE) {
                 $errorMessage = 'File exceeds maximum upload size';
             }
-            $response->getBody()->write(json_encode([
-                'error' => $errorMessage,
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $errorMessage,
+            ], 400);
         }
 
         // Validate file size before processing
         $maxFileSize = $this->uploadSettings['maxFileSize'];
         $fileSize = $file->getSize();
         if ($fileSize > $maxFileSize) {
-            $response->getBody()->write(json_encode([
-                'error' => 'File too large. Maximum size is ' . round($maxFileSize / 1024 / 1024, 1) . 'MB',
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'File too large. Maximum size is ' . round($maxFileSize / 1024 / 1024, 1) . 'MB',
                 'maxSize' => $maxFileSize,
                 'actualSize' => $fileSize,
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            ], 400);
         }
 
         // Create a secure temp file with restrictive permissions BEFORE writing
@@ -155,11 +152,11 @@ class AIController
         }
         if (!in_array($mimeType, $allowedTypes, true)) {
             @unlink($tempPath);
-            $response->getBody()->write(json_encode([
-                'error' => 'Unsupported file type: ' . $mimeType,
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Unsupported file type: ' . $mimeType,
                 'allowed' => $allowedTypes,
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            ], 400);
         }
 
         try {
@@ -169,18 +166,17 @@ class AIController
             // Generate form from images
             $result = $this->aiService->generateFormFromImages($images, $additionalPrompt);
 
-            $response->getBody()->write(json_encode([
+            return $this->jsonResponse($response, [
                 'success' => true,
                 'data' => $result,
                 'pagesProcessed' => count($images),
-            ]));
-            return $response->withHeader('Content-Type', 'application/json');
+            ]);
         } catch (\Exception $e) {
             $this->logger->error('AI file generation error', ['exception' => $e->getMessage()]);
-            $response->getBody()->write(json_encode([
-                'error' => 'An unexpected error occurred',
-            ]));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         } finally {
             // Clean up temp file
             if (file_exists($tempPath)) {
@@ -202,34 +198,33 @@ class AIController
         $additionalPrompt = $body['prompt'] ?? null;
 
         if (empty($images) || !is_array($images)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'At least one image is required',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'At least one image is required',
+            ], 400);
         }
 
         // Limit number of images
         if (count($images) > 10) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Maximum 10 images allowed',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Maximum 10 images allowed',
+            ], 400);
         }
 
         try {
             $result = $this->aiService->generateFormFromImages($images, $additionalPrompt);
 
-            $response->getBody()->write(json_encode([
+            return $this->jsonResponse($response, [
                 'success' => true,
                 'data' => $result,
-            ]));
-            return $response->withHeader('Content-Type', 'application/json');
+            ]);
         } catch (\Exception $e) {
             $this->logger->error('AI image generation error', ['exception' => $e->getMessage()]);
-            $response->getBody()->write(json_encode([
-                'error' => 'An unexpected error occurred',
-            ]));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -246,33 +241,32 @@ class AIController
         $fields = $body['fields'] ?? [];
 
         if (empty($prompt)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Prompt is required',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Prompt is required',
+            ], 400);
         }
 
         if (empty($fields)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Form fields are required for script generation',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form fields are required for script generation',
+            ], 400);
         }
 
         try {
             $result = $this->aiService->generateScript($prompt, $fields);
 
-            $response->getBody()->write(json_encode([
+            return $this->jsonResponse($response, [
                 'success' => true,
                 'data' => $result,
-            ]));
-            return $response->withHeader('Content-Type', 'application/json');
+            ]);
         } catch (\Exception $e) {
             $this->logger->error('AI script generation error', ['exception' => $e->getMessage()]);
-            $response->getBody()->write(json_encode([
-                'error' => 'An unexpected error occurred',
-            ]));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
     }
 
@@ -290,33 +284,43 @@ class AIController
         $fields = $body['fields'] ?? [];
 
         if (empty($prompt)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Prompt is required',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Prompt is required',
+            ], 400);
         }
 
         if (empty($fields)) {
-            $response->getBody()->write(json_encode([
-                'error' => 'Form fields are required',
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form fields are required',
+            ], 400);
         }
 
         try {
             $result = $this->aiService->improveScript($currentScript, $prompt, $fields);
 
-            $response->getBody()->write(json_encode([
+            return $this->jsonResponse($response, [
                 'success' => true,
                 'data' => $result,
-            ]));
-            return $response->withHeader('Content-Type', 'application/json');
+            ]);
         } catch (\Exception $e) {
             $this->logger->error('AI script improvement error', ['exception' => $e->getMessage()]);
-            $response->getBody()->write(json_encode([
-                'error' => 'An unexpected error occurred',
-            ]));
-            return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ], 500);
         }
+    }
+
+    /**
+     * Helper to create JSON responses
+     */
+    private function jsonResponse(Response $response, array $data, int $status = 200): Response
+    {
+        $response->getBody()->write(json_encode($data));
+        return $response
+            ->withStatus($status)
+            ->withHeader('Content-Type', 'application/json');
     }
 }

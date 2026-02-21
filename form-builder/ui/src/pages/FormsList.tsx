@@ -27,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs'
 import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
+import { toast } from '../stores/toastStore';
 import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { PackImportModal } from '../components/builder/PackImportModal';
@@ -216,10 +217,16 @@ export function FormsList() {
   const handleCreateForm = async () => {
     if (isCreating) return;
     setIsCreating(true);
-    const form = await createForm('Untitled Form');
-    setActiveForm(form.id);
-    navigate(`/builder/${form.id}`);
-    setIsCreating(false);
+    try {
+      const form = await createForm('Untitled Form');
+      setActiveForm(form.id);
+      navigate(`/builder/${form.id}`);
+    } catch (error) {
+      console.error('Failed to create form:', error);
+      toast.error('Failed to create form', 'Please try again');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleNavigate = useCallback((path: string) => {
@@ -227,10 +234,15 @@ export function FormsList() {
   }, [navigate]);
 
   const handleDuplicate = useCallback(async (id: string) => {
-    const newForm = await duplicateForm(id);
-    if (newForm) {
-      setActiveForm(newForm.id);
-      navigate(`/builder/${newForm.id}`);
+    try {
+      const newForm = await duplicateForm(id);
+      if (newForm) {
+        setActiveForm(newForm.id);
+        navigate(`/builder/${newForm.id}`);
+      }
+    } catch (error) {
+      console.error('Failed to duplicate form:', error);
+      toast.error('Failed to duplicate form', 'Please try again');
     }
     setActiveMenu(null);
   }, [duplicateForm, setActiveForm, navigate]);

@@ -246,6 +246,7 @@ export const useFormStore = create<FormState>()(
               // Rollback optimistic update
               set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
               console.error('Failed to create form on server:', result.error);
+              toast.error('Failed to create form', typeof result.error === 'string' ? result.error : 'Please try again');
             } else if (result.data) {
               // Update with server response (may have different ID)
               set((s) => ({
@@ -259,6 +260,7 @@ export const useFormStore = create<FormState>()(
             // Rollback optimistic update
             set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
             console.error('Failed to create form on server:', error);
+            toast.error('Failed to create form', 'Please check your connection and try again');
           }
         }
 
@@ -286,6 +288,7 @@ export const useFormStore = create<FormState>()(
                 await api.updateForm(id, form);
               } catch (error) {
                 console.error('Failed to update form on server:', error);
+                toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
               }
             }
           });
@@ -313,6 +316,7 @@ export const useFormStore = create<FormState>()(
             await api.deleteForm(id);
           } catch (error) {
             console.error('Failed to delete form on server:', error);
+            toast.error('Failed to delete form', 'Please try again');
           }
         }
       },
@@ -351,6 +355,7 @@ export const useFormStore = create<FormState>()(
             }
           } catch (error) {
             console.error('Failed to duplicate form on server:', error);
+            toast.error('Failed to duplicate form', 'Please try again');
           }
         }
 

@@ -82,11 +82,15 @@ class FormService
         }
         $stmt->execute();
 
+        $includeFields = $options['includeFields'] ?? false;
+
         $forms = [];
         while ($row = $stmt->fetch()) {
             $form = Form::fromArray($row);
-            // Load fields from SQLite
-            $form->fields = $this->getFormFields($form->id);
+            // Only load fields from SQLite when explicitly requested (avoids N+1 for list views)
+            if ($includeFields) {
+                $form->fields = $this->getFormFields($form->id);
+            }
             $forms[] = $form->toArray();
         }
 

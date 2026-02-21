@@ -110,8 +110,11 @@ class FormLogicRuntime
 
         } catch (\Throwable $e) {
             $executionTimeMs = (int)((microtime(true) - $startTime) * 1000);
+            // Sanitize error message: strip file paths and internal details
+            $safeMessage = preg_replace('/\s*in\s+\/[^\s]+/', '', $e->getMessage());
+            $safeMessage = preg_replace('/\s*on line \d+/', '', $safeMessage);
             return ScriptResult::error(
-                "Script execution error: {$e->getMessage()}",
+                "Script execution error: {$safeMessage}",
                 $engine->getInstructionCount(),
                 $executionTimeMs,
             );
@@ -631,7 +634,7 @@ class FormLogicRuntime
 
         // Handle cURL errors
         if ($errno !== 0) {
-            return $this->httpErrorResponse("Request failed: {$error}");
+            return $this->httpErrorResponse("HTTP request failed");
         }
 
         // Handle redirects securely (validate each redirect URL)
@@ -676,7 +679,7 @@ class FormLogicRuntime
             curl_close($ch);
 
             if ($errno !== 0) {
-                return $this->httpErrorResponse("Request failed: {$error}");
+                return $this->httpErrorResponse("HTTP request failed");
             }
         }
 

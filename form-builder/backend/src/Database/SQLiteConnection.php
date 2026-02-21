@@ -46,6 +46,10 @@ class SQLiteConnection
                 ]
             );
 
+            // Enable WAL mode for better concurrent read/write performance
+            $pdo->exec('PRAGMA journal_mode = WAL');
+            // Wait up to 5s for locks instead of failing immediately
+            $pdo->exec('PRAGMA busy_timeout = 5000');
             // Enable foreign keys
             $pdo->exec('PRAGMA foreign_keys = ON');
 

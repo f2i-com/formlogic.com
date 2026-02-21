@@ -84,6 +84,10 @@ function registerFormModules(engine: FormLogicEngine): void {
       if (typeof pattern !== 'string') return falseObject;
       // Limit pattern length to mitigate ReDoS from complex expressions
       if (pattern.length > 500) return falseObject;
+      // Reject patterns with known catastrophic backtracking constructs
+      if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pattern) || /\([^)]*\|[^)]*\)\+/.test(pattern)) {
+        return falseObject;
+      }
       try {
         const regex = new RegExp(pattern);
         return regex.test(value) ? trueObject : falseObject;

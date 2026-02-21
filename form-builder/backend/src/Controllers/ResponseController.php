@@ -174,8 +174,9 @@ class ResponseController
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
                 return $this->jsonResponse($response, [
-                    'error' => 'submission_rejected',
+                    'error' => true,
                     'message' => $result->message,
+                    'rejected' => true,
                 ], 422);
             }
 
