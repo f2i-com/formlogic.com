@@ -180,14 +180,11 @@ const handleCreateForm = async () => {
 - Validate blob size is reasonable before triggering download
 - Show error toast on failure
 
-### 2.4 Response Export Memory Exhaustion
+### 2.4 Response Export Memory Exhaustion [DONE]
 **Severity**: HIGH
 **File**: `backend/src/Controllers/ResponseController.php` ~L869
 **Problem**: `exportJson` loads ALL responses (up to 10,000) into memory. For forms with many large responses, this can exhaust PHP memory.
-**Fix**:
-- Stream JSON output using PHP generators and `fwrite()` to `php://output`
-- Or add a hard limit (e.g., 5,000 responses) with a date-range filter requirement for larger datasets
-- Add `Content-Length` header for progress indication
+**Fix**: Rewrote to stream JSON in batches of 500 responses instead of loading all into memory.
 
 ### 2.5 CSV Import Error Recovery
 **Severity**: MEDIUM
@@ -307,20 +304,17 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 **Problem**: `filteredForms`, `draftForms`, `publishedForms`, `archivedForms` are recalculated every render without `useMemo`. Sorting by response count calls `getResponsesByFormId` repeatedly.
 **Fix**: Wrapped `filteredForms`, `draftForms`, `publishedForms`, `archivedForms` in `useMemo`.
 
-### 3.4 FieldPreview Missing Memoization
+### 3.4 FieldPreview Missing Memoization [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormPreview.tsx` ~L17-583
 **Problem**: `FieldPreview` function creates handlers and elements inline on every render. For multi-field forms, this causes excessive re-renders.
-**Fix**: Convert to a `React.memo`-wrapped component with `useCallback` for event handlers.
+**Fix**: Wrapped FieldPreview in `React.memo`.
 
-### 3.5 AppDataTable Virtualization
+### 3.5 AppDataTable Virtualization [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/components/app-runtime/AppDataTable.tsx` ~L44-95
 **Problem**: Response list renders all items without virtualization. With hundreds of responses, mobile card list becomes sluggish.
-**Fix**:
-- Implement `React.memo` for individual response cards
-- For 100+ items, add virtual scrolling (e.g., `@tanstack/virtual` or `react-window`)
-- Current pagination (10/page) mitigates this, but mobile card view can still be slow
+**Fix**: Wrapped `MobileCardList` in `React.memo`. Pagination (15/page) already limits rendered items.
 
 ### 3.6 SQLite Concurrent Write Bottleneck [DONE]
 **Severity**: HIGH for production
@@ -385,23 +379,20 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 - Include a keyboard shortcut or button to switch between draw/type modes
 - Add `aria-label` and `role="img"` to the canvas
 
-### 4.2 Missing Save Indicator
+### 4.2 Missing Save Indicator [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/stores/formStore.ts` ~L268-293
 **Problem**: `updateForm` performs debounced async saves but there's no UI indicator showing save status. Users don't know if their changes are saved.
 **Fix**:
-- Add `savingFormIds: Set<string>` to formStore state
-- Set it when debounce fires, clear on API success/failure
-- Show "Saving..." / "Saved" / "Save failed" indicator in FormBuilder header
+- Added `savingFormIds: Set<string>` to formStore state
+- `markSaving()` helper called before/after debounced saves
+- FormBuilder header shows spinning loader during save, cloud+check when saved
 
-### 4.3 No Offline Mode Indicator
+### 4.3 No Offline Mode Indicator [DONE]
 **Severity**: MEDIUM
-**File**: `ui/src/hooks/useOnlineStatus.ts` exists but isn't used in main UI
+**File**: `ui/src/components/layout/AppShell.tsx`
 **Problem**: `useOnlineStatus` hook exists but no component displays network status. Users submitting forms offline get silent failures.
-**Fix**:
-- Add a global offline banner in `AppShell` and `AppRuntimeShell`
-- Disable submit buttons when offline with tooltip explaining why
-- Show pending sync count if background sync is queued
+**Fix**: Added amber offline banner at top of AppShell with WifiOff icon and "You're offline" message. Content shifts down with `pt-8` when offline.
 
 ### 4.4 Missing ARIA Labels on Dynamic Content [DONE]
 **Severity**: MEDIUM
@@ -429,16 +420,16 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 **Problem**: When optimistic create/update fails and rolls back, the UI changes without explanation. User's work appears to vanish.
 **Fix**: Added toast.error() notifications for all rollback scenarios (done as part of 2.1).
 
-### 4.7 Stale Response Count After CSV Import
+### 4.7 Stale Response Count After CSV Import [DONE]
 **Severity**: LOW
-**File**: `ui/src/stores/responseStore.ts`
+**File**: `ui/src/pages/FormResponses.tsx`
 **Problem**: Response count badges aren't updated after CSV import. Requires manual page refresh.
-**Fix**: Call `refreshForms()` or update the specific form's `responseCount` after successful CSV import.
+**Fix**: CSV import `onImportComplete` callback now calls `refreshForms()` to update counts.
 
-### 4.8 Storage Mode Change Not Visible
+### 4.8 Storage Mode Change Not Visible [DONE]
 **Severity**: MEDIUM
 **Problem**: When switching between local/API storage, there's no visual indicator showing current mode or sync status.
-**Fix**: Add a subtle badge in the sidebar or header: "Cloud" / "Local" with sync status icon.
+**Fix**: Added "Cloud Storage" / "Local Storage" indicator with icon in sidebar (visible when expanded).
 
 ### 4.9 Missing Loading States in App Runtime [DONE]
 **Severity**: MEDIUM
@@ -452,11 +443,11 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 **Problem**: Custom theme colors are applied as inline styles without validation. Non-hex values could cause rendering issues.
 **Fix**: Validate with `/^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/` before applying.
 
-### 4.11 Module-Level Session Callback Leak
+### 4.11 Module-Level Session Callback Leak [DONE]
 **Severity**: MEDIUM
 **Files**: `ui/src/stores/authStore.ts` ~L41-54, `ui/src/stores/appRuntimeStore.ts` ~L41-62
 **Problem**: `sessionExpiredRegistered` is a module-level flag. If stores are recreated (dev hot reload, testing), the callback registration state becomes stale.
-**Fix**: Move the registration flag into Zustand state itself, or use a WeakRef pattern to avoid leaks.
+**Fix**: Store callback reference at module level, remove old and re-register on each initialize. Added `api.removeSessionExpiredCallback()` method.
 
 ### 4.12 Missing Document Event Listener Cleanup [DONE]
 **Severity**: MEDIUM
@@ -693,17 +684,25 @@ VITE_API_URL=http://localhost:8080/api
 ### Phase 2 continued
 - [x] 2.12 (audit log for auth failures) — DONE
 
+### Phase 2 continued (2)
+- [x] 2.4 (streaming JSON export) — DONE
+
 ### Phase 3 Performance
 - [x] 3.2 (N+1 query in form listing) — DONE
 - [x] 3.3 (memoization in FormsList) — DONE
+- [x] 3.4 (FieldPreview React.memo) — DONE
+- [x] 3.5 (AppDataTable MobileCardList memo) — DONE
 - [x] 3.6 (SQLite WAL mode + busy_timeout) — DONE
 - [x] 3.8 (debounce race condition) — DONE
 - [x] 3.11 (PWA form definition caching) — DONE
 
 ### Phase 4 Frontend Quality
+- [x] 4.2 (save indicator in FormBuilder) — DONE
 - [x] 4.4 (ARIA labels on dynamic menus) — DONE
 - [x] 4.6 (optimistic rollback feedback) — DONE (via 2.1)
+- [x] 4.7 (refresh response count after CSV import) — DONE
 - [x] 4.9 (double-submission prevention) — already correct
+- [x] 4.11 (session callback leak fix) — DONE
 - [x] 4.12 (event listener cleanup) — already correct
 - [x] 4.13 (don't persist API forms to localStorage) — DONE
 

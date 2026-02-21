@@ -6,7 +6,9 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Globe
+  Globe,
+  Cloud,
+  HardDrive,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
@@ -25,7 +27,7 @@ const navItems = [
 export function Sidebar() {
   const navigate = useNavigate();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
-  const { createForm, setActiveForm } = useFormStore();
+  const { createForm, setActiveForm, storageMode } = useFormStore();
 
   const handleCreateForm = async () => {
     try {
@@ -99,6 +101,19 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Storage Mode Indicator */}
+      {!sidebarCollapsed && (
+        <div className="px-4 py-2">
+          <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
+            {storageMode === 'api' ? (
+              <><Cloud className="h-3.5 w-3.5" /><span>Cloud Storage</span></>
+            ) : (
+              <><HardDrive className="h-3.5 w-3.5" /><span>Local Storage</span></>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Collapse Button */}
       <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-transparent">
