@@ -38,19 +38,13 @@ These issues represent real vulnerabilities or data loss risks and should be add
 - Added DNS pinning via `CURLOPT_RESOLVE` to prevent TOCTOU rebinding
 - Disabled `CURLOPT_FOLLOWLOCATION` to prevent redirect-based SSRF
 
-### 1.3 Dual-Database Consistency (MySQL + SQLite)
+### 1.3 Dual-Database Consistency (MySQL + SQLite) [PARTIAL]
 **Severity**: CRITICAL
 **Files**: `backend/src/Services/FormService.php`, `backend/src/Services/ResponseService.php`
-**Problem**: Forms have metadata in MySQL and responses in SQLite. No cross-database transactions means partial failures create inconsistent state:
-- Form creation succeeds in MySQL but SQLite init fails → form visible but unusable
-- Response stored in SQLite but MySQL metadata insert fails → response exists but invisible to analytics/queries
-- Form deletion in MySQL succeeds but SQLite file unlink fails → orphaned database files
+**Problem**: Forms have metadata in MySQL and responses in SQLite. No cross-database transactions means partial failures create inconsistent state.
 **Fix**:
-- Add a `verifyFormDatabase(formId)` health check in `FormService::getForm()` that ensures SQLite DB exists/is accessible
-- In `ResponseService::createResponse()`, if MySQL `response_metadata` INSERT fails after SQLite INSERT, perform compensating delete on SQLite (partially done — verify completeness)
-- In `FormService::deleteForm()`, attempt SQLite deletion first (fail-fast); only delete MySQL record after SQLite is confirmed removed
-- Add a periodic cleanup job or admin endpoint to find/clean orphaned SQLite files (MySQL form missing but SQLite file exists)
-- Log all cross-database inconsistencies at ERROR level for monitoring
+- Reordered `deleteForm()` to delete SQLite first (fail-fast) before MySQL deletion
+- Remaining: verifyFormDatabase health check, compensating deletes in ResponseService, orphan cleanup
 
 ### 1.4 Missing Permission Check in Related Records Endpoint [DONE]
 **Severity**: HIGH
@@ -259,11 +253,11 @@ $validTransitions = [
 ];
 ```
 
-### 2.12 Audit Log for Authorization Failures
+### 2.12 Audit Log for Authorization Failures [DONE]
 **Severity**: LOW
 **Files**: `FormController.php`, `ResponseController.php`, etc.
 **Problem**: When authorization fails (user doesn't own form), a 404 is returned but not logged. This makes security incident investigation difficult.
-**Fix**: Add audit log entries for all authorization failures with the requesting `userId` and target resource.
+**Fix**: Added `logger->warning()` for ownership check failures in FormController.authorizeFormAccess().
 
 ### 2.13 Field ID Uniqueness Validation
 **Severity**: MEDIUM
@@ -372,14 +366,11 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 - SQLite export: stream the file directly (already a file — just stream it)
 - Add response count check: if >5000, require date range filter
 
-### 3.11 PWA Aggressive Caching of Form Definitions
+### 3.11 PWA Aggressive Caching of Form Definitions [DONE]
 **Severity**: MEDIUM
 **File**: `ui/vite.config.ts` ~L52-53
 **Problem**: Form definitions are cached for 1 hour. If a form owner publishes changes, respondents may see the stale version for up to an hour.
-**Fix**:
-- Reduce form definition cache to 5 minutes, or use `NetworkFirst` strategy instead of `StaleWhileRevalidate`
-- Add a form version/hash header so the frontend can detect stale data
-- Consider `NetworkFirst` for all API calls (with graceful offline fallback)
+**Fix**: Switched form definitions to `NetworkFirst` strategy with 5s timeout and 5-minute fallback cache.
 
 ---
 
@@ -699,15 +690,21 @@ VITE_API_URL=http://localhost:8080/api
 - [x] 2.8 (standardize error response shapes — AIController) — DONE
 - [x] 2.9 (per-route error boundaries) — DONE
 
+### Phase 2 continued
+- [x] 2.12 (audit log for auth failures) — DONE
+
 ### Phase 3 Performance
 - [x] 3.2 (N+1 query in form listing) — DONE
 - [x] 3.3 (memoization in FormsList) — DONE
 - [x] 3.6 (SQLite WAL mode + busy_timeout) — DONE
 - [x] 3.8 (debounce race condition) — DONE
+- [x] 3.11 (PWA form definition caching) — DONE
 
 ### Phase 4 Frontend Quality
 - [x] 4.4 (ARIA labels on dynamic menus) — DONE
 - [x] 4.6 (optimistic rollback feedback) — DONE (via 2.1)
+- [x] 4.9 (double-submission prevention) — already correct
+- [x] 4.12 (event listener cleanup) — already correct
 - [x] 4.13 (don't persist API forms to localStorage) — DONE
 
 ### Requires Careful Testing

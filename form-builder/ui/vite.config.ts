@@ -54,15 +54,16 @@ export default defineConfig({
               },
             },
           },
-          // Cache form definitions for offline viewing
+          // Cache form definitions — use NetworkFirst so published changes appear quickly
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+$/,
-            handler: 'StaleWhileRevalidate',
+            handler: 'NetworkFirst',
             options: {
               cacheName: 'app-forms-cache',
+              networkTimeoutSeconds: 5,
               expiration: {
                 maxEntries: 50,
-                maxAgeSeconds: 60 * 60, // 1 hour
+                maxAgeSeconds: 5 * 60, // 5 minutes fallback
               },
             },
           },

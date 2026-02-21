@@ -263,6 +263,9 @@ class FormService
      */
     public function deleteForm(string $formId): bool
     {
+        // Delete SQLite database first (fail-fast to avoid orphaned MySQL record without data)
+        $this->sqlite->deleteFormDatabase($formId);
+
         // Clean up response_links referencing this form (no FK cascade on this table)
         $linkStmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :id1 OR target_form_id = :id2");
         $linkStmt->execute(['id1' => $formId, 'id2' => $formId]);
@@ -270,9 +273,6 @@ class FormService
         // Delete from MySQL (cascades to related tables)
         $stmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
         $stmt->execute(['id' => $formId]);
-
-        // Delete SQLite database
-        $this->sqlite->deleteFormDatabase($formId);
 
         return $stmt->rowCount() > 0;
     }

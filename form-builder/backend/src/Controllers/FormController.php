@@ -85,6 +85,10 @@ class FormController
 
         // Check ownership
         if ($form['userId'] !== $userId) {
+            $this->logger->warning('Authorization denied: user does not own form', [
+                'userId' => $userId,
+                'formId' => $formId,
+            ]);
             return null;
         }
 
