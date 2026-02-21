@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus,
@@ -17,7 +17,7 @@ import { CalculatedFieldEditor } from './CalculatedFieldEditor';
 import { LinkedRecordSettings } from './LinkedRecordSettings';
 import { FIELD_TYPE_INFO, type FormField, type ConditionalLogic } from '../../types/form';
 
-export function FieldSettingsPanel({
+export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   field,
   allFields,
   onUpdate,
@@ -330,4 +330,4 @@ export function FieldSettingsPanel({
       </Tabs>
     </div>
   );
-}
+});

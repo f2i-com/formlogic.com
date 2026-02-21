@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import { GripVertical, Trash2, HelpCircle } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -5,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { FIELD_TYPE_INFO, type FormField } from '../../types/form';
 import { ICON_MAP } from './fieldIcons';
 
-export function SortableFieldCard({
+export const SortableFieldCard = memo(function SortableFieldCard({
   field,
   isSelected,
   onSelect,
@@ -13,8 +14,8 @@ export function SortableFieldCard({
 }: {
   field: FormField;
   isSelected: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
+  onSelect: (fieldId: string) => void;
+  onDelete: (fieldId: string) => void;
 }) {
   const {
     attributes,
@@ -33,6 +34,12 @@ export function SortableFieldCard({
   const fieldInfo = FIELD_TYPE_INFO[field.type];
   const IconComponent = ICON_MAP[fieldInfo.icon] || HelpCircle;
 
+  const handleSelect = useCallback(() => onSelect(field.id), [onSelect, field.id]);
+  const handleDelete = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete(field.id);
+  }, [onDelete, field.id]);
+
   return (
     <div
       ref={setNodeRef}
@@ -43,7 +50,7 @@ export function SortableFieldCard({
         isDragging && 'opacity-50 shadow-lg'
       )}
     >
-      <div className="flex items-start gap-3 p-4 cursor-pointer" onClick={onSelect}>
+      <div className="flex items-start gap-3 p-4 cursor-pointer" onClick={handleSelect}>
         <button
           {...attributes}
           {...listeners}
@@ -69,7 +76,7 @@ export function SortableFieldCard({
         </div>
 
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={handleDelete}
           aria-label={`Delete ${field.label || 'field'}`}
           className={cn(
             'p-1.5 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer',
@@ -83,4 +90,4 @@ export function SortableFieldCard({
       </div>
     </div>
   );
-}
+});

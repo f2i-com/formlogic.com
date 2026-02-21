@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
@@ -33,6 +33,162 @@ import { PackImportModal } from '../components/builder/PackImportModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { Form } from '../types/form';
 
+// Extracted outside FormsList so React maintains a stable component identity across renders
+const FormCard = memo(function FormCard({
+  form,
+  responseCount,
+  activeMenuId,
+  activeMenuRect,
+  onMenuToggle,
+  onMenuClose,
+  onNavigate,
+  onDuplicate,
+  onEmbed,
+  onDelete,
+}: {
+  form: Form;
+  responseCount: number;
+  activeMenuId: string | null;
+  activeMenuRect: DOMRect | null;
+  onMenuToggle: (id: string, rect: DOMRect) => void;
+  onMenuClose: () => void;
+  onNavigate: (path: string) => void;
+  onDuplicate: (id: string) => void;
+  onEmbed: (id: string, title: string) => void;
+  onDelete: (id: string, title: string) => void;
+}) {
+  const isMenuOpen = activeMenuId === form.id;
+
+  return (
+    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
+      <CardContent>
+        <div className="flex items-start justify-between mb-3 gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <div className="p-2 bg-indigo-50 dark:bg-primary-500/10 rounded-lg flex-shrink-0">
+              <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title}</h3>
+              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
+                {form.fields.length} fields
+              </p>
+            </div>
+          </div>
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Actions for ${form.title}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isMenuOpen) {
+                  onMenuClose();
+                } else {
+                  onMenuToggle(form.id, e.currentTarget.getBoundingClientRect());
+                }
+              }}
+            >
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+
+            {isMenuOpen && activeMenuRect && createPortal(
+              <div
+                className="fixed inset-0 z-[60]"
+                style={{ zIndex: 60 }}
+              >
+                <div
+                  className="absolute inset-0 bg-transparent"
+                  onClick={onMenuClose}
+                />
+                <div
+                  className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
+                  style={{
+                    top: activeMenuRect.bottom + 4,
+                    left: Math.max(8, activeMenuRect.right - 192),
+                  }}
+                >
+                  <button
+                    onClick={() => { onNavigate(`/builder/${form.id}`); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Pencil className="h-4 w-4" /> Edit
+                  </button>
+                  <button
+                    onClick={() => { onNavigate(`/preview/${form.id}`); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Eye className="h-4 w-4" /> Preview
+                  </button>
+                  <button
+                    onClick={() => { onNavigate(`/analytics/${form.id}`); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <BarChart3 className="h-4 w-4" /> Analytics
+                  </button>
+                  <button
+                    onClick={() => { onNavigate(`/responses/${form.id}`); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Table className="h-4 w-4" /> View Data
+                  </button>
+                  <button
+                    onClick={() => onDuplicate(form.id)}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Copy className="h-4 w-4" /> Duplicate
+                  </button>
+                  <button
+                    onClick={() => { onEmbed(form.id, form.title); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Share2 className="h-4 w-4" /> Share & Embed
+                  </button>
+                  <hr className="my-1 border-gray-100 dark:border-slate-800" />
+                  <button
+                    onClick={() => { onDelete(form.id, form.title); onMenuClose(); }}
+                    className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4" /> Delete
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between text-xs sm:text-sm">
+          <span className="text-slate-500 truncate">
+            {formatRelativeTime(form.updatedAt)}
+          </span>
+          <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm">
+            {responseCount} responses
+          </Badge>
+        </div>
+
+        <div className="flex gap-2 mt-3 sm:mt-4">
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => onNavigate(`/builder/${form.id}`)}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            className="flex-1"
+            onClick={() => onNavigate(`/preview/${form.id}`)}
+          >
+            Preview
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+});
+
 export function FormsList() {
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
@@ -66,14 +222,34 @@ export function FormsList() {
     setIsCreating(false);
   };
 
-  const handleDuplicate = async (id: string) => {
+  const handleNavigate = useCallback((path: string) => {
+    navigate(path);
+  }, [navigate]);
+
+  const handleDuplicate = useCallback(async (id: string) => {
     const newForm = await duplicateForm(id);
     if (newForm) {
       setActiveForm(newForm.id);
       navigate(`/builder/${newForm.id}`);
     }
     setActiveMenu(null);
-  };
+  }, [duplicateForm, setActiveForm, navigate]);
+
+  const handleMenuToggle = useCallback((id: string, rect: DOMRect) => {
+    setActiveMenu({ id, rect });
+  }, []);
+
+  const handleMenuClose = useCallback(() => {
+    setActiveMenu(null);
+  }, []);
+
+  const handleEmbed = useCallback((id: string, title: string) => {
+    setEmbedModalForm({ id, title });
+  }, []);
+
+  const handleDelete = useCallback((id: string, title: string) => {
+    setDeleteTarget({ id, title });
+  }, []);
 
   const filteredForms = forms
     .filter((form) => form.title.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -93,157 +269,21 @@ export function FormsList() {
   const publishedForms = filteredForms.filter((f) => f.status === 'published');
   const archivedForms = filteredForms.filter((f) => f.status === 'archived');
 
-  const FormCard = ({ form }: { form: Form }) => {
-    const responses = getResponsesByFormId(form.id);
-    const isMenuOpen = activeMenu?.id === form.id;
-
-    return (
-      <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
-        <CardContent>
-          <div className="flex items-start justify-between mb-3 gap-2">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="p-2 bg-indigo-50 dark:bg-primary-500/10 rounded-lg flex-shrink-0">
-                <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
-              </div>
-              <div className="min-w-0">
-                <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title}</h3>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
-                  {form.fields.length} fields
-                </p>
-              </div>
-            </div>
-            <div className="relative">
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={`Actions for ${form.title}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActiveMenu(
-                    activeMenu?.id === form.id
-                      ? null
-                      : { id: form.id, rect: e.currentTarget.getBoundingClientRect() }
-                  );
-                }}
-              >
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-
-              {isMenuOpen && activeMenu && createPortal(
-                <div
-                  className="fixed inset-0 z-[60]"
-                  style={{ zIndex: 60 }} // Enforce high z-index
-                >
-                  <div
-                    className="absolute inset-0 bg-transparent"
-                    onClick={() => setActiveMenu(null)}
-                  />
-                  <div
-                    className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
-                    style={{
-                      top: activeMenu.rect.bottom + 4,
-                      left: Math.max(8, activeMenu.rect.right - 192), // Align right edge, clamp to viewport
-                    }}
-                  >
-                    <button
-                      onClick={() => {
-                        navigate(`/builder/${form.id}`);
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <Pencil className="h-4 w-4" /> Edit
-                    </button>
-                    <button
-                      onClick={() => {
-                        navigate(`/preview/${form.id}`);
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <Eye className="h-4 w-4" /> Preview
-                    </button>
-                    <button
-                      onClick={() => {
-                        navigate(`/analytics/${form.id}`);
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <BarChart3 className="h-4 w-4" /> Analytics
-                    </button>
-                    <button
-                      onClick={() => {
-                        navigate(`/responses/${form.id}`);
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <Table className="h-4 w-4" /> View Data
-                    </button>
-                    <button
-                      onClick={() => handleDuplicate(form.id)}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <Copy className="h-4 w-4" /> Duplicate
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEmbedModalForm({ id: form.id, title: form.title });
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                    >
-                      <Share2 className="h-4 w-4" /> Share & Embed
-                    </button>
-                    <hr className="my-1 border-gray-100 dark:border-slate-800" />
-                    <button
-                      onClick={() => {
-                        setDeleteTarget({ id: form.id, title: form.title });
-                        setActiveMenu(null);
-                      }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" /> Delete
-                    </button>
-                  </div>
-                </div>,
-                document.body
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between text-xs sm:text-sm">
-            <span className="text-slate-500 truncate">
-              {formatRelativeTime(form.updatedAt)}
-            </span>
-            <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm">
-              {responses.length} responses
-            </Badge>
-          </div>
-
-          <div className="flex gap-2 mt-3 sm:mt-4">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1"
-              onClick={() => navigate(`/builder/${form.id}`)}
-            >
-              Edit
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              className="flex-1"
-              onClick={() => navigate(`/preview/${form.id}`)}
-            >
-              Preview
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
+  const renderFormCard = (form: Form) => (
+    <FormCard
+      key={form.id}
+      form={form}
+      responseCount={getResponsesByFormId(form.id).length}
+      activeMenuId={activeMenu?.id ?? null}
+      activeMenuRect={activeMenu?.id === form.id ? activeMenu.rect : null}
+      onMenuToggle={handleMenuToggle}
+      onMenuClose={handleMenuClose}
+      onNavigate={handleNavigate}
+      onDuplicate={handleDuplicate}
+      onEmbed={handleEmbed}
+      onDelete={handleDelete}
+    />
+  );
 
   return (
     <div className="min-h-screen">
@@ -309,7 +349,7 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                filteredForms.map((form) => <FormCard key={form.id} form={form} />)
+                filteredForms.map(renderFormCard)
               )}
             </div>
           </TabsContent>
@@ -325,7 +365,7 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                publishedForms.map((form) => <FormCard key={form.id} form={form} />)
+                publishedForms.map(renderFormCard)
               )}
             </div>
           </TabsContent>
@@ -341,7 +381,7 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                draftForms.map((form) => <FormCard key={form.id} form={form} />)
+                draftForms.map(renderFormCard)
               )}
             </div>
           </TabsContent>
@@ -357,7 +397,7 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                archivedForms.map((form) => <FormCard key={form.id} form={form} />)
+                archivedForms.map(renderFormCard)
               )}
             </div>
           </TabsContent>

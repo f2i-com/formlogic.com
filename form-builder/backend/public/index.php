@@ -439,14 +439,17 @@ $getArgs = function ($request) {
     return $routeContext->getRoute()->getArguments();
 };
 
+// Rate limiter for form creation/duplication (20 per minute per IP)
+$formMutationRateLimiter = new RateLimitMiddleware(20, 60, 'form_mutation');
+
 // Form routes (protected for management)
-$app->group('/api/forms', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+$app->group('/api/forms', function (RouteCollectorProxy $group) use ($container, $getArgs, $formMutationRateLimiter) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(FormController::class)->index($request, $response);
     });
     $group->post('', function ($request, $response) use ($container) {
         return $container->get(FormController::class)->create($request, $response);
-    });
+    })->add($formMutationRateLimiter);
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FormController::class)->show($request, $response, $getArgs($request));
     });
@@ -458,7 +461,7 @@ $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container,
     });
     $group->post('/{id}/duplicate', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FormController::class)->duplicate($request, $response, $getArgs($request));
-    });
+    })->add($formMutationRateLimiter);
 })->add($authRequired);  // Require authentication for form management
 
 // Webhook routes (protected - require authentication + form ownership)

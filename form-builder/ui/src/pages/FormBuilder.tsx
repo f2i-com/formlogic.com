@@ -76,19 +76,32 @@ export default function FormBuilder() {
 
   const form = formId ? getForm(formId) : undefined;
 
+  // Local title state to avoid calling updateForm on every keystroke
+  const [localTitle, setLocalTitle] = useState(form?.title ?? '');
+  const titleSyncedFromForm = useRef(form?.title);
+  // Sync local title when form title changes externally (e.g., AI generation, undo)
+  if (form && form.title !== titleSyncedFromForm.current) {
+    titleSyncedFromForm.current = form.title;
+    setLocalTitle(form.title);
+  }
+
+  const flushTitle = useCallback(() => {
+    if (form && localTitle !== form.title) {
+      updateForm(form.id, { title: localTitle });
+    }
+  }, [form, localTitle, updateForm]);
+
+  // Flush title to store on unmount
+  const flushRef = useRef(flushTitle);
+  flushRef.current = flushTitle;
+  useEffect(() => () => { flushRef.current(); }, []);
+
   // Track latest form for cleanup ref (avoids stale closure in unmount effect)
   const formRef = useRef(form);
   useEffect(() => { formRef.current = form; }, [form]);
 
-  // Clean up empty/untouched forms when navigating away
-  useEffect(() => {
-    return () => {
-      const f = formRef.current;
-      if (f && f.fields.length === 0 && f.title === 'Untitled Form' && !f.description && !f.logicScript) {
-        useFormStore.getState().deleteForm(f.id);
-      }
-    };
-  }, []);
+  // Note: empty forms are intentionally kept as drafts rather than deleted on
+  // unmount — deleting caused data loss when users briefly navigated away.
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -284,11 +297,15 @@ export default function FormBuilder() {
     }
   };
 
-  const handleUpdateField = (updates: Partial<FormField>) => {
+  const handleUpdateField = useCallback((updates: Partial<FormField>) => {
     if (selectedFieldId) {
       updateField(form.id, selectedFieldId, updates);
     }
-  };
+  }, [form.id, selectedFieldId, updateField]);
+
+  const handleDeleteFieldById = useCallback((fieldId: string) => {
+    deleteField(form.id, fieldId);
+  }, [form.id, deleteField]);
 
   const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string) => {
     // Update form title and description
@@ -331,8 +348,10 @@ export default function FormBuilder() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <Input
-            value={form.title}
-            onChange={(e) => updateForm(form.id, { title: e.target.value })}
+            value={localTitle}
+            onChange={(e) => setLocalTitle(e.target.value)}
+            onBlur={flushTitle}
+            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             aria-label="Form title"
             className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
           />
@@ -554,8 +573,8 @@ export default function FormBuilder() {
                           key={field.id}
                           field={field}
                           isSelected={field.id === selectedFieldId}
-                          onSelect={() => handleSelectField(field.id)}
-                          onDelete={() => deleteField(form.id, field.id)}
+                          onSelect={handleSelectField}
+                          onDelete={handleDeleteFieldById}
                         />
                       ))}
                     </div>

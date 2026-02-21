@@ -24,36 +24,62 @@ class FormService
 
     /**
      * Get all forms for a user (or all if no user specified)
+     * Supports both offset-based and cursor-based pagination.
+     * Cursor-based: pass 'cursor' (updated_at|id) for efficient keyset pagination.
      */
     public function getAllForms(?string $userId = null, array $options = []): array
     {
         $sql = "SELECT * FROM forms";
         $params = [];
+        $conditions = [];
 
         if ($userId) {
-            $sql .= " WHERE user_id = :user_id";
+            $conditions[] = "user_id = :user_id";
             $params['user_id'] = $userId;
         }
 
         // Add status filter
         if (!empty($options['status'])) {
-            $sql .= ($userId ? " AND" : " WHERE") . " status = :status";
+            $conditions[] = "status = :status";
             $params['status'] = $options['status'];
         }
 
-        $sql .= " ORDER BY updated_at DESC";
+        // Cursor-based pagination (keyset on updated_at DESC, id DESC)
+        $cursor = $options['cursor'] ?? null;
+        if ($cursor && is_string($cursor)) {
+            $parts = explode('|', $cursor, 2);
+            if (count($parts) === 2) {
+                $conditions[] = "(updated_at < :cursor_date OR (updated_at = :cursor_date2 AND id < :cursor_id))";
+                $params['cursor_date'] = $parts[0];
+                $params['cursor_date2'] = $parts[0];
+                $params['cursor_id'] = $parts[1];
+            }
+        }
+
+        if (!empty($conditions)) {
+            $sql .= " WHERE " . implode(" AND ", $conditions);
+        }
+
+        $sql .= " ORDER BY updated_at DESC, id DESC";
 
         // Pagination (clamp to safe ranges)
         $limit = max(1, min((int)($options['limit'] ?? 50), 1000));
-        $offset = max(0, (int)($options['offset'] ?? 0));
-        $sql .= " LIMIT :limit OFFSET :offset";
+        $sql .= " LIMIT :limit";
+
+        // Offset only when not using cursor
+        if (!$cursor) {
+            $offset = max(0, (int)($options['offset'] ?? 0));
+            $sql .= " OFFSET :offset";
+        }
 
         $stmt = $this->mysql->prepare($sql);
         foreach ($params as $key => $value) {
             $stmt->bindValue($key, $value);
         }
         $stmt->bindValue('limit', (int)$limit, PDO::PARAM_INT);
-        $stmt->bindValue('offset', (int)$offset, PDO::PARAM_INT);
+        if (!$cursor) {
+            $stmt->bindValue('offset', (int)$offset, PDO::PARAM_INT);
+        }
         $stmt->execute();
 
         $forms = [];

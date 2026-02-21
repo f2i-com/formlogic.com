@@ -76,17 +76,28 @@ class FormController
 
         $queryParams = $request->getQueryParams();
 
+        $limit = max(1, min((int)($queryParams['limit'] ?? 50), 1000));
+
         $options = [
             'status' => $queryParams['status'] ?? null,
-            'limit' => max(1, min((int)($queryParams['limit'] ?? 50), 1000)),
+            'limit' => $limit,
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
+            'cursor' => $queryParams['cursor'] ?? null,
         ];
 
         $forms = $this->formService->getAllForms($userId, $options);
 
+        // Build next cursor from the last form in the result set
+        $nextCursor = null;
+        if (count($forms) === $limit && !empty($forms)) {
+            $last = $forms[count($forms) - 1];
+            $nextCursor = ($last['updatedAt'] ?? '') . '|' . ($last['id'] ?? '');
+        }
+
         return $this->jsonResponse($response, [
             'forms' => $forms,
             'count' => count($forms),
+            'nextCursor' => $nextCursor,
         ]);
     }
 
@@ -126,6 +137,27 @@ class FormController
         }
 
         $data = $request->getParsedBody();
+
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 422);
+        }
+
+        // Validate input types
+        if (isset($data['title']) && !is_string($data['title'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be a string'], 422);
+        }
+        if (isset($data['title']) && mb_strlen($data['title']) > 500) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 500 characters or fewer'], 422);
+        }
+        if (isset($data['description']) && !is_string($data['description'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Description must be a string'], 422);
+        }
+        if (isset($data['status']) && !in_array($data['status'], ['draft', 'published', 'archived'], true)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid status value'], 422);
+        }
+        if (isset($data['fields']) && !is_array($data['fields'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
+        }
 
         if (empty($data['title'])) {
             $data['title'] = 'Untitled Form';
@@ -169,6 +201,27 @@ class FormController
         }
 
         $data = $request->getParsedBody();
+
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 422);
+        }
+
+        // Validate input types
+        if (isset($data['title']) && !is_string($data['title'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be a string'], 422);
+        }
+        if (isset($data['title']) && mb_strlen($data['title']) > 500) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Title must be 500 characters or fewer'], 422);
+        }
+        if (isset($data['description']) && !is_string($data['description'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Description must be a string'], 422);
+        }
+        if (isset($data['status']) && !in_array($data['status'], ['draft', 'published', 'archived'], true)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid status value'], 422);
+        }
+        if (isset($data['fields']) && !is_array($data['fields'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
+        }
 
         try {
             // Snapshot current state before updating
