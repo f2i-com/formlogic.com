@@ -44,7 +44,8 @@ class FormVersionService
             $id = $this->generateUuid();
             $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id");
             $stmt->execute(['form_id' => $formId]);
-            $nextVersion = (int)$stmt->fetch()['next_version'];
+            $row = $stmt->fetch();
+            $nextVersion = $row ? (int)$row['next_version'] : 1;
 
             try {
                 $stmt = $this->mysql->prepare("

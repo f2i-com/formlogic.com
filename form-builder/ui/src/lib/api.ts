@@ -15,8 +15,8 @@ class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
   private _isAuthenticated: boolean = false;
-  // Callbacks invoked when a 401 response invalidates the session
-  private _onSessionExpiredCallbacks: Array<() => void> = [];
+  // Callbacks invoked when a 401 response invalidates the session (Set prevents duplicates)
+  private _onSessionExpiredCallbacks: Set<() => void> = new Set();
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
@@ -24,10 +24,10 @@ class ApiClient {
 
   /**
    * Register a callback to be invoked when a 401 response is received,
-   * allowing stores to clear user state. Multiple callbacks can be registered.
+   * allowing stores to clear user state. Uses a Set to prevent duplicate registrations.
    */
   onSessionExpired(callback: () => void): void {
-    this._onSessionExpiredCallbacks.push(callback);
+    this._onSessionExpiredCallbacks.add(callback);
   }
 
   /**
@@ -38,7 +38,7 @@ class ApiClient {
   private handleUnauthorized(): void {
     const wasAuthenticated = this._isAuthenticated;
     this._isAuthenticated = false;
-    if (wasAuthenticated && this._onSessionExpiredCallbacks.length > 0) {
+    if (wasAuthenticated && this._onSessionExpiredCallbacks.size > 0) {
       for (const cb of this._onSessionExpiredCallbacks) {
         cb();
       }

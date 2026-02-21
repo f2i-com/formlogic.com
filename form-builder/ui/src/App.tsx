@@ -6,6 +6,7 @@ import { NotFound } from './pages/NotFound';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
+import { useAppStore } from './stores/appStore';
 import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
@@ -63,7 +64,6 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
   const initializeForms = useFormStore((state) => state.initialize);
   const isAuthInitialized = useAuthStore((state) => state.isInitialized);
   const user = useAuthStore((state) => state.user);
-  const storageMode = useFormStore((state) => state.storageMode);
   const theme = useUIStore((state) => state.theme);
 
   useEffect(() => {
@@ -80,28 +80,44 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('lazy_refresh');
   }, []);
 
+  // Step 1: Check for an existing session (runs once on mount)
   useEffect(() => {
-    // Initialize auth first, then forms
-    initializeAuth()
-      .then(() => {
-        initializeForms();
-      })
-      .catch((error) => {
-        console.error('Failed to initialize app:', error);
-        initializeForms();
-      });
-  }, [initializeAuth, initializeForms]);
+    initializeAuth();
+  }, [initializeAuth]);
 
-  // When user logs in and storage mode is cloud, re-fetch forms from API
+  // Step 2: After auth resolves (or user logs in/out), sync all data stores.
+  // Reads storageMode directly from the store to avoid stale closure values.
   useEffect(() => {
-    if (isAuthInitialized && user && storageMode === 'api') {
-      // Reset isInitialized so initialize() re-runs with the authenticated session
-      useFormStore.setState({ isInitialized: false });
-      initializeForms();
+    if (!isAuthInitialized) return;
+
+    if (user) {
+      // User is authenticated — load their data
+      const mode = useFormStore.getState().storageMode;
+      if (mode === 'api') {
+        // Cloud mode: always re-fetch from the server
+        useFormStore.setState({ isInitialized: false });
+        initializeForms();
+      } else if (!useFormStore.getState().isInitialized) {
+        // Local mode: initialize from localStorage (loaded by persist middleware)
+        initializeForms();
+      }
+      // Apps are always server-backed — refresh after login
+      useAppStore.getState().fetchApps();
+    } else {
+      // Not authenticated — clear user-specific data to prevent leakage
+      const mode = useFormStore.getState().storageMode;
+      if (mode === 'api') {
+        // Can't reach API without auth — show empty state
+        useFormStore.setState({ forms: [], isInitialized: true, isLoading: false });
+      } else if (!useFormStore.getState().isInitialized) {
+        // Local mode: load whatever is in localStorage
+        initializeForms();
+      }
+      // Clear server-backed stores
+      useAppStore.setState({ apps: [], activeAppId: null });
     }
-  // Only trigger on user change (login/logout), not on every render
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [isAuthInitialized, user?.id, initializeForms]);
 
   // Show loading while initializing
   if (!isAuthInitialized) {

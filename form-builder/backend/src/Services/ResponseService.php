@@ -182,7 +182,8 @@ class ResponseService
             $countStmt->bindValue($key, $value);
         }
         $countStmt->execute();
-        $total = (int)$countStmt->fetch()['total'];
+        $countRow = $countStmt->fetch();
+        $total = $countRow ? (int)$countRow['total'] : 0;
 
         // Get paginated results
         $limit = max(1, min((int)($options['limit'] ?? 20), 100));

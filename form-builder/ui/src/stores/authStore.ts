@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import { useFormStore } from './formStore';
+import { useAppStore } from './appStore';
+import { useAppRuntimeStore } from './appRuntimeStore';
 
 interface User {
   id: string;
@@ -58,8 +61,12 @@ export const useAuthStore = create<AuthState>()(
           const result = await api.getMe();
           if (result.error || !result.data) {
             // No valid session
+            api.setAuthenticated(false);
             set({ user: null, isLoading: false, isInitialized: true });
           } else {
+            // Mark the API client as authenticated so session-expired
+            // callbacks will fire correctly on subsequent 401 responses
+            api.setAuthenticated(true);
             set({
               user: result.data.user,
               isLoading: false,
@@ -67,6 +74,7 @@ export const useAuthStore = create<AuthState>()(
             });
           }
         } catch {
+          api.setAuthenticated(false);
           set({ user: null, isLoading: false, isInitialized: true });
         }
       },
@@ -130,7 +138,13 @@ export const useAuthStore = create<AuthState>()(
         }
         set({ user: null, error: null });
 
-        // Clear user-specific data from persisted stores to prevent data
+        // Clear in-memory state of all user-specific stores immediately
+        // so stale data never leaks between sessions
+        useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null });
+        useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, error: null });
+        useAppRuntimeStore.getState().reset();
+
+        // Clear persisted data from localStorage to prevent data
         // leakage if another user logs in on the same browser
         try {
           localStorage.removeItem('formlogic-forms');

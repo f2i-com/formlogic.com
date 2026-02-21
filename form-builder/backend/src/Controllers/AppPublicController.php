@@ -184,7 +184,7 @@ class AppPublicController
 
         // Get form's logic script if any
         $form = $this->formService->getForm($formId);
-        $script = $form['logicScript'] ?? null;
+        $script = $form ? ($form['logicScript'] ?? null) : null;
 
         try {
             $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
@@ -601,7 +601,7 @@ class AppPublicController
             foreach ($sourceForm['fields'] as $f) {
                 if ($f['id'] === $fieldId) {
                     $fieldLabel = $f['label'] ?? $fieldId;
-                    $displayFieldIds = $f['properties']['displayFieldIds'] ?? [];
+                    $displayFieldIds = isset($f['properties']) ? ($f['properties']['displayFieldIds'] ?? []) : [];
                     break;
                 }
             }
@@ -686,7 +686,8 @@ class AppPublicController
         foreach ($responses as $resp) {
             $answers = $resp['answers'] ?? [];
             foreach ($linkedFields as $field) {
-                $targetFormId = $field['properties']['targetFormId'];
+                $targetFormId = $field['properties']['targetFormId'] ?? null;
+                if (!$targetFormId) continue;
                 $val = $answers[$field['id']] ?? null;
                 if ($val === null) continue;
 
@@ -716,7 +717,7 @@ class AppPublicController
             // Find display field IDs from the linked field config
             $displayFieldIds = [];
             foreach ($linkedFields as $field) {
-                if ($field['properties']['targetFormId'] === $targetFormId) {
+                if (isset($field['properties']['targetFormId']) && $field['properties']['targetFormId'] === $targetFormId) {
                     $displayFieldIds = $field['properties']['displayFieldIds'] ?? [];
                     break;
                 }
@@ -760,7 +761,8 @@ class AppPublicController
             $resolved = [];
 
             foreach ($linkedFields as $field) {
-                $targetFormId = $field['properties']['targetFormId'];
+                $targetFormId = $field['properties']['targetFormId'] ?? null;
+                if (!$targetFormId) continue;
                 $val = $answers[$field['id']] ?? null;
                 if ($val === null) continue;
 
