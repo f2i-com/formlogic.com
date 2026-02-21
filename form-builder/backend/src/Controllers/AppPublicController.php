@@ -12,6 +12,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Constants\AppPermissions;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use PDO;
@@ -178,7 +179,7 @@ class AppPublicController
         }
 
         $data = $request->getParsedBody();
-        $data['ipAddress'] = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $data['ipAddress'] = IpResolver::fromEnvironment()->getClientIp($request);
         $data['userAgent'] = $request->getHeaderLine('User-Agent');
 
         // Get form's logic script if any

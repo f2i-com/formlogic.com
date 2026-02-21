@@ -17,7 +17,9 @@ class SQLiteConnection
         $this->storagePath = $storagePath;
 
         if (!is_dir($storagePath)) {
-            mkdir($storagePath, 0700, true);
+            if (!mkdir($storagePath, 0700, true)) {
+                throw new \RuntimeException("Failed to create SQLite storage directory: {$storagePath}");
+            }
         }
     }
 

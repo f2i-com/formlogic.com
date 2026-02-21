@@ -757,7 +757,7 @@ class ResponseController
     {
         if ($this->auditService === null) return;
         $userId = $request->getAttribute('userId');
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $ip = $this->ipResolver->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 
@@ -766,7 +766,12 @@ class ResponseController
      */
     private function jsonResponse(Response $response, array $data, int $status = 200): Response
     {
-        $response->getBody()->write(json_encode($data));
+        $json = json_encode($data);
+        if ($json === false) {
+            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
+            $status = 500;
+        }
+        $response->getBody()->write($json);
         return $response
             ->withStatus($status)
             ->withHeader('Content-Type', 'application/json');
