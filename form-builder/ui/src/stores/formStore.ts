@@ -42,6 +42,7 @@ interface FormState {
   error: string | null;
   storageMode: StorageMode;
   isInitialized: boolean;
+  savingFormIds: Set<string>;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -120,12 +121,25 @@ export const useFormStore = create<FormState>()(
   persist(
     (set, get) => {
     // Helper to sync a form field to the API with debouncing
+    const markSaving = (formId: string, saving: boolean) => {
+      set((s) => {
+        const next = new Set(s.savingFormIds);
+        if (saving) next.add(formId); else next.delete(formId);
+        return { savingFormIds: next };
+      });
+    };
+
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
       if (get().storageMode === 'api') {
+        markSaving(formId, true);
         debouncedSave(`${formId}-${field}`, async () => {
-          const form = get().forms.find((f) => f.id === formId);
-          if (form) {
-            await api.updateForm(formId, { [field]: form[field] });
+          try {
+            const form = get().forms.find((f) => f.id === formId);
+            if (form) {
+              await api.updateForm(formId, { [field]: form[field] });
+            }
+          } finally {
+            markSaving(formId, false);
           }
         });
       }
@@ -154,6 +168,7 @@ export const useFormStore = create<FormState>()(
       error: null,
       storageMode: 'local' as StorageMode,
       isInitialized: false,
+      savingFormIds: new Set<string>(),
 
       initialize: async () => {
         const state = get();
@@ -283,12 +298,15 @@ export const useFormStore = create<FormState>()(
         // If using API, sync only the changed fields to server (debounced)
         // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
         if (state.storageMode === 'api') {
+          markSaving(id, true);
           debouncedSave(`${id}-meta`, async () => {
             try {
               await api.updateForm(id, updates);
             } catch (error) {
               console.error('Failed to update form on server:', error);
               toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
+            } finally {
+              markSaving(id, false);
             }
           });
         }

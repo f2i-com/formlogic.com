@@ -12,6 +12,9 @@ import {
   Keyboard,
   MoreVertical,
   Layers,
+  Cloud,
+  Check,
+  Loader2,
 } from 'lucide-react';
 import {
   DndContext,
@@ -64,6 +67,7 @@ export default function FormBuilder() {
     setSelectedField,
     duplicateField,
   } = useFormStore();
+  const isSaving = useFormStore((s) => formId ? s.savingFormIds.has(formId) : false);
 
   const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
 
@@ -361,6 +365,14 @@ export default function FormBuilder() {
             aria-label="Form title"
             className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
           />
+          {/* Save indicator */}
+          <span className="hidden sm:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
+            {isSaving ? (
+              <><Loader2 className="h-3 w-3 animate-spin" />Saving</>
+            ) : (
+              <><Cloud className="h-3 w-3" /><Check className="h-3 w-3" /></>
+            )}
+          </span>
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5">

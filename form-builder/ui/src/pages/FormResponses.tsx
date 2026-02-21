@@ -81,6 +81,7 @@ function FormResponses() {
   const navigate = useNavigate();
   const storageMode = useFormStore((state) => state.storageMode);
   const getForm = useFormStore((state) => state.getForm);
+  const refreshForms = useFormStore((state) => state.refreshForms);
   const localResponses = useResponseStore((state) => state.getResponsesByFormId);
   const deleteLocalResponse = useResponseStore((state) => state.deleteResponse);
   const updateLocalResponse = useResponseStore((state) => state.updateResponse);
@@ -759,7 +760,7 @@ function FormResponses() {
         formId={form.id}
         fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
         onImportComplete={async () => {
-          // Reload responses after import
+          // Reload responses and refresh form list counts after import
           if (storageMode === 'api' && formId) {
             try {
               const result = await api.getResponses(formId);
@@ -769,6 +770,8 @@ function FormResponses() {
             } catch {
               // Responses will refresh on next page load
             }
+            // Refresh forms list so response counts are updated
+            refreshForms();
           }
         }}
       />
