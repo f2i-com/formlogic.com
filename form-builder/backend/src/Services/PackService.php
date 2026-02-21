@@ -109,13 +109,21 @@ class PackService
                         'description' => $packRole['description'] ?? null,
                     ]);
 
-                    // Map permissions to real form IDs
+                    // Map permissions to real form IDs (app-level permissions have no packFormId)
                     $permissions = [];
                     foreach ($packRole['permissions'] ?? [] as $perm) {
-                        $realFormId = $formIdMap[$perm['packFormId']] ?? null;
-                        if ($realFormId) {
+                        if (isset($perm['packFormId']) && $perm['packFormId'] !== null) {
+                            $realFormId = $formIdMap[$perm['packFormId']] ?? null;
+                            if ($realFormId) {
+                                $permissions[] = [
+                                    'formId' => $realFormId,
+                                    'permission' => $perm['permission'],
+                                ];
+                            }
+                        } else {
+                            // App-level permission (no form scope)
                             $permissions[] = [
-                                'formId' => $realFormId,
+                                'formId' => null,
                                 'permission' => $perm['permission'],
                             ];
                         }

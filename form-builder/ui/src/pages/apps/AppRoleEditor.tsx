@@ -41,7 +41,10 @@ export function AppRoleEditor() {
 
   useEffect(() => {
     if (!appId || !selectedRoleId) return;
+    setPermissions([]); // Clear previous role's permissions immediately
+    let cancelled = false;
     api.getAppRolePermissions(appId, selectedRoleId).then((result) => {
+      if (cancelled) return;
       if (result.data?.permissions) {
         setPermissions((result.data.permissions as Array<{ formId: string | null; permission: PermissionAction }>).map((p) => ({
           formId: (p as Record<string, unknown>).formId as string | null,
@@ -49,9 +52,12 @@ export function AppRoleEditor() {
         })));
       }
     }).catch(() => {
-      setPermissions([]);
-      toast.error('Load failed', 'Could not load permissions for this role');
+      if (!cancelled) {
+        setPermissions([]);
+        toast.error('Load failed', 'Could not load permissions for this role');
+      }
     });
+    return () => { cancelled = true; };
   }, [appId, selectedRoleId]);
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId);
@@ -79,7 +85,7 @@ export function AppRoleEditor() {
     if (!appId || !newRoleName.trim()) return;
     const role = await createRole(appId, { name: newRoleName.trim() });
     if (role) {
-      setRoles([...roles, role]);
+      setRoles((prev) => [...prev, role]);
       setSelectedRoleId(role.id);
       setNewRoleName('');
     }
@@ -90,9 +96,11 @@ export function AppRoleEditor() {
     setRoleError(null);
     try {
       await deleteRole(appId, roleId);
-      const updated = roles.filter((r) => r.id !== roleId);
-      setRoles(updated);
-      if (selectedRoleId === roleId) setSelectedRoleId(updated[0]?.id ?? null);
+      setRoles((prev) => {
+        const updated = prev.filter((r) => r.id !== roleId);
+        if (selectedRoleId === roleId) setSelectedRoleId(updated[0]?.id ?? null);
+        return updated;
+      });
     } catch {
       setRoleError('Cannot delete this role. It may still have users assigned.');
     }

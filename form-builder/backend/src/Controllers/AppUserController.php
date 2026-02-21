@@ -225,6 +225,13 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
+        if (isset($data['status'])) {
+            $allowedStatuses = ['active', 'suspended'];
+            if (!in_array($data['status'], $allowedStatuses, true)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid status. Allowed: active, suspended'], 400);
+            }
+        }
+
         try {
             $this->appUserService->updateAppUser($args['id'], $data);
             $users = $this->appUserService->getAppUsers($appId);

@@ -22,7 +22,9 @@ function MobileCardList({
   navigate: ReturnType<typeof useNavigate>;
 }) {
   const [page, setPage] = useState(1);
-  const totalPages = Math.ceil(responses.length / MOBILE_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(responses.length / MOBILE_PAGE_SIZE));
+  // Reset page when responses change (e.g., after delete)
+  useEffect(() => { setPage((p) => Math.min(p, Math.max(1, Math.ceil(responses.length / MOBILE_PAGE_SIZE)))); }, [responses.length]);
   const paged = useMemo(() => {
     const start = (page - 1) * MOBILE_PAGE_SIZE;
     return responses.slice(start, start + MOBILE_PAGE_SIZE);
@@ -138,7 +140,9 @@ export function AppDataTable() {
     if (formId && config) {
       setLoading(true);
       setError(null);
+      let cancelled = false;
       fetchResponses(formId, { resolve: hasLinkedFields }).then((data) => {
+        if (cancelled) return;
         const flattenedData = (data as Record<string, unknown>[]).map((r: Record<string, unknown>) => {
           const flat: Record<string, unknown> = { ...r };
           const answers = r.answers as Record<string, unknown> | undefined;
@@ -152,9 +156,11 @@ export function AppDataTable() {
         setResponses(flattenedData);
         setLoading(false);
       }).catch((err) => {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : 'Failed to load responses');
         setLoading(false);
       });
+      return () => { cancelled = true; };
     }
   }, [formId, config, hasLinkedFields, fetchResponses]);
 
@@ -163,7 +169,7 @@ export function AppDataTable() {
     setDeleting(true);
     const success = await deleteResponse(formId, deleteId);
     if (success) {
-      setResponses(responses.filter((r) => r.id !== deleteId));
+      setResponses((prev) => prev.filter((r) => r.id !== deleteId));
     }
     setDeleting(false);
     setDeleteId(null);

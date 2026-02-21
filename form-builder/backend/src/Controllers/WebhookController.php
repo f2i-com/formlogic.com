@@ -89,11 +89,20 @@ class WebhookController
 
         $data = $request->getParsedBody();
 
-        if (isset($data['url']) && !filter_var($data['url'], FILTER_VALIDATE_URL)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'A valid URL is required'], 400);
+        if (isset($data['url'])) {
+            if (!filter_var($data['url'], FILTER_VALIDATE_URL)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'A valid URL is required'], 400);
+            }
+            $scheme = parse_url($data['url'], PHP_URL_SCHEME);
+            if ($scheme !== 'https' && $scheme !== 'http') {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
+            }
         }
 
         if (isset($data['events'])) {
+            if (!is_array($data['events']) || empty($data['events'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Events must be a non-empty array'], 400);
+            }
             $allowedEvents = ['response.created', 'response.updated', 'response.deleted', 'form.published'];
             foreach ($data['events'] as $event) {
                 if (!in_array($event, $allowedEvents, true)) {

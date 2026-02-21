@@ -14,11 +14,14 @@ export function useConditionalLogic(
   fields: FormField[],
   formData: Record<string, unknown>
 ) {
-  const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set());
-  const [requiredFields, setRequiredFields] = useState<Set<string>>(new Set());
+  // Initialize with all fields visible to avoid flash of invisible content
+  const [visibleFields, setVisibleFields] = useState<Set<string>>(() => new Set(fields.map((f) => f.id)));
+  const [requiredFields, setRequiredFields] = useState<Set<string>>(() => new Set(fields.filter((f) => f.required).map((f) => f.id)));
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const evaluationIdRef = useRef(0);
 
   const evaluateAllConditions = useCallback(async () => {
+    const thisEvalId = ++evaluationIdRef.current;
     setIsEvaluating(true);
 
     const visible = new Set<string>();
@@ -37,6 +40,9 @@ export function useConditionalLogic(
           field.conditionalLogic.expression,
           formData
         );
+
+        // Bail out if a newer evaluation has started
+        if (thisEvalId !== evaluationIdRef.current) return;
 
         const action = field.conditionalLogic.action;
 
@@ -62,6 +68,9 @@ export function useConditionalLogic(
         if (field.required) required.add(field.id);
       }
     }
+
+    // Only apply results if this is still the latest evaluation
+    if (thisEvalId !== evaluationIdRef.current) return;
 
     // Only update state if the actual contents changed (prevents cascading re-renders)
     setVisibleFields((prev) => {

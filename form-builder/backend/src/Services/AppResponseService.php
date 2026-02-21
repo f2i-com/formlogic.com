@@ -80,9 +80,9 @@ class AppResponseService
         $deleted = $this->responseService->deleteResponse($formId, $responseId);
 
         if ($deleted) {
-            // Clean up response links
-            $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id");
-            $stmt->execute(['id' => $responseId]);
+            // Clean up response links (both as source and target)
+            $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id OR target_response_id = :id2");
+            $stmt->execute(['id' => $responseId, 'id2' => $responseId]);
         }
 
         return $deleted;

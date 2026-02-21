@@ -29,10 +29,12 @@ export function AppResponseDetail() {
     if (appSlug && formId && responseId && config) {
       setLoading(true);
       setFetchError(null);
+      let cancelled = false;
       const fetchFn = hasLinkedFields
         ? api.getAppResponseByIdResolved(appSlug, formId, responseId)
         : api.getAppResponseById(appSlug, formId, responseId);
       fetchFn.then((result) => {
+        if (cancelled) return;
         if (result.data?.response) {
           const r = result.data.response as Record<string, unknown>;
           setResponse(r);
@@ -42,9 +44,11 @@ export function AppResponseDetail() {
         }
         setLoading(false);
       }).catch((err) => {
+        if (cancelled) return;
         setFetchError(err instanceof Error ? err.message : 'Failed to load response');
         setLoading(false);
       });
+      return () => { cancelled = true; };
     }
   }, [appSlug, formId, responseId, config, hasLinkedFields]);
 
@@ -83,7 +87,7 @@ export function AppResponseDetail() {
     setSaveError(null);
     try {
       await updateResponse(formId, responseId, { answers: editedAnswers });
-      setResponse({ ...response, answers: editedAnswers });
+      setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
       setEditing(false);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save changes');
@@ -94,10 +98,19 @@ export function AppResponseDetail() {
   const handleDelete = async () => {
     if (!formId || !responseId) return;
     setDeleting(true);
-    const success = await deleteResponse(formId, responseId);
-    setDeleting(false);
-    if (success) navigate(`/app/${appSlug}/form/${formId}/responses`);
-    setShowDeleteConfirm(false);
+    try {
+      const success = await deleteResponse(formId, responseId);
+      setDeleting(false);
+      if (success) {
+        setShowDeleteConfirm(false);
+        navigate(`/app/${appSlug}/form/${formId}/responses`);
+      } else {
+        setShowDeleteConfirm(false);
+      }
+    } catch {
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
   };
 
   const answers = (editing ? editedAnswers : (response.answers as Record<string, unknown>)) ?? {};

@@ -35,7 +35,10 @@ class AuditService
         array $details = []
     ): void {
         try {
-            $this->mysql->beginTransaction();
+            $alreadyInTransaction = $this->mysql->inTransaction();
+            if (!$alreadyInTransaction) {
+                $this->mysql->beginTransaction();
+            }
 
             // Get next sequence number via auto-increment table
             $this->mysql->exec("INSERT INTO audit_sequence VALUES ()");
@@ -85,9 +88,11 @@ class AuditService
                 'created_at' => $timestamp,
             ]);
 
-            $this->mysql->commit();
+            if (!$alreadyInTransaction) {
+                $this->mysql->commit();
+            }
         } catch (\Exception $e) {
-            if ($this->mysql->inTransaction()) {
+            if (!$alreadyInTransaction && $this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
             }
             // Never let audit failures break the main operation

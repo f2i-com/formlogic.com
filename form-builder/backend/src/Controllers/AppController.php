@@ -112,9 +112,14 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
-        $this->appService->deleteApp($args['id']);
-        $this->audit($request, 'app.delete', 'app', $args['id']);
-        return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully']);
+        try {
+            $this->appService->deleteApp($args['id']);
+            $this->audit($request, 'app.delete', 'app', $args['id']);
+            return $this->jsonResponse($response, ['success' => true, 'message' => 'App deleted successfully']);
+        } catch (\Exception $e) {
+            $this->logger->error('App delete error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete app'], 500);
+        }
     }
 
     // Form management
@@ -162,10 +167,15 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
-        $data = $request->getParsedBody();
-        $this->appService->updateAppForm($args['id'], $args['formId'], $data);
-        $forms = $this->appService->getAppForms($args['id']);
-        return $this->jsonResponse($response, ['forms' => $forms]);
+        $data = $request->getParsedBody() ?? [];
+
+        try {
+            $this->appService->updateAppForm($args['id'], $args['formId'], $data);
+            $forms = $this->appService->getAppForms($args['id']);
+            return $this->jsonResponse($response, ['forms' => $forms]);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
     }
 
     public function removeForm(Request $request, Response $response, array $args): Response

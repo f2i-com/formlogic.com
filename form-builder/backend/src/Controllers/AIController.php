@@ -129,7 +129,8 @@ class AIController
 
         // Create a secure temp file with restrictive permissions BEFORE writing
         $tempDir = sys_get_temp_dir();
-        $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($file->getClientFilename()));
+        $clientFilename = $file->getClientFilename() ?? 'upload';
+        $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($clientFilename));
         $tempPath = $tempDir . '/' . bin2hex(random_bytes(16)) . '_' . $safeFilename;
 
         // Create an empty file with restrictive permissions first
@@ -141,9 +142,17 @@ class AIController
 
         // Validate file type using server-side detection (not client-supplied header)
         $allowedTypes = $this->uploadSettings['allowedTypes'];
-        $mimeType = function_exists('finfo_file')
-            ? finfo_file(finfo_open(FILEINFO_MIME_TYPE), $tempPath)
-            : mime_content_type($tempPath);
+        $mimeType = null;
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            if ($finfo !== false) {
+                $mimeType = finfo_file($finfo, $tempPath);
+                finfo_close($finfo);
+            }
+        }
+        if (!$mimeType) {
+            $mimeType = mime_content_type($tempPath) ?: 'application/octet-stream';
+        }
         if (!in_array($mimeType, $allowedTypes, true)) {
             @unlink($tempPath);
             $response->getBody()->write(json_encode([

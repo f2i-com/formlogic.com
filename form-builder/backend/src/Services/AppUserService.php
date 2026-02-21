@@ -132,7 +132,10 @@ class AppUserService
     public function deleteRole(string $roleId): bool
     {
         $role = $this->getRole($roleId);
-        if (!$role || $role['isSystem']) {
+        if (!$role) {
+            throw new \RuntimeException('Role not found');
+        }
+        if ($role['isSystem']) {
             throw new \RuntimeException('Cannot delete system role');
         }
 

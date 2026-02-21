@@ -39,9 +39,9 @@ class FormVersionService
         ];
 
         // Retry loop to handle concurrent version creation race condition
-        $id = $this->generateUuid();
         $maxRetries = 3;
         for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+            $id = $this->generateUuid();
             $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id");
             $stmt->execute(['form_id' => $formId]);
             $nextVersion = (int)$stmt->fetch()['next_version'];

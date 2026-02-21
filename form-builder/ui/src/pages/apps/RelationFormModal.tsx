@@ -46,17 +46,21 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
       return;
     }
     setLoadingTarget(true);
+    let cancelled = false;
     api.getForm(targetFormId).then((res) => {
+      if (cancelled) return;
       if (res.data?.form) {
         const fields = (res.data.form as Form).fields.filter((f) => !EXCLUDED_TYPES.has(f.type));
         setTargetFields(fields);
       }
       setLoadingTarget(false);
     }).catch(() => {
+      if (cancelled) return;
       setTargetFields([]);
       setLoadingTarget(false);
       toast.error('Load failed', 'Could not load target form fields.');
     });
+    return () => { cancelled = true; };
   }, [targetFormId]);
 
   const handleSave = async () => {

@@ -19,7 +19,9 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   useEffect(() => {
     setLoading(true);
     setError(null);
+    let cancelled = false;
     api.getRelatedRecords(appSlug, formId, responseId).then((result) => {
+      if (cancelled) return;
       if (result.error) {
         setError(result.error);
       } else if (result.data?.related) {
@@ -27,9 +29,11 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
       }
       setLoading(false);
     }).catch((err) => {
+      if (cancelled) return;
       setError(err instanceof Error ? err.message : 'Failed to load related records');
       setLoading(false);
     });
+    return () => { cancelled = true; };
   }, [appSlug, formId, responseId]);
 
   const groups = Object.values(related);

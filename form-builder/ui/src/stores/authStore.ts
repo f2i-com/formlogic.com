@@ -25,6 +25,8 @@ interface AuthState {
   clearError: () => void;
 }
 
+let sessionExpiredRegistered = false;
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -37,13 +39,16 @@ export const useAuthStore = create<AuthState>()(
         const state = get();
         if (state.isInitialized || state.isLoading) return;
 
-        // Register session expiry callback so the store is notified on 401
-        api.onSessionExpired(() => {
-          const current = get();
-          if (current.user) {
-            set({ user: null, error: null });
-          }
-        });
+        // Register session expiry callback once so the store is notified on 401
+        if (!sessionExpiredRegistered) {
+          sessionExpiredRegistered = true;
+          api.onSessionExpired(() => {
+            const current = get();
+            if (current.user) {
+              set({ user: null, error: null });
+            }
+          });
+        }
 
         set({ isLoading: true });
 

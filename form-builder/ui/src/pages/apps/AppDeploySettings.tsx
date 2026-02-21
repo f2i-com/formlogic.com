@@ -56,7 +56,7 @@ export function AppDeploySettings() {
     // Re-read from store to verify the update succeeded
     const updated = useAppStore.getState().getApp(appId);
     if (updated && (updated as App).status === 'published') {
-      setApp({ ...app, status: 'published' });
+      setApp(updated as App);
       toast.success('Published', 'Your app is now live');
     } else {
       toast.error('Publish failed', 'Could not publish the app. Please try again.');
