@@ -29,6 +29,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   const { storageMode, setStorageMode, syncToApi } = useFormStore();
 
   useEffect(() => {
+    if (!isOpen) return;
     function handleClickOutside(event: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
         setIsOpen(false);
@@ -36,7 +37,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     }
 
     function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape' && isOpen) {
+      if (event.key === 'Escape') {
         setIsOpen(false);
       }
     }

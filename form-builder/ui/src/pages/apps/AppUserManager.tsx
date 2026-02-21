@@ -194,10 +194,16 @@ export function AppUserManager() {
       <ConfirmDialog
         isOpen={confirmAction !== null}
         onClose={() => setConfirmAction(null)}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (!confirmAction || !appId) return;
-          if (confirmAction.type === 'removeUser') removeUser(appId, confirmAction.id);
-          else if (confirmAction.type === 'deleteGroup') deleteGroup(appId, confirmAction.id);
+          let success = false;
+          if (confirmAction.type === 'removeUser') {
+            success = await removeUser(appId, confirmAction.id);
+            if (!success) toast.error('Remove failed', 'Could not remove the user. Please try again.');
+          } else if (confirmAction.type === 'deleteGroup') {
+            success = await deleteGroup(appId, confirmAction.id);
+            if (!success) toast.error('Delete failed', 'Could not delete the group. Please try again.');
+          }
           setConfirmAction(null);
         }}
         title={confirmAction?.type === 'removeUser' ? 'Remove User' : 'Delete Group'}

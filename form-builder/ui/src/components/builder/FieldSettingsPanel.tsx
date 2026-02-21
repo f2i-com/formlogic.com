@@ -159,7 +159,7 @@ export function FieldSettingsPanel({
                 onChange={(e) => {
                   const val = parseInt(e.target.value);
                   onUpdate({
-                    properties: { ...field.properties, maxStars: isNaN(val) ? 5 : val },
+                    properties: { ...field.properties, maxStars: isNaN(val) ? 5 : Math.min(10, Math.max(1, val)) },
                   });
                 }}
               />
@@ -174,22 +174,26 @@ export function FieldSettingsPanel({
                 <Input
                   label="Start"
                   type="number"
+                  min={0}
+                  max={99}
                   value={field.properties.scaleStart || 1}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
                     onUpdate({
-                      properties: { ...field.properties, scaleStart: isNaN(val) ? 1 : val },
+                      properties: { ...field.properties, scaleStart: isNaN(val) ? 1 : Math.max(0, Math.min(99, val)) },
                     });
                   }}
                 />
                 <Input
                   label="End"
                   type="number"
+                  min={1}
+                  max={100}
                   value={field.properties.scaleEnd || 10}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
                     onUpdate({
-                      properties: { ...field.properties, scaleEnd: isNaN(val) ? 10 : val },
+                      properties: { ...field.properties, scaleEnd: isNaN(val) ? 10 : Math.max(1, Math.min(100, val)) },
                     });
                   }}
                 />

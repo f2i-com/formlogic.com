@@ -96,6 +96,7 @@ export function LinkedRecordInput({
 
   // Close on outside click
   useEffect(() => {
+    if (!isOpen) return;
     const handleClick = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
@@ -103,7 +104,7 @@ export function LinkedRecordInput({
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  }, [isOpen]);
 
   const handleSelect = (record: LinkedRecord) => {
     setResolvedLabels((prev) => ({ ...prev, [record.id]: record.display }));
