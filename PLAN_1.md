@@ -370,14 +370,15 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 
 ## Phase 4: Frontend Quality & UX
 
-### 4.1 Signature Field Keyboard Accessibility
+### 4.1 Signature Field Keyboard Accessibility [DONE]
 **Severity**: HIGH
 **File**: `ui/src/pages/FormResponse.tsx` ~L367-481
 **Problem**: The signature canvas has no keyboard alternative. Users who can't use a mouse/touchscreen are completely blocked from completing forms with signature fields.
 **Fix**:
-- Add a "Type your name" text input as an alternative to drawing
-- Include a keyboard shortcut or button to switch between draw/type modes
-- Add `aria-label` and `role="img"` to the canvas
+- Added Draw/Type mode toggle buttons
+- Type mode shows a text input with cursive font preview
+- Typed signatures stored as `typed:Name` prefix to distinguish from drawn data URLs
+- Added `role="img"` and `aria-label` to the canvas drawing area
 
 ### 4.2 Missing Save Indicator [DONE]
 **Severity**: MEDIUM
@@ -697,10 +698,13 @@ VITE_API_URL=http://localhost:8080/api
 - [x] 3.11 (PWA form definition caching) — DONE
 
 ### Phase 4 Frontend Quality
+- [x] 4.1 (signature keyboard accessibility) — DONE
 - [x] 4.2 (save indicator in FormBuilder) — DONE
+- [x] 4.3 (offline mode indicator) — DONE
 - [x] 4.4 (ARIA labels on dynamic menus) — DONE
 - [x] 4.6 (optimistic rollback feedback) — DONE (via 2.1)
 - [x] 4.7 (refresh response count after CSV import) — DONE
+- [x] 4.8 (storage mode indicator) — DONE
 - [x] 4.9 (double-submission prevention) — already correct
 - [x] 4.11 (session callback leak fix) — DONE
 - [x] 4.12 (event listener cleanup) — already correct

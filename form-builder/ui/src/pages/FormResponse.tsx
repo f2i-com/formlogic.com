@@ -366,100 +366,174 @@ function FieldResponse({
 
       case 'signature': {
         const signatureCanvasId = `signature-canvas-${field.id}`;
+        const isTypedSignature = typeof value === 'string' && value.startsWith('typed:');
+        const typedName = isTypedSignature ? (value as string).slice(6) : '';
         return (
-          <div className="space-y-4">
-            <div
-              className="w-full h-52 border-2 rounded-xl bg-white cursor-crosshair relative overflow-hidden transition-colors"
-              style={{ borderColor: value ? primaryColor : `${textColor || '#1f2937'}30` }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                const canvas = e.currentTarget.querySelector('canvas');
-                if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
-
-                ctx.strokeStyle = textColor || '#1f2937';
-                ctx.lineWidth = 2.5;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                const rect = canvas.getBoundingClientRect();
-                const scaleX = canvas.width / rect.width;
-                const scaleY = canvas.height / rect.height;
-
-                ctx.beginPath();
-                ctx.moveTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
-
-                const onMouseMove = (moveEvent: MouseEvent) => {
-                  ctx.lineTo((moveEvent.clientX - rect.left) * scaleX, (moveEvent.clientY - rect.top) * scaleY);
-                  ctx.stroke();
-                  onChange(canvas.toDataURL());
-                };
-
-                const onMouseUp = () => {
-                  document.removeEventListener('mousemove', onMouseMove);
-                  document.removeEventListener('mouseup', onMouseUp);
-                };
-
-                document.addEventListener('mousemove', onMouseMove);
-                document.addEventListener('mouseup', onMouseUp);
-              }}
-              onTouchStart={(e) => {
-                e.preventDefault();
-                const canvas = e.currentTarget.querySelector('canvas');
-                if (!canvas) return;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
-
-                ctx.strokeStyle = textColor || '#1f2937';
-                ctx.lineWidth = 2.5;
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-
-                const rect = canvas.getBoundingClientRect();
-                const scaleX = canvas.width / rect.width;
-                const scaleY = canvas.height / rect.height;
-                const touch = e.touches[0];
-
-                ctx.beginPath();
-                ctx.moveTo((touch.clientX - rect.left) * scaleX, (touch.clientY - rect.top) * scaleY);
-
-                const onTouchMove = (moveEvent: TouchEvent) => {
-                  moveEvent.preventDefault();
-                  const moveTouch = moveEvent.touches[0];
-                  ctx.lineTo((moveTouch.clientX - rect.left) * scaleX, (moveTouch.clientY - rect.top) * scaleY);
-                  ctx.stroke();
-                  onChange(canvas.toDataURL());
-                };
-
-                const onTouchEnd = () => {
-                  document.removeEventListener('touchmove', onTouchMove);
-                  document.removeEventListener('touchend', onTouchEnd);
-                };
-
-                document.addEventListener('touchmove', onTouchMove, { passive: false });
-                document.addEventListener('touchend', onTouchEnd);
-              }}
-            >
-              <canvas
-                id={signatureCanvasId}
-                width={600}
-                height={208}
-                className="w-full h-full"
-                style={{ touchAction: 'none' }}
-              />
-              {!value && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <p className="text-lg opacity-40 flex items-center gap-2">
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                    Sign here
-                  </p>
-                </div>
-              )}
+          <div className="space-y-3">
+            {/* Mode toggle */}
+            <div className="flex gap-2 text-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  // Switch to draw mode, clear typed value
+                  onChange(null);
+                }}
+                className={`px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${!isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
+                style={!isTypedSignature ? { borderColor: primaryColor, color: primaryColor } : undefined}
+              >
+                Draw
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  // Switch to type mode
+                  const canvas = document.getElementById(signatureCanvasId) as HTMLCanvasElement;
+                  if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx?.clearRect(0, 0, canvas.width, canvas.height);
+                  }
+                  onChange('typed:');
+                }}
+                className={`px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${isTypedSignature ? 'border-current font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400'}`}
+                style={isTypedSignature ? { borderColor: primaryColor, color: primaryColor } : undefined}
+              >
+                Type
+              </button>
             </div>
-            {Boolean(value) && (
+
+            {isTypedSignature ? (
+              /* Type your name mode */
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={typedName}
+                  onChange={(e) => onChange(`typed:${e.target.value}`)}
+                  placeholder="Type your full name"
+                  aria-label="Type your signature"
+                  className="w-full px-4 py-3 border-2 rounded-xl bg-white text-lg transition-colors focus:outline-none"
+                  style={{
+                    borderColor: typedName ? primaryColor : `${textColor || '#1f2937'}30`,
+                    fontFamily: "'Dancing Script', 'Segoe Script', 'Comic Sans MS', cursive",
+                    fontSize: '1.5rem',
+                    color: textColor || '#1f2937',
+                  }}
+                />
+                {typedName && (
+                  <div
+                    className="w-full h-20 border-2 rounded-xl bg-white flex items-center justify-center"
+                    style={{ borderColor: `${textColor || '#1f2937'}15` }}
+                  >
+                    <p
+                      className="text-3xl"
+                      style={{
+                        fontFamily: "'Dancing Script', 'Segoe Script', 'Comic Sans MS', cursive",
+                        color: textColor || '#1f2937',
+                      }}
+                    >
+                      {typedName}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Draw signature mode */
+              <>
+                <div
+                  className="w-full h-52 border-2 rounded-xl bg-white cursor-crosshair relative overflow-hidden transition-colors"
+                  style={{ borderColor: value ? primaryColor : `${textColor || '#1f2937'}30` }}
+                  role="img"
+                  aria-label="Signature drawing area"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const canvas = e.currentTarget.querySelector('canvas');
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) return;
+
+                    ctx.strokeStyle = textColor || '#1f2937';
+                    ctx.lineWidth = 2.5;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+
+                    ctx.beginPath();
+                    ctx.moveTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
+
+                    const onMouseMove = (moveEvent: MouseEvent) => {
+                      ctx.lineTo((moveEvent.clientX - rect.left) * scaleX, (moveEvent.clientY - rect.top) * scaleY);
+                      ctx.stroke();
+                      onChange(canvas.toDataURL());
+                    };
+
+                    const onMouseUp = () => {
+                      document.removeEventListener('mousemove', onMouseMove);
+                      document.removeEventListener('mouseup', onMouseUp);
+                    };
+
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    const canvas = e.currentTarget.querySelector('canvas');
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) return;
+
+                    ctx.strokeStyle = textColor || '#1f2937';
+                    ctx.lineWidth = 2.5;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const touch = e.touches[0];
+
+                    ctx.beginPath();
+                    ctx.moveTo((touch.clientX - rect.left) * scaleX, (touch.clientY - rect.top) * scaleY);
+
+                    const onTouchMove = (moveEvent: TouchEvent) => {
+                      moveEvent.preventDefault();
+                      const moveTouch = moveEvent.touches[0];
+                      ctx.lineTo((moveTouch.clientX - rect.left) * scaleX, (moveTouch.clientY - rect.top) * scaleY);
+                      ctx.stroke();
+                      onChange(canvas.toDataURL());
+                    };
+
+                    const onTouchEnd = () => {
+                      document.removeEventListener('touchmove', onTouchMove);
+                      document.removeEventListener('touchend', onTouchEnd);
+                    };
+
+                    document.addEventListener('touchmove', onTouchMove, { passive: false });
+                    document.addEventListener('touchend', onTouchEnd);
+                  }}
+                >
+                  <canvas
+                    id={signatureCanvasId}
+                    width={600}
+                    height={208}
+                    className="w-full h-full"
+                    style={{ touchAction: 'none' }}
+                  />
+                  {!value && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <p className="text-lg opacity-40 flex items-center gap-2">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        Sign here
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {Boolean(value) && !isTypedSignature && (
               <button
                 type="button"
                 onClick={() => {
