@@ -29,7 +29,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   // Check AI availability on mount
   useEffect(() => {
     if (isOpen) {
-      checkAvailability();
+      checkAvailability().catch(() => setIsAvailable(false));
     }
   }, [isOpen]);
 
