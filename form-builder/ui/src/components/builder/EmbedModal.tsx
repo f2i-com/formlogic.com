@@ -182,6 +182,10 @@ function closeFormPopup() {
       document.body.removeChild(link);
     };
 
+    img.onerror = () => {
+      toast.error('Download failed', 'Could not generate QR code image');
+    };
+
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   };
 

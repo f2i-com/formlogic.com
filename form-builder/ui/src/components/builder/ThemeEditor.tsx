@@ -211,6 +211,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
       }
       updateTheme({ [type]: dataUrl });
     };
+    reader.onerror = () => {
+      toast.error('Upload failed', 'Could not read the image file');
+    };
     reader.readAsDataURL(file);
   };
 

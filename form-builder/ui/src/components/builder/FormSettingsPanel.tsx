@@ -204,7 +204,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave }: FormSet
                       type="number"
                       min={0}
                       value={editedSettings.quotaLimit || ''}
-                      onChange={(e) => updateSettings({ quotaLimit: e.target.value ? parseInt(e.target.value) : undefined })}
+                      onChange={(e) => {
+                        if (!e.target.value) { updateSettings({ quotaLimit: undefined }); return; }
+                        const val = parseInt(e.target.value);
+                        updateSettings({ quotaLimit: isNaN(val) ? undefined : Math.max(0, val) });
+                      }}
                       placeholder="Unlimited"
                     />
                     <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">

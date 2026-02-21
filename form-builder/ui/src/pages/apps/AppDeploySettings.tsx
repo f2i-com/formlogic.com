@@ -29,10 +29,14 @@ export function AppDeploySettings() {
 
   const appUrl = `${window.location.origin}/app/${app.slug}`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(appUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(appUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Copy failed', 'Could not copy to clipboard');
+    }
   };
 
   const handlePublish = async () => {
