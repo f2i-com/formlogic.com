@@ -86,9 +86,13 @@ $container->set(LoggerInterface::class, function (Container $c) {
 // Register database connections
 $container->set(MySQLConnection::class, function (Container $c) {
     $mysql = new MySQLConnection($c->get('settings')['mysql']);
-    // Initialize schema on first run
-    $mysql->initializeSchema();
-    $mysql->runMigrations();
+    // Initialize schema and run migrations only once per process
+    static $schemaInitialized = false;
+    if (!$schemaInitialized) {
+        $mysql->initializeSchema();
+        $mysql->runMigrations();
+        $schemaInitialized = true;
+    }
     return $mysql;
 });
 

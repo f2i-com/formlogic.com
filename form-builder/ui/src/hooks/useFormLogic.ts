@@ -119,14 +119,20 @@ export function useFieldValidation(
   const [error, setError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const validate = useCallback(async () => {
+    if (!mountedRef.current) return false;
     setIsValidating(true);
 
     // Check built-in validations first
     if (field.required && !value) {
-      setError('This field is required');
-      setIsValidating(false);
+      if (mountedRef.current) { setError('This field is required'); setIsValidating(false); }
       return false;
     }
 
@@ -139,6 +145,7 @@ export function useFieldValidation(
             value,
             formData
           );
+          if (!mountedRef.current) return false;
           if (result) {
             setError(result);
             setIsValidating(false);
@@ -146,47 +153,40 @@ export function useFieldValidation(
           }
         } else if (rule.type === 'minLength' && typeof value === 'string') {
           if (value.length < (rule.value as number)) {
-            setError(rule.message || `Minimum ${rule.value} characters required`);
-            setIsValidating(false);
+            if (mountedRef.current) { setError(rule.message || `Minimum ${rule.value} characters required`); setIsValidating(false); }
             return false;
           }
         } else if (rule.type === 'maxLength' && typeof value === 'string') {
           if (value.length > (rule.value as number)) {
-            setError(rule.message || `Maximum ${rule.value} characters allowed`);
-            setIsValidating(false);
+            if (mountedRef.current) { setError(rule.message || `Maximum ${rule.value} characters allowed`); setIsValidating(false); }
             return false;
           }
         } else if (rule.type === 'pattern' && typeof value === 'string') {
           try {
             const regex = new RegExp(rule.value as string);
             if (!regex.test(value)) {
-              setError(rule.message || 'Invalid format');
-              setIsValidating(false);
+              if (mountedRef.current) { setError(rule.message || 'Invalid format'); setIsValidating(false); }
               return false;
             }
           } catch {
-            setError(rule.message || 'Invalid validation pattern');
-            setIsValidating(false);
+            if (mountedRef.current) { setError(rule.message || 'Invalid validation pattern'); setIsValidating(false); }
             return false;
           }
         } else if (rule.type === 'min' && typeof value === 'number') {
           if (value < (rule.value as number)) {
-            setError(rule.message || `Minimum value is ${rule.value}`);
-            setIsValidating(false);
+            if (mountedRef.current) { setError(rule.message || `Minimum value is ${rule.value}`); setIsValidating(false); }
             return false;
           }
         } else if (rule.type === 'max' && typeof value === 'number') {
           if (value > (rule.value as number)) {
-            setError(rule.message || `Maximum value is ${rule.value}`);
-            setIsValidating(false);
+            if (mountedRef.current) { setError(rule.message || `Maximum value is ${rule.value}`); setIsValidating(false); }
             return false;
           }
         }
       }
     }
 
-    setError(null);
-    setIsValidating(false);
+    if (mountedRef.current) { setError(null); setIsValidating(false); }
     return true;
   }, [field, value, formData]);
 
