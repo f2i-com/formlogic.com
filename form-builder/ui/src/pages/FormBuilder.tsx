@@ -324,7 +324,7 @@ export default function FormBuilder() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
+      <header className="h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
@@ -332,6 +332,7 @@ export default function FormBuilder() {
           <Input
             value={form.title}
             onChange={(e) => updateForm(form.id, { title: e.target.value })}
+            aria-label="Form title"
             className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
           />
         </div>
@@ -343,6 +344,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('ai')}
             title="Generate with AI"
+            aria-label="Generate with AI"
             className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
           >
             <Sparkles className="h-4 w-4 text-purple-400" />
@@ -355,6 +357,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('settings')}
             title="Form Settings"
+            aria-label="Form Settings"
             className="hidden sm:flex"
           >
             <Settings className="h-4 w-4" />
@@ -367,6 +370,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('theme')}
             title="Theme Customization"
+            aria-label="Theme Customization"
             className="hidden md:flex"
           >
             <Palette className="h-4 w-4" />
@@ -379,6 +383,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('script')}
             title="Backend Logic Script"
+            aria-label="Backend Logic Script"
             className="hidden md:flex"
           >
             <Code2 className="h-4 w-4" />
@@ -387,7 +392,7 @@ export default function FormBuilder() {
           </Button>
 
           {/* Preview */}
-          <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview">
+          <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview" aria-label="Preview form">
             <Eye className="h-4 w-4" />
             <span className="hidden lg:inline ml-2">Preview</span>
           </Button>
@@ -398,6 +403,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('embed')}
             title="Share & Embed"
+            aria-label="Share & Embed"
             className="hidden sm:flex"
           >
             <Share2 className="h-4 w-4" />
@@ -410,6 +416,7 @@ export default function FormBuilder() {
             size="sm"
             onClick={() => setActiveModal('shortcuts')}
             title="Keyboard Shortcuts (Ctrl+?)"
+            aria-label="Keyboard Shortcuts"
             className="hidden sm:flex"
           >
             <Keyboard className="h-4 w-4" />
@@ -426,7 +433,7 @@ export default function FormBuilder() {
               <MoreVertical className="h-4 w-4" />
             </Button>
             {showMobileMenu && (
-              <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-slate-900 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 py-1 z-50">
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 py-1 z-50">
                 {[
                   { label: 'Form Settings', icon: Settings, modal: 'settings' as ModalType },
                   { label: 'Theme', icon: Palette, modal: 'theme' as ModalType },
@@ -436,7 +443,7 @@ export default function FormBuilder() {
                   <button
                     key={item.label}
                     onClick={() => { setActiveModal(item.modal); setShowMobileMenu(false); }}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                   >
                     <item.icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
                     {item.label}
@@ -475,7 +482,7 @@ export default function FormBuilder() {
                   mobilePanel === tab.key
                     ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm'
                     : 'text-gray-500 dark:text-slate-400'
-                } ${tab.disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                } ${tab.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <tab.icon className="h-4 w-4" />
                 {tab.label}
@@ -558,7 +565,7 @@ export default function FormBuilder() {
               {form.fields.length > 0 && (
                 <button
                   onClick={() => setMobilePanel('palette')}
-                  className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-500 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2"
+                  className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
                   Add Field

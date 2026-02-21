@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useId, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X } from 'lucide-react';
@@ -32,6 +32,9 @@ export function Modal({
   size = 'md',
   showCloseButton = true,
 }: ModalProps) {
+  const uniqueId = useId();
+  const titleId = `modal-title-${uniqueId}`;
+  const descId = `modal-desc-${uniqueId}`;
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const hasInitialFocusRef = useRef(false);
@@ -97,8 +100,8 @@ export function Modal({
       document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = '';
 
-      // Restore focus to the previously focused element (only when actually closing)
-      if (!isOpen && previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+      // Restore focus to the previously focused element when closing
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
         previousFocusRef.current.focus();
         previousFocusRef.current = null;
       }
@@ -122,44 +125,45 @@ export function Modal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-md"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm"
             onMouseDown={onClose}
+            aria-hidden="true"
           />
           <motion.div
             ref={modalRef}
             role="dialog"
             aria-modal="true"
             onMouseDown={(e) => e.stopPropagation()}
-            aria-labelledby={title ? 'modal-title' : undefined}
-            aria-describedby={description ? 'modal-description' : undefined}
+            aria-labelledby={title ? titleId : undefined}
+            aria-describedby={description ? descId : undefined}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.15 }}
             className={cn(
-              'relative w-full bg-white dark:bg-slate-900 rounded-xl shadow-2xl',
+              'relative w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl shadow-black/20',
               'max-h-[90vh] overflow-hidden flex flex-col',
-              'ring-1 ring-black/5 dark:ring-white/10 border border-gray-100 dark:border-slate-800',
+              'ring-1 ring-black/5 dark:ring-white/[0.06] border border-gray-200/50 dark:border-slate-800',
               sizes[size]
             )}
           >
             {(title || showCloseButton) && (
-              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
+              <div className="flex items-start justify-between px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200/80 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
                 <div className="min-w-0 flex-1 pr-2">
                   {title && (
-                    <h2 id="modal-title" className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate">
+                    <h2 id={titleId} className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white truncate tracking-tight">
                       {title}
                     </h2>
                   )}
                   {description && (
-                    <p id="modal-description" className="mt-1 text-sm text-gray-500 dark:text-slate-500">{description}</p>
+                    <p id={descId} className="mt-1 text-sm text-gray-500 dark:text-slate-400">{description}</p>
                   )}
                 </div>
                 {showCloseButton && (
                   <button
                     onClick={onClose}
                     aria-label="Close modal"
-                    className="p-2 -m-1 text-gray-400 dark:text-slate-400 hover:text-gray-500 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 transition-colors flex-shrink-0"
+                    className="p-2 -m-1 text-gray-400 dark:text-slate-400 hover:text-gray-500 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900 transition-colors flex-shrink-0 cursor-pointer"
                   >
                     <X className="h-5 w-5" />
                   </button>

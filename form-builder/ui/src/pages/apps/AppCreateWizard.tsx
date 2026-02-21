@@ -95,7 +95,7 @@ export function AppCreateWizard() {
         ))}
       </div>
 
-      <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
         {step === 0 && (
           <div className="space-y-4">
             <div>
@@ -107,7 +107,7 @@ export function AppCreateWizard() {
                 onBlur={validateName}
                 placeholder="My Application"
                 className={cn(
-                  'w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+                  'w-full px-3.5 py-2.5 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200',
                   nameError ? 'border-red-500' : 'border-gray-300 dark:border-slate-600'
                 )}
                 autoFocus
@@ -121,7 +121,7 @@ export function AppCreateWizard() {
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="What does this app do?"
                 rows={3}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none transition-all duration-200"
               />
             </div>
           </div>
@@ -144,7 +144,7 @@ export function AppCreateWizard() {
                   <label
                     key={form.id}
                     className={cn(
-                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors',
+                      'flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-200',
                       selectedFormIds.includes(form.id)
                         ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
                         : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -172,10 +172,10 @@ export function AppCreateWizard() {
 
         {step === 2 && (
           <div className="space-y-4">
-            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
+            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-slate-800 rounded-xl">
               <Globe className="h-10 w-10 text-primary-600 dark:text-primary-400" />
               <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white">{name}</h3>
+                <h3 className="font-semibold text-gray-900 dark:text-white tracking-tight">{name}</h3>
                 {description && <p className="text-sm text-gray-500 dark:text-slate-400">{description}</p>}
               </div>
             </div>

@@ -430,7 +430,7 @@ export function CsvImportWizard({
                             title={row[csvCol] || ''}
                           >
                             {row[csvCol] || (
-                              <span className="text-gray-400 dark:text-slate-600 italic">
+                              <span className="text-gray-400 dark:text-slate-500 italic">
                                 empty
                               </span>
                             )}

@@ -269,15 +269,19 @@ export default function FormAnalytics() {
         return;
       }
 
+      const escapeCell = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...form.fields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
         r.id,
         r.submittedAt,
         Math.round(r.completionTime / 1000),
-        ...form.fields.map((f) => JSON.stringify(r.answers[f.id] || '')),
+        ...form.fields.map((f) => {
+          const v = r.answers[f.id];
+          return Array.isArray(v) ? v.join(', ') : (v ?? '');
+        }),
       ]);
 
-      const csv = [headers.join(','), ...rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+      const csv = [headers.map(escapeCell).join(','), ...rows.map((r) => r.map(escapeCell).join(','))].join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -291,6 +295,7 @@ export default function FormAnalytics() {
   };
 
   const handleExportSqlite = async () => {
+    if (!form) return;
     setIsExporting(true);
     setExportMenuOpen(false);
     try {
@@ -304,6 +309,7 @@ export default function FormAnalytics() {
   };
 
   const handleExportJson = async () => {
+    if (!form) return;
     setIsExporting(true);
     setExportMenuOpen(false);
     try {
@@ -349,7 +355,7 @@ export default function FormAnalytics() {
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
-                <div role="menu" className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-md shadow-lg border border-gray-200 dark:border-slate-800 py-1 z-50">
+                <div role="menu" className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
                   <button
                     onClick={handleExportCSV}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors"
@@ -388,7 +394,7 @@ export default function FormAnalytics() {
               </div>
               <div className="min-w-0">
                 <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{totalResponses}</p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Responses</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Responses</p>
               </div>
             </CardContent>
           </Card>
@@ -400,7 +406,7 @@ export default function FormAnalytics() {
               </div>
               <div className="min-w-0">
                 <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors">{completionRate}%</p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Completion</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Completion</p>
               </div>
             </CardContent>
           </Card>
@@ -416,7 +422,7 @@ export default function FormAnalytics() {
                     ? `${Math.floor(avgCompletionTime / 60)}m`
                     : `${avgCompletionTime}s`}
                 </p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">Avg. Time</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Avg. Time</p>
               </div>
             </CardContent>
           </Card>
@@ -430,7 +436,7 @@ export default function FormAnalytics() {
                 <p className={`text-xl sm:text-2xl font-bold ${weeklyChange === null ? 'text-gray-500 dark:text-slate-400' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
                   {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
                 </p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 truncate transition-colors">This Week</p>
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">This Week</p>
               </div>
             </CardContent>
           </Card>
@@ -439,7 +445,7 @@ export default function FormAnalytics() {
         {/* Chart */}
         <Card>
           <CardHeader>
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white transition-colors">Responses Over Time</h2>
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Responses Over Time</h2>
           </CardHeader>
           <CardContent>
             <div className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2">
@@ -469,7 +475,7 @@ export default function FormAnalytics() {
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">
               <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-500" />
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white transition-colors">Field Breakdown</h2>
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Field Breakdown</h2>
             </CardHeader>
             <CardContent>
               <div className="space-y-6 sm:space-y-8">
@@ -511,7 +517,7 @@ export default function FormAnalytics() {
         {/* Recent Responses */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">Recent Responses</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Recent Responses</h2>
             <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)}>
               View All
             </Button>

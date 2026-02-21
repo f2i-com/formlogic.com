@@ -53,18 +53,18 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
         <div className="w-full max-w-md">
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 p-8 shadow-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
             <div className="text-center mb-6">
               <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-3">
                 <Lock className="h-6 w-6 text-primary-600 dark:text-primary-400" />
               </div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Sign in to continue</h2>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Sign in to continue</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Please log in to access this app</p>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (
-                <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
+                <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20">
                   <AlertCircle className="h-4 w-4 flex-shrink-0" />
                   <span>{loginError}</span>
                 </div>
@@ -79,7 +79,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@example.com"
-                    className="w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="w-full pl-10 pr-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
                     disabled={authLoading}
                     required
                   />
@@ -95,7 +95,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Your password"
-                    className="w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    className="w-full pl-10 pr-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
                     disabled={authLoading}
                     required
                   />
@@ -125,9 +125,14 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
           <div className="w-12 h-12 mx-auto rounded-full bg-red-50 dark:bg-red-500/10 flex items-center justify-center mb-4">
             <AlertCircle className="h-6 w-6 text-red-500 dark:text-red-400" />
           </div>
-          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white">Access Denied</h2>
-          <p className="text-gray-500 dark:text-slate-400 mb-4">{error || 'Unable to load app. You may not have access.'}</p>
-          <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>
+          <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">
+            {error?.includes('403') || error?.includes('401') || error?.includes('denied') || error?.includes('permission') ? 'Access Denied' : 'Unable to Load'}
+          </h2>
+          <p className="text-gray-500 dark:text-slate-400 mb-4">{error || 'Unable to load this app. Please try again later.'}</p>
+          <div className="flex items-center justify-center gap-3">
+            <button type="button" onClick={() => window.location.reload()} className="text-sm text-gray-600 dark:text-slate-300 hover:underline cursor-pointer">Try Again</button>
+            <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>
+          </div>
         </div>
       </div>
     );

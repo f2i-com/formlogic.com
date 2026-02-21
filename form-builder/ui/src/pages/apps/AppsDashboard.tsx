@@ -48,7 +48,7 @@ export function AppsDashboard() {
             <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center mb-4">
               <Globe className="h-8 w-8 text-gray-400 dark:text-slate-500" />
             </div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">No apps yet</h3>
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1 tracking-tight">No apps yet</h3>
             <p className="text-gray-500 dark:text-slate-400 mb-6 text-sm max-w-sm mx-auto">Create your first app to group forms into a deployable application.</p>
             <Button onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
               Create Your First App
@@ -84,10 +84,14 @@ export function AppsDashboard() {
 function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; onDelete: () => void }) {
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       className={cn(
-        'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700/80 p-6',
-        'hover:shadow-lg hover:shadow-gray-200/50 dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
+        'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6',
+        'hover:shadow-lg hover:shadow-gray-900/[0.06] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
+        'focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 outline-none',
         'transition-all duration-200 cursor-pointer group'
       )}
     >
@@ -116,7 +120,7 @@ function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; on
         <p className="text-sm text-gray-600 dark:text-slate-400 mb-4 line-clamp-2">{app.description}</p>
       )}
 
-      <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-slate-700/50">
+      <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-slate-700/40">
         <span className="text-xs text-gray-400 dark:text-slate-500">
           Updated {new Date(app.updatedAt).toLocaleDateString()}
         </span>
@@ -124,7 +128,7 @@ function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; on
           {app.status === 'published' && (
             <button
               onClick={() => window.open(`/app/${app.slug}`, '_blank')}
-              className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors"
+              className="p-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
               aria-label="Open app"
             >
               <ExternalLink className="h-4 w-4" />
@@ -132,7 +136,7 @@ function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; on
           )}
           <button
             onClick={onDelete}
-            className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+            className="p-2.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer"
             aria-label="Delete app"
           >
             <Trash2 className="h-4 w-4" />

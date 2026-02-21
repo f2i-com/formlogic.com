@@ -27,9 +27,9 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const variants = {
       primary:
-        'bg-primary-600 text-white hover:bg-primary-700 dark:hover:bg-primary-500 focus:ring-primary-500 active:bg-primary-800 dark:active:bg-primary-700 shadow-md dark:shadow-lg dark:shadow-primary-500/20 dark:hover:shadow-primary-500/30 border border-transparent',
+        'bg-primary-600 text-white hover:bg-primary-700 dark:hover:bg-primary-500 focus:ring-primary-500 active:bg-primary-800 dark:active:bg-primary-700 shadow-md shadow-primary-600/15 dark:shadow-lg dark:shadow-primary-500/20 dark:hover:shadow-primary-500/30 border border-transparent',
       secondary:
-        'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-100 hover:bg-gray-50 dark:hover:bg-slate-700 focus:ring-gray-500 dark:focus:ring-slate-500 active:bg-gray-100 dark:active:bg-slate-900 border border-gray-200 dark:border-slate-700',
+        'bg-white dark:bg-slate-800/80 text-gray-700 dark:text-slate-100 hover:bg-gray-50 dark:hover:bg-slate-700 focus:ring-gray-500 dark:focus:ring-slate-500 active:bg-gray-100 dark:active:bg-slate-900 border border-gray-200 dark:border-slate-700 shadow-sm',
       outline:
         'border border-gray-300 dark:border-slate-700 bg-transparent text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 hover:text-gray-900 dark:hover:text-white dark:hover:border-slate-600 focus:ring-primary-500 active:bg-gray-100 dark:active:bg-slate-900',
       ghost:
@@ -41,18 +41,18 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const sizes = {
       sm: 'px-3 py-1.5 text-xs font-medium gap-1.5',
       md: 'px-4 py-2 text-sm font-medium gap-2',
-      lg: 'px-6 py-3 text-base font-medium gap-2.5',
+      lg: 'px-6 py-2.5 text-[15px] font-semibold gap-2.5',
     };
 
     return (
       <button
         ref={ref}
         className={cn(
-          'inline-flex items-center justify-center font-medium rounded-lg',
-          'transition-all duration-150 ease-in-out',
+          'inline-flex items-center justify-center rounded-lg',
+          'transition-all duration-200 ease-out',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950',
           'disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none',
-          'active:scale-[0.98]',
+          'active:scale-[0.97]',
           variants[variant],
           sizes[size],
           className

@@ -29,7 +29,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
         )}
         <div className="relative">
           {leftIcon && (
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500 dark:text-slate-500">
+            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400 dark:text-slate-500">
               {leftIcon}
             </div>
           )}
@@ -39,13 +39,13 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             aria-invalid={error ? true : undefined}
             aria-describedby={describedBy}
             className={cn(
-              'block w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 px-3 py-2.5',
-              'text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-500',
-              'transition-all duration-150 ease-in-out',
+              'block w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-3.5 py-2.5',
+              'text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500',
+              'transition-all duration-200 ease-out',
               'focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500',
               'hover:border-gray-400 dark:hover:border-slate-600',
               'disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:text-gray-500 dark:disabled:text-slate-600 disabled:cursor-not-allowed disabled:hover:border-gray-300 dark:disabled:hover:border-slate-800',
-              error && 'border-red-500 focus:ring-red-500/20 focus:border-red-500 hover:border-red-500',
+              error && 'border-red-400 focus:ring-red-500/20 focus:border-red-500 hover:border-red-400',
               leftIcon && 'pl-10',
               rightIcon && 'pr-10',
               className
@@ -53,14 +53,14 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             {...props}
           />
           {rightIcon && (
-            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-gray-400 dark:text-slate-500">
+            <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-gray-400 dark:text-slate-500">
               {rightIcon}
             </div>
           )}
         </div>
         {error && (
           <p id={errorId} className="mt-1.5 text-sm text-red-600 dark:text-red-400 flex items-center gap-1" role="alert">
-            <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
             </svg>
             {error}

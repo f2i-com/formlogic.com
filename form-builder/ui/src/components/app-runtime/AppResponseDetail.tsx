@@ -110,18 +110,18 @@ export function AppResponseDetail() {
         <button
           onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
           aria-label="Back to responses"
-          className="p-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+          className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="flex-1">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white">{runtimeForm?.displayName || 'Response'}</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Response'}</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {canEdit(formId) && !editing && (
             <button
               onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer"
             >
               <Pencil className="h-3.5 w-3.5" /> Edit
             </button>
@@ -130,14 +130,14 @@ export function AppResponseDetail() {
             <>
               <button
                 onClick={() => { setEditing(false); setEditedAnswers((response.answers as Record<string, unknown>) ?? {}); setSaveError(null); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" /> Cancel
               </button>
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white rounded-lg app-btn-primary disabled:opacity-50 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white rounded-lg app-btn-primary disabled:opacity-50 transition-all duration-200 cursor-pointer"
               >
                 <Save className="h-3.5 w-3.5" /> {saving ? 'Saving...' : 'Save'}
               </button>
@@ -147,7 +147,7 @@ export function AppResponseDetail() {
             <button
               onClick={() => setShowDeleteConfirm(true)}
               aria-label="Delete response"
-              className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+              className="p-2.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -158,14 +158,14 @@ export function AppResponseDetail() {
       {saveError && (
         <div className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
           <span>{saveError}</span>
-          <button onClick={() => setSaveError(null)} className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300">
+          <button type="button" onClick={() => setSaveError(null)} aria-label="Dismiss error" className="ml-2 text-red-400 hover:text-red-600 dark:hover:text-red-300 cursor-pointer">
             <X className="h-4 w-4" />
           </button>
         </div>
       )}
 
       {/* Metadata card */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 p-4 mb-4 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-5 text-sm">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 mb-4 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-5 text-sm">
         <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
           <Clock className="h-4 w-4 flex-shrink-0" />
           {response.submittedAt ? new Date(String(response.submittedAt)).toLocaleString() : '-'}
@@ -182,7 +182,7 @@ export function AppResponseDetail() {
       </div>
 
       {/* Answers */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 divide-y divide-gray-200 dark:divide-slate-700/50">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 divide-y divide-gray-100 dark:divide-slate-700/40">
         {fields.map((field) => {
           const isLinked = field.type === 'linked_record';
           const resolved = response._resolved as Record<string, unknown> | undefined;
@@ -195,12 +195,85 @@ export function AppResponseDetail() {
                 {field.label}
               </label>
               {editing && !isLinked ? (
-                <input
-                  type="text"
-                  value={String(editedAnswers[field.id] ?? '')}
-                  onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-colors"
-                />
+                (() => {
+                  const editInputClass = "w-full px-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200";
+                  const editVal = editedAnswers[field.id];
+
+                  if (field.type === 'number') {
+                    return (
+                      <input
+                        type="number"
+                        step="any"
+                        value={editVal != null ? String(editVal) : ''}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
+                        }}
+                        className={editInputClass}
+                      />
+                    );
+                  }
+                  if (field.type === 'date') {
+                    return <input type="date" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                  }
+                  if (field.type === 'time') {
+                    return <input type="time" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                  }
+                  if (field.type === 'datetime') {
+                    return <input type="datetime-local" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                  }
+                  if (field.type === 'long_text') {
+                    return <textarea value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} rows={4} className={cn(editInputClass, 'resize-none')} />;
+                  }
+                  if (field.type === 'dropdown') {
+                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                    return (
+                      <select value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass}>
+                        <option value="">Select...</option>
+                        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    );
+                  }
+                  if (field.type === 'multiple_choice') {
+                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                    return (
+                      <div className="space-y-1.5">
+                        {options.map((o) => (
+                          <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="accent-primary-500" />
+                            {o.label}
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  }
+                  if (field.type === 'checkboxes') {
+                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                    const selected = Array.isArray(editVal) ? (editVal as string[]) : [];
+                    return (
+                      <div className="space-y-1.5">
+                        {options.map((o) => (
+                          <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => {
+                              const newVals = e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value);
+                              setEditedAnswers({ ...editedAnswers, [field.id]: newVals });
+                            }} className="accent-primary-500" />
+                            {o.label}
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  }
+                  // Default: text input for short_text, email, phone, url, etc.
+                  return (
+                    <input
+                      type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
+                      value={String(editVal ?? '')}
+                      onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
+                      className={editInputClass}
+                    />
+                  );
+                })()
               ) : editing && isLinked ? (
                 <div>
                   {resolved?.[field.id] ? (
@@ -223,7 +296,7 @@ export function AppResponseDetail() {
                   ) : (
                     <div className="text-sm text-gray-400 dark:text-slate-500 italic">No linked record</div>
                   )}
-                  <p className="text-xs text-gray-400 dark:text-slate-500 mt-1.5">Linked records can only be changed from the form submission view.</p>
+                  <p className="text-xs text-gray-400 dark:text-slate-400 mt-1.5">Linked records can only be changed from the form submission view.</p>
                 </div>
               ) : isLinked && resolved?.[field.id] ? (
                 <div className="text-sm">
@@ -237,7 +310,7 @@ export function AppResponseDetail() {
                               key={item.id}
                               type="button"
                               onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
                             >
                               <Link2 className="h-3 w-3" />
                               {item.display || 'Record not found'}
@@ -250,7 +323,7 @@ export function AppResponseDetail() {
                       <button
                         type="button"
                         onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${rv.id}`)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
                       >
                         <Link2 className="h-3 w-3" />
                         {rv.display || 'Record not found'}
@@ -262,7 +335,7 @@ export function AppResponseDetail() {
                 <div className="text-sm text-gray-800 dark:text-slate-200">
                   {answers[field.id] != null
                     ? (Array.isArray(answers[field.id]) ? (answers[field.id] as unknown[]).join(', ') : String(answers[field.id]))
-                    : <span className="text-gray-300 dark:text-slate-600 italic">No answer</span>
+                    : <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                   }
                 </div>
               )}

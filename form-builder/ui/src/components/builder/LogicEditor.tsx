@@ -271,18 +271,20 @@ export function LogicEditor({
                     <span className="text-sm text-gray-600 dark:text-slate-400">Match</span>
                     <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
                       <button
+                        type="button"
                         onClick={() => setCombinator('and')}
                         className={cn(
-                          'px-3 py-1 text-sm rounded-md transition-colors',
+                          'px-3 py-1 text-sm rounded-md transition-colors cursor-pointer',
                           combinator === 'and' ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-700/50'
                         )}
                       >
                         All conditions (AND)
                       </button>
                       <button
+                        type="button"
                         onClick={() => setCombinator('or')}
                         className={cn(
-                          'px-3 py-1 text-sm rounded-md transition-colors',
+                          'px-3 py-1 text-sm rounded-md transition-colors cursor-pointer',
                           combinator === 'or' ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-700/50'
                         )}
                       >
@@ -377,7 +379,7 @@ export function LogicEditor({
                       <button
                         key={f.id}
                         onClick={() => setExpression((prev) => prev + varName)}
-                        className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors font-mono"
+                        className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors font-mono cursor-pointer"
                         title={f.label}
                       >
                         {varName}

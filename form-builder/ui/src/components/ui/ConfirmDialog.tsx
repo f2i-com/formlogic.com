@@ -35,7 +35,7 @@ export function ConfirmDialog({
             </div>
           )}
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-white">{title}</h3>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-white tracking-tight">{title}</h3>
             <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400">{message}</p>
           </div>
         </div>

@@ -196,11 +196,11 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                     onChange(Math.min(maxStars, (currentRating || 0) + 1));
                   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    onChange(Math.max(1, (currentRating || 2) - 1));
+                    onChange(Math.max(1, (currentRating || 0) - 1) || 1);
                   }
                 }}
                 className={cn(
-                  'text-4xl transition-transform hover:scale-110',
+                  'text-4xl transition-transform hover:scale-110 cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg',
                   i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
@@ -245,11 +245,11 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                         onChange(Math.min(end, (scaleValue || start - 1) + 1));
                       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                         e.preventDefault();
-                        onChange(Math.max(start, (scaleValue || start + 1) - 1));
+                        onChange(Math.max(start, (scaleValue ?? start) - 1));
                       }
                     }}
                     className={cn(
-                      'py-3 rounded-lg border-2 font-medium transition-all',
+                      'py-3 min-h-[44px] rounded-lg border-2 font-medium transition-all cursor-pointer',
                       scaleValue === num
                         ? 'border-primary-500 bg-primary-500 text-white'
                         : 'border-current/20 hover:border-current/40'
@@ -342,8 +342,10 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                       <p className="text-xs opacity-50">{formatFileSize(file.size)}</p>
                     </div>
                     <button
+                      type="button"
                       onClick={() => onChange(uploadedFiles.filter((_, i) => i !== index))}
-                      className="p-1.5 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors"
+                      aria-label="Remove file"
+                      className="p-1.5 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -367,6 +369,7 @@ function FieldPreview({ field, value, onChange, isRequired, textColor }: {
                 value ? "border-primary-500" : "border-current/30"
               )}
               onMouseDown={(e) => {
+                e.preventDefault();
                 const canvas = e.currentTarget.querySelector('canvas');
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
@@ -728,7 +731,7 @@ export default function FormPreview() {
             </button>
           </div>
 
-          {form.settings.showNigoDashboard && (
+          {form.settings?.showNigoDashboard && (
             <Button
               variant={showNigo ? 'primary' : 'outline'}
               size="sm"
@@ -768,11 +771,11 @@ export default function FormPreview() {
       />
 
       {/* Preview Area */}
-      <div className="flex-1 flex items-center justify-center p-8 relative">
+      <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
         <div
           className={cn(
             'bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-300',
-            previewDevice === 'mobile' ? 'w-[375px] h-[667px]' : 'w-full max-w-4xl h-[600px]'
+            previewDevice === 'mobile' ? 'w-full max-w-[375px] h-[667px] max-h-[calc(100vh-8rem)]' : 'w-full max-w-4xl h-[600px] max-h-[calc(100vh-8rem)]'
           )}
           style={{
             backgroundColor: form.theme.backgroundColor,
@@ -796,7 +799,7 @@ export default function FormPreview() {
               </div>
 
               {/* Content */}
-              <div className="flex-1 flex items-center justify-center p-8">
+              <div className="flex-1 flex items-center justify-center p-4 sm:p-8 overflow-y-auto">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={currentField.id}
@@ -845,7 +848,7 @@ export default function FormPreview() {
             <div className="h-full overflow-y-auto p-8">
               <div className="max-w-lg mx-auto space-y-8">
                 <div className="text-center mb-8">
-                  <h1 className="text-3xl font-bold">{form.title}</h1>
+                  <h1 className="text-3xl font-bold tracking-tight">{form.title}</h1>
                   {form.description && (
                     <p className="opacity-70 mt-2">{form.description}</p>
                   )}
@@ -879,7 +882,7 @@ export default function FormPreview() {
         </div>
 
         {/* NIGO Dashboard Sidebar */}
-        {showNigo && form.settings.showNigoDashboard && (
+        {showNigo && form.settings?.showNigoDashboard && (
           <div className="absolute top-4 right-4 w-72 z-20">
             <NigoDashboard
               fields={form.fields}

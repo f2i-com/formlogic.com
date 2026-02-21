@@ -66,30 +66,36 @@ export function Signup() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex">
       {/* Left panel - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-indigo-900 to-slate-900 p-12 flex-col justify-between relative overflow-hidden">
-        <div className="absolute inset-0 bg-grid-white/[0.02] bg-[length:50px_50px]" />
+      <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-indigo-600 via-indigo-700 to-slate-900 dark:from-slate-900/80 dark:via-indigo-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
+        {/* Decorative elements */}
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:60px_60px]" />
+        <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/20 rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 left-0 w-72 h-72 bg-purple-600/15 rounded-full blur-[100px]" />
+
         <div className="relative z-10">
           <Link to="/">
             <LogoWhite size="lg" />
           </Link>
         </div>
-        <div>
-          <h1 className="text-4xl font-bold text-white mb-4">
+        <div className="relative z-10">
+          <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">
             Start building smarter forms
           </h1>
-          <p className="text-indigo-200 text-lg mb-8">
+          <p className="text-indigo-200/80 text-lg mb-8 leading-relaxed">
             Create forms with real backend logic and full data control.
           </p>
-          <ul className="space-y-3">
+          <ul className="space-y-3.5">
             {benefits.map((benefit) => (
-              <li key={benefit} className="flex items-center gap-3 text-white">
-                <Check className="h-5 w-5 text-indigo-300" />
+              <li key={benefit} className="flex items-center gap-3 text-white/90">
+                <div className="p-0.5 rounded-full bg-indigo-400/20">
+                  <Check className="h-4 w-4 text-indigo-300" />
+                </div>
                 {benefit}
               </li>
             ))}
           </ul>
         </div>
-        <p className="text-indigo-300 text-sm relative z-10">
+        <p className="text-indigo-300/60 text-sm relative z-10">
           No credit card required. Get started in seconds.
         </p>
       </div>
@@ -103,17 +109,17 @@ export function Signup() {
             </Link>
           </div>
 
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Create your account</h2>
-          <p className="text-gray-600 dark:text-slate-400 mb-8">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Create your account</h2>
+          <p className="text-gray-500 dark:text-slate-400 mb-8">
             Already have an account?{' '}
-            <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-medium">
+            <Link to="/login" className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-medium transition-colors">
               Sign in
             </Link>
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {displayError && (
-              <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
+              <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <span>{displayError}</span>
               </div>
@@ -172,7 +178,7 @@ export function Signup() {
           </form>
 
           <p className="mt-8 text-center text-sm text-gray-500 dark:text-slate-500">
-            <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">
+            <Link to="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
               &larr; Back to home
             </Link>
           </p>

@@ -98,7 +98,7 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
                     <div className="flex items-center gap-1">
                       {shortcut.keys.split('+').map((key, index) => (
                         <span key={index}>
-                          {index > 0 && <span className="text-gray-400 dark:text-slate-600 mx-0.5">+</span>}
+                          {index > 0 && <span className="text-gray-400 dark:text-slate-500 mx-0.5">+</span>}
                           <kbd className="px-2 py-1 text-xs font-semibold text-gray-600 dark:text-slate-300 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded shadow-sm">
                             {key.trim()}
                           </kbd>

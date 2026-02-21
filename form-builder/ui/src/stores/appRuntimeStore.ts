@@ -83,7 +83,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
               permissions: perms ?? null,
               roleName: (appUser?.roleName as string) ?? null,
               isLoading: false,
-              activeFormId: forms[0]?.formId ?? null,
+              activeFormId: null,
             });
           }
         } catch (e) {

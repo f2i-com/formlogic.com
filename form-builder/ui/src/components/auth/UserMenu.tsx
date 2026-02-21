@@ -94,7 +94,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     return (
       <button
         onClick={onOpenAuth}
-        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98]"
+        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98] cursor-pointer"
       >
         <User className="h-4 w-4" />
         Sign In
@@ -109,7 +109,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         aria-label="User menu"
         aria-expanded={isOpen}
         className={cn(
-          'flex items-center gap-2 px-2 py-1.5 text-sm rounded-lg transition-all duration-150',
+          'flex items-center gap-2 px-2 py-1.5 text-sm rounded-lg transition-all duration-150 cursor-pointer',
           'hover:bg-gray-100 dark:hover:bg-slate-800',
           isOpen && 'bg-gray-100 dark:bg-slate-800'
         )}
@@ -127,7 +127,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
       </button>
 
       {isOpen && (
-        <div role="menu" className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
+        <div role="menu" aria-label="User menu" className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
           {/* User info */}
           <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
             <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
@@ -164,8 +164,8 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           {/* Menu items */}
           <div className="py-1">
             <button
-              onClick={handleToggleStorageMode}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              onClick={() => { handleToggleStorageMode(); setIsOpen(false); }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               {storageMode === 'api' ? (
                 <>
@@ -184,7 +184,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
               <button
                 onClick={handleSyncToCloud}
                 disabled={isSyncing}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
               >
                 <RefreshCw className={cn('h-4 w-4 text-gray-400 dark:text-slate-500', isSyncing && 'animate-spin')} />
                 {isSyncing ? 'Syncing...' : 'Sync to Cloud'}
@@ -196,7 +196,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
                 setIsOpen(false);
                 navigate('/settings');
               }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               <Settings className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Settings
@@ -207,7 +207,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           <div className="border-t border-gray-100 dark:border-slate-800 py-1">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
             >
               <LogOut className="h-4 w-4" />
               Sign Out

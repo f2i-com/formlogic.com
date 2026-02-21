@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
@@ -45,6 +45,18 @@ export function FormsList() {
   const [isCreating, setIsCreating] = useState(false);
   const [showPackImport, setShowPackImport] = useState(false);
 
+  // Close dropdown menu on scroll or resize to prevent stale positioning
+  useEffect(() => {
+    if (!activeMenu) return;
+    const close = () => setActiveMenu(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [activeMenu]);
+
   const handleCreateForm = async () => {
     if (isCreating) return;
     setIsCreating(true);
@@ -86,7 +98,7 @@ export function FormsList() {
     const isMenuOpen = activeMenu?.id === form.id;
 
     return (
-      <Card className="hover:shadow-md transition-shadow">
+      <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
         <CardContent>
           <div className="flex items-start justify-between mb-3 gap-2">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -127,7 +139,7 @@ export function FormsList() {
                     onClick={() => setActiveMenu(null)}
                   />
                   <div
-                    className="absolute w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/5 overflow-hidden"
+                    className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
                     style={{
                       top: activeMenu.rect.bottom + 4,
                       left: Math.max(8, activeMenu.rect.right - 192), // Align right edge, clamp to viewport
@@ -138,7 +150,7 @@ export function FormsList() {
                         navigate(`/builder/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <Pencil className="h-4 w-4" /> Edit
                     </button>
@@ -147,7 +159,7 @@ export function FormsList() {
                         navigate(`/preview/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <Eye className="h-4 w-4" /> Preview
                     </button>
@@ -156,7 +168,7 @@ export function FormsList() {
                         navigate(`/analytics/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <BarChart3 className="h-4 w-4" /> Analytics
                     </button>
@@ -165,13 +177,13 @@ export function FormsList() {
                         navigate(`/responses/${form.id}`);
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <Table className="h-4 w-4" /> View Data
                     </button>
                     <button
                       onClick={() => handleDuplicate(form.id)}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <Copy className="h-4 w-4" /> Duplicate
                     </button>
@@ -180,7 +192,7 @@ export function FormsList() {
                         setEmbedModalForm({ id: form.id, title: form.title });
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                     >
                       <Share2 className="h-4 w-4" /> Share & Embed
                     </button>
@@ -190,7 +202,7 @@ export function FormsList() {
                         setDeleteTarget({ id: form.id, title: form.title });
                         setActiveMenu(null);
                       }}
-                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer"
                     >
                       <Trash2 className="h-4 w-4" /> Delete
                     </button>
@@ -239,7 +251,7 @@ export function FormsList() {
         title="My Forms"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} title="Import Pack">
               <span className="hidden sm:inline">Import Pack</span>
             </Button>
             <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
@@ -263,7 +275,8 @@ export function FormsList() {
           <select
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
-            className="px-3 py-2 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500"
+            aria-label="Sort forms by"
+            className="px-3.5 py-2.5 bg-white dark:bg-slate-900 border border-gray-200/80 dark:border-slate-800 rounded-xl text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all duration-200 cursor-pointer"
           >
             <option value="modified">Last Modified</option>
             <option value="name">Name A-Z</option>

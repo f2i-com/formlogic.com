@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useId, useRef, useEffect, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -114,7 +114,7 @@ export function Dropdown({
     }
   }, [disabled, isOpen, focusedIndex, options, onChange]);
 
-  const listboxId = useRef(`dropdown-${Math.random().toString(36).slice(2, 9)}`).current;
+  const listboxId = `dropdown${useId()}`;
 
   return (
     <div className={cn('w-full', className)} ref={dropdownRef}>

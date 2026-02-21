@@ -95,12 +95,13 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
 
         {mode === 'register' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+            <label htmlFor="auth-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Name
             </label>
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <Input
+                id="auth-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -113,12 +114,13 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
         )}
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+          <label htmlFor="auth-email" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
             Email <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
             <Input
+              id="auth-email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -131,12 +133,13 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+          <label htmlFor="auth-password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
             Password <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
             <Input
+              id="auth-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -150,12 +153,13 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
 
         {mode === 'register' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
+            <label htmlFor="auth-confirm-password" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">
               Confirm Password <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <Input
+                id="auth-confirm-password"
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}

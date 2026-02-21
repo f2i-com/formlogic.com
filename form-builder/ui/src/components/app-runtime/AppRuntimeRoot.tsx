@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Routes, Route, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppRuntimeThemeProvider } from './AppRuntimeThemeProvider';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
@@ -33,6 +33,7 @@ export function AppRuntimeRoot() {
             <Route path="/form/:formId/responses" element={<AppDataTable />} />
             <Route path="/form/:formId/responses/:responseId" element={<AppResponseDetail />} />
             <Route path="/profile" element={<AppUserProfile />} />
+            <Route path="*" element={<Navigate to="." replace />} />
           </Routes>
         </AppRuntimeShell>
       </AppRuntimeAuthGuard>

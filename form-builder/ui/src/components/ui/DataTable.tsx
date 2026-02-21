@@ -93,15 +93,15 @@ export function DataTable<T extends Record<string, unknown>>({
             onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             placeholder={searchPlaceholder}
             aria-label="Search table"
-            className="w-full max-w-sm pl-9 pr-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="w-full max-w-sm pl-9 pr-3.5 py-2 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200"
           />
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-slate-700">
+      <div className="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-slate-700/60">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 sticky top-0 z-10">
+            <tr className="bg-gray-50/80 dark:bg-slate-800/80 border-b border-gray-200/80 dark:border-slate-700/60 sticky top-0 z-10">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -128,7 +128,7 @@ export function DataTable<T extends Record<string, unknown>>({
               <tr>
                 <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center">
                   <Inbox className="h-8 w-8 mx-auto text-gray-300 dark:text-slate-600 mb-2" />
-                  <p className="text-sm text-gray-500 dark:text-slate-500">{emptyMessage}</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">{emptyMessage}</p>
                 </td>
               </tr>
             ) : (
@@ -140,7 +140,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   tabIndex={onRowClick ? 0 : undefined}
                   onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(item); } } : undefined}
                   className={cn(
-                    'border-b border-gray-100 dark:border-slate-700/50 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors',
+                    'border-b border-gray-100 dark:border-slate-700/40 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors duration-150',
                     onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-500/10'
                   )}
                 >
@@ -171,7 +171,7 @@ export function DataTable<T extends Record<string, unknown>>({
               onClick={() => setPage(Math.max(0, safePage - 1))}
               disabled={safePage === 0}
               aria-label="Previous page"
-              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -180,7 +180,7 @@ export function DataTable<T extends Record<string, unknown>>({
               onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
               disabled={safePage >= totalPages - 1}
               aria-label="Next page"
-              className="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

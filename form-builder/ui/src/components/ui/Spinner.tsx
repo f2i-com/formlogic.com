@@ -9,7 +9,7 @@ export function Spinner({ size = 'md', className }: SpinnerProps) {
   const sizes = {
     sm: 'h-4 w-4 border-2',
     md: 'h-8 w-8 border-2',
-    lg: 'h-12 w-12 border-3',
+    lg: 'h-12 w-12 border-[3px]',
   };
 
   return (
@@ -38,7 +38,7 @@ export function LoadingState({ message = 'Loading...', size = 'md', className }:
     <div className={cn('flex flex-col items-center justify-center py-12', className)}>
       <Spinner size={size} />
       {message && (
-        <p className="mt-4 text-sm text-gray-500 dark:text-slate-500">{message}</p>
+        <p className="mt-4 text-sm text-gray-500 dark:text-slate-400">{message}</p>
       )}
     </div>
   );

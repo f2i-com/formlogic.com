@@ -75,9 +75,9 @@ function SectionHeader({
         <Icon className={`h-5 w-5 ${iconColor}`} />
       </div>
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h2>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white tracking-tight">{title}</h2>
         {description && (
-          <p className="text-sm text-gray-500 dark:text-slate-500 mt-0.5">{description}</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">{description}</p>
         )}
       </div>
     </div>
@@ -250,7 +250,7 @@ export function Settings() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white">Email notifications</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-500">Receive email notifications for new form responses</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">Receive email notifications for new form responses</p>
                   </div>
                 </div>
                 <Switch
@@ -265,7 +265,7 @@ export function Settings() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white">Weekly digest</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-500">Get a weekly summary of form activity</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">Get a weekly summary of form activity</p>
                   </div>
                 </div>
                 <Switch
@@ -350,7 +350,7 @@ export function Settings() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white">Show progress bar</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-500">Display progress bar on forms by default</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">Display progress bar on forms by default</p>
                   </div>
                 </div>
                 <Switch
@@ -365,7 +365,7 @@ export function Settings() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white">Allow back navigation</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-500">Allow respondents to go back to previous questions</p>
+                    <p className="text-sm text-gray-500 dark:text-slate-400">Allow respondents to go back to previous questions</p>
                   </div>
                 </div>
                 <Switch

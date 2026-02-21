@@ -121,7 +121,7 @@ export const useFormStore = create<FormState>()(
     // Helper to sync a form field to the API with debouncing
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
       if (get().storageMode === 'api') {
-        debouncedSave(formId, async () => {
+        debouncedSave(`${formId}-${field}`, async () => {
           const form = get().forms.find((f) => f.id === formId);
           if (form) {
             await api.updateForm(formId, { [field]: form[field] });
@@ -295,7 +295,10 @@ export const useFormStore = create<FormState>()(
       deleteForm: async (id) => {
         const state = get();
 
-        // Clear any pending debounce timer for this form
+        // Clear any pending debounce timers for this form
+        clearDebounceTimer(`${id}-fields`);
+        clearDebounceTimer(`${id}-settings`);
+        clearDebounceTimer(`${id}-theme`);
         clearDebounceTimer(id);
 
         // Optimistic update

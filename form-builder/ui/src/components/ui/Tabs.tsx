@@ -91,6 +91,7 @@ export function TabsTrigger({
       aria-selected={isActive}
       onClick={() => !disabled && setActiveTab(value)}
       disabled={disabled}
+      tabIndex={isActive ? 0 : -1}
       className={cn(
         'text-sm font-medium flex-shrink-0 whitespace-nowrap transition-all duration-200',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',

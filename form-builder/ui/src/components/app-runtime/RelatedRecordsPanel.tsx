@@ -36,7 +36,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-6">
+      <div className="flex items-center justify-center py-6" role="status" aria-label="Loading related records">
         <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
       </div>
     );
@@ -55,10 +55,10 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   }
 
   return (
-    <div className="mt-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200 dark:border-slate-700 overflow-hidden">
-      <div className="px-5 py-3 border-b border-gray-200 dark:border-slate-700/50 flex items-center gap-2">
-        <Link2 className="h-4 w-4 text-indigo-500" />
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Related Records</h3>
+    <div className="mt-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 overflow-hidden">
+      <div className="px-5 py-3 border-b border-gray-100 dark:border-slate-700/40 flex items-center gap-2">
+        <Link2 className="h-4 w-4 text-primary-500" />
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight">Related Records</h3>
       </div>
 
       {groups.map((group) => (
@@ -77,7 +77,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
                 key={record.id}
                 type="button"
                 onClick={() => navigate(`/app/${appSlug}/form/${group.formId}/responses/${record.id}`)}
-                className="w-full text-left px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group"
+                className="w-full text-left px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-all duration-200 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-700 dark:text-slate-300 truncate">

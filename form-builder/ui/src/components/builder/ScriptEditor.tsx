@@ -381,7 +381,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
               <p className="text-sm text-gray-500 dark:text-slate-400">Write code that runs when forms are submitted</p>
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
+          <button type="button" onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer">
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
@@ -397,7 +397,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
                 activeTab === tab.key
                   ? 'border-primary-600 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
@@ -528,7 +528,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                       <button
                         key={i}
                         onClick={() => setAiPrompt(example)}
-                        className="w-full text-left text-sm text-gray-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-slate-800 px-3 py-2 rounded-lg transition-colors"
+                        className="w-full text-left text-sm text-gray-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-slate-800 px-3 py-2 rounded-lg transition-colors cursor-pointer"
                       >
                         {example}
                       </button>

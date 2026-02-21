@@ -12,8 +12,8 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
       <div
         ref={ref}
         className={cn(
-          'bg-white dark:bg-slate-900/50 backdrop-blur-md border border-gray-100 dark:border-white/10 rounded-xl shadow-sm',
-          hover && 'transition-all duration-300 hover:shadow-lg hover:-translate-y-1 hover:border-primary-500/30 dark:hover:shadow-primary-500/5',
+          'bg-white dark:bg-slate-900/50 backdrop-blur-md border border-gray-200/80 dark:border-white/[0.06] rounded-xl shadow-sm shadow-gray-900/[0.03]',
+          hover && 'transition-all duration-300 ease-out hover:shadow-lg hover:shadow-gray-900/[0.06] hover:-translate-y-1 hover:border-gray-300 dark:hover:border-primary-500/20 dark:hover:shadow-primary-500/5',
           className
         )}
         {...props}
@@ -36,7 +36,7 @@ const CardHeader = React.forwardRef<HTMLDivElement, CardHeaderProps>(
       <div
         ref={ref}
         className={cn(
-          'px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5',
+          'px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/80 dark:bg-white/[0.02]',
           className
         )}
         {...props}
@@ -75,7 +75,7 @@ const CardFooter = React.forwardRef<HTMLDivElement, CardFooterProps>(
       <div
         ref={ref}
         className={cn(
-          'px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5',
+          'px-4 py-3 sm:px-6 sm:py-4 border-t border-gray-100 dark:border-white/5 bg-gray-50/80 dark:bg-white/[0.02]',
           className
         )}
         {...props}

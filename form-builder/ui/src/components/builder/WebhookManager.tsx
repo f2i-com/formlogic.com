@@ -143,12 +143,13 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                   toast.success('Copied!');
                 }
               }}
-              className="p-2 hover:bg-amber-100 dark:hover:bg-amber-500/20 rounded"
+              className="p-2 hover:bg-amber-100 dark:hover:bg-amber-500/20 rounded cursor-pointer"
+              aria-label="Copy secret to clipboard"
             >
               <Copy className="h-4 w-4" />
             </button>
           </div>
-          <button onClick={() => setNewSecret(null)} className="text-xs text-amber-600 dark:text-amber-400 mt-2 underline">
+          <button type="button" onClick={() => setNewSecret(null)} className="text-xs text-amber-600 dark:text-amber-400 mt-2 underline cursor-pointer">
             Dismiss
           </button>
         </div>
@@ -223,7 +224,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
           {webhooks.map(webhook => (
             <div key={webhook.id} className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden">
               <div className="flex items-center gap-3 p-3">
-                <button onClick={() => handleToggle(webhook)} title={webhook.isActive ? 'Active' : 'Inactive'}>
+                <button type="button" onClick={() => handleToggle(webhook)} title={webhook.isActive ? 'Active' : 'Inactive'} aria-label={webhook.isActive ? 'Deactivate webhook' : 'Activate webhook'} className="cursor-pointer">
                   {webhook.isActive ? (
                     <ToggleRight className="h-5 w-5 text-green-500" />
                   ) : (
@@ -238,10 +239,10 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                     ))}
                   </div>
                 </div>
-                <button onClick={() => handleViewDeliveries(webhook.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded" title="View deliveries">
+                <button type="button" onClick={() => handleViewDeliveries(webhook.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer" title="View deliveries" aria-label="View deliveries">
                   {expandedWebhook === webhook.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                 </button>
-                <button onClick={() => handleDelete(webhook.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500" title="Delete">
+                <button type="button" onClick={() => handleDelete(webhook.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 cursor-pointer" title="Delete" aria-label="Delete webhook">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

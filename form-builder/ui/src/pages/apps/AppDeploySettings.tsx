@@ -79,21 +79,21 @@ export function AppDeploySettings() {
       <div className="space-y-6">
         {/* Status */}
         {app.status !== 'published' && (
-          <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-500/20 rounded-xl p-6">
-            <h3 className="font-medium text-yellow-800 dark:text-yellow-400 mb-2">App is not published</h3>
+          <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200/80 dark:border-yellow-500/20 rounded-2xl p-6">
+            <h3 className="font-medium text-yellow-800 dark:text-yellow-400 mb-2 tracking-tight">App is not published</h3>
             <p className="text-sm text-yellow-700 dark:text-yellow-300/70 mb-4">Publish your app to make it accessible to users.</p>
             <Button onClick={handlePublish}>Publish App</Button>
           </div>
         )}
 
         {/* Share Link */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
           <div className="flex items-center gap-3 mb-4">
             <Globe className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            <h3 className="font-medium text-gray-900 dark:text-white">Share Link</h3>
+            <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Share Link</h3>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex-1 px-3 py-2 bg-gray-50 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 text-sm text-gray-700 dark:text-slate-300 font-mono overflow-hidden text-ellipsis">
+            <div className="flex-1 px-3.5 py-2.5 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200/80 dark:border-slate-700/60 text-sm text-gray-700 dark:text-slate-300 font-mono overflow-hidden text-ellipsis">
               {appUrl}
             </div>
             <Button variant="outline" size="sm" onClick={handleCopy} leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
@@ -106,15 +106,15 @@ export function AppDeploySettings() {
         </div>
 
         {/* PWA */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-6">
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
           <div className="flex items-center gap-3 mb-4">
             <Smartphone className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            <h3 className="font-medium text-gray-900 dark:text-white">Progressive Web App</h3>
+            <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Progressive Web App</h3>
           </div>
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
             Users can install this app on their mobile devices for a native-like experience.
           </p>
-          <div className="bg-gray-50 dark:bg-slate-800 rounded-lg p-4 text-sm text-gray-600 dark:text-slate-400">
+          <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-400">
             <p className="font-medium mb-2">Install Instructions:</p>
             <ol className="list-decimal list-inside space-y-1">
               <li>Open the app URL on a mobile device</li>

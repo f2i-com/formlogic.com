@@ -139,11 +139,11 @@ export function AppRelationsManager() {
             </div>
           )}
           {relations.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-12 text-center">
+            <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-12 text-center">
               <div className="mx-auto w-12 h-12 rounded-xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
                 <Link2 className="h-6 w-6 text-primary-600 dark:text-primary-400" />
               </div>
-              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">No relations yet</h3>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 tracking-tight">No relations yet</h3>
               <p className="text-sm text-gray-500 dark:text-slate-400 mb-6 max-w-sm mx-auto">
                 Relations link records between forms. Create one to connect your data.
               </p>
@@ -156,7 +156,7 @@ export function AppRelationsManager() {
               {relations.map((rel) => (
                 <div
                   key={`${rel.sourceFormId}-${rel.field.id}`}
-                  className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4 hover:border-gray-300 dark:hover:border-slate-600 transition-colors"
+                  className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200"
                 >
                   {/* Relation label */}
                   <div className="flex items-center gap-2 mb-3">
@@ -185,7 +185,7 @@ export function AppRelationsManager() {
                   <div className="flex gap-1 border-t border-gray-100 dark:border-slate-800 pt-3">
                     <button
                       onClick={() => handleEdit(rel)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
                       title="Open in Form Builder for full configuration"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
@@ -193,7 +193,7 @@ export function AppRelationsManager() {
                     </button>
                     <button
                       onClick={() => setDeleteTarget(rel)}
-                      className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors ml-auto"
+                      className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer ml-auto"
                       aria-label="Delete relation"
                     >
                       <Trash2 className="h-4 w-4" />

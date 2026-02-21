@@ -48,18 +48,22 @@ function ToastItem({ toast }: { toast: ToastType }) {
   const Icon = icons[toast.type];
   const style = styles[toast.type];
 
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
   const handleClose = useCallback(() => {
     setIsExiting(true);
     timeoutRef.current = setTimeout(() => removeToast(toast.id), 150);
   }, [removeToast, toast.id]);
+
+  // Auto-dismiss after timeout
+  useEffect(() => {
+    const duration = toast.type === 'error' ? 6000 : 4000;
+    const autoDismiss = setTimeout(() => handleClose(), duration);
+    return () => {
+      clearTimeout(autoDismiss);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [handleClose, toast.type]);
 
   return (
     <div
@@ -97,7 +101,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col gap-3">
+    <div className="fixed bottom-20 right-4 md:bottom-4 z-[100] flex flex-col gap-3">
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} />
       ))}

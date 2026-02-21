@@ -62,18 +62,18 @@ function StatCard({
   subtext?: string;
 }) {
   return (
-    <Card className="hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5">
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white">{value}</p>
+            <p className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">{value}</p>
             <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mt-1">{label}</p>
             {subtext && (
-              <p className="text-xs text-slate-500 mt-0.5">{subtext}</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{subtext}</p>
             )}
           </div>
-          <div className={`p-3 rounded-xl ${iconBg}`}>
-            <Icon className={`h-6 w-6 ${iconColor}`} />
+          <div className={`p-2.5 rounded-xl ${iconBg}`}>
+            <Icon className={`h-5 w-5 ${iconColor}`} />
           </div>
         </div>
       </CardContent>
@@ -96,12 +96,12 @@ function QuickActionButton({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition-all duration-200 hover:-translate-y-0.5 ${primary
-        ? 'bg-primary-600 border-primary-500 text-white hover:bg-primary-500 shadow-lg shadow-primary-500/20'
-        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200 dark:border-white/10 text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/20 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50'
+      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-xl border transition-all duration-300 hover:-translate-y-0.5 cursor-pointer ${primary
+        ? 'bg-primary-600 border-primary-500 text-white hover:bg-primary-500 shadow-md shadow-primary-600/15'
+        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/10 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
         }`}
     >
-      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-500 dark:text-slate-400'}`} />
+      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-400 dark:text-slate-400'}`} />
       <span className={`text-sm font-medium ${primary ? 'text-white' : 'text-gray-700 dark:text-slate-300'}`}>
         {label}
       </span>
@@ -207,7 +207,7 @@ function FormActionsDropdown({
         )}
       </Button>
       {isOpen && (
-        <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-lg shadow-xl border border-gray-100 dark:border-slate-800 py-1 z-50 ring-1 ring-black/5 dark:ring-white/5">
+        <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50 ring-1 ring-black/5 dark:ring-white/[0.06]">
           {/* Mobile-only quick actions */}
           <div className="sm:hidden">
             <button
@@ -414,7 +414,7 @@ export function Dashboard() {
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Welcome Section */}
         <div className="mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
             Welcome back{user?.name ? `, ${user.name}` : ''}!
           </h1>
           <p className="text-gray-500 dark:text-slate-400 mt-1">{today}</p>
@@ -458,7 +458,7 @@ export function Dashboard() {
 
         {/* Quick Actions */}
         <div className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider mb-3">
+          <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">
             Quick Actions
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
@@ -494,7 +494,7 @@ export function Dashboard() {
         {/* Getting Started Section for New Users */}
         {showGettingStarted && (
           <div className="mb-8">
-            <Card className="bg-gradient-to-br from-indigo-900/50 to-purple-900/50 border-indigo-500/30">
+            <Card className="bg-gradient-to-br from-indigo-600/90 to-purple-700/90 dark:from-indigo-900/50 dark:to-purple-900/50 border-indigo-500/20">
               <CardContent className="p-6 sm:p-8">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
                   <div className="p-4 bg-white/20 rounded-2xl">
@@ -573,7 +573,7 @@ export function Dashboard() {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fields?.length || 0;
                   return (
-                    <Card key={form.id} className="hover:shadow-md transition-all duration-200">
+                    <Card key={form.id} className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-4 min-w-0 flex-1">
@@ -582,7 +582,7 @@ export function Dashboard() {
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-semibold text-gray-900 dark:text-white truncate">
+                                <h4 className="font-semibold text-gray-900 dark:text-white truncate" title={form.title}>
                                   {form.title}
                                 </h4>
                                 <Badge
@@ -592,7 +592,7 @@ export function Dashboard() {
                                   {form.status}
                                 </Badge>
                               </div>
-                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-500">
+                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400">
                                 <span className="flex items-center gap-1">
                                   <Clock className="h-3.5 w-3.5" />
                                   {formatRelativeTime(form.updatedAt)}
@@ -611,6 +611,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/builder/${form.id}`)}
                               title="Edit form"
+                              aria-label="Edit form"
                               className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Pencil className="h-4 w-4" />
@@ -620,6 +621,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/preview/${form.id}`)}
                               title="Preview form"
+                              aria-label="Preview form"
                               className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Eye className="h-4 w-4" />
@@ -629,6 +631,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/analytics/${form.id}`)}
                               title="View analytics"
+                              aria-label="View analytics"
                               className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <BarChart3 className="h-4 w-4" />
@@ -638,6 +641,7 @@ export function Dashboard() {
                               size="sm"
                               onClick={() => navigate(`/responses/${form.id}`)}
                               title="View data"
+                              aria-label="View data"
                               className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Table className="h-4 w-4" />
@@ -673,10 +677,10 @@ export function Dashboard() {
                 {recentResponses.length === 0 ? (
                   <div className="py-12 text-center px-4">
                     <div className="w-12 h-12 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <Inbox className="h-6 w-6 text-gray-400 dark:text-slate-500" />
+                      <Inbox className="h-6 w-6 text-gray-400 dark:text-slate-400" />
                     </div>
-                    <p className="text-sm text-gray-500 dark:text-slate-500">No submissions yet</p>
-                    <p className="text-xs text-gray-400 dark:text-slate-600 mt-1">
+                    <p className="text-sm text-gray-500 dark:text-slate-400">No submissions yet</p>
+                    <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
                       Responses will appear here
                     </p>
                   </div>

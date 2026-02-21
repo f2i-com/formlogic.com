@@ -128,8 +128,8 @@ export function AppFormManager() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Available forms */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3">Available Forms</h3>
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available Forms</h3>
           {availableForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-500 py-4 text-center">
               {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'All forms are already included.'}
@@ -137,12 +137,12 @@ export function AppFormManager() {
           ) : (
             <div className="space-y-2">
               {availableForms.map((form) => (
-                <div key={form.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800">
+                <div key={form.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
                   <div>
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
                     <span className="ml-2 text-xs text-gray-400 dark:text-slate-500">{form.status}</span>
                   </div>
-                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="p-1.5 rounded-md hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors">
+                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="p-1.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
                   </button>
                 </div>
@@ -152,23 +152,23 @@ export function AppFormManager() {
         </div>
 
         {/* Included forms */}
-        <div className="bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200 dark:border-slate-700 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3">Included Forms ({appForms.length})</h3>
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Included Forms ({appForms.length})</h3>
           {appForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-500 py-4 text-center">No forms included yet</p>
           ) : (
             <div className="space-y-2">
               {appForms.map((af) => (
-                <div key={af.formId} className="p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50">
+                <div key={af.formId} className="p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/50">
                   <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
-                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors">
+                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
                     <Pencil className="h-4 w-4" />
                   </button>
-                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
+                  <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors cursor-pointer', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
                     {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
-                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors">
+                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
                   </div>

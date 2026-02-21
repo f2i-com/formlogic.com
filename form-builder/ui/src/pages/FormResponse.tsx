@@ -194,13 +194,25 @@ function FieldResponse({
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
-          <div className="flex gap-3 justify-center">
+          <div className="flex gap-3 justify-center" role="radiogroup" aria-label={`${field.label} rating`}>
             {Array.from({ length: maxStars }, (_, i) => (
               <button
                 key={i}
+                role="radio"
+                aria-checked={currentRating === i + 1}
+                aria-label={`${i + 1} star${i === 0 ? '' : 's'}`}
                 onClick={() => onChange(i + 1)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    onChange(Math.min((currentRating || 0) + 1, maxStars));
+                  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    onChange(Math.max((currentRating || 0) - 1, 1));
+                  }
+                }}
                 className={cn(
-                  'text-5xl transition-transform hover:scale-110',
+                  'text-5xl transition-transform hover:scale-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center',
                   i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
@@ -233,7 +245,7 @@ function FieldResponse({
                     key={num}
                     onClick={() => onChange(num)}
                     className={cn(
-                      'py-4 rounded-lg border-2 font-bold text-lg transition-all',
+                      'py-4 min-h-[44px] rounded-lg border-2 font-bold text-lg transition-all cursor-pointer',
                       scaleValue === num
                         ? 'text-white'
                         : 'border-current/20 hover:border-current/30'
@@ -358,6 +370,7 @@ function FieldResponse({
               className="w-full h-52 border-2 rounded-xl bg-white cursor-crosshair relative overflow-hidden transition-colors"
               style={{ borderColor: value ? primaryColor : `${textColor || '#1f2937'}30` }}
               onMouseDown={(e) => {
+                e.preventDefault();
                 const canvas = e.currentTarget.querySelector('canvas');
                 if (!canvas) return;
                 const ctx = canvas.getContext('2d');
@@ -454,7 +467,7 @@ function FieldResponse({
                   }
                   onChange(null);
                 }}
-                className="text-red-500 hover:text-red-700 font-medium flex items-center gap-1.5"
+                className="text-red-500 hover:text-red-700 font-medium flex items-center gap-1.5 cursor-pointer"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -568,7 +581,7 @@ function FieldResponse({
     <div className="w-full max-w-xl mx-auto">
       <div className="mb-8">
         <h2
-          className="text-3xl font-bold mb-3"
+          className="text-3xl font-bold mb-3 tracking-tight"
           style={{ color: textColor }}
         >
           {field.label}
@@ -680,7 +693,7 @@ export default function FormResponse() {
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
         <div className="text-center" style={{ color: form.theme.textColor }}>
-          <h1 className="text-2xl font-bold mb-2">Form Closed</h1>
+          <h1 className="text-2xl font-bold mb-2 tracking-tight">Form Closed</h1>
           <p className="opacity-70">
             {form.settings.closedMessage || 'This form is no longer accepting responses.'}
           </p>
@@ -822,7 +835,7 @@ export default function FormResponse() {
               >
                 {isLastStep ? 'Submit' : 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
-              <span className="text-sm opacity-50">
+              <span className="hidden sm:inline text-sm opacity-50">
                 press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>
               </span>
             </div>
@@ -842,14 +855,14 @@ export default function FormResponse() {
             onClick={prevStep}
             disabled={safeCurrentStep === 0}
             aria-label="Previous question"
-            className="p-2 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity"
+            className="p-3 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity cursor-pointer"
           >
             <ChevronUp className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
             aria-label="Next question"
-            className="p-2 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 transition-opacity"
+            className="p-3 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 transition-opacity cursor-pointer"
           >
             <ChevronDown className="h-5 w-5" />
           </button>

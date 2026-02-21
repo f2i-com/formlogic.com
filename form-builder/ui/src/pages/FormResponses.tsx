@@ -67,8 +67,8 @@ function StatCard({
             <Icon className={cn('h-5 w-5', iconColor)} />
           </div>
           <div>
-            <p className={cn("text-2xl font-bold", textColor || "text-gray-900 dark:text-white")}>{value}</p>
-            <p className="text-sm text-gray-500 dark:text-slate-500">{label}</p>
+            <p className={cn("text-2xl font-bold tracking-tight", textColor || "text-gray-900 dark:text-white")}>{value}</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400">{label}</p>
           </div>
         </div>
       </CardContent>
@@ -287,6 +287,7 @@ function FormResponses() {
     const allExportFields = form.fields.filter(
       (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
     );
+    const escapeCell = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
     const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];
     const rows = responses.map((r) => [
       r.id,
@@ -294,7 +295,7 @@ function FormResponses() {
       ...allExportFields.map((f) => formatValue(r.answers[f.id])),
     ]);
 
-    const csv = [headers.join(','), ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -372,7 +373,7 @@ function FormResponses() {
       <Header
         title={`${form.title} - Responses`}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => navigate(`/analytics/${formId}`)}>
               <ArrowLeft className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Back to Analytics</span>
@@ -381,11 +382,11 @@ function FormResponses() {
               <Share2 className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Share</span>
             </Button>
-            <Button variant="outline" onClick={() => setShowCsvImport(true)}>
+            <Button variant="outline" onClick={() => setShowCsvImport(true)} title="Import CSV">
               <Upload className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Import CSV</span>
             </Button>
-            <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0}>
+            <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0} title="Export CSV">
               <Download className="h-4 w-4 sm:mr-2" />
               <span className="hidden sm:inline">Export CSV</span>
             </Button>
@@ -437,6 +438,7 @@ function FormResponses() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
               <input
                 placeholder="Search responses..."
+                aria-label="Search responses"
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
@@ -567,7 +569,7 @@ function FormResponses() {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="px-4 py-3 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between">
-                <p className="text-sm text-gray-500 dark:text-slate-500">
+                <p className="text-sm text-gray-500 dark:text-slate-400">
                   Showing <span className="font-medium text-gray-900 dark:text-white">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{' '}
                   <span className="font-medium text-gray-900 dark:text-white">{Math.min(currentPage * ITEMS_PER_PAGE, filteredResponses.length)}</span> of{' '}
                   <span className="font-medium text-gray-900 dark:text-white">{filteredResponses.length}</span> responses
@@ -616,7 +618,7 @@ function FormResponses() {
                 .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
                 .map((field) => (
                   <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
-                    <p className="text-sm font-medium text-gray-500 dark:text-slate-500 mb-1">{field.label}</p>
+                    <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
                     <p className="text-gray-900 dark:text-white">
                       {formatValue(selectedResponse.answers[field.id]) || (
                         <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
@@ -626,23 +628,23 @@ function FormResponses() {
                 ))}
               {/* Metadata */}
               <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
-                <h3 className="text-sm font-medium text-gray-500 dark:text-slate-500 mb-3">Metadata</h3>
+                <h3 className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Metadata</h3>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <p className="text-gray-500 dark:text-slate-500">Response ID</p>
+                    <p className="text-gray-500 dark:text-slate-400">Response ID</p>
                     <p className="text-gray-700 dark:text-slate-300 font-mono text-xs bg-gray-100 dark:bg-slate-800 px-2 py-1 rounded mt-1">
                       {selectedResponse.id}
                     </p>
                   </div>
                   <div>
-                    <p className="text-gray-500 dark:text-slate-500">Completion Time</p>
+                    <p className="text-gray-500 dark:text-slate-400">Completion Time</p>
                     <p className="text-gray-900 dark:text-white mt-1">
                       {formatDuration(selectedResponse.completionTime || 0)}
                     </p>
                   </div>
                   {selectedResponse.metadata?.userAgent && (
                     <div className="col-span-2">
-                      <p className="text-gray-500 dark:text-slate-500">User Agent</p>
+                      <p className="text-gray-500 dark:text-slate-400">User Agent</p>
                       <p className="text-gray-900 dark:text-white text-xs truncate mt-1">
                         {selectedResponse.metadata.userAgent}
                       </p>
@@ -719,8 +721,8 @@ function FormResponses() {
               <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Delete Response</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-500">This action cannot be undone</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white tracking-tight">Delete Response</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400">This action cannot be undone</p>
             </div>
           </div>
           <p className="text-gray-600 dark:text-slate-400 mb-6">
@@ -756,9 +758,13 @@ function FormResponses() {
         onImportComplete={async () => {
           // Reload responses after import
           if (storageMode === 'api' && formId) {
-            const result = await api.getResponses(formId);
-            if (result.data?.responses) {
-              setResponses(result.data.responses as ResponseWithStatus[]);
+            try {
+              const result = await api.getResponses(formId);
+              if (result.data?.responses) {
+                setResponses(result.data.responses as ResponseWithStatus[]);
+              }
+            } catch {
+              // Responses will refresh on next page load
             }
           }
         }}

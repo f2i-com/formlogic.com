@@ -40,7 +40,7 @@ function FieldInput({
   primaryColor: string;
   formId?: string;
 }) {
-  const inputClass = 'w-full bg-transparent border-b-2 border-gray-300 dark:border-slate-600 outline-none py-2 text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-colors focus:border-current';
+  const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
   if (['short_text', 'email', 'phone', 'url'].includes(field.type)) {
@@ -83,7 +83,7 @@ function FieldInput({
         }}
         placeholder={field.placeholder || 'Type a number...'}
         className={inputClass}
-        style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
+        style={{ ...focusStyle, borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
         autoFocus
       />
     );
@@ -95,7 +95,7 @@ function FieldInput({
         type={field.type === 'datetime' ? 'datetime-local' : field.type}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
-        className={cn(inputClass, 'max-w-xs')}
+        className={cn(inputClass, 'max-w-full sm:max-w-xs')}
         style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
         autoFocus
       />
@@ -131,7 +131,7 @@ function FieldInput({
               >
                 {String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-lg text-gray-900 dark:text-white">{option.label}</span>
+              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label}</span>
               {selected && <Check className="h-5 w-5 flex-shrink-0" style={{ color: primaryColor }} />}
             </button>
           );
@@ -147,8 +147,8 @@ function FieldInput({
       <select
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-xl text-gray-900 dark:text-white transition-colors"
-        style={{ borderColor: value ? primaryColor : undefined }}
+        className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white transition-colors"
+        style={{ borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
       >
         <option value="">Select...</option>
         {options.map((opt) => (
@@ -188,7 +188,7 @@ function FieldInput({
               >
                 {checked ? <Check className="h-4 w-4" /> : String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-lg text-gray-900 dark:text-white">{option.label}</span>
+              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label}</span>
             </button>
           );
         })}
@@ -215,12 +215,12 @@ function FieldInput({
                 onChange(Math.min(maxStars, (currentRating || 0) + 1));
               } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                 e.preventDefault();
-                onChange(Math.max(1, (currentRating || 2) - 1));
+                onChange(Math.max(1, (currentRating || 0) - 1) || 1);
               }
             }}
             className={cn(
-              'text-4xl transition-all duration-150 hover:scale-125',
-              currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-600'
+              'text-4xl transition-all duration-150 hover:scale-125 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg',
+              currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-500'
             )}
           >
             ★
@@ -236,7 +236,7 @@ function FieldInput({
     const range = Math.max(1, max - min + 1);
     return (
       <div className="space-y-3">
-        <div className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-10')}>
+        <div className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
           {Array.from({ length: range }, (_, i) => {
             const num = min + i;
             const selected = value === num;
@@ -254,11 +254,11 @@ function FieldInput({
                     onChange(Math.min(max, ((value as number) || min - 1) + 1));
                   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    onChange(Math.max(min, ((value as number) || min + 1) - 1));
+                    onChange(Math.max(min, ((value as number) ?? min) - 1));
                   }
                 }}
                 className={cn(
-                  'aspect-square rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
+                  'aspect-square min-h-[44px] rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
                   selected ? 'text-white shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
                 style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
@@ -311,7 +311,7 @@ function FieldInput({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             <p className="text-sm text-gray-500 dark:text-slate-400">
-              <span className="font-medium" style={{ color: primaryColor }}>Click to upload</span> or drag and drop
+              <span className="font-medium" style={{ color: primaryColor }}>Click to upload</span>
             </p>
             {maxSize && <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Max {formatFileSize(maxSize)}</p>}
           </div>
@@ -324,10 +324,15 @@ function FieldInput({
               const files = Array.from(e.target.files || []);
               if (maxSize) {
                 const valid = files.filter(f => f.size <= maxSize);
+                const rejected = files.length - valid.length;
+                if (rejected > 0) {
+                  alert(`${rejected} file${rejected > 1 ? 's' : ''} exceeded the ${formatFileSize(maxSize)} limit and ${rejected > 1 ? 'were' : 'was'} skipped.`);
+                }
                 onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...valid] : valid);
               } else {
                 onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...files] : files);
               }
+              e.target.value = '';
             }}
           />
         </label>
@@ -337,7 +342,7 @@ function FieldInput({
               <div key={i} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-slate-800 rounded-lg text-sm">
                 <span className="flex-1 truncate text-gray-700 dark:text-slate-300">{file.name}</span>
                 <span className="text-gray-400 dark:text-slate-500 text-xs">{formatFileSize(file.size)}</span>
-                <button onClick={() => onChange(uploadedFiles.filter((_, idx) => idx !== i))} className="text-red-500 hover:text-red-700">✕</button>
+                <button type="button" onClick={() => onChange(uploadedFiles.filter((_, idx) => idx !== i))} aria-label="Remove file" className="text-red-500 hover:text-red-700 cursor-pointer">✕</button>
               </div>
             ))}
           </div>
@@ -358,6 +363,7 @@ function FieldInput({
           )}
           style={{ borderColor: value ? primaryColor : undefined }}
           onMouseDown={(e) => {
+            e.preventDefault();
             const canvas = e.currentTarget.querySelector('canvas');
             if (!canvas) return;
             const ctx = canvas.getContext('2d');
@@ -370,8 +376,8 @@ function FieldInput({
             const sy = canvas.height / rect.height;
             ctx.beginPath();
             ctx.moveTo((e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy);
-            const onMove = (me: MouseEvent) => { ctx.lineTo((me.clientX - rect.left) * sx, (me.clientY - rect.top) * sy); ctx.stroke(); onChange(canvas.toDataURL()); };
-            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            const onMove = (me: MouseEvent) => { ctx.lineTo((me.clientX - rect.left) * sx, (me.clientY - rect.top) * sy); ctx.stroke(); };
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); onChange(canvas.toDataURL()); };
             document.addEventListener('mousemove', onMove);
             document.addEventListener('mouseup', onUp);
           }}
@@ -390,8 +396,8 @@ function FieldInput({
             const t = e.touches[0];
             ctx.beginPath();
             ctx.moveTo((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
-            const onMove = (te: TouchEvent) => { te.preventDefault(); const mt = te.touches[0]; ctx.lineTo((mt.clientX - rect.left) * sx, (mt.clientY - rect.top) * sy); ctx.stroke(); onChange(canvas.toDataURL()); };
-            const onEnd = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); };
+            const onMove = (te: TouchEvent) => { te.preventDefault(); const mt = te.touches[0]; ctx.lineTo((mt.clientX - rect.left) * sx, (mt.clientY - rect.top) * sy); ctx.stroke(); };
+            const onEnd = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); onChange(canvas.toDataURL()); };
             document.addEventListener('touchmove', onMove, { passive: false });
             document.addEventListener('touchend', onEnd);
           }}
@@ -405,8 +411,9 @@ function FieldInput({
         </div>
         {Boolean(value) && (
           <button
+            type="button"
             onClick={(e) => { const c = (e.currentTarget.parentElement?.querySelector('canvas')) as HTMLCanvasElement | null; if (c) { c.getContext('2d')?.clearRect(0, 0, c.width, c.height); } onChange(null); }}
-            className="text-sm text-red-500 hover:text-red-700"
+            className="text-sm text-red-500 hover:text-red-700 cursor-pointer"
           >
             Clear signature
           </button>
@@ -548,7 +555,7 @@ export function AppFormView() {
 
   const handleNext = useCallback(() => {
     if (currentField?.required && !['statement', 'calculated'].includes(currentField.type)) {
-      const answer = answers[currentField.id];
+      const answer = answersRef.current[currentField.id];
       if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');
         return;
@@ -560,7 +567,7 @@ export function AppFormView() {
     } else {
       setCurrentStep((s) => Math.min(s + 1, fields.length - 1));
     }
-  }, [currentField, answers, isLastStep, fields.length, handleSubmit]);
+  }, [currentField, isLastStep, fields.length, handleSubmit]);
 
   const handlePrev = useCallback(() => {
     setError(null);
@@ -569,8 +576,10 @@ export function AppFormView() {
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      // Don't intercept Enter in textarea
+      // Don't intercept Enter in textarea or select elements
       if (currentField?.type === 'long_text') return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'SELECT') return;
       e.preventDefault();
       handleNext();
     }
@@ -591,7 +600,7 @@ export function AppFormView() {
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
           <p className="text-red-600 dark:text-red-400 mb-4">{fetchError}</p>
-          <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline">
+          <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline cursor-pointer">
             Back to Dashboard
           </button>
         </div>
@@ -604,7 +613,7 @@ export function AppFormView() {
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
           <p className="text-gray-500 dark:text-slate-400 mb-4">You don&apos;t have permission to submit responses to this form.</p>
-          <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline">
+          <button onClick={() => navigate(`/app/${appSlug}`)} className="text-sm app-text-primary hover:underline cursor-pointer">
             Back to Dashboard
           </button>
         </div>
@@ -627,8 +636,8 @@ export function AppFormView() {
           >
             <CheckCircle className="h-10 w-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white">Thank you!</h1>
-          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8">Your response has been submitted successfully.</p>
+          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">Thank you!</h1>
+          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed">Your response has been submitted successfully.</p>
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => { setSubmitted(false); setAnswers({}); setCurrentStep(0); setError(null); }}
@@ -653,7 +662,7 @@ export function AppFormView() {
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
           <p className="text-gray-500 dark:text-slate-400">This form has no fields.</p>
-          <button onClick={() => navigate(`/app/${appSlug}`)} className="mt-4 text-sm app-text-primary hover:underline">
+          <button onClick={() => navigate(`/app/${appSlug}`)} className="mt-4 text-sm app-text-primary hover:underline cursor-pointer">
             Back to Dashboard
           </button>
         </div>
@@ -677,7 +686,7 @@ export function AppFormView() {
       <div className="pt-2 pb-0 px-1">
         <button
           onClick={() => navigate(`/app/${appSlug}`)}
-          className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors"
+          className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors cursor-pointer"
         >
           <ArrowLeft className="h-4 w-4" /> {runtimeForm?.displayName || 'Back'}
         </button>
@@ -697,12 +706,12 @@ export function AppFormView() {
             >
               {/* Field label & description */}
               <div className="mb-8">
-                <h2 className="text-2xl md:text-3xl font-bold mb-2 text-gray-900 dark:text-white">
+                <h2 className="text-2xl md:text-3xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
                   {currentField.label}
                   {currentField.required && <span className="text-red-500 ml-1">*</span>}
                 </h2>
                 {currentField.description && (
-                  <p className="text-base md:text-lg text-gray-500 dark:text-slate-400">
+                  <p className="text-base md:text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
                     {currentField.description}
                   </p>
                 )}
@@ -734,7 +743,7 @@ export function AppFormView() {
                   type="button"
                   onClick={handleNext}
                   disabled={submitting}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-white text-sm font-medium transition-all hover:shadow-md disabled:opacity-50"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-white text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer"
                   style={{ backgroundColor: primaryColor }}
                 >
                   {submitting ? 'Submitting...' : isLastStep ? 'Submit' : 'OK'}
@@ -798,7 +807,7 @@ export function AppFormView() {
             onClick={handlePrev}
             disabled={safeStep === 0}
             aria-label="Previous field"
-            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors border border-gray-100 dark:border-slate-700"
+            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
           >
             <ChevronUp className="h-4 w-4" />
           </button>
@@ -807,7 +816,7 @@ export function AppFormView() {
             onClick={handleNext}
             disabled={submitting}
             aria-label="Next field"
-            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-md text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-colors border border-gray-100 dark:border-slate-700"
+            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
           >
             <ChevronDown className="h-4 w-4" />
           </button>

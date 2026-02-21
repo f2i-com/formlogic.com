@@ -26,7 +26,7 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
         {/* Background rounded square with gradient */}
         <rect width="40" height="40" rx="10" fill="url(#logoGradient)" />
 
-        {/* Branching flow icon: form input → logic branches → outcomes */}
+        {/* Branching flow icon: form input -> logic branches -> outcomes */}
         <g transform="translate(8, 6)">
           {/* Branching curves (behind nodes) */}
           <path
@@ -66,8 +66,8 @@ export function Logo({ size = 'md', showText = true, className = '' }: LogoProps
       </svg>
 
       {showText && (
-        <span className={`font-semibold text-gray-900 dark:text-white tracking-tight ${text}`}>
-          Form<span className="text-primary-600 dark:text-indigo-400">Logic</span>
+        <span className={`font-bold text-gray-900 dark:text-white tracking-tight ${text}`} style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+          Form<span className="text-primary-600 dark:text-primary-400">Logic</span>
         </span>
       )}
     </div>
@@ -98,7 +98,7 @@ export function LogoWhite({ size = 'md', showText = true, className = '' }: Logo
         <rect width="40" height="40" rx="10" fill="white" fillOpacity="0.15" />
         <rect width="40" height="40" rx="10" stroke="white" strokeOpacity="0.25" strokeWidth="1" />
 
-        {/* Branching flow icon: form input → logic branches → outcomes */}
+        {/* Branching flow icon: form input -> logic branches -> outcomes */}
         <g transform="translate(8, 6)">
           {/* Branching curves (behind nodes) */}
           <path
@@ -131,7 +131,7 @@ export function LogoWhite({ size = 'md', showText = true, className = '' }: Logo
       </svg>
 
       {showText && (
-        <span className={`font-semibold text-white tracking-tight ${text}`}>
+        <span className={`font-bold text-white tracking-tight ${text}`} style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
           Form<span className="text-indigo-200">Logic</span>
         </span>
       )}

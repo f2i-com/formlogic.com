@@ -135,29 +135,29 @@ export function Landing() {
   ];
 
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-indigo-500/30 font-sans">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-indigo-500/20 dark:selection:bg-indigo-400/20">
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-b border-gray-200 dark:border-indigo-500/10 z-50 transition-all duration-300">
+      <nav className="fixed top-0 left-0 right-0 bg-white/90 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-indigo-500/10 z-50 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Logo size="md" />
             <div className="hidden md:flex items-center gap-8">
-              <a href="#features" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+              <a href="#features" className="text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Features
               </a>
-              <a href="#solutions" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+              <a href="#solutions" className="text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Solutions
               </a>
-              <a href="#pricing" className="text-sm font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+              <a href="#pricing" className="text-sm font-medium text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Pricing
               </a>
             </div>
-            <div className="hidden sm:flex items-center gap-4">
-              <Link to="/login" className="text-sm font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <div className="hidden md:flex items-center gap-4">
+              <Link to="/login" className="text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Sign In
               </Link>
               <Link to="/signup">
-                <Button className="bg-indigo-600 hover:bg-indigo-500 text-white border-0 shadow-[0_0_20px_-5px_rgba(79,70,229,0.5)]">
+                <Button className="bg-indigo-600 hover:bg-indigo-500 text-white border-0 shadow-md shadow-indigo-600/20">
                   Get Started Free
                 </Button>
               </Link>
@@ -174,7 +174,7 @@ export function Landing() {
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden bg-white dark:bg-slate-950 border-t border-gray-200 dark:border-slate-900 py-4 px-4 space-y-3 shadow-2xl">
+          <div className="md:hidden bg-white dark:bg-slate-950 border-t border-gray-100 dark:border-slate-900 py-4 px-4 space-y-3 shadow-2xl">
             <a
               href="#features"
               onClick={() => setMobileMenuOpen(false)}
@@ -196,7 +196,7 @@ export function Landing() {
             >
               Pricing
             </a>
-            <div className="pt-3 border-t border-gray-200 dark:border-slate-900 flex flex-col gap-2">
+            <div className="pt-3 border-t border-gray-100 dark:border-slate-900 flex flex-col gap-2">
               <Link
                 to="/login"
                 onClick={() => setMobileMenuOpen(false)}
@@ -215,33 +215,31 @@ export function Landing() {
       {/* Hero Section */}
       <section className="relative pt-32 sm:pt-40 pb-20 sm:pb-32 px-4 sm:px-6 lg:px-8 overflow-hidden">
         {/* Background Gradients */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-indigo-600/20 blur-[100px] rounded-full opacity-30 pointer-events-none" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-indigo-600/15 blur-[100px] rounded-full opacity-40 pointer-events-none" />
         <div className="absolute top-20 right-0 w-[500px] h-[500px] bg-purple-600/10 blur-[100px] rounded-full opacity-20 pointer-events-none" />
 
         <div className="relative max-w-5xl mx-auto text-center z-10">
-          <div className="inline-flex items-center gap-2 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm border border-indigo-200 dark:border-indigo-500/30 text-indigo-600 dark:text-indigo-300 px-4 py-1.5 rounded-full text-sm font-medium mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          <div className="inline-flex items-center gap-2 bg-white/60 dark:bg-slate-900/50 backdrop-blur-sm border border-indigo-200/60 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-300 px-4 py-1.5 rounded-full text-sm font-medium mb-8">
             <Building2 className="h-4 w-4" />
-            <span className="bg-gradient-to-r from-indigo-600 to-indigo-400 dark:from-indigo-300 dark:to-white bg-clip-text text-transparent">
-              Built for enterprise teams
-            </span>
+            <span>Built for enterprise teams</span>
           </div>
 
-          <h1 className="text-5xl sm:text-7xl font-bold tracking-tight text-gray-900 dark:text-white mb-8 leading-tight animate-in fade-in slide-in-from-bottom-8 duration-700 delay-100">
+          <h1 className="text-5xl sm:text-7xl font-extrabold tracking-tight text-gray-900 dark:text-white mb-8 leading-[1.1]">
             The Form Platform for
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 dark:from-indigo-400 dark:via-purple-400 dark:to-indigo-400 animate-pulse-subtle">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-500 to-indigo-600 dark:from-indigo-400 dark:via-purple-400 dark:to-indigo-400">
               Serious Applications
             </span>
           </h1>
 
-          <p className="text-lg sm:text-xl text-gray-600 dark:text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed animate-in fade-in slide-in-from-bottom-8 duration-700 delay-200">
+          <p className="text-lg sm:text-xl text-gray-500 dark:text-slate-400 mb-12 max-w-2xl mx-auto leading-relaxed">
             Move beyond basic form builders. FormLogic combines beautiful UX with real backend logic,
             giving you complete control over your data and submission workflows.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-5 mb-20 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-300">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-5 mb-20">
             <Link to="/signup" className="w-full sm:w-auto">
-              <Button size="lg" className="w-full sm:w-auto text-base h-12 bg-indigo-600 hover:bg-indigo-500 shadow-[0_0_30px_-5px_rgba(79,70,229,0.5)] border-0">
+              <Button size="lg" className="w-full sm:w-auto text-base h-12 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/25 border-0">
                 Start Free Trial
                 <ArrowRight className="h-5 w-5 ml-2" />
               </Button>
@@ -256,10 +254,10 @@ export function Landing() {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto pt-10 border-t border-gray-200 dark:border-slate-800 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-500">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto pt-10 border-t border-gray-200 dark:border-slate-800">
             {stats.map((stat) => (
               <div key={stat.label} className="text-center group hover:-translate-y-1 transition-transform duration-300">
-                <div className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{stat.value}</div>
+                <div className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors tracking-tight">{stat.value}</div>
                 <div className="text-sm text-gray-500 dark:text-slate-500 mt-2">{stat.label}</div>
               </div>
             ))}
@@ -268,22 +266,22 @@ export function Landing() {
       </section>
 
       {/* Trust Banner */}
-      <section className="py-10 px-4 sm:px-6 lg:px-8 bg-gray-50/50 dark:bg-slate-900/50 border-y border-gray-100 dark:border-slate-800 backdrop-blur-sm">
+      <section className="py-10 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/30 border-y border-gray-100 dark:border-slate-800/50 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-16 text-gray-500 dark:text-slate-500 text-sm font-medium">
-            <div className="flex items-center gap-3 hover:text-gray-900 dark:hover:text-slate-300 transition-colors">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-16 text-gray-400 dark:text-slate-500 text-sm font-medium">
+            <div className="flex items-center gap-3 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Shield className="h-5 w-5" />
               <span>SOC 2 Compliant</span>
             </div>
-            <div className="flex items-center gap-3 hover:text-gray-900 dark:hover:text-slate-300 transition-colors">
+            <div className="flex items-center gap-3 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Lock className="h-5 w-5" />
               <span>GDPR Ready</span>
             </div>
-            <div className="flex items-center gap-3 hover:text-gray-900 dark:hover:text-slate-300 transition-colors">
+            <div className="flex items-center gap-3 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Clock className="h-5 w-5" />
               <span>99.9% Uptime SLA</span>
             </div>
-            <div className="flex items-center gap-3 hover:text-gray-900 dark:hover:text-slate-300 transition-colors">
+            <div className="flex items-center gap-3 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Globe className="h-5 w-5" />
               <span>Global CDN</span>
             </div>
@@ -295,24 +293,24 @@ export function Landing() {
       <section id="features" className="py-24 sm:py-32 px-4 sm:px-6 lg:px-8 relative">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-20">
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight">
               Enterprise Features, <span className="text-indigo-600 dark:text-indigo-400">Developer Experience</span>
             </h2>
-            <p className="text-lg sm:text-xl text-gray-600 dark:text-slate-400 max-w-2xl mx-auto">
+            <p className="text-lg sm:text-xl text-gray-500 dark:text-slate-400 max-w-2xl mx-auto">
               Everything you need to build sophisticated form-driven applications.
             </p>
           </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((feature) => (
               <div
                 key={feature.title}
-                className="group bg-white/60 dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-8 border border-gray-200 dark:border-slate-800 hover:border-indigo-500/50 hover:bg-white dark:hover:bg-slate-800/60 transition-all duration-300 hover:shadow-[0_0_30px_-5px_rgba(79,70,229,0.1)]"
+                className="group bg-white dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-8 border border-gray-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/30 hover:bg-white dark:hover:bg-slate-800/60 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/[0.04]"
               >
-                <div className="w-14 h-14 bg-indigo-50 dark:bg-slate-800 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 border border-indigo-100 dark:border-slate-700 group-hover:border-indigo-500/30">
-                  <feature.icon className="h-7 w-7 text-indigo-600 dark:text-indigo-400 group-hover:text-indigo-500 dark:group-hover:text-indigo-300" />
+                <div className="w-12 h-12 bg-indigo-50 dark:bg-slate-800 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 border border-indigo-100 dark:border-slate-700 group-hover:border-indigo-300 dark:group-hover:border-indigo-500/30">
+                  <feature.icon className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{feature.title}</h3>
-                <p className="text-gray-600 dark:text-slate-400 leading-relaxed font-light">{feature.description}</p>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3 tracking-tight">{feature.title}</h3>
+                <p className="text-gray-500 dark:text-slate-400 leading-relaxed text-[15px]">{feature.description}</p>
               </div>
             ))}
           </div>
@@ -320,52 +318,52 @@ export function Landing() {
       </section>
 
       {/* Code Demo Section */}
-      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-slate-900/30 overflow-hidden relative border-y border-gray-100 dark:border-slate-800/50">
+      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/20 overflow-hidden relative border-y border-gray-100 dark:border-slate-800/50">
         <div className="absolute inset-0 bg-white/50 dark:bg-slate-950/80" />
         <div className="absolute top-1/2 left-0 w-[600px] h-[600px] bg-indigo-600/5 dark:bg-indigo-600/10 blur-[120px] rounded-full -translate-y-1/2 -translate-x-1/2" />
 
         <div className="max-w-6xl mx-auto relative z-10">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div>
-              <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8 leading-tight">
+              <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8 leading-tight tracking-tight">
                 Real Backend Logic,
                 <br />
                 <span className="text-indigo-600 dark:text-indigo-400">Not Just Webhooks</span>
               </h2>
-              <p className="text-lg text-gray-600 dark:text-slate-400 mb-10 leading-relaxed">
+              <p className="text-lg text-gray-500 dark:text-slate-400 mb-10 leading-relaxed">
                 Write server-side scripts that run on every submission. Score leads, validate data,
                 route workflows, and store computed fields &mdash; all in a familiar JavaScript-like syntax.
               </p>
-              <ul className="space-y-6">
+              <ul className="space-y-5">
                 <li className="flex items-start gap-4">
-                  <div className="mt-1 p-1 bg-green-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                  <div className="mt-1 p-1 bg-emerald-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                   </div>
-                  <span className="text-gray-700 dark:text-slate-300 text-lg">Sandboxed execution with 50k instruction limit</span>
+                  <span className="text-gray-600 dark:text-slate-300 text-lg">Sandboxed execution with 50k instruction limit</span>
                 </li>
                 <li className="flex items-start gap-4">
-                  <div className="mt-1 p-1 bg-green-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                  <div className="mt-1 p-1 bg-emerald-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                   </div>
-                  <span className="text-gray-700 dark:text-slate-300 text-lg">Access to all form data and submission context</span>
+                  <span className="text-gray-600 dark:text-slate-300 text-lg">Access to all form data and submission context</span>
                 </li>
                 <li className="flex items-start gap-4">
-                  <div className="mt-1 p-1 bg-green-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" />
+                  <div className="mt-1 p-1 bg-emerald-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                   </div>
-                  <span className="text-gray-700 dark:text-slate-300 text-lg">Store computed fields directly to the database</span>
+                  <span className="text-gray-600 dark:text-slate-300 text-lg">Store computed fields directly to the database</span>
                 </li>
               </ul>
             </div>
 
             {/* Terminal Window */}
             <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl opacity-20 group-hover:opacity-40 blur transition duration-500" />
-              <div className="relative bg-[#0F1117] rounded-2xl shadow-2xl border border-slate-800 overflow-hidden">
-                <div className="h-10 bg-slate-900/50 flex items-center gap-2 px-4 border-b border-slate-800">
-                  <div className="w-3 h-3 rounded-full bg-red-500/80" />
-                  <div className="w-3 h-3 rounded-full bg-amber-500/80" />
-                  <div className="w-3 h-3 rounded-full bg-green-500/80" />
+              <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500/50 to-purple-600/50 rounded-2xl opacity-15 group-hover:opacity-30 blur-lg transition duration-500" />
+              <div className="relative bg-[#0F1117] rounded-2xl shadow-2xl border border-slate-800/80 overflow-hidden">
+                <div className="h-10 bg-slate-900/80 flex items-center gap-2 px-4 border-b border-slate-800/80">
+                  <div className="w-3 h-3 rounded-full bg-red-500/70" />
+                  <div className="w-3 h-3 rounded-full bg-amber-500/70" />
+                  <div className="w-3 h-3 rounded-full bg-green-500/70" />
                   <span className="text-xs text-slate-500 ml-2 font-mono">onSubmit.ts</span>
                 </div>
                 <div className="p-6 overflow-x-auto">
@@ -412,20 +410,19 @@ export function Landing() {
       </section>
 
       {/* SQLite Section */}
-      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-indigo-50 dark:bg-indigo-950/20 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[url('/grid-pattern.svg')] opacity-5" />
+      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-indigo-50/60 dark:bg-indigo-950/20 relative overflow-hidden">
         <div className="max-w-6xl mx-auto relative z-10">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="order-2 lg:order-1">
-              <div className="bg-white dark:bg-slate-900 rounded-xl p-8 shadow-2xl border border-indigo-200 dark:border-indigo-500/20 relative group">
-                <div className="absolute -inset-px bg-gradient-to-br from-indigo-500/50 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition duration-500 pointer-events-none" />
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="p-3 bg-indigo-100 dark:bg-indigo-500/10 rounded-lg">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-xl shadow-gray-900/[0.03] dark:shadow-none border border-gray-200/80 dark:border-indigo-500/20 relative group">
+                <div className="absolute -inset-px bg-gradient-to-br from-indigo-500/30 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition duration-500 pointer-events-none" />
+                <div className="flex items-center gap-4 mb-6 relative">
+                  <div className="p-3 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
                     <Download className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                   </div>
                   <span className="font-mono text-sm text-gray-500 dark:text-slate-400">contact-form.sqlite</span>
                 </div>
-                <div className="font-mono text-sm bg-gray-900 dark:bg-slate-950 rounded-lg p-6 text-slate-300 space-y-4 shadow-inner border border-gray-800 dark:border-slate-800">
+                <div className="font-mono text-sm bg-gray-950 dark:bg-slate-950 rounded-xl p-6 text-slate-300 space-y-4 shadow-inner border border-gray-800 dark:border-slate-800 relative">
                   <div className="flex items-center gap-3">
                     <Database className="h-4 w-4 text-slate-600" />
                     <span className="text-indigo-400">responses</span>
@@ -447,34 +444,34 @@ export function Landing() {
                     <span className="text-slate-600">(response_id, success, duration_ms)</span>
                   </div>
                 </div>
-                <p className="text-sm text-slate-500 mt-6 text-center">Real tables. Real relationships. Real queries.</p>
+                <p className="text-sm text-gray-400 dark:text-slate-500 mt-6 text-center relative">Real tables. Real relationships. Real queries.</p>
               </div>
             </div>
 
             <div className="order-1 lg:order-2">
-              <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8">
+              <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8 tracking-tight">
                 Your Data.
                 <br />
                 <span className="text-indigo-600 dark:text-indigo-400">Actually Yours.</span>
               </h2>
-              <p className="text-gray-600 dark:text-slate-400 text-lg mb-10 leading-relaxed">
+              <p className="text-gray-500 dark:text-slate-400 text-lg mb-10 leading-relaxed">
                 Each form gets its own SQLite database. Responses, computed fields, tags, audit logs &mdash;
                 all in a portable, queryable format you can download anytime.
               </p>
-              <ul className="space-y-6">
-                <li className="flex items-center gap-4 text-gray-700 dark:text-slate-300">
+              <ul className="space-y-5">
+                <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
                   <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
                     <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                   </div>
                   Download the entire database anytime
                 </li>
-                <li className="flex items-center gap-4 text-gray-700 dark:text-slate-300">
+                <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
                   <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
                     <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                   </div>
                   Query with any SQLite-compatible tool
                 </li>
-                <li className="flex items-center gap-4 text-gray-700 dark:text-slate-300">
+                <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
                   <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
                     <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
                   </div>
@@ -487,25 +484,25 @@ export function Landing() {
       </section>
 
       {/* Solutions Section */}
-      <section id="solutions" className="py-24 sm:py-32 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-slate-900/40">
+      <section id="solutions" className="py-24 sm:py-32 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/30">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-20">
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">Built For Your Use Case</h2>
-            <p className="text-lg sm:text-xl text-gray-600 dark:text-slate-400 max-w-2xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight">Built For Your Use Case</h2>
+            <p className="text-lg sm:text-xl text-gray-500 dark:text-slate-400 max-w-2xl mx-auto">
               From lead generation to complex application processing, FormLogic handles it all.
             </p>
           </div>
-          <div className="grid sm:grid-cols-2 gap-8">
+          <div className="grid sm:grid-cols-2 gap-6">
             {useCases.map((useCase) => (
               <div
                 key={useCase.title}
-                className="bg-white dark:bg-slate-950 rounded-2xl p-10 border border-gray-200 dark:border-slate-800 hover:border-indigo-500/30 hover:shadow-2xl transition-all duration-300 group"
+                className="bg-white dark:bg-slate-950/80 rounded-2xl p-10 border border-gray-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/30 hover:shadow-xl hover:shadow-gray-900/[0.04] transition-all duration-300 group"
               >
-                <div className="w-14 h-14 bg-indigo-50 dark:bg-slate-900 rounded-2xl flex items-center justify-center mb-6 border border-indigo-100 dark:border-slate-800 group-hover:border-indigo-500/30 group-hover:bg-indigo-500/5 transition-colors">
-                  <useCase.icon className="h-7 w-7 text-indigo-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
+                <div className="w-12 h-12 bg-indigo-50 dark:bg-slate-900 rounded-xl flex items-center justify-center mb-6 border border-indigo-100/80 dark:border-slate-800 group-hover:border-indigo-300 dark:group-hover:border-indigo-500/30 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-500/5 transition-all duration-300">
+                  <useCase.icon className="h-6 w-6 text-indigo-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{useCase.title}</h3>
-                <p className="text-gray-600 dark:text-slate-400 leading-relaxed group-hover:text-gray-900 dark:group-hover:text-slate-300 transition-colors">{useCase.description}</p>
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3 tracking-tight">{useCase.title}</h3>
+                <p className="text-gray-500 dark:text-slate-400 leading-relaxed group-hover:text-gray-600 dark:group-hover:text-slate-300 transition-colors">{useCase.description}</p>
               </div>
             ))}
           </div>
@@ -516,36 +513,36 @@ export function Landing() {
       <section id="pricing" className="py-24 sm:py-32 px-4 sm:px-6 lg:px-8">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-20">
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight">
               Simple, Transparent Pricing
             </h2>
-            <p className="text-lg sm:text-xl text-gray-600 dark:text-slate-400 max-w-2xl mx-auto">
+            <p className="text-lg sm:text-xl text-gray-500 dark:text-slate-400 max-w-2xl mx-auto">
               Start free, scale as you grow. No hidden fees, no surprises.
             </p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-3 gap-6">
             {pricingPlans.map((plan) => (
               <div
                 key={plan.name}
                 className={`rounded-2xl p-8 transition-all duration-300 ${plan.highlighted
-                  ? 'bg-white dark:bg-slate-900/80 ring-2 ring-indigo-500 shadow-2xl shadow-indigo-500/10 scale-105 z-10'
-                  : 'bg-white dark:bg-slate-950 border border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700'
+                  ? 'bg-white dark:bg-slate-900/80 ring-2 ring-indigo-500 shadow-2xl shadow-indigo-500/10 scale-[1.03] z-10'
+                  : 'bg-white dark:bg-slate-950/80 border border-gray-200/80 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700'
                   }`}
               >
                 {plan.highlighted && (
                   <div className="flex justify-center -mt-12 mb-6">
-                    <span className="bg-indigo-600 text-white text-sm font-medium px-4 py-1 rounded-full shadow-lg">
+                    <span className="bg-indigo-600 text-white text-sm font-semibold px-4 py-1.5 rounded-full shadow-lg shadow-indigo-600/30">
                       Most Popular
                     </span>
                   </div>
                 )}
                 <div className="text-center mb-8">
-                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white">{plan.name}</h3>
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">{plan.name}</h3>
                   <p className="text-sm text-gray-500 dark:text-slate-500 mt-2">{plan.description}</p>
                 </div>
                 <div className="text-center mb-8">
                   <span className="text-5xl font-bold text-gray-900 dark:text-white tracking-tight">{plan.price}</span>
-                  <span className="text-gray-500 dark:text-slate-600 ml-2">{plan.period}</span>
+                  <span className="text-gray-400 dark:text-slate-400 ml-2">{plan.period}</span>
                 </div>
                 <ul className="space-y-4 mb-10">
                   {plan.features.map((feature) => (
@@ -556,7 +553,7 @@ export function Landing() {
                   ))}
                 </ul>
                 <Link to="/signup" className="block">
-                  <Button className={`w-full ${plan.highlighted ? 'bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-500/25 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
+                  <Button className={`w-full ${plan.highlighted ? 'bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
                     {plan.cta}
                   </Button>
                 </Link>
@@ -568,27 +565,26 @@ export function Landing() {
 
       {/* CTA Section */}
       <section className="py-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-        <div className="absolute inset-0 bg-indigo-600" />
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-purple-800" />
-        <div className="absolute inset-0 opacity-10 bg-[url('/grid-pattern.svg')] bg-[length:40px_40px]" />
+        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800" />
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:40px_40px]" />
 
         <div className="max-w-4xl mx-auto text-center relative z-10">
-          <h2 className="text-4xl sm:text-5xl font-bold text-white mb-6">
+          <h2 className="text-4xl sm:text-5xl font-bold text-white mb-6 tracking-tight">
             Ready to build smarter forms?
           </h2>
-          <p className="text-xl text-indigo-100 mb-10 max-w-2xl mx-auto">
+          <p className="text-xl text-indigo-100/80 mb-10 max-w-2xl mx-auto">
             Start your free trial today. No credit card required.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6">
             <Link to="/signup">
-              <Button size="lg" className="bg-white text-indigo-600 hover:bg-indigo-50 h-14 px-8 text-lg font-semibold shadow-2xl">
+              <Button size="lg" className="bg-white text-indigo-600 hover:bg-indigo-50 h-14 px-8 text-lg font-semibold shadow-2xl shadow-black/20">
                 Get Started Free
                 <ArrowRight className="h-5 w-5 ml-2" />
               </Button>
             </Link>
             <Link
               to="/login"
-              className="text-white hover:text-indigo-100 font-medium flex items-center gap-2 py-3 px-4 rounded-lg hover:bg-white/10 transition-colors"
+              className="text-white/90 hover:text-white font-medium flex items-center gap-2 py-3 px-4 rounded-lg hover:bg-white/10 transition-colors"
             >
               Sign in to existing account
             </Link>
@@ -597,52 +593,52 @@ export function Landing() {
       </section>
 
       {/* Footer */}
-      <footer className="py-20 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-slate-950 border-t border-gray-200 dark:border-slate-900">
+      <footer className="py-20 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-slate-950 border-t border-gray-200/80 dark:border-slate-900">
         <div className="max-w-6xl mx-auto">
           <div className="grid md:grid-cols-4 gap-12 mb-16">
             <div className="md:col-span-1">
               <Logo size="md" />
-              <p className="text-gray-500 dark:text-slate-500 mt-6 text-sm leading-relaxed">
+              <p className="text-gray-400 dark:text-slate-500 mt-6 text-sm leading-relaxed">
                 The form platform for serious applications. Built for developers and enterprises.
               </p>
             </div>
             <div>
-              <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Product</h4>
+              <h4 className="text-gray-900 dark:text-white font-semibold mb-6 text-sm tracking-wide uppercase">Product</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
-                  <a href="#features" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                  <a href="#features" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Features
                   </a>
                 </li>
                 <li>
-                  <a href="#pricing" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                  <a href="#pricing" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Pricing
                   </a>
                 </li>
                 <li>
-                  <a href="#solutions" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                  <a href="#solutions" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Solutions
                   </a>
                 </li>
               </ul>
             </div>
             <div>
-              <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Get Started</h4>
+              <h4 className="text-gray-900 dark:text-white font-semibold mb-6 text-sm tracking-wide uppercase">Get Started</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
-                  <Link to="/signup" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                  <Link to="/signup" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Sign Up
                   </Link>
                 </li>
                 <li>
-                  <Link to="/login" className="hover:text-primary-400 dark:hover:text-white transition-colors">
+                  <Link to="/login" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Sign In
                   </Link>
                 </li>
               </ul>
             </div>
             <div>
-              <h4 className="text-gray-900 dark:text-white font-semibold mb-6">Legal</h4>
+              <h4 className="text-gray-900 dark:text-white font-semibold mb-6 text-sm tracking-wide uppercase">Legal</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
                   <span className="cursor-default">Privacy Policy</span>
@@ -653,14 +649,14 @@ export function Landing() {
               </ul>
             </div>
           </div>
-          <div className="border-t border-gray-200 dark:border-slate-900 pt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
-            <p className="text-gray-500 dark:text-slate-600 text-sm">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
+          <div className="border-t border-gray-200/80 dark:border-slate-900 pt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
+            <p className="text-gray-400 dark:text-slate-500 text-sm">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
             <div className="flex items-center gap-6">
               <a
                 href="https://twitter.com/formlogic"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-500 hover:text-primary-400 dark:hover:text-white transition-colors"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-white transition-colors"
                 aria-label="Twitter"
               >
                 <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">

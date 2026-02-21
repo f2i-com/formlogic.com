@@ -83,7 +83,11 @@ function FieldRow({
     >
       <span
         className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${STATUS_DOT_COLORS[field.status]}`}
+        aria-hidden="true"
       />
+      <span className="sr-only">
+        {field.status === 'green' ? 'Complete' : field.status === 'yellow' ? 'Needs review' : 'Incomplete'}
+      </span>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
           {field.label}

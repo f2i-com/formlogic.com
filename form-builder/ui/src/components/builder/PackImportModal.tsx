@@ -373,7 +373,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                 <button
                   type="button"
                   onClick={() => setExpandedForms((v) => !v)}
-                  className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
                   {expandedForms ? (
                     <ChevronDown className="h-4 w-4" />
@@ -408,7 +408,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                 <button
                   type="button"
                   onClick={() => setExpandedApps((v) => !v)}
-                  className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
                   {expandedApps ? (
                     <ChevronDown className="h-4 w-4" />
