@@ -25,13 +25,16 @@ class CsrfMiddleware implements MiddlewareInterface
 {
     private string $cookieName;
     private string $headerName;
+    private string $authCookieName;
 
     public function __construct(
         string $cookieName = 'formlogic_csrf',
-        string $headerName = 'X-CSRF-Token'
+        string $headerName = 'X-CSRF-Token',
+        string $authCookieName = 'formlogic_auth'
     ) {
         $this->cookieName = $cookieName;
         $this->headerName = $headerName;
+        $this->authCookieName = $authCookieName;
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -53,7 +56,7 @@ class CsrfMiddleware implements MiddlewareInterface
         // If there's no auth cookie, skip CSRF check (the request will fail
         // at the auth middleware anyway, or it's a public endpoint)
         $cookies = $request->getCookieParams();
-        if (empty($cookies['formlogic_auth'])) {
+        if (empty($cookies[$this->authCookieName])) {
             return $handler->handle($request);
         }
 
@@ -73,7 +76,13 @@ class CsrfMiddleware implements MiddlewareInterface
     private function isExempt(string $path, string $method): bool
     {
         // Login/register/logout - these set/clear the CSRF token
-        if (str_starts_with($path, '/api/auth/')) {
+        // Note: /api/auth/me (GET/PUT) is NOT exempt — profile updates need CSRF protection
+        $authExemptPaths = [
+            '/api/auth/login',
+            '/api/auth/register',
+            '/api/auth/logout',
+        ];
+        if (in_array($path, $authExemptPaths, true)) {
             return true;
         }
 

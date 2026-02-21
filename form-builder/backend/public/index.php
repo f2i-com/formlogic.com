@@ -280,8 +280,11 @@ $errorMiddleware->setDefaultErrorHandler(function (
         ->withHeader('Content-Type', 'application/json');
 });
 
+// Auth cookie name used by CSRF and Auth middleware
+$cookieName = $settings['settings']['cookie']['name'] ?? 'formlogic_auth';
+
 // Add CSRF middleware (validates tokens on state-changing requests)
-$app->add(new CsrfMiddleware());
+$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName));
 
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];
@@ -298,7 +301,6 @@ $maxBodySize = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1
 $app->add(new BodySizeLimitMiddleware($maxBodySize));
 
 // Create auth middleware instances
-$cookieName = $settings['settings']['cookie']['name'] ?? 'formlogic_auth';
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName);
 
