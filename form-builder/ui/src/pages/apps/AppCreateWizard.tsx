@@ -42,11 +42,16 @@ export function AppCreateWizard() {
     try {
       const app = await createApp({ name, description: description || undefined });
       if (app) {
-        // Add selected forms
+        let failedCount = 0;
         for (const formId of selectedFormIds) {
-          await useAppStore.getState().addFormToApp(app.id, formId);
+          const added = await useAppStore.getState().addFormToApp(app.id, formId);
+          if (!added) failedCount++;
+        }
+        if (failedCount > 0) {
+          toast.warning('Partial success', `App created but ${failedCount} form(s) could not be added.`);
         }
         navigate(`/apps/${app.id}/settings`);
+        return; // Skip setIsCreating after navigate
       } else {
         toast.error('Creation failed', 'Could not create the app. Please try again.');
       }

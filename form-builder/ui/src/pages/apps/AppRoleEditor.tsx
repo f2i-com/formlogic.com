@@ -37,7 +37,11 @@ export function AppRoleEditor() {
     }
   };
 
-  useEffect(() => { loadData(); }, [appId]);
+  useEffect(() => {
+    setSelectedRoleId(null);
+    setPermissions([]);
+    loadData();
+  }, [appId]);
 
   useEffect(() => {
     if (!appId || !selectedRoleId) return;
