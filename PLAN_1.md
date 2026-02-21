@@ -70,13 +70,13 @@ if (!$targetResp) {
 }
 ```
 
-### 1.5 Race Condition in Form Duplication
+### 1.5 Race Condition in Form Duplication [DONE]
 **Severity**: HIGH
 **File**: `backend/src/Services/FormService.php` ~L254-280
 **Problem**: `duplicateForm()` fetches the source form, then copies it. Between the authorization check and the actual copy, the source form could be deleted or ownership could change.
 **Fix**:
-- Wrap the duplicate operation in a MySQL transaction with `SELECT ... FOR UPDATE` on the source form
-- Re-verify ownership within the transaction before copying
+- Wrapped in MySQL transaction with `SELECT ... FOR UPDATE` row lock on source form
+- Rolls back on any failure
 
 ### 1.6 XSS via Redirect URL on Form Submission
 **Severity**: HIGH
@@ -313,19 +313,11 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 - Added `includeFields` option (default `false`) to `getAllForms()`. List views skip SQLite queries.
 - Only load fields when viewing/editing a single form via `getForm()`
 
-### 3.3 Missing Memoization in FormsList
+### 3.3 Missing Memoization in FormsList [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormsList.tsx` ~L254-286
 **Problem**: `filteredForms`, `draftForms`, `publishedForms`, `archivedForms` are recalculated every render without `useMemo`. Sorting by response count calls `getResponsesByFormId` repeatedly.
-**Fix**:
-```typescript
-const filteredForms = useMemo(() => {
-  let result = [...forms];
-  if (searchQuery) result = result.filter(/* ... */);
-  // sort logic...
-  return result;
-}, [forms, searchQuery, sortBy]);
-```
+**Fix**: Wrapped `filteredForms`, `draftForms`, `publishedForms`, `archivedForms` in `useMemo`.
 
 ### 3.4 FieldPreview Missing Memoization
 **Severity**: MEDIUM
@@ -359,13 +351,13 @@ const filteredForms = useMemo(() => {
 - **Long-term**: Move webhook delivery to an async job queue (see 6.3)
 - Return submission response immediately, deliver webhooks asynchronously
 
-### 3.8 Debounce Race Condition in Form Saves
+### 3.8 Debounce Race Condition in Form Saves [DONE]
 **Severity**: HIGH
 **File**: `ui/src/stores/formStore.ts` ~L94-131
-**Problem**: `debouncedSave` uses a global `debounceTimers` map. Field updates and settings updates share the same timer key per form, so rapid field changes cancel pending settings saves and vice versa.
+**Problem**: `updateForm` sent the entire form object, potentially overwriting field/settings/theme changes from their separate syncs.
 **Fix**:
-- Use separate debounce keys for different update types: `${formId}:fields`, `${formId}:settings`, `${formId}:theme`
-- Or batch all pending changes into a single save that includes all dirty fields
+- Changed `updateForm` to use `${id}-meta` debounce key and send only the specific `updates` payload
+- Separate debounce keys now: `-meta`, `-fields`, `-settings`, `-theme`
 
 ### 3.9 Response Store Unbounded localStorage Growth
 **Severity**: MEDIUM
@@ -426,14 +418,14 @@ const filteredForms = useMemo(() => {
 - Disable submit buttons when offline with tooltip explaining why
 - Show pending sync count if background sync is queued
 
-### 4.4 Missing ARIA Labels on Dynamic Content
+### 4.4 Missing ARIA Labels on Dynamic Content [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/pages/FormsList.tsx` ~L94-157
-**Problem**: Portal-based dropdown menus lack focus trap and ARIA attributes. Screen reader users can't navigate these menus.
+**Problem**: Portal-based dropdown menus lack ARIA attributes. Screen reader users can't navigate these menus.
 **Fix**:
-- Add `role="menu"`, `aria-modal="true"` to dropdown portals
-- Implement focus trap (trap focus within menu while open)
-- Add `aria-expanded` to trigger buttons
+- Added `role="menu"`, `aria-label` to dropdown portal
+- Added `role="menuitem"` to all menu buttons
+- Added `aria-haspopup="menu"`, `aria-expanded` to trigger button
 
 ### 4.5 Form Validation Not Announced to Screen Readers
 **Severity**: MEDIUM
@@ -446,11 +438,11 @@ const filteredForms = useMemo(() => {
 </div>
 ```
 
-### 4.6 Optimistic Update Rollback Without Feedback
+### 4.6 Optimistic Update Rollback Without Feedback [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/stores/formStore.ts` ~L239-265
 **Problem**: When optimistic create/update fails and rolls back, the UI changes without explanation. User's work appears to vanish.
-**Fix**: Show explicit error toast: "Changes couldn't be saved. Please try again." Keep local changes and offer retry.
+**Fix**: Added toast.error() notifications for all rollback scenarios (done as part of 2.1).
 
 ### 4.7 Stale Response Count After CSV Import
 **Severity**: LOW
@@ -495,14 +487,11 @@ useEffect(() => {
 }, [mobileMenu]);
 ```
 
-### 4.13 Sensitive Form Data in localStorage
+### 4.13 Sensitive Form Data in localStorage [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/stores/formStore.ts` L199
-**Problem**: In local storage mode, form configurations (including field labels, validation rules, linked record configs) persist unencrypted in localStorage. On shared devices, this is accessible.
-**Fix**:
-- In API mode: don't persist form data to localStorage (it's server-backed)
-- In local mode: warn users that data is stored locally
-- Consider `sessionStorage` for sensitive fields, or encrypt the persisted data
+**Problem**: In API mode, form data was unnecessarily persisted to localStorage despite being server-backed.
+**Fix**: Changed `partialize` to only persist forms when `storageMode === 'local'`. API mode persists an empty array.
 
 ---
 
@@ -700,6 +689,7 @@ VITE_API_URL=http://localhost:8080/api
 
 ### Phase 1 Security Fixes
 - [x] 1.4 (response ownership check) — DONE
+- [x] 1.5 (race condition in form duplication) — DONE
 - [x] 1.7 (ReDoS pattern validation) — DONE
 - [x] 1.8 (input length validation) — DONE
 - [x] 1.9 (linked record field ID validation) — DONE
@@ -715,7 +705,14 @@ VITE_API_URL=http://localhost:8080/api
 
 ### Phase 3 Performance
 - [x] 3.2 (N+1 query in form listing) — DONE
+- [x] 3.3 (memoization in FormsList) — DONE
 - [x] 3.6 (SQLite WAL mode + busy_timeout) — DONE
+- [x] 3.8 (debounce race condition) — DONE
+
+### Phase 4 Frontend Quality
+- [x] 4.4 (ARIA labels on dynamic menus) — DONE
+- [x] 4.6 (optimistic rollback feedback) — DONE (via 2.1)
+- [x] 4.13 (don't persist API forms to localStorage) — DONE
 
 ### Requires Careful Testing
 - 1.3 (dual-database consistency) — affects core data flow

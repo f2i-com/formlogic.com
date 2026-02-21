@@ -282,28 +282,48 @@ class FormService
      */
     public function duplicateForm(string $formId, ?string $userId = null): ?array
     {
-        $original = $this->getForm($formId);
-        if (!$original) {
-            return null;
+        // Use transaction with row lock to prevent race conditions
+        // (source form deleted/modified between read and copy)
+        $this->mysql->beginTransaction();
+        try {
+            // Lock the source row to prevent concurrent deletion
+            $stmt = $this->mysql->prepare("SELECT * FROM forms WHERE id = :id FOR UPDATE");
+            $stmt->execute(['id' => $formId]);
+            $row = $stmt->fetch();
+            if (!$row) {
+                $this->mysql->rollBack();
+                return null;
+            }
+
+            $original = $this->getForm($formId);
+            if (!$original) {
+                $this->mysql->rollBack();
+                return null;
+            }
+
+            $newId = $this->generateUuid();
+
+            // Create new form with copied data
+            $newData = [
+                'id' => $newId,
+                'userId' => $userId ?? $original['userId'],
+                'title' => $original['title'] . ' (Copy)',
+                'description' => $original['description'],
+                'status' => 'draft',
+                'settings' => $original['settings'],
+                'theme' => $original['theme'],
+                'logicScript' => $original['logicScript'] ?? null,
+                'logicPrompt' => $original['logicPrompt'] ?? null,
+                'fields' => $this->generateDuplicateFieldIds($original['fields']),
+            ];
+
+            $result = $this->createForm($newData);
+            $this->mysql->commit();
+            return $result;
+        } catch (\Exception $e) {
+            $this->mysql->rollBack();
+            throw $e;
         }
-
-        $newId = $this->generateUuid();
-
-        // Create new form with copied data
-        $newData = [
-            'id' => $newId,
-            'userId' => $userId ?? $original['userId'],
-            'title' => $original['title'] . ' (Copy)',
-            'description' => $original['description'],
-            'status' => 'draft',
-            'settings' => $original['settings'],
-            'theme' => $original['theme'],
-            'logicScript' => $original['logicScript'] ?? null,
-            'logicPrompt' => $original['logicPrompt'] ?? null,
-            'fields' => $this->generateDuplicateFieldIds($original['fields']),
-        ];
-
-        return $this->createForm($newData);
     }
 
     /**

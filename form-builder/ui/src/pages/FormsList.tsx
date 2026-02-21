@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
@@ -80,6 +80,8 @@ const FormCard = memo(function FormCard({
               variant="ghost"
               size="sm"
               aria-label={`Actions for ${form.title}`}
+              aria-haspopup="menu"
+              aria-expanded={isMenuOpen}
               onClick={(e) => {
                 e.stopPropagation();
                 if (isMenuOpen) {
@@ -102,6 +104,8 @@ const FormCard = memo(function FormCard({
                   onClick={onMenuClose}
                 />
                 <div
+                  role="menu"
+                  aria-label={`Actions for ${form.title}`}
                   className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden"
                   style={{
                     top: activeMenuRect.bottom + 4,
@@ -110,36 +114,42 @@ const FormCard = memo(function FormCard({
                 >
                   <button
                     onClick={() => { onNavigate(`/builder/${form.id}`); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Pencil className="h-4 w-4" /> Edit
                   </button>
                   <button
                     onClick={() => { onNavigate(`/preview/${form.id}`); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Eye className="h-4 w-4" /> Preview
                   </button>
                   <button
                     onClick={() => { onNavigate(`/analytics/${form.id}`); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <BarChart3 className="h-4 w-4" /> Analytics
                   </button>
                   <button
                     onClick={() => { onNavigate(`/responses/${form.id}`); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Table className="h-4 w-4" /> View Data
                   </button>
                   <button
                     onClick={() => onDuplicate(form.id)}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Copy className="h-4 w-4" /> Duplicate
                   </button>
                   <button
                     onClick={() => { onEmbed(form.id, form.title); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
                     <Share2 className="h-4 w-4" /> Share & Embed
@@ -147,6 +157,7 @@ const FormCard = memo(function FormCard({
                   <hr className="my-1 border-gray-100 dark:border-slate-800" />
                   <button
                     onClick={() => { onDelete(form.id, form.title); onMenuClose(); }}
+                    role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer"
                   >
                     <Trash2 className="h-4 w-4" /> Delete
@@ -263,23 +274,26 @@ export function FormsList() {
     setDeleteTarget({ id, title });
   }, []);
 
-  const filteredForms = forms
-    .filter((form) => form.title.toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'name':
-          return a.title.localeCompare(b.title);
-        case 'responses':
-          return getResponsesByFormId(b.id).length - getResponsesByFormId(a.id).length;
-        case 'modified':
-        default:
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      }
-    });
+  const filteredForms = useMemo(() =>
+    forms
+      .filter((form) => form.title.toLowerCase().includes(searchQuery.toLowerCase()))
+      .sort((a, b) => {
+        switch (sortBy) {
+          case 'name':
+            return a.title.localeCompare(b.title);
+          case 'responses':
+            return getResponsesByFormId(b.id).length - getResponsesByFormId(a.id).length;
+          case 'modified':
+          default:
+            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        }
+      }),
+    [forms, searchQuery, sortBy, getResponsesByFormId]
+  );
 
-  const draftForms = filteredForms.filter((f) => f.status === 'draft');
-  const publishedForms = filteredForms.filter((f) => f.status === 'published');
-  const archivedForms = filteredForms.filter((f) => f.status === 'archived');
+  const draftForms = useMemo(() => filteredForms.filter((f) => f.status === 'draft'), [filteredForms]);
+  const publishedForms = useMemo(() => filteredForms.filter((f) => f.status === 'published'), [filteredForms]);
+  const archivedForms = useMemo(() => filteredForms.filter((f) => f.status === 'archived'), [filteredForms]);
 
   const renderFormCard = (form: Form) => (
     <FormCard

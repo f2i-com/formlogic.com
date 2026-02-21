@@ -279,17 +279,15 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // If using API, sync to server (debounced)
+        // If using API, sync only the changed fields to server (debounced)
+        // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
         if (state.storageMode === 'api') {
-          debouncedSave(id, async () => {
-            const form = get().forms.find((f) => f.id === id);
-            if (form) {
-              try {
-                await api.updateForm(id, form);
-              } catch (error) {
-                console.error('Failed to update form on server:', error);
-                toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
-              }
+          debouncedSave(`${id}-meta`, async () => {
+            try {
+              await api.updateForm(id, updates);
+            } catch (error) {
+              console.error('Failed to update form on server:', error);
+              toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
             }
           });
         }
@@ -302,7 +300,7 @@ export const useFormStore = create<FormState>()(
         clearDebounceTimer(`${id}-fields`);
         clearDebounceTimer(`${id}-settings`);
         clearDebounceTimer(`${id}-theme`);
-        clearDebounceTimer(id);
+        clearDebounceTimer(`${id}-meta`);
 
         // Optimistic update
         set((s) => ({
@@ -605,7 +603,8 @@ export const useFormStore = create<FormState>()(
     {
       name: 'formlogic-forms',
       partialize: (state) => ({
-        forms: state.forms,
+        // Only persist forms in local mode — API mode data is server-backed
+        forms: state.storageMode === 'local' ? state.forms : [],
         storageMode: state.storageMode,
       }),
       onRehydrateStorage: () => {
