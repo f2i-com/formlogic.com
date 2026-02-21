@@ -605,10 +605,11 @@ export const useFormStore = create<FormState>()(
       }),
       onRehydrateStorage: () => {
         return (state) => {
-          // Restore storage mode from localStorage
+          // Restore storage mode from localStorage without triggering initialize()
+          // (initialization is handled by AppInitializer after auth is ready)
           const savedMode = localStorage.getItem('formlogic_storage_mode');
-          if (savedMode === 'api' || savedMode === 'local') {
-            state?.setStorageMode?.(savedMode);
+          if (state && (savedMode === 'api' || savedMode === 'local')) {
+            useFormStore.setState({ storageMode: savedMode });
           }
         };
       },

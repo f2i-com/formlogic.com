@@ -53,9 +53,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   const handleLogout = () => {
     logout();
     setIsOpen(false);
-    if (storageMode === 'api') {
-      setStorageMode('local');
-    }
+    // Storage mode preference is preserved so it restores on next login
   };
 
   const handleToggleStorageMode = async () => {

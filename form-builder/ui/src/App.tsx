@@ -62,6 +62,8 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
   const initializeAuth = useAuthStore((state) => state.initialize);
   const initializeForms = useFormStore((state) => state.initialize);
   const isAuthInitialized = useAuthStore((state) => state.isInitialized);
+  const user = useAuthStore((state) => state.user);
+  const storageMode = useFormStore((state) => state.storageMode);
   const theme = useUIStore((state) => state.theme);
 
   useEffect(() => {
@@ -89,6 +91,17 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
         initializeForms();
       });
   }, [initializeAuth, initializeForms]);
+
+  // When user logs in and storage mode is cloud, re-fetch forms from API
+  useEffect(() => {
+    if (isAuthInitialized && user && storageMode === 'api') {
+      // Reset isInitialized so initialize() re-runs with the authenticated session
+      useFormStore.setState({ isInitialized: false });
+      initializeForms();
+    }
+  // Only trigger on user change (login/logout), not on every render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Show loading while initializing
   if (!isAuthInitialized) {
