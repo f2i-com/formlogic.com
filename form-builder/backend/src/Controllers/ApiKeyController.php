@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -13,11 +15,15 @@ class ApiKeyController
 {
     private ApiKeyService $apiKeyService;
     private FormService $formService;
+    private ?AuditService $auditService;
+    private IpResolver $ipResolver;
 
-    public function __construct(ApiKeyService $apiKeyService, FormService $formService)
+    public function __construct(ApiKeyService $apiKeyService, FormService $formService, ?AuditService $auditService = null)
     {
         $this->apiKeyService = $apiKeyService;
         $this->formService = $formService;
+        $this->auditService = $auditService;
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     /**
@@ -68,6 +74,10 @@ class ApiKeyController
 
         try {
             $key = $this->apiKeyService->createKey($userId, $name, $scopes, $formIds, $expiresAt);
+            $this->audit($request, 'apikey.create', 'api_key', $key['id'], [
+                'name' => $name,
+                'scopes' => $scopes,
+            ]);
             return $this->jsonResponse($response, ['key' => $key], 201);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
@@ -100,7 +110,15 @@ class ApiKeyController
             ], 404);
         }
 
+        $this->audit($request, 'apikey.revoke', 'api_key', $keyId);
         return $this->jsonResponse($response, ['success' => true, 'message' => 'API key revoked']);
+    }
+
+    private function audit(Request $request, string $action, string $resourceType, ?string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) return;
+        $ip = $this->ipResolver->getClientIp($request);
+        $this->auditService->log($action, $resourceType, $resourceId, $request->getAttribute('userId'), $ip, $details);
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

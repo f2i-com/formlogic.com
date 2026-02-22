@@ -65,8 +65,9 @@ class CorsMiddleware implements MiddlewareInterface
         // Never allow wildcard origins when credentials are enabled
         // This is a security requirement per CORS spec
         if ($this->defaultOrigin === '*') {
-            // In wildcard mode, reflect the origin but don't allow credentials
-            return $requestOrigin;
+            // In wildcard mode, return literal '*' — don't reflect the origin
+            // as reflection could allow targeted cross-origin reads
+            return '*';
         }
 
         // Multi-origin mode: check against allowlist

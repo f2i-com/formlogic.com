@@ -15,11 +15,14 @@ class AuditService
 
     private PDO $mysql;
     private LoggerInterface $logger;
+    private string $hmacKey;
 
-    public function __construct(MySQLConnection $mysql, ?LoggerInterface $logger = null)
+    public function __construct(MySQLConnection $mysql, ?LoggerInterface $logger = null, ?string $hmacKey = null)
     {
         $this->mysql = $mysql->getConnection();
         $this->logger = $logger ?? new NullLogger();
+        // Derive audit HMAC key from provided secret; fall back to a static key for dev
+        $this->hmacKey = $hmacKey ?? 'formlogic-audit-dev-key';
     }
 
     /**
@@ -70,7 +73,7 @@ class AuditService
             $hashInput = $previousHash . '|' . $action . '|' . $resourceType . '|'
                 . ($resourceId ?? '') . '|' . ($userId ?? '') . '|'
                 . $detailsJson . '|' . $ipForHash . '|' . $timestamp;
-            $integrityHash = hash('sha256', $hashInput);
+            $integrityHash = hash_hmac('sha256', $hashInput, $this->hmacKey);
 
             $stmt = $this->mysql->prepare("
                 INSERT INTO audit_log (id, user_id, action, resource_type, resource_id, details, ip_address, integrity_hash, sequence_number, created_at)
@@ -136,7 +139,7 @@ class AuditService
             $hashInput = $previousHash . '|' . $entry['action'] . '|' . $entry['resource_type'] . '|'
                 . ($entry['resource_id'] ?? '') . '|' . ($entry['user_id'] ?? '') . '|'
                 . $detailsJson . '|' . $ipForHash . '|' . $entry['created_at'];
-            $expectedHash = hash('sha256', $hashInput);
+            $expectedHash = hash_hmac('sha256', $hashInput, $this->hmacKey);
 
             if ($expectedHash !== $entry['integrity_hash']) {
                 return [

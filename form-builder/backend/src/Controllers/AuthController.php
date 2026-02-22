@@ -203,6 +203,20 @@ class AuthController
             $allowedFields = ['name', 'email', 'password', 'currentPassword'];
             $filteredData = array_intersect_key($data ?? [], array_flip($allowedFields));
             $updatedUser = $this->authService->updateUser($user->id, $filteredData);
+
+            // Audit security-critical profile changes
+            $auditDetails = [];
+            if (isset($filteredData['password'])) {
+                $auditDetails['passwordChanged'] = true;
+            }
+            if (isset($filteredData['email']) && $filteredData['email'] !== $user->email) {
+                $auditDetails['emailChanged'] = true;
+                $auditDetails['previousEmail'] = $user->email;
+            }
+            if (!empty($auditDetails)) {
+                $this->audit($request, 'auth.profile_update', 'user', $user->id, $auditDetails);
+            }
+
             return $this->jsonResponse($response, [
                 'user' => $updatedUser->toArray(),
             ]);

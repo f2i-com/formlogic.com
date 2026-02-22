@@ -130,10 +130,14 @@ $container->set(WebhookService::class, function (Container $c) {
 });
 
 // Register audit service
-$container->set(AuditService::class, function (Container $c) {
+$container->set(AuditService::class, function (Container $c) use ($settings) {
+    // Derive audit HMAC key from JWT secret to prevent audit chain forgery
+    $jwtSecret = $settings['jwt']['secret'] ?? '';
+    $auditHmacKey = hash('sha256', 'formlogic-audit:' . $jwtSecret);
     return new AuditService(
         $c->get(MySQLConnection::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $auditHmacKey
     );
 });
 
@@ -302,7 +306,8 @@ $container->set(ApiKeyService::class, function (Container $c) {
 $container->set(ApiKeyController::class, function (Container $c) {
     return new ApiKeyController(
         $c->get(ApiKeyService::class),
-        $c->get(FormService::class)
+        $c->get(FormService::class),
+        $c->get(AuditService::class)
     );
 });
 
@@ -709,6 +714,16 @@ $app->post('/api/packs/catalog/upload', function ($request, $response) use ($con
 })->add($authRequired);
 
 $app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
+    // Only the platform owner (first registered user) may seed the catalog
+    $userId = $request->getAttribute('userId');
+    $mysql = $container->get(MySQLConnection::class)->getConnection();
+    $stmt = $mysql->prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1");
+    $stmt->execute();
+    $firstUser = $stmt->fetch();
+    if (!$firstUser || $firstUser['id'] !== $userId) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Admin access required']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
     return $container->get(PackCatalogController::class)->seed($request, $response);
 })->add($authRequired);
 

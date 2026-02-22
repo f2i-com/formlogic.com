@@ -435,6 +435,28 @@ class PackService
             if (isset($form['fields']) && is_array($form['fields']) && count($form['fields']) > 200) {
                 throw new \RuntimeException("Form '{$form['packFormId']}' has too many fields (max 200)");
             }
+            // Enforce per-form field size limits (same as FormController)
+            if (isset($form['logicScript']) && is_string($form['logicScript']) && strlen($form['logicScript']) > 102400) {
+                throw new \RuntimeException("Form '{$form['packFormId']}' logic script exceeds 100KB limit");
+            }
+            if (isset($form['fields']) && is_array($form['fields'])) {
+                $fieldsJson = json_encode($form['fields']);
+                if ($fieldsJson !== false && strlen($fieldsJson) > 512000) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' fields data exceeds 500KB limit");
+                }
+            }
+            if (isset($form['settings'])) {
+                $settingsJson = json_encode($form['settings']);
+                if ($settingsJson !== false && strlen($settingsJson) > 10240) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' settings exceeds 10KB limit");
+                }
+            }
+            if (isset($form['theme'])) {
+                $themeJson = json_encode($form['theme']);
+                if ($themeJson !== false && strlen($themeJson) > 10240) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 10KB limit");
+                }
+            }
             if (isset($seenFormIds[$form['packFormId']])) {
                 throw new \RuntimeException("Duplicate packFormId: '{$form['packFormId']}'");
             }
