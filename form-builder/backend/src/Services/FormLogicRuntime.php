@@ -31,6 +31,9 @@ class FormLogicRuntime
     private int $maxInstructions;
     private int $maxWallTimeMs;
     private int $maxCallDepth;
+    private int $httpRequestCount = 0;
+    private const MAX_HTTP_REQUESTS = 10;
+    private const MAX_RESPONSE_SIZE = 1 * 1024 * 1024; // 1MB
 
     public function __construct(array $config = [])
     {
@@ -49,6 +52,7 @@ class FormLogicRuntime
     public function execute(string $script, array $context): ScriptResult
     {
         $startTime = microtime(true);
+        $this->httpRequestCount = 0; // Reset per execution
 
         // Create a fresh engine instance
         $engine = new FormLogicEngine();
@@ -705,6 +709,12 @@ class FormLogicRuntime
      */
     private function executeHttpRequest(string $method, string $url, mixed $body, array $options): BaseObject
     {
+        // Enforce per-execution HTTP request limit
+        if ($this->httpRequestCount >= self::MAX_HTTP_REQUESTS) {
+            return $this->httpErrorResponse('HTTP request limit exceeded (max ' . self::MAX_HTTP_REQUESTS . ' per execution)');
+        }
+        $this->httpRequestCount++;
+
         // Validate URL
         if (!filter_var($url, FILTER_VALIDATE_URL)) {
             return $this->httpErrorResponse('Invalid URL format');
@@ -766,10 +776,11 @@ class FormLogicRuntime
             }
         }
 
-        // Timeout (default 10 seconds, max 30)
-        $timeout = 10;
+        // Timeout: cap to wall-time limit to prevent blocking the PHP worker
+        $maxTimeout = max(1, (int)($this->maxWallTimeMs / 1000));
+        $timeout = min($maxTimeout, 10);
         if (isset($options['timeout']) && is_numeric($options['timeout'])) {
-            $timeout = min(30, max(1, (int)$options['timeout']));
+            $timeout = min($maxTimeout, max(1, (int)$options['timeout']));
         }
 
         // Execute request with cURL
@@ -788,8 +799,11 @@ class FormLogicRuntime
             // Security settings
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            // Prevent SSRF via redirects (keeping as defense-in-depth)
+            // Restrict to HTTP/HTTPS only (prevent gopher://, dict://, file:// etc.)
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
+            // Limit response size to prevent memory exhaustion
+            CURLOPT_MAXFILESIZE => self::MAX_RESPONSE_SIZE,
         ];
 
         // DNS pinning: Force cURL to use our pre-resolved IP to prevent DNS rebinding
@@ -840,14 +854,31 @@ class FormLogicRuntime
                 return $this->httpErrorResponse('Redirect to private/local address blocked');
             }
 
+            // Per RFC 7231: convert POST/PUT/PATCH to GET on 301/302 redirects
+            // and strip the request body. 307/308 preserve method.
+            $redirectOptions = $curlOptions;
+            if (in_array($httpCode, [301, 302], true) && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+                $redirectOptions[CURLOPT_CUSTOMREQUEST] = 'GET';
+                unset($redirectOptions[CURLOPT_POSTFIELDS]);
+            }
+
+            // Strip Authorization header when redirecting to a different host
+            // to prevent credential leakage
+            if (strtolower($redirectHost) !== strtolower($host)) {
+                $filteredHeaders = array_filter($redirectOptions[CURLOPT_HTTPHEADER], function ($h) {
+                    return stripos($h, 'Authorization:') !== 0;
+                });
+                $redirectOptions[CURLOPT_HTTPHEADER] = array_values($filteredHeaders);
+            }
+
             // Follow the redirect with DNS pinning
             $redirectPort = $redirectParsed['port'] ?? (($redirectParsed['scheme'] ?? 'https') === 'https' ? 443 : 80);
             $ch = curl_init();
-            $curlOptions[CURLOPT_URL] = $redirectUrl;
+            $redirectOptions[CURLOPT_URL] = $redirectUrl;
             if ($redirectCheck['resolvedIp'] !== null) {
-                $curlOptions[CURLOPT_RESOLVE] = ["{$redirectHost}:{$redirectPort}:{$redirectCheck['resolvedIp']}"];
+                $redirectOptions[CURLOPT_RESOLVE] = ["{$redirectHost}:{$redirectPort}:{$redirectCheck['resolvedIp']}"];
             }
-            curl_setopt_array($ch, $curlOptions);
+            curl_setopt_array($ch, $redirectOptions);
 
             $response = curl_exec($ch);
             $error = curl_error($ch);

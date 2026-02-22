@@ -945,7 +945,10 @@ export default function FormResponse() {
           }
           if (rule.type === 'pattern' && typeof answer === 'string') {
             try {
-              if (!new RegExp(rule.value as string).test(answer)) {
+              const pat = String(rule.value);
+              if (pat.length > 500) { setFieldError(rule.message || 'Invalid format'); return; }
+              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { setFieldError(rule.message || 'Invalid format'); return; }
+              if (!new RegExp(pat).test(answer)) {
                 setFieldError(rule.message || 'Invalid format');
                 return;
               }
@@ -1012,7 +1015,10 @@ export default function FormResponse() {
           }
           if (rule.type === 'pattern' && typeof answer === 'string') {
             try {
-              if (!new RegExp(rule.value as string).test(answer)) {
+              const pat = String(rule.value);
+              if (pat.length > 500) { setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`); return; }
+              if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) { setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`); return; }
+              if (!new RegExp(pat).test(answer)) {
                 setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`);
                 return;
               }
