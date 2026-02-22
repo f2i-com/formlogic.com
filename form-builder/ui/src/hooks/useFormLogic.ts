@@ -50,6 +50,8 @@ export function useConditionalLogic(
           if (result) visible.add(field.id);
         } else if (action === 'hide') {
           if (!result) visible.add(field.id);
+        } else if (action === 'skip') {
+          if (!result) visible.add(field.id);
         } else if (action === 'require') {
           visible.add(field.id);
           if (result) required.add(field.id);

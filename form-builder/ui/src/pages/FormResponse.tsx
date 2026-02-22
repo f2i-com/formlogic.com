@@ -306,7 +306,9 @@ function FieldResponse({
       }
 
       case 'statement':
-        return null;
+        return field.description ? (
+          <p className="text-lg opacity-70">{field.description}</p>
+        ) : null;
 
       case 'file_upload': {
         const uploadedFiles = (value as File[]) || [];

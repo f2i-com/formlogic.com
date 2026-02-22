@@ -351,7 +351,7 @@ export function AppResponseDetail() {
                 </div>
               ) : (
                 <div className="text-sm text-gray-800 dark:text-slate-200">
-                  {answers[field.id] != null
+                  {answers[field.id] !== undefined && answers[field.id] !== null && answers[field.id] !== ''
                     ? (() => {
                         const val = answers[field.id];
                         // Boolean yes/no chip

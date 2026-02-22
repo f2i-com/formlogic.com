@@ -55,23 +55,25 @@ function simpleConditionToExpression(
   const parts = conditions.map((cond) => {
     // Use variable name instead of field ID
     const fieldRef = idToVar[cond.fieldId] || cond.fieldId;
+    // Escape quotes in value to prevent expression injection
+    const escaped = String(cond.value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const value = cond.value;
 
     switch (cond.operator) {
       case '===':
-        return `${fieldRef} === "${value}"`;
+        return `${fieldRef} === "${escaped}"`;
       case '!==':
-        return `${fieldRef} !== "${value}"`;
+        return `${fieldRef} !== "${escaped}"`;
       case '>':
-        return `${fieldRef} > ${value}`;
+        return `${fieldRef} > ${Number(value) || 0}`;
       case '<':
-        return `${fieldRef} < ${value}`;
+        return `${fieldRef} < ${Number(value) || 0}`;
       case '>=':
-        return `${fieldRef} >= ${value}`;
+        return `${fieldRef} >= ${Number(value) || 0}`;
       case '<=':
-        return `${fieldRef} <= ${value}`;
+        return `${fieldRef} <= ${Number(value) || 0}`;
       case 'contains':
-        return `${fieldRef}.includes("${value}")`;
+        return `${fieldRef}.includes("${escaped}")`;
       case 'notEmpty':
         return `isNotEmpty(${fieldRef})`;
       case 'empty':
