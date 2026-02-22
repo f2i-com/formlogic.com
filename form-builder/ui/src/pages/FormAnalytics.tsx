@@ -573,11 +573,29 @@ export default function FormAnalytics() {
                         <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {Math.round(response.completionTime / 1000)}s
                         </td>
-                        {form.fields.slice(0, 3).map((field) => (
-                          <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs">
-                            {String(response.answers[field.id] || '-')}
-                          </td>
-                        ))}
+                        {form.fields.slice(0, 3).map((field) => {
+                          const val = response.answers[field.id];
+                          let display = '-';
+                          if (val !== null && val !== undefined && val !== '') {
+                            if (field.type === 'location' && typeof val === 'object' && 'latitude' in (val as Record<string, unknown>)) {
+                              const loc = val as Record<string, number>;
+                              display = `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
+                            } else if (field.type === 'file_upload' && Array.isArray(val)) {
+                              display = val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ');
+                            } else if (Array.isArray(val)) {
+                              display = val.join(', ');
+                            } else if (typeof val === 'object') {
+                              display = JSON.stringify(val);
+                            } else {
+                              display = String(val);
+                            }
+                          }
+                          return (
+                            <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs">
+                              {display}
+                            </td>
+                          );
+                        })}
                       </tr>
                     ))}
                   </tbody>

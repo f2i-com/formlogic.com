@@ -726,9 +726,9 @@ class AppPublicController
             if (!isset($appFormMap[$sourceFormId])) continue;
 
             // Check if user has permission to view the source form's responses
-            $canViewOther = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $sourceFormId)
-                || $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $sourceFormId);
-            if (!$canViewOther) continue;
+            $canViewAllSource = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $sourceFormId);
+            $canViewOwnSource = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $sourceFormId);
+            if (!$canViewAllSource && !$canViewOwnSource) continue;
 
             $sourceForm = $sourceFormDataMap[$sourceFormId] ?? null;
             if (!$sourceForm) continue;
@@ -748,6 +748,12 @@ class AppPublicController
             // Batch-fetch source responses
             $sourceResponseIds = array_unique(array_column($formLinks, 'source_response_id'));
             $sourceResponses = $this->responseService->getResponsesByIds($sourceFormId, $sourceResponseIds);
+
+            // Filter by ownership if user only has VIEW_OWN_RESPONSES
+            if (!$canViewAllSource) {
+                $sourceResponses = array_filter($sourceResponses, fn($r) => ($r['metadata']['submittedByUserId'] ?? null) === $userId);
+                if (empty($sourceResponses)) continue;
+            }
 
             $matchingRecords = [];
             foreach ($sourceResponses as $sr) {
@@ -862,11 +868,25 @@ class AppPublicController
                 }
             }
 
+            // Check permissions before loading target responses
+            $canViewAllTarget = $this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_ALL_RESPONSES, $targetFormId);
+            $canViewOwnTarget = $this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_OWN_RESPONSES, $targetFormId);
+
+            if (!$canViewAllTarget && !$canViewOwnTarget) {
+                // User has no permission on target form — skip resolving these records
+                continue;
+            }
+
             $targetResponses = $this->responseService->getResponsesByIds($targetFormId, array_keys($idMap));
+
+            // Filter by ownership if user only has VIEW_OWN_RESPONSES
+            if (!$canViewAllTarget) {
+                $targetResponses = array_filter($targetResponses, fn($r) => ($r['metadata']['submittedByUserId'] ?? null) === $userId);
+            }
+
             $resolvedCache[$targetFormId] = [];
 
             foreach ($targetResponses as $tr) {
-
                 $answers = $tr['answers'] ?? [];
                 $parts = [];
                 if (!empty($displayFieldIds)) {

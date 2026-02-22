@@ -197,21 +197,21 @@ class WebhookService
                 throw new \RuntimeException('Webhook URL host is not allowed');
             }
 
-            $resolvedIp = null;
             $resolvedIps = gethostbynamel($host);
-            if ($resolvedIps !== false) {
-                foreach ($resolvedIps as $ip) {
-                    // Strip IPv4-mapped IPv6 prefix for validation
-                    $checkIp = $ip;
-                    if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
-                        $checkIp = $m[1];
-                    }
-                    if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                        throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
-                    }
-                }
-                $resolvedIp = $resolvedIps[0] ?? null;
+            if ($resolvedIps === false || empty($resolvedIps)) {
+                throw new \RuntimeException('Unable to resolve webhook URL hostname');
             }
+            foreach ($resolvedIps as $ip) {
+                // Strip IPv4-mapped IPv6 prefix for validation
+                $checkIp = $ip;
+                if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
+                    $checkIp = $m[1];
+                }
+                if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
+                }
+            }
+            $resolvedIp = $resolvedIps[0];
 
             $ch = curl_init($webhook['url']);
             $curlOpts = [

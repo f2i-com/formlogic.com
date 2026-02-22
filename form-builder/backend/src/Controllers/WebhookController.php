@@ -57,6 +57,11 @@ class WebhookController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
         }
 
+        // Block internal/private hosts
+        if ($this->isBlockedWebhookHost($url)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Webhook URL host is not allowed'], 400);
+        }
+
         if (empty($events) || !is_array($events)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'At least one event is required'], 400);
         }
@@ -96,6 +101,9 @@ class WebhookController
             $scheme = parse_url($data['url'], PHP_URL_SCHEME);
             if ($scheme !== 'https' && $scheme !== 'http') {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
+            }
+            if ($this->isBlockedWebhookHost($data['url'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Webhook URL host is not allowed'], 400);
             }
         }
 
@@ -154,6 +162,27 @@ class WebhookController
 
         $deliveries = $this->webhookService->getDeliveries($webhookId);
         return $this->jsonResponse($response, ['deliveries' => $deliveries]);
+    }
+
+    /**
+     * Validate that a webhook URL does not target internal/private hosts.
+     */
+    private function isBlockedWebhookHost(string $url): bool
+    {
+        $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
+        $blockedHosts = [
+            'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
+            '0.0.0.0', '::1', '::ffff:127.0.0.1', '::ffff:0:127.0.0.1',
+            '::ffff:169.254.169.254', '::ffff:0.0.0.0', 'metadata.azure.internal',
+        ];
+        if (in_array($host, $blockedHosts, true)) {
+            return true;
+        }
+        // Block IP addresses in private/reserved ranges
+        if (filter_var($host, FILTER_VALIDATE_IP) && !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            return true;
+        }
+        return false;
     }
 
     private function authorizeFormOwner(string $formId, ?string $userId): bool

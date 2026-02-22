@@ -744,13 +744,26 @@ class ResponseService
                         } else {
                             $value = $linkedDisplayCache[$targetFormId][$value] ?? $value;
                         }
+                    } elseif ($field['type'] === 'file_upload' && is_array($value)) {
+                        $value = implode(', ', array_map(fn($f) => $f['originalFilename'] ?? 'File', $value));
+                    } elseif ($field['type'] === 'location' && is_array($value)) {
+                        $lat = $value['latitude'] ?? '';
+                        $lng = $value['longitude'] ?? '';
+                        $value = $lat !== '' && $lng !== '' ? "$lat, $lng" : '';
                     } elseif (is_array($value)) {
-                        $value = implode(', ', $value);
+                        $value = implode(', ', array_map(fn($v) => is_array($v) ? json_encode($v) : (string)$v, $value));
                     }
 
                     $row[] = $value;
                 }
 
+                // Prevent CSV formula injection
+                foreach ($row as &$cell) {
+                    if (is_string($cell) && preg_match('/^[=+\-@]/', $cell)) {
+                        $cell = "'" . $cell;
+                    }
+                }
+                unset($cell);
                 fputcsv($outputStream, $row);
                 $totalWritten++;
             }

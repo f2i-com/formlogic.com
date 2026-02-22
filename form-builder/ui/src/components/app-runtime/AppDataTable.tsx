@@ -256,9 +256,20 @@ export function AppDataTable() {
           try { return new Date(val).toLocaleString(); } catch { /* fall through */ }
         }
       }
+      if (field.type === 'file_upload' && Array.isArray(val)) {
+        const names = val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ');
+        return names.length > 50 ? names.substring(0, 50) + '\u2026' : names;
+      }
+      if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in val) {
+        const loc = val as Record<string, number>;
+        return `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
+      }
       if (Array.isArray(val)) {
-        const joined = val.join(', ');
+        const joined = val.map((v: unknown) => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
         return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
+      }
+      if (typeof val === 'object' && val !== null) {
+        return JSON.stringify(val).substring(0, 50);
       }
       const str = String(val);
       return str.length > 50 ? str.substring(0, 50) + '\u2026' : str;

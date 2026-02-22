@@ -291,7 +291,12 @@ function FormResponses() {
     const allExportFields = form.fields.filter(
       (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
     );
-    const escapeCell = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const escapeCell = (val: unknown) => {
+      let str = String(val ?? '').replace(/"/g, '""');
+      // Prevent CSV formula injection — prefix with single quote if cell starts with =, +, -, or @
+      if (/^[=+\-@]/.test(str)) str = "'" + str;
+      return `"${str}"`;
+    };
     const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];
     const rows = responses.map((r) => [
       r.id,
@@ -314,6 +319,15 @@ function FormResponses() {
   const formatValue = (value: unknown, fieldType?: string): string => {
     if (value === null || value === undefined) return '-';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    // File upload: show filenames
+    if (fieldType === 'file_upload' && Array.isArray(value)) {
+      return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
+    }
+    // Location: show coordinates
+    if (fieldType === 'location' && value && typeof value === 'object' && 'latitude' in (value as Record<string, unknown>)) {
+      const loc = value as Record<string, number>;
+      return `${loc.latitude?.toFixed(6)}, ${loc.longitude?.toFixed(6)}`;
+    }
     // Date/time locale formatting
     if (typeof value === 'string' && value) {
       if (fieldType === 'date') {
@@ -918,6 +932,33 @@ function renderEditField(
         </div>
       );
     }
+
+    case 'file_upload':
+      // File uploads are not editable inline — show read-only summary
+      if (Array.isArray(currentValue) && currentValue.length > 0) {
+        return (
+          <div className="text-sm text-gray-600 dark:text-slate-400 space-y-1">
+            {currentValue.map((f: Record<string, unknown>, i: number) => (
+              <div key={i} className="flex items-center gap-2">
+                <span>{String(f.originalFilename || 'File')}</span>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No files uploaded</p>;
+
+    case 'location':
+      if (currentValue && typeof currentValue === 'object' && 'latitude' in (currentValue as Record<string, unknown>)) {
+        const loc = currentValue as Record<string, number>;
+        return (
+          <p className="text-sm text-gray-600 dark:text-slate-400">
+            {loc.latitude?.toFixed(6)}, {loc.longitude?.toFixed(6)}
+            {loc.accuracy ? ` (~${loc.accuracy}m)` : ''}
+          </p>
+        );
+      }
+      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No location captured</p>;
 
     default:
       return (
