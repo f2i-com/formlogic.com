@@ -152,7 +152,7 @@ function registerFormModules(engine: FormLogicEngine): void {
         if (formatStr === 'short') {
           return new StringObject(date.toLocaleDateString());
         } else if (formatStr === 'long') {
-          return new StringObject(date.toLocaleDateString('en-US', {
+          return new StringObject(date.toLocaleDateString(undefined, {
             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
           }));
         }

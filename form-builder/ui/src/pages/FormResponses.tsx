@@ -296,7 +296,7 @@ function FormResponses() {
     const rows = responses.map((r) => [
       r.id,
       new Date(r.submittedAt).toLocaleString(),
-      ...allExportFields.map((f) => formatValue(r.answers[f.id])),
+      ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type)),
     ]);
 
     const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
@@ -311,9 +311,19 @@ function FormResponses() {
   };
 
   // Format value for display
-  const formatValue = (value: unknown): string => {
+  const formatValue = (value: unknown, fieldType?: string): string => {
     if (value === null || value === undefined) return '-';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+    // Date/time locale formatting
+    if (typeof value === 'string' && value) {
+      if (fieldType === 'date') {
+        try { return new Date(value + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch { /* fall through */ }
+      } else if (fieldType === 'time') {
+        try { const [h, m] = value.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } catch { /* fall through */ }
+      } else if (fieldType === 'datetime') {
+        try { return new Date(value).toLocaleString(); } catch { /* fall through */ }
+      }
+    }
     if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
@@ -322,7 +332,7 @@ function FormResponses() {
   // Format date
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -528,9 +538,9 @@ function FormResponses() {
                         <td
                           key={field.id}
                           className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 max-w-[200px] truncate hidden sm:table-cell"
-                          title={formatValue(response.answers[field.id])}
+                          title={formatValue(response.answers[field.id], field.type)}
                         >
-                          {formatValue(response.answers[field.id])}
+                          {formatValue(response.answers[field.id], field.type)}
                         </td>
                       ))}
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
@@ -624,7 +634,7 @@ function FormResponses() {
                   <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
                     <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
                     <p className="text-gray-900 dark:text-white">
-                      {formatValue(selectedResponse.answers[field.id]) || (
+                      {formatValue(selectedResponse.answers[field.id], field.type) || (
                         <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                       )}
                     </p>

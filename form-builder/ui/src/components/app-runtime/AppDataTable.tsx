@@ -244,6 +244,16 @@ export function AppDataTable() {
       const answers = r.answers as Record<string, unknown> | undefined;
       const val = answers?.[field.id];
       if (val == null) return '-';
+      // Date/time locale formatting
+      if (typeof val === 'string' && val) {
+        if (field.type === 'date') {
+          try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch { /* fall through */ }
+        } else if (field.type === 'time') {
+          try { const [h, m] = val.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } catch { /* fall through */ }
+        } else if (field.type === 'datetime') {
+          try { return new Date(val).toLocaleString(); } catch { /* fall through */ }
+        }
+      }
       if (Array.isArray(val)) {
         const joined = val.join(', ');
         return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;

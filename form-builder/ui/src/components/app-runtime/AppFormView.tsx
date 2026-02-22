@@ -115,7 +115,8 @@ function FieldInput({
         type={field.type === 'datetime' ? 'datetime-local' : field.type}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
-        className={cn(inputClass, 'max-w-full sm:max-w-xs')}
+        onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+        className={cn(inputClass, 'max-w-full sm:max-w-xs cursor-pointer')}
         style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
         autoFocus
       />

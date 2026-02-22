@@ -169,7 +169,7 @@ export const ohsQmsPack: PackData = {
         },
         {
           id: 'thank_you',
-          type: 'thank_you_screen',
+          type: 'thank_you',
           label: 'Report Submitted',
           description: 'Thank you for reporting this incident. It will be reviewed and investigated promptly.',
           required: false,

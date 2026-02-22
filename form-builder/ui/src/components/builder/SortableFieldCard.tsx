@@ -31,7 +31,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
     transition,
   };
 
-  const fieldInfo = FIELD_TYPE_INFO[field.type];
+  const fieldInfo = FIELD_TYPE_INFO[field.type] ?? { label: field.type, icon: 'HelpCircle', category: 'other' };
   const IconComponent = ICON_MAP[fieldInfo.icon] || HelpCircle;
 
   const handleSelect = useCallback(() => onSelect(field.id), [onSelect, field.id]);

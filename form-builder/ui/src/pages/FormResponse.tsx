@@ -99,7 +99,8 @@ function FieldResponse({
             type="date"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors cursor-pointer"
           />
         );
 

@@ -439,7 +439,7 @@ export function Dashboard() {
   }, [forms, responses, getResponsesByFormId]);
 
   // Format date for welcome message
-  const today = new Date().toLocaleDateString('en-US', {
+  const today = new Date().toLocaleDateString(undefined, {
     weekday: 'long',
     month: 'long',
     day: 'numeric',

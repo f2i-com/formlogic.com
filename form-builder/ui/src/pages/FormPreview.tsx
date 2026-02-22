@@ -84,7 +84,8 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
             type="date"
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
+            onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors cursor-pointer"
           />
         );
 
