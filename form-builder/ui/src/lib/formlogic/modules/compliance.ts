@@ -137,4 +137,50 @@ export const complianceModule: Record<string, (args: BaseObject[]) => BaseObject
     if (income > 200000 || netWorth > 1000000) return trueObject;
     return falseObject;
   },
+
+  /**
+   * Australian wholesale client check — Corporations Act s761G.
+   * Gross income >= $250,000 OR net assets >= $2,500,000.
+   */
+  wholesaleClient: (args: BaseObject[]) => {
+    if (args.length < 2) return falseObject;
+    const income = getValue(args[0]);
+    const netAssets = getValue(args[1]);
+    if (typeof income !== 'number' || typeof netAssets !== 'number') return falseObject;
+
+    if (income >= 250000 || netAssets >= 2500000) return trueObject;
+    return falseObject;
+  },
+
+  /**
+   * AUSTRAC Threshold Transaction Report flag.
+   * Flags: single >= AUD $10,000, structuring ($8k-$10k + freq>3),
+   * high volume (>50/month), high aggregate (>$100k).
+   */
+  austracFlag: (args: BaseObject[]) => {
+    if (args.length < 1) return falseObject;
+    const amount = getValue(args[0]);
+    const frequency = args.length > 1 ? getValue(args[1]) : 0;
+    if (typeof amount !== 'number') return falseObject;
+    const freq = typeof frequency === 'number' ? frequency : 0;
+
+    if (amount >= 10000) return trueObject;
+    if (amount >= 8000 && amount < 10000 && freq > 3) return trueObject;
+    if (freq > 50) return trueObject;
+    if (amount * freq > 100000) return trueObject;
+
+    return falseObject;
+  },
+
+  /**
+   * Australian TFN validation — 9-digit format (###-###-### or #########).
+   */
+  tfnValid: (args: BaseObject[]) => {
+    if (args.length < 1) return falseObject;
+    const tfn = getValue(args[0]);
+    if (typeof tfn !== 'string') return falseObject;
+
+    const pattern = /^\d{3}-?\d{3}-?\d{3}$/;
+    return pattern.test(tfn.trim()) ? trueObject : falseObject;
+  },
 };

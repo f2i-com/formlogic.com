@@ -125,8 +125,9 @@ export const financeModule: Record<string, (args: BaseObject[]) => BaseObject> =
   },
 
   /**
-   * Transfer fee by custodian.
-   * Schwab/Fidelity/Vanguard = $0, others = $75, waived under $500.
+   * ACAT transfer fee by custodian (US).
+   * Schwab=$50, Fidelity=$0, Vanguard=$100, E*TRADE=$75, others=$75.
+   * Fee waived for transfers under $500.
    */
   transferFee: (args: BaseObject[]) => {
     if (args.length < 1) return new FloatObject(0);
@@ -134,15 +135,95 @@ export const financeModule: Record<string, (args: BaseObject[]) => BaseObject> =
     const custodian = args.length > 1 ? getValue(args[1]) : undefined;
     if (typeof amount !== 'number') return new FloatObject(0);
 
-    const zeroCostCustodians = ['schwab', 'fidelity', 'vanguard'];
-
-    if (typeof custodian === 'string' && zeroCostCustodians.includes(custodian.toLowerCase())) {
-      return new FloatObject(0);
-    }
-
     // Waive fee for small transfers
     if (amount < 500) return new FloatObject(0);
 
+    const feeSchedule: Record<string, number> = {
+      schwab: 50,
+      fidelity: 0,
+      vanguard: 100,
+      etrade: 75,
+      pershing: 75,
+      lpl: 75,
+    };
+
+    if (typeof custodian === 'string') {
+      const fee = feeSchedule[custodian.toLowerCase()];
+      if (fee !== undefined) return new FloatObject(fee);
+    }
+
     return new FloatObject(75);
+  },
+
+  /**
+   * Australian tiered AUM fee (GST inclusive).
+   * Default tiers: 1.1% first $500k, 0.88% $500k-$2M, 0.66% $2M-$5M, 0.44% above $5M.
+   * Optional tiersJson param for custom tiers.
+   */
+  auAumFee: (args: BaseObject[]) => {
+    if (args.length < 1) return new FloatObject(0);
+    const assets = getValue(args[0]);
+    const tiersJson = args.length > 1 ? getValue(args[1]) : undefined;
+    if (typeof assets !== 'number' || assets <= 0) return new FloatObject(0);
+
+    let tiers: Array<[number, number]> = [
+      [500_000, 0.011],
+      [2_000_000, 0.0088],
+      [5_000_000, 0.0066],
+      [Infinity, 0.0044],
+    ];
+
+    if (typeof tiersJson === 'string') {
+      try {
+        const parsed = JSON.parse(tiersJson);
+        if (Array.isArray(parsed) && parsed.length > 0 &&
+            parsed.every((t: unknown) => Array.isArray(t) && t.length >= 2 && typeof t[0] === 'number' && typeof t[1] === 'number')) {
+          tiers = parsed.map((t: [number, number]) => [t[0], t[1]]);
+          tiers.sort((a, b) => a[0] - b[0]);
+        }
+      } catch {
+        // Use default tiers on parse error
+      }
+    }
+
+    let remaining = assets;
+    let totalFee = 0;
+    let prevCeiling = 0;
+
+    for (const [ceiling, rate] of tiers) {
+      const tierAmount = Math.min(remaining, ceiling - prevCeiling);
+      if (tierAmount <= 0) break;
+      totalFee += tierAmount * rate;
+      remaining -= tierAmount;
+      prevCeiling = ceiling;
+      if (remaining <= 0) break;
+    }
+
+    return new FloatObject(Math.round(totalFee * 100) / 100);
+  },
+
+  /**
+   * Australian off-market transfer fee by platform.
+   * Netwealth/HUB24=$0, BT Panorama=$54 flat, Macquarie=$33, CFS=$0, others=$55.
+   */
+  auTransferFee: (args: BaseObject[]) => {
+    if (args.length < 2) return new FloatObject(0);
+    const amount = getValue(args[0]);
+    const platform = getValue(args[1]);
+    if (typeof amount !== 'number' || typeof platform !== 'string') return new FloatObject(0);
+
+    const feeSchedule: Record<string, number> = {
+      netwealth: 0,
+      hub24: 0,
+      'bt panorama': 54,
+      macquarie: 33,
+      cfs: 0,
+      'cfs firstchoice': 0,
+    };
+
+    const fee = feeSchedule[platform.toLowerCase()];
+    if (fee !== undefined) return new FloatObject(fee);
+
+    return new FloatObject(55);
   },
 };

@@ -96,13 +96,13 @@ const defaultTheme: Record<string, unknown> = {
 export const financeOsPack: PackData = {
   formatVersion: 1,
   packMeta: {
-    id: 'finance-os',
-    name: 'Finance OS',
+    id: 'finance-os-us',
+    name: 'Finance OS (United States)',
     description:
-      'A comprehensive pack for financial advisors covering client onboarding, compliance, account transfers, and ongoing client management.',
+      'A comprehensive United States-focused pack for financial advisors covering client onboarding, compliance, account transfers, and ongoing client management.',
     version: '1.0.0',
     author: 'FormLogic',
-    tags: ['finance', 'advisory', 'compliance', 'onboarding', 'wealth-management'],
+    tags: ['finance', 'advisory', 'compliance', 'onboarding', 'wealth-management', 'united-states'],
   },
 
   // ────────────────────────────────────────────────────────────────────────
@@ -478,7 +478,9 @@ export const financeOsPack: PackData = {
               { id: 'schwab', label: 'Schwab', value: 'schwab' },
               { id: 'fidelity', label: 'Fidelity', value: 'fidelity' },
               { id: 'vanguard', label: 'Vanguard', value: 'vanguard' },
-              { id: 'td_ameritrade', label: 'TD Ameritrade', value: 'td_ameritrade' },
+              { id: 'etrade', label: 'E*TRADE', value: 'etrade' },
+              { id: 'pershing', label: 'BNY Pershing', value: 'pershing' },
+              { id: 'lpl', label: 'LPL Financial', value: 'lpl' },
               { id: 'other', label: 'Other', value: 'other' },
             ],
           },
@@ -625,7 +627,7 @@ export const financeOsPack: PackData = {
       title: 'Annual Client Review',
       description:
         'Document annual portfolio review, updated goals, and any life changes for each client.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -708,7 +710,7 @@ export const financeOsPack: PackData = {
       title: 'Fee Agreement',
       description:
         'Establish advisory fee terms based on assets under management.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -809,6 +811,13 @@ export const financeOsPack: PackData = {
           },
         },
         {
+          id: 'document_name',
+          type: 'short_text',
+          label: 'Document Name',
+          required: true,
+          properties: { placeholder: 'Enter a name for this document' },
+        },
+        {
           id: 'document_file',
           type: 'file_upload',
           label: 'Document File',
@@ -848,6 +857,13 @@ export const financeOsPack: PackData = {
       settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
+        {
+          id: 'client_record',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client-intake' },
+        },
         {
           id: 'legal_name',
           type: 'short_text',
@@ -1077,6 +1093,13 @@ export const financeOsPack: PackData = {
       settings: { ...defaultSettings },
       theme: { ...defaultTheme },
       fields: [
+        {
+          id: 'client_record',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client-intake' },
+        },
         {
           id: 'principal_name',
           type: 'short_text',

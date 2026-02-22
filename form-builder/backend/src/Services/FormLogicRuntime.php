@@ -412,6 +412,42 @@ class FormLogicRuntime
                 if ((float) $income > 200000 || (float) $netWorth > 1000000) return trueObject();
                 return falseObject();
             },
+
+            // Australian wholesale client — Corporations Act s761G
+            // Gross income >= $250,000 OR net assets >= $2,500,000
+            'wholesaleClient' => function (array $args): BaseObject {
+                if (count($args) < 2) return falseObject();
+                $income = getValue($args[0]);
+                $netAssets = getValue($args[1]);
+                if (!is_numeric($income) || !is_numeric($netAssets)) return falseObject();
+                if ((float) $income >= 250000 || (float) $netAssets >= 2500000) return trueObject();
+                return falseObject();
+            },
+
+            // AUSTRAC Threshold Transaction Report flag
+            // Single >= AUD $10,000, structuring ($8k-$10k + freq>3),
+            // high volume (>50/month), high aggregate (>$100k)
+            'austracFlag' => function (array $args): BaseObject {
+                if (count($args) < 1) return falseObject();
+                $amount = getValue($args[0]);
+                $frequency = count($args) >= 2 ? getValue($args[1]) : 0;
+                if (!is_numeric($amount)) return falseObject();
+                $amt = (float) $amount;
+                $freq = is_numeric($frequency) ? (float) $frequency : 0;
+                if ($amt >= 10000) return trueObject();
+                if ($amt >= 8000 && $amt < 10000 && $freq > 3) return trueObject();
+                if ($freq > 50) return trueObject();
+                if ($amt * $freq > 100000) return trueObject();
+                return falseObject();
+            },
+
+            // Australian TFN validation — 9-digit format
+            'tfnValid' => function (array $args): BaseObject {
+                if (count($args) < 1) return falseObject();
+                $tfn = getValue($args[0]);
+                if (!is_string($tfn)) return falseObject();
+                return preg_match('/^\d{3}-?\d{3}-?\d{3}$/', trim($tfn)) ? trueObject() : falseObject();
+            },
         ]);
     }
 
@@ -504,18 +540,96 @@ class FormLogicRuntime
                 return new StringObject("{$equity}:{$bond}:{$cash}");
             },
 
+            // ACAT transfer fee by custodian (US)
+            // Schwab=$50, Fidelity=$0, Vanguard=$100, E*TRADE=$75, others=$75
             'transferFee' => function (array $args): BaseObject {
                 if (count($args) < 1) return new FloatObject(0.0);
                 $amount = getValue($args[0]);
                 if (!is_numeric($amount)) return new FloatObject(0.0);
                 $amt = (float) $amount;
-                $custodian = count($args) >= 2 ? getValue($args[1]) : null;
-                $zeroCost = ['schwab', 'fidelity', 'vanguard'];
-                if (is_string($custodian) && in_array(strtolower($custodian), $zeroCost, true)) {
-                    return new FloatObject(0.0);
-                }
+
+                // Waive fee for small transfers
                 if ($amt < 500) return new FloatObject(0.0);
+
+                $custodian = count($args) >= 2 ? getValue($args[1]) : null;
+                $feeSchedule = [
+                    'schwab' => 50.0,
+                    'fidelity' => 0.0,
+                    'vanguard' => 100.0,
+                    'etrade' => 75.0,
+                    'pershing' => 75.0,
+                    'lpl' => 75.0,
+                ];
+                if (is_string($custodian)) {
+                    $key = strtolower($custodian);
+                    if (isset($feeSchedule[$key])) {
+                        return new FloatObject($feeSchedule[$key]);
+                    }
+                }
                 return new FloatObject(75.0);
+            },
+
+            // Australian tiered AUM fee (GST inclusive)
+            // 1.1% first $500k, 0.88% $500k-$2M, 0.66% $2M-$5M, 0.44% above $5M
+            'auAumFee' => function (array $args): BaseObject {
+                if (count($args) < 1) return new FloatObject(0.0);
+                $assets = getValue($args[0]);
+                if (!is_numeric($assets) || (float) $assets <= 0) return new FloatObject(0.0);
+                $amt = (float) $assets;
+
+                $tiers = [
+                    [500000, 0.011],
+                    [2000000, 0.0088],
+                    [5000000, 0.0066],
+                    [PHP_FLOAT_MAX, 0.0044],
+                ];
+
+                if (count($args) >= 2) {
+                    $tiersJson = getValue($args[1]);
+                    if (is_string($tiersJson)) {
+                        $parsed = json_decode($tiersJson, true);
+                        if (is_array($parsed) && !empty($parsed)) {
+                            $tiers = $parsed;
+                            usort($tiers, fn($a, $b) => ($a[0] ?? 0) <=> ($b[0] ?? 0));
+                        }
+                    }
+                }
+
+                $remaining = $amt;
+                $totalFee = 0.0;
+                $prevCeiling = 0;
+                foreach ($tiers as [$ceiling, $rate]) {
+                    $tierAmount = min($remaining, $ceiling - $prevCeiling);
+                    if ($tierAmount <= 0) break;
+                    $totalFee += $tierAmount * $rate;
+                    $remaining -= $tierAmount;
+                    $prevCeiling = $ceiling;
+                    if ($remaining <= 0) break;
+                }
+                return new FloatObject(round($totalFee, 2));
+            },
+
+            // Australian off-market transfer fee by platform
+            // Netwealth/HUB24=$0, BT Panorama=$54, Macquarie=$33, CFS=$0, others=$55
+            'auTransferFee' => function (array $args): BaseObject {
+                if (count($args) < 2) return new FloatObject(0.0);
+                $amount = getValue($args[0]);
+                $platform = getValue($args[1]);
+                if (!is_numeric($amount) || !is_string($platform)) return new FloatObject(0.0);
+
+                $feeSchedule = [
+                    'netwealth' => 0.0,
+                    'hub24' => 0.0,
+                    'bt panorama' => 54.0,
+                    'macquarie' => 33.0,
+                    'cfs' => 0.0,
+                    'cfs firstchoice' => 0.0,
+                ];
+                $key = strtolower($platform);
+                if (isset($feeSchedule[$key])) {
+                    return new FloatObject($feeSchedule[$key]);
+                }
+                return new FloatObject(55.0);
             },
         ]);
     }
