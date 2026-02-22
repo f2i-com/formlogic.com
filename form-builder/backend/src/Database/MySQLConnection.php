@@ -40,7 +40,7 @@ class MySQLConnection
                     ]
                 );
             } catch (PDOException $e) {
-                throw new PDOException('MySQL Connection failed: ' . $e->getMessage());
+                throw new PDOException('MySQL Connection failed');
             }
         }
 

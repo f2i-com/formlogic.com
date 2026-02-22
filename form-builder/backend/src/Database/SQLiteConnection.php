@@ -71,7 +71,7 @@ class SQLiteConnection
             return $pdo;
 
         } catch (PDOException $e) {
-            throw new PDOException('SQLite Connection failed: ' . $e->getMessage());
+            throw new PDOException('SQLite Connection failed');
         }
     }
 

@@ -391,7 +391,7 @@ class PackCatalogController
             $seeded = $this->catalogService->seedOfficialPacks($userId, $packsData);
             return $this->jsonResponse($response, ['success' => true, 'seeded' => $seeded]);
         } catch (\Exception $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to seed packs: ' . $e->getMessage()], 500);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to seed packs'], 500);
         }
     }
 
