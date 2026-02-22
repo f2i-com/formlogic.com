@@ -824,6 +824,67 @@ class ApiClient {
     return this.request(`/packs/catalog/${slug}/ratings`, { method: 'DELETE' });
   }
 
+  // File upload for form responses
+  async uploadFile(formId: string, file: File): Promise<ApiResponse<UploadedFileMetadata>> {
+    const url = `${this.baseUrl}/forms/${formId}/upload`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to upload file' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  async uploadAppFile(slug: string, formId: string, file: File): Promise<ApiResponse<UploadedFileMetadata>> {
+    const url = `${this.baseUrl}/app/${slug}/forms/${formId}/upload`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to upload file' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
   // CSV import
   async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
@@ -1182,8 +1243,17 @@ interface ApiKeyCreated extends ApiKey {
   key: string;
 }
 
+interface UploadedFileMetadata {
+  id: string;
+  originalFilename: string;
+  storedFilename: string;
+  size: number;
+  mimeType: string;
+  url: string;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackRatingEntry, PackRatingsResult };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };

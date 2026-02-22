@@ -46,8 +46,10 @@ use FormLogic\Controllers\PackController;
 use FormLogic\Controllers\PackCatalogController;
 use FormLogic\Controllers\PackRatingController;
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\FileStorageService;
 use FormLogic\Controllers\ApiKeyController;
 use FormLogic\Controllers\ExternalApiController;
+use FormLogic\Controllers\FileController;
 use FormLogic\Middleware\ApiKeyMiddleware;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -166,7 +168,8 @@ $container->set(ResponseService::class, function (Container $c) {
         $c->get(SQLiteConnection::class),
         $c->get(FormLogicRuntime::class),
         $c->get(LoggerInterface::class),
-        $c->get(WebhookService::class)
+        $c->get(WebhookService::class),
+        $c->get(FileStorageService::class)
     );
 });
 
@@ -272,6 +275,20 @@ $container->set(PackRatingController::class, function (Container $c) {
     );
 });
 
+// File storage service
+$container->set(FileStorageService::class, function (Container $c) {
+    $uploadsConfig = $c->get('settings')['uploads'] ?? [];
+    $uploadsConfig['storagePath'] = $uploadsConfig['storagePath'] ?? __DIR__ . '/../storage/uploads';
+    return new FileStorageService($uploadsConfig);
+});
+
+$container->set(FileController::class, function (Container $c) {
+    return new FileController(
+        $c->get(FileStorageService::class),
+        $c->get(FormService::class)
+    );
+});
+
 // Register API Key services
 $container->set(ApiKeyService::class, function (Container $c) {
     return new ApiKeyService(
@@ -281,7 +298,8 @@ $container->set(ApiKeyService::class, function (Container $c) {
 
 $container->set(ApiKeyController::class, function (Container $c) {
     return new ApiKeyController(
-        $c->get(ApiKeyService::class)
+        $c->get(ApiKeyService::class),
+        $c->get(FormService::class)
     );
 });
 
@@ -596,6 +614,16 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
 $app->post('/api/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
 })->add($submissionRateLimiter);
+
+// File upload for standalone forms (no auth required since forms can be public)
+$app->post('/api/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(FileController::class)->upload($request, $response, $getArgs($request));
+})->add($submissionRateLimiter);
+
+// File serving (public - files keyed by UUID)
+$app->get('/api/files/{formId}/{fileId}/{filename}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(FileController::class)->serve($request, $response, $getArgs($request));
+});
 
 // Analytics routes (protected)
 $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {
@@ -968,6 +996,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Linked record lookup
     $group->get('/forms/{formId}/lookup', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->lookupRecords($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // File upload for app forms
+    $group->post('/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(FileController::class)->appUpload($request, $response, $getArgs($request));
     })->add($authRequired);
 
     // Response CRUD

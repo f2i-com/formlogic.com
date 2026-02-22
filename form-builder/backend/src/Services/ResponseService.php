@@ -16,6 +16,7 @@ class ResponseService
     private SQLiteConnection $sqlite;
     private ?FormLogicRuntime $runtime;
     private ?WebhookService $webhookService;
+    private ?FileStorageService $fileStorageService;
     private LoggerInterface $logger;
 
     public function __construct(
@@ -23,13 +24,15 @@ class ResponseService
         SQLiteConnection $sqlite,
         ?FormLogicRuntime $runtime = null,
         ?LoggerInterface $logger = null,
-        ?WebhookService $webhookService = null
+        ?WebhookService $webhookService = null,
+        ?FileStorageService $fileStorageService = null
     ) {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->runtime = $runtime;
         $this->logger = $logger ?? new NullLogger();
         $this->webhookService = $webhookService;
+        $this->fileStorageService = $fileStorageService;
     }
 
     /**
@@ -498,6 +501,19 @@ class ResponseService
         }
 
         $db = $this->sqlite->getFormDatabase($formId);
+
+        // Fetch response answers before deleting so we can clean up uploaded files
+        if ($this->fileStorageService !== null) {
+            $fetchStmt = $db->prepare("SELECT answers FROM responses WHERE id = :id");
+            $fetchStmt->execute(['id' => $responseId]);
+            $row = $fetchStmt->fetch(PDO::FETCH_ASSOC);
+            if ($row && !empty($row['answers'])) {
+                $answers = json_decode($row['answers'], true);
+                if (is_array($answers)) {
+                    $this->fileStorageService->deleteResponseFiles($formId, $answers);
+                }
+            }
+        }
 
         // Delete from SQLite
         $stmt = $db->prepare("DELETE FROM responses WHERE id = :id");

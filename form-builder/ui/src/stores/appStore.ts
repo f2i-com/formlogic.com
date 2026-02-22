@@ -9,6 +9,7 @@ interface AppState {
   apps: App[];
   activeAppId: string | null;
   isLoading: boolean;
+  _loadingCount: number;
   error: string | null;
 
   // App CRUD
@@ -35,45 +36,57 @@ interface AppState {
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const startLoading = () => set((s) => ({ _loadingCount: s._loadingCount + 1, isLoading: true }));
+      const stopLoading = () => set((s) => {
+        const next = Math.max(0, s._loadingCount - 1);
+        return { _loadingCount: next, isLoading: next > 0 };
+      });
+
+      return ({
       apps: [],
       activeAppId: null,
       isLoading: false,
+      _loadingCount: 0,
       error: null,
 
       fetchApps: async () => {
-        set({ isLoading: true, error: null });
+        startLoading(); set({ error: null });
         try {
           const result = await api.getApps();
           if (result.error) {
-            set({ error: result.error, isLoading: false });
+            set({ error: result.error });
           } else {
-            set({ apps: (result.data?.apps as App[]) ?? [], isLoading: false });
+            set({ apps: (result.data?.apps as App[]) ?? [] });
           }
         } catch (e) {
-          set({ error: e instanceof Error ? e.message : 'Failed to fetch apps', isLoading: false });
+          set({ error: e instanceof Error ? e.message : 'Failed to fetch apps' });
+        } finally {
+          stopLoading();
         }
       },
 
       createApp: async (data) => {
-        set({ isLoading: true, error: null });
+        startLoading(); set({ error: null });
         try {
           const result = await api.createApp(data);
           if (result.error) {
-            set({ error: result.error, isLoading: false });
+            set({ error: result.error });
             return null;
           }
           const app = result.data?.app as App;
-          set((s) => ({ apps: [...s.apps, app], isLoading: false }));
+          set((s) => ({ apps: [...s.apps, app] }));
           return app;
         } catch (e) {
-          set({ error: e instanceof Error ? e.message : 'Failed to create app', isLoading: false });
+          set({ error: e instanceof Error ? e.message : 'Failed to create app' });
           return null;
+        } finally {
+          stopLoading();
         }
       },
 
       updateApp: async (id, data) => {
-        set({ isLoading: true });
+        startLoading(); set({ error: null });
         try {
           const result = await api.updateApp(id, data);
           if (result.error) {
@@ -88,12 +101,12 @@ export const useAppStore = create<AppState>()(
         } catch {
           toast.error('Update failed', 'Could not update the app. Please try again.');
         } finally {
-          set({ isLoading: false });
+          stopLoading();
         }
       },
 
       deleteApp: async (id) => {
-        set({ isLoading: true });
+        startLoading(); set({ error: null });
         try {
           const result = await api.deleteApp(id);
           if (result.error) {
@@ -107,7 +120,7 @@ export const useAppStore = create<AppState>()(
         } catch {
           toast.error('Delete failed', 'Could not delete the app. Please try again.');
         } finally {
-          set({ isLoading: false });
+          stopLoading();
         }
       },
 
@@ -191,7 +204,7 @@ export const useAppStore = create<AppState>()(
         const result = await api.deleteAppRole(appId, roleId);
         if (result.error) throw new Error(result.error);
       },
-    }),
+    })},
     {
       name: 'formlogic-apps',
       partialize: (state) => ({

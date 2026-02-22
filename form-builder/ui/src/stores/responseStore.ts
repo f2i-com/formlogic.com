@@ -66,7 +66,7 @@ export const useResponseStore = create<ResponseState>()(
       },
 
       goToStep: (step) => {
-        set({ currentStep: step });
+        set({ currentStep: Math.max(0, step) });
       },
 
       submitResponse: () => {

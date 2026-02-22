@@ -9,6 +9,8 @@ import { cn } from '../../lib/utils';
 import { PhoneInput } from '../ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../ui/DynamicIcon';
+import { FileUploadField } from '../ui/FileUploadField';
+import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import type { FormField as FormFieldType } from '../../types/form';
 
@@ -36,6 +38,7 @@ function FieldInput({
   onChange,
   primaryColor,
   formId,
+  appSlug,
   allAnswers,
   allFieldIds,
   onCalculated,
@@ -45,6 +48,7 @@ function FieldInput({
   onChange: (val: unknown) => void;
   primaryColor: string;
   formId?: string;
+  appSlug?: string;
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
   onCalculated?: (fieldId: string, value: unknown) => void;
@@ -331,58 +335,25 @@ function FieldInput({
   }
 
   if (field.type === 'file_upload') {
-    const uploadedFiles = (value as File[]) || [];
-    const maxSize = field.properties?.maxFileSize as number | undefined;
-    const formatFileSize = (bytes: number) => {
-      if (bytes < 1024) return bytes + ' B';
-      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-    };
     return (
-      <div className="space-y-3">
-        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-gray-300 dark:border-slate-600 rounded-xl cursor-pointer hover:border-gray-400 dark:hover:border-slate-500 transition-colors">
-          <div className="flex flex-col items-center py-4">
-            <svg className="w-8 h-8 text-gray-400 dark:text-slate-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            <p className="text-sm text-gray-500 dark:text-slate-400">
-              <span className="font-medium" style={{ color: primaryColor }}>Click to upload</span>
-            </p>
-            {maxSize && <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">Max {formatFileSize(maxSize)}</p>}
-          </div>
-          <input
-            type="file"
-            className="hidden"
-            multiple={field.properties?.allowMultiple as boolean}
-            accept={(field.properties?.acceptedFileTypes as string[])?.join(',')}
-            onChange={(e) => {
-              const files = Array.from(e.target.files || []);
-              if (maxSize) {
-                const valid = files.filter(f => f.size <= maxSize);
-                const rejected = files.length - valid.length;
-                if (rejected > 0) {
-                  alert(`${rejected} file${rejected > 1 ? 's' : ''} exceeded the ${formatFileSize(maxSize)} limit and ${rejected > 1 ? 'were' : 'was'} skipped.`);
-                }
-                onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...valid] : valid);
-              } else {
-                onChange(field.properties?.allowMultiple ? [...uploadedFiles, ...files] : files);
-              }
-              e.target.value = '';
-            }}
-          />
-        </label>
-        {uploadedFiles.length > 0 && (
-          <div className="space-y-2">
-            {uploadedFiles.map((file, i) => (
-              <div key={i} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-slate-800 rounded-lg text-sm">
-                <span className="flex-1 truncate text-gray-700 dark:text-slate-300">{file.name}</span>
-                <span className="text-gray-400 dark:text-slate-500 text-xs">{formatFileSize(file.size)}</span>
-                <button type="button" onClick={() => onChange(uploadedFiles.filter((_, idx) => idx !== i))} aria-label="Remove file" className="text-red-500 hover:text-red-700 cursor-pointer">✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <FileUploadField
+        field={field as unknown as import('../../types/form').FormField}
+        value={value}
+        onChange={onChange}
+        primaryColor={primaryColor}
+        formId={formId}
+        appSlug={appSlug}
+      />
+    );
+  }
+
+  if (field.type === 'location') {
+    return (
+      <LocationField
+        value={value}
+        onChange={onChange}
+        primaryColor={primaryColor}
+      />
     );
   }
 
@@ -883,6 +854,7 @@ export function AppFormView() {
                 onChange={(val) => handleSetAnswer(currentField.id, val)}
                 primaryColor={primaryColor}
                 formId={formId}
+                appSlug={appSlug}
                 allAnswers={allFormData}
                 allFieldIds={fields.map(f => f.id)}
                 onCalculated={handleCalculated}
@@ -1021,6 +993,7 @@ export function AppFormView() {
                     onChange={(val) => handleSetAnswer(field.id, val)}
                     primaryColor={primaryColor}
                     formId={formId}
+                    appSlug={appSlug}
                     allAnswers={allFormData}
                     onCalculated={handleCalculated}
                     allFieldIds={fields.map(f => f.id)}

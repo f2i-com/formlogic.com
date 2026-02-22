@@ -20,7 +20,8 @@ export type FieldType =
   | 'welcome_screen'
   | 'thank_you'
   | 'calculated'
-  | 'linked_record';
+  | 'linked_record'
+  | 'location';
 
 export interface FieldOption {
   id: string;
@@ -63,6 +64,8 @@ export interface FieldProperties {
   targetFormId?: string;
   displayFieldIds?: string[];
   searchFieldIds?: string[];
+  // Location properties
+  showMap?: boolean;
 }
 
 export interface FormField {
@@ -183,6 +186,7 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced' },
   linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced' },
   statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout' },
+  location: { label: 'Location', icon: 'MapPin', category: 'advanced' },
   welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout' },
   thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout' },
 };

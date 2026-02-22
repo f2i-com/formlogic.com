@@ -347,6 +347,34 @@ class FormService
             $newId = $this->generateUuid();
 
             // Create new form with copied data
+            $idMapping = [];
+            $newFields = $this->generateDuplicateFieldIds($original['fields'], $idMapping);
+
+            // Update expressions and scripts that reference old field IDs
+            if (!empty($idMapping)) {
+                foreach ($newFields as &$field) {
+                    // Update conditional logic expressions
+                    if (!empty($field['conditionalLogic']['expression'])) {
+                        $field['conditionalLogic']['expression'] = $this->replaceFieldIds(
+                            $field['conditionalLogic']['expression'], $idMapping
+                        );
+                    }
+                    // Update calculation expressions
+                    if (!empty($field['properties']['calculationExpression'])) {
+                        $field['properties']['calculationExpression'] = $this->replaceFieldIds(
+                            $field['properties']['calculationExpression'], $idMapping
+                        );
+                    }
+                }
+                unset($field);
+            }
+
+            // Update logic script with new field IDs
+            $logicScript = $original['logicScript'] ?? null;
+            if ($logicScript && !empty($idMapping)) {
+                $logicScript = $this->replaceFieldIds($logicScript, $idMapping);
+            }
+
             $newData = [
                 'id' => $newId,
                 'userId' => $userId ?? $original['userId'],
@@ -355,10 +383,10 @@ class FormService
                 'status' => 'draft',
                 'settings' => $original['settings'],
                 'theme' => $original['theme'],
-                'logicScript' => $original['logicScript'] ?? null,
+                'logicScript' => $logicScript,
                 'logicPrompt' => $original['logicPrompt'] ?? null,
                 'icon' => $original['icon'] ?? null,
-                'fields' => $this->generateDuplicateFieldIds($original['fields']),
+                'fields' => $newFields,
             ];
 
             $result = $this->createForm($newData);
@@ -455,12 +483,13 @@ class FormService
      * Generate human-friendly field IDs for duplicated fields.
      * Appends '_copy' suffix and deduplicates with numeric counters.
      */
-    private function generateDuplicateFieldIds(array $fields): array
+    private function generateDuplicateFieldIds(array $fields, array &$idMapping = []): array
     {
         $usedIds = [];
         $result = [];
 
         foreach ($fields as $field) {
+            $oldId = $field['id'] ?? '';
             $baseId = $this->generateHumanFieldId($field['label'] ?? '');
             $finalId = $baseId;
             $counter = 1;
@@ -469,11 +498,29 @@ class FormService
                 $counter++;
             }
             $usedIds[] = $finalId;
+            if ($oldId !== '' && $oldId !== $finalId) {
+                $idMapping[$oldId] = $finalId;
+            }
             $field['id'] = $finalId;
             $result[] = $field;
         }
 
         return $result;
+    }
+
+    /**
+     * Replace field ID references in an expression or script string.
+     * Uses word-boundary matching to avoid partial replacements.
+     * Replaces longest IDs first to prevent substring conflicts.
+     */
+    private function replaceFieldIds(string $text, array $idMapping): string
+    {
+        // Sort by key length descending to replace longest matches first
+        uksort($idMapping, fn($a, $b) => strlen($b) - strlen($a));
+        foreach ($idMapping as $oldId => $newId) {
+            $text = preg_replace('/\b' . preg_quote($oldId, '/') . '\b/', $newId, $text);
+        }
+        return $text;
     }
 
     /**

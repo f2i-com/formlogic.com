@@ -148,6 +148,7 @@ export const useAuthStore = create<AuthState>()(
         // Clear persisted data from localStorage to prevent data
         // leakage if another user logs in on the same browser
         try {
+          localStorage.removeItem('formlogic-auth');
           localStorage.removeItem('formlogic-forms');
           localStorage.removeItem('formlogic-apps');
           localStorage.removeItem('formlogic-responses');

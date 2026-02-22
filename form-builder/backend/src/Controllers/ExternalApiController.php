@@ -179,8 +179,10 @@ class ExternalApiController
                 } else {
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null];
                 }
-            } catch (\Exception $e) {
+            } catch (\RuntimeException | \InvalidArgumentException $e) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage()];
+            } catch (\Exception $e) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => 'Internal error processing response'];
             }
         }
 
@@ -213,6 +215,7 @@ class ExternalApiController
         ];
 
         $responses = $this->responseService->getFormResponses($args['formId'], $options);
+        $responses = array_map([$this, 'sanitizeResponseData'], $responses);
         return $this->jsonResponse($response, ['responses' => $responses]);
     }
 
@@ -231,7 +234,7 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
-        return $this->jsonResponse($response, ['response' => $formResponse]);
+        return $this->jsonResponse($response, ['response' => $this->sanitizeResponseData($formResponse)]);
     }
 
     /**
@@ -246,12 +249,24 @@ class ExternalApiController
 
         $data = $request->getParsedBody();
 
+        // Validate answers if provided
+        if (isset($data['answers']) && is_array($data['answers'])) {
+            $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
+            if (!empty($validationErrors)) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => 'Validation failed',
+                    'errors' => $validationErrors,
+                ], 400);
+            }
+        }
+
         try {
             $formResponse = $this->responseService->updateResponse($args['formId'], $args['id'], $data);
             if (!$formResponse) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
             }
-            return $this->jsonResponse($response, ['response' => $formResponse]);
+            return $this->jsonResponse($response, ['response' => $this->sanitizeResponseData($formResponse)]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
@@ -310,6 +325,7 @@ class ExternalApiController
         }
 
         $webhooks = $this->webhookService->getWebhooksForForm($args['formId']);
+        $webhooks = array_map([$this, 'sanitizeWebhook'], $webhooks);
         return $this->jsonResponse($response, ['webhooks' => $webhooks]);
     }
 
@@ -350,7 +366,7 @@ class ExternalApiController
         }
 
         $webhook = $this->webhookService->createWebhook($args['formId'], $userId, $url, $events, $description);
-        return $this->jsonResponse($response, ['webhook' => $webhook], 201);
+        return $this->jsonResponse($response, ['webhook' => $this->sanitizeWebhook($webhook)], 201);
     }
 
     /**
@@ -396,7 +412,7 @@ class ExternalApiController
         $allowedFields = ['url', 'events', 'is_active', 'description'];
         $filtered = array_intersect_key($data, array_flip($allowedFields));
         $updated = $this->webhookService->updateWebhook($args['webhookId'], $filtered);
-        return $this->jsonResponse($response, ['webhook' => $updated]);
+        return $this->jsonResponse($response, ['webhook' => $this->sanitizeWebhook($updated)]);
     }
 
     /**
@@ -461,6 +477,7 @@ class ExternalApiController
     {
         unset($form['logicScript']);
         unset($form['logicPrompt']);
+        unset($form['userId']);
         return $form;
     }
 
@@ -483,7 +500,7 @@ class ExternalApiController
             if (!$fieldId) continue;
 
             $fieldType = $field['type'] ?? 'short_text';
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you'], true)) continue;
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) continue;
 
             $isRequired = $field['required'] ?? false;
             $value = $answers[$fieldId] ?? null;
@@ -587,6 +604,27 @@ class ExternalApiController
         }
 
         return $errors;
+    }
+
+    /**
+     * Strip internal fields from webhook data for external consumers.
+     */
+    private function sanitizeWebhook(array $webhook): array
+    {
+        unset($webhook['userId']);
+        return $webhook;
+    }
+
+    /**
+     * Strip PII (IP address, user agent) from response metadata for external consumers.
+     */
+    private function sanitizeResponseData(array $resp): array
+    {
+        if (isset($resp['metadata']) && is_array($resp['metadata'])) {
+            unset($resp['metadata']['ipAddress']);
+            unset($resp['metadata']['userAgent']);
+        }
+        return $resp;
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

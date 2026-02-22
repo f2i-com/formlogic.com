@@ -5,16 +5,19 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\FormService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 class ApiKeyController
 {
     private ApiKeyService $apiKeyService;
+    private FormService $formService;
 
-    public function __construct(ApiKeyService $apiKeyService)
+    public function __construct(ApiKeyService $apiKeyService, FormService $formService)
     {
         $this->apiKeyService = $apiKeyService;
+        $this->formService = $formService;
     }
 
     /**
@@ -47,6 +50,20 @@ class ApiKeyController
                 'error' => true,
                 'message' => 'Scopes must be an array',
             ], 400);
+        }
+
+        // Validate that formIds belong to the current user
+        if (is_array($formIds) && !empty($formIds)) {
+            foreach ($formIds as $fid) {
+                if (!is_string($fid)) continue;
+                $form = $this->formService->getForm($fid);
+                if (!$form || $form['userId'] !== $userId) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'message' => "Form not found or not owned by you: $fid",
+                    ], 400);
+                }
+            }
         }
 
         try {

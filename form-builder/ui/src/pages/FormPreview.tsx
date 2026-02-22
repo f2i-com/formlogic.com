@@ -14,10 +14,12 @@ import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
+import { FileUploadField } from '../components/ui/FileUploadField';
+import { LocationField } from '../components/ui/LocationField';
 import type { FormField } from '../types/form';
 
 // Field Preview Component (memoized to prevent re-renders when other fields change)
-const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor, allAnswers, allFieldIds, onCalculated }: {
+const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor, allAnswers, allFieldIds, onCalculated, formId }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
@@ -26,6 +28,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
   onCalculated?: (fieldId: string, value: unknown) => void;
+  formId?: string;
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -284,95 +287,25 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
           <p className="text-lg opacity-70">{field.description || 'Statement content'}</p>
         );
 
-      case 'file_upload': {
-        const uploadedFiles = (value as File[]) || [];
-        const formatFileSize = (bytes: number) => {
-          if (bytes < 1024) return bytes + ' B';
-          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-          return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-        };
+      case 'file_upload':
         return (
-          <div className="space-y-4">
-            <label className={cn(
-              "flex flex-col items-center justify-center w-full h-36 border-2 border-dashed rounded-xl cursor-pointer transition-all",
-              uploadedFiles.length > 0
-                ? "border-primary-300 bg-primary-500/10 hover:bg-primary-500/15"
-                : "border-current/30 bg-current/5 hover:bg-current/10 hover:border-current/40"
-            )}>
-              <div className="flex flex-col items-center justify-center py-4">
-                <div className="w-12 h-12 rounded-full bg-current/10 flex items-center justify-center mb-3">
-                  <svg className="w-6 h-6 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                  </svg>
-                </div>
-                <p className="text-sm opacity-70">
-                  <span className="font-semibold text-primary-600 dark:text-primary-400">Click to upload</span> or drag and drop
-                </p>
-                <p className="text-xs opacity-50 mt-1">
-                  {field.properties.acceptedFileTypes?.length
-                    ? field.properties.acceptedFileTypes.join(', ')
-                    : 'Any file type'}
-                  {field.properties.maxFileSize && ` • Max ${formatFileSize(field.properties.maxFileSize)}`}
-                </p>
-              </div>
-              <input
-                type="file"
-                className="hidden"
-                multiple={field.properties.allowMultiple}
-                accept={field.properties.acceptedFileTypes?.join(',')}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  const maxSize = field.properties.maxFileSize;
-
-                  // Validate file sizes
-                  if (maxSize) {
-                    const oversizedFiles = files.filter(f => f.size > maxSize);
-                    if (oversizedFiles.length > 0) {
-                      toast.error(
-                        'File Too Large',
-                        `${oversizedFiles[0].name} exceeds the maximum size of ${formatFileSize(maxSize)}`
-                      );
-                      const validFiles = files.filter(f => f.size <= maxSize);
-                      if (validFiles.length === 0) return;
-                      onChange(field.properties.allowMultiple ? [...uploadedFiles, ...validFiles] : validFiles);
-                      return;
-                    }
-                  }
-
-                  onChange(field.properties.allowMultiple ? [...uploadedFiles, ...files] : files);
-                }}
-              />
-            </label>
-            {uploadedFiles.length > 0 && (
-              <div className="space-y-2">
-                {uploadedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center gap-3 p-3 bg-current/5 rounded-lg border border-current/15">
-                    <div className="w-10 h-10 rounded-lg bg-primary-500/15 flex items-center justify-center flex-shrink-0">
-                      <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium opacity-80 truncate">{file.name}</p>
-                      <p className="text-xs opacity-50">{formatFileSize(file.size)}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onChange(uploadedFiles.filter((_, i) => i !== index))}
-                      aria-label="Remove file"
-                      className="p-1.5 opacity-50 hover:text-red-500 hover:opacity-100 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <FileUploadField
+            field={field}
+            value={value}
+            onChange={onChange}
+            primaryColor="var(--color-primary-500, #6366f1)"
+            formId={formId}
+          />
         );
-      }
+
+      case 'location':
+        return (
+          <LocationField
+            value={value}
+            onChange={onChange}
+            primaryColor="var(--color-primary-500, #6366f1)"
+          />
+        );
 
       case 'signature': {
         const signatureId = `signature-${field.id}`;
@@ -864,6 +797,7 @@ export default function FormPreview() {
                       allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
                       onCalculated={handleCalculated}
+                      formId={formId}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -915,6 +849,7 @@ export default function FormPreview() {
                       allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
                       onCalculated={handleCalculated}
+                      formId={formId}
                     />
                   </div>
                 ))}

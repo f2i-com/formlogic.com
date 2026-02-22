@@ -395,6 +395,35 @@ class ResponseController
                     }
                 }
                 break;
+
+            case 'location':
+                if (!is_array($value)) {
+                    return 'Invalid location format';
+                }
+                if (!isset($value['latitude']) || !isset($value['longitude'])) {
+                    return 'Location must include latitude and longitude';
+                }
+                if (!is_numeric($value['latitude']) || !is_numeric($value['longitude'])) {
+                    return 'Latitude and longitude must be numbers';
+                }
+                if ($value['latitude'] < -90 || $value['latitude'] > 90) {
+                    return 'Latitude must be between -90 and 90';
+                }
+                if ($value['longitude'] < -180 || $value['longitude'] > 180) {
+                    return 'Longitude must be between -180 and 180';
+                }
+                break;
+
+            case 'file_upload':
+                if (!is_array($value)) {
+                    return 'Invalid file upload format';
+                }
+                foreach ($value as $item) {
+                    if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
+                        return 'Invalid file metadata';
+                    }
+                }
+                break;
         }
 
         return null;

@@ -346,6 +346,7 @@ export function Dashboard() {
 
     if (template) {
       const form = await createForm(template.name);
+      if (!form) return;
       template.fields.forEach((field) => {
         addField(form.id, field);
       });
@@ -354,6 +355,7 @@ export function Dashboard() {
       toast.success('Form Created', `Started with "${template.name}" template`);
     } else {
       const form = await createForm('Untitled Form');
+      if (!form) return;
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
     }

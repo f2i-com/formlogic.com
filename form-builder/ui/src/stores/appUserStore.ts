@@ -25,26 +25,28 @@ interface AppUserState {
   removeGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<boolean>;
 }
 
-export const useAppUserStore = create<AppUserState>()((set, get) => ({
+export const useAppUserStore = create<AppUserState>()((set, get) => {
+  let _loadingCount = 0;
+  const startLoading = () => { _loadingCount++; set({ isLoading: true }); };
+  const stopLoading = () => { _loadingCount = Math.max(0, _loadingCount - 1); set({ isLoading: _loadingCount > 0 }); };
+
+  return ({
   users: {},
   groups: {},
   invitations: {},
   isLoading: false,
 
   fetchUsers: async (appId) => {
-    set({ isLoading: true });
+    startLoading();
     try {
       const result = await api.getAppUsers(appId);
       if (!result.error && result.data) {
         set((s) => ({
           users: { ...s.users, [appId]: result.data!.users as AppUser[] },
-          isLoading: false,
         }));
-      } else {
-        set({ isLoading: false });
       }
-    } catch {
-      set({ isLoading: false });
+    } finally {
+      stopLoading();
     }
   },
 
@@ -133,4 +135,4 @@ export const useAppUserStore = create<AppUserState>()((set, get) => ({
     await get().fetchGroups(appId);
     return true;
   },
-}));
+})});

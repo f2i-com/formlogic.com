@@ -43,14 +43,14 @@ interface FormState {
   error: string | null;
   storageMode: StorageMode;
   isInitialized: boolean;
-  savingFormIds: Set<string>;
+  savingFormIds: Record<string, boolean>;
 
   // Initialization
   initialize: () => Promise<void>;
   setStorageMode: (mode: StorageMode) => void;
 
   // Form actions
-  createForm: (title: string, description?: string) => Promise<Form>;
+  createForm: (title: string, description?: string) => Promise<Form | null>;
   updateForm: (id: string, updates: Partial<Form>) => Promise<void>;
   deleteForm: (id: string) => Promise<void>;
   duplicateForm: (id: string) => Promise<Form | null>;
@@ -124,9 +124,11 @@ export const useFormStore = create<FormState>()(
     // Helper to sync a form field to the API with debouncing
     const markSaving = (formId: string, saving: boolean) => {
       set((s) => {
-        const next = new Set(s.savingFormIds);
-        if (saving) next.add(formId); else next.delete(formId);
-        return { savingFormIds: next };
+        if (saving) {
+          return { savingFormIds: { ...s.savingFormIds, [formId]: true } };
+        }
+        const { [formId]: _, ...rest } = s.savingFormIds;
+        return { savingFormIds: rest };
       });
     };
 
@@ -169,7 +171,7 @@ export const useFormStore = create<FormState>()(
       error: null,
       storageMode: 'local' as StorageMode,
       isInitialized: false,
-      savingFormIds: new Set<string>(),
+      savingFormIds: {} as Record<string, boolean>,
 
       initialize: async () => {
         const state = get();
@@ -264,7 +266,7 @@ export const useFormStore = create<FormState>()(
               set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
               logger.error('Failed to create form on server:', result.error);
               toast.error('Failed to create form', typeof result.error === 'string' ? result.error : 'Please try again');
-              return form; // Return form so caller knows creation was attempted
+              return null;
             } else if (result.data) {
               // Update with server response (may have different ID)
               set((s) => ({
@@ -279,7 +281,7 @@ export const useFormStore = create<FormState>()(
             set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
             logger.error('Failed to create form on server:', error);
             toast.error('Failed to create form', 'Please check your connection and try again');
-            return form; // Return form so caller knows creation was attempted
+            return null;
           }
         }
 
@@ -298,13 +300,18 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // If using API, sync only the changed fields to server (debounced)
+        // If using API, sync current form state to server (debounced)
         // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
+        // Reads fresh state inside the callback to avoid stale closures dropping earlier updates
         if (state.storageMode === 'api') {
           markSaving(id, true);
           debouncedSave(`${id}-meta`, async () => {
             try {
-              await api.updateForm(id, updates);
+              const currentForm = get().forms.find((f) => f.id === id);
+              if (currentForm) {
+                const { title, description, status, icon } = currentForm;
+                await api.updateForm(id, { title, description, status, icon });
+              }
             } catch (error) {
               logger.error('Failed to update form on server:', error);
               toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
@@ -317,6 +324,7 @@ export const useFormStore = create<FormState>()(
 
       deleteForm: async (id) => {
         const state = get();
+        const formToDelete = state.forms.find((f) => f.id === id);
 
         // Clear any pending debounce timers for this form
         clearDebounceTimer(`${id}-fields`);
@@ -333,8 +341,17 @@ export const useFormStore = create<FormState>()(
         // If using API, also delete on server
         if (state.storageMode === 'api') {
           try {
-            await api.deleteForm(id);
+            const result = await api.deleteForm(id);
+            if (result.error && formToDelete) {
+              // Rollback: restore the form
+              set((s) => ({ forms: [...s.forms, formToDelete] }));
+              toast.error('Failed to delete form', typeof result.error === 'string' ? result.error : 'Please try again');
+            }
           } catch (error) {
+            // Rollback: restore the form
+            if (formToDelete) {
+              set((s) => ({ forms: [...s.forms, formToDelete] }));
+            }
             logger.error('Failed to delete form on server:', error);
             toast.error('Failed to delete form', 'Please try again');
           }
@@ -351,6 +368,8 @@ export const useFormStore = create<FormState>()(
           ...form,
           id: uuidv4(),
           title: `${form.title} (Copy)`,
+          settings: { ...form.settings, notifications: { ...form.settings.notifications } },
+          theme: { ...form.theme },
           fields: form.fields.map((field) => ({
             ...field,
             properties: {
@@ -365,6 +384,8 @@ export const useFormStore = create<FormState>()(
                 ? { searchFieldIds: [...field.properties.searchFieldIds] }
                 : {}),
             },
+            validation: field.validation?.map((v) => ({ ...v })),
+            conditionalLogic: field.conditionalLogic ? { ...field.conditionalLogic } : undefined,
           })),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -485,17 +506,29 @@ export const useFormStore = create<FormState>()(
 
       deleteField: (formId, fieldId) => {
         set((state) => ({
-          forms: state.forms.map((form) =>
-            form.id === formId
-              ? {
-                  ...form,
-                  fields: form.fields
-                    .filter((field) => field.id !== fieldId)
-                    .map((field, index) => ({ ...field, order: index })),
-                  updatedAt: new Date().toISOString(),
-                }
-              : form
-          ),
+          forms: state.forms.map((form) => {
+            if (form.id !== formId) return form;
+            return {
+              ...form,
+              fields: form.fields
+                .filter((field) => field.id !== fieldId)
+                .map((field, index) => {
+                  let updated = { ...field, order: index };
+                  // Clear conditional logic that references the deleted field
+                  if (updated.conditionalLogic?.expression &&
+                      updated.conditionalLogic.expression.includes(fieldId)) {
+                    updated = { ...updated, conditionalLogic: undefined };
+                  }
+                  // Clear calculation expressions that reference the deleted field
+                  if (updated.properties?.calculationExpression &&
+                      updated.properties.calculationExpression.includes(fieldId)) {
+                    updated = { ...updated, properties: { ...updated.properties, calculationExpression: undefined } };
+                  }
+                  return updated;
+                }),
+              updatedAt: new Date().toISOString(),
+            };
+          }),
           selectedFieldId:
             state.selectedFieldId === fieldId ? null : state.selectedFieldId,
         }));

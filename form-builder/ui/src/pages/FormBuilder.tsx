@@ -68,7 +68,7 @@ export default function FormBuilder() {
     setSelectedField,
     duplicateField,
   } = useFormStore();
-  const isSaving = useFormStore((s) => formId ? s.savingFormIds.has(formId) : false);
+  const isSaving = useFormStore((s) => formId ? !!s.savingFormIds[formId] : false);
 
   const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
 

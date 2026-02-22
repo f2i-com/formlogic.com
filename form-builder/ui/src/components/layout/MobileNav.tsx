@@ -11,6 +11,7 @@ export function MobileNav() {
   const handleCreateForm = async () => {
     try {
       const form = await createForm('Untitled Form');
+      if (!form) return;
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
     } catch {
