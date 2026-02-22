@@ -698,10 +698,26 @@ function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: 
   );
 }
 
+// Normalize form data from API (PHP returns [] for empty objects)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeFormData(raw: any) {
+  return {
+    ...raw,
+    settings: Array.isArray(raw.settings) || !raw.settings
+      ? DEFAULT_FORM_SETTINGS
+      : { ...DEFAULT_FORM_SETTINGS, ...raw.settings },
+    theme: Array.isArray(raw.theme) || !raw.theme
+      ? DEFAULT_FORM_THEME
+      : { ...DEFAULT_FORM_THEME, ...raw.theme },
+    fields: raw.fields ?? [],
+    responseCount: raw.responseCount ?? 0,
+  };
+}
+
 // Main Form Response Component
 export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
-  const { getForm, loadFullForm, updateForm } = useFormStore();
+  const { getForm, updateForm } = useFormStore();
   const {
     startResponse,
     setAnswer,
@@ -724,62 +740,62 @@ export default function FormResponse() {
 
   const storeForm = formId ? getForm(formId) : undefined;
 
-  // Load form: try store (with full fields), then fall back to public API
+  // Load form: try authenticated API (owner), then public API (visitor)
   useEffect(() => {
     if (!formId) return;
 
-    // If store has the form with fields loaded, use it
+    // If store already has the form with fields loaded, no fetch needed
     if (storeForm && storeForm.fields.length > 0) {
       setPublicForm(null);
       return;
     }
 
-    // Try to load full form from authenticated API first (owner case with empty fields),
-    // then fall back to public API (visitor case)
     let cancelled = false;
     setIsLoadingForm(true);
     setFormLoadError(false);
 
     (async () => {
-      // If form is in store but fields are empty, try loadFullForm
-      if (storeForm) {
-        const full = await loadFullForm(formId);
-        if (!cancelled && full && full.fields.length > 0) {
-          setIsLoadingForm(false);
-          return;
+      // 1. Try authenticated form API (works for owner, any status)
+      if (api.isAuthenticated()) {
+        try {
+          const result = await api.getForm(formId);
+          if (!cancelled && !result.error && result.data?.form) {
+            const raw = result.data.form;
+            const normalized = normalizeFormData(raw);
+            setPublicForm(normalized as ReturnType<typeof getForm>);
+            setIsLoadingForm(false);
+            return;
+          }
+        } catch {
+          // Fall through to public API
         }
       }
 
-      // Fall back to public form API
-      const result = await api.getPublicForm(formId);
-      if (cancelled) return;
+      // 2. Fall back to public form API (works for visitors, published only)
+      try {
+        const result = await api.getPublicForm(formId);
+        if (cancelled) return;
 
-      if (result.data?.form) {
-        const raw = result.data.form;
-        // Normalize settings/theme (PHP returns [] for empty objects)
-        const normalized = {
-          ...raw,
-          settings: Array.isArray(raw.settings) || !raw.settings
-            ? DEFAULT_FORM_SETTINGS
-            : { ...DEFAULT_FORM_SETTINGS, ...raw.settings },
-          theme: Array.isArray(raw.theme) || !raw.theme
-            ? DEFAULT_FORM_THEME
-            : { ...DEFAULT_FORM_THEME, ...raw.theme },
-          fields: raw.fields ?? [],
-          responseCount: raw.responseCount ?? 0,
-        };
-        setPublicForm(normalized as ReturnType<typeof getForm>);
-        setIsLoadingForm(false);
-      } else {
-        setFormLoadError(true);
-        setIsLoadingForm(false);
+        if (result.data?.form) {
+          const normalized = normalizeFormData(result.data.form);
+          setPublicForm(normalized as ReturnType<typeof getForm>);
+          setIsLoadingForm(false);
+        } else {
+          setFormLoadError(true);
+          setIsLoadingForm(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setFormLoadError(true);
+          setIsLoadingForm(false);
+        }
       }
     })();
 
     return () => { cancelled = true; };
   }, [formId, storeForm?.id, storeForm?.fields.length]);
 
-  // Use store form (with fields) if available, otherwise public form
+  // Use store form (with fields) if available, otherwise fetched form
   const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
 
   // Use conditional logic to determine field visibility
