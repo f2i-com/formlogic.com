@@ -40,6 +40,7 @@ import { api } from '../lib/api';
 import { formatRelativeTime, sanitizeFilename } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormTemplate } from '../data/formTemplates';
 
 interface DashboardStats {
@@ -618,7 +619,7 @@ export function Dashboard() {
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-4 min-w-0 flex-1">
                             <div className="p-2.5 bg-indigo-50 dark:bg-slate-800 rounded-xl flex-shrink-0 hidden sm:flex">
-                              <FileText className="h-5 w-5 text-indigo-500 dark:text-slate-400" />
+                              <DynamicIcon name={form.icon} className="h-5 w-5 text-indigo-500 dark:text-slate-400" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">

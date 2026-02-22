@@ -1,5 +1,6 @@
 import { useNavigate, useParams } from 'react-router-dom';
-import { FileText, Send, Eye, LayoutGrid } from 'lucide-react';
+import { Send, Eye, LayoutGrid } from 'lucide-react';
+import { DynamicIcon } from '../ui/DynamicIcon';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { cn } from '../../lib/utils';
 
@@ -48,7 +49,7 @@ export function AppDashboard() {
               >
                 <div className="flex items-start gap-3.5 mb-5">
                   <div className="p-2.5 rounded-xl app-bg-primary-light flex-shrink-0">
-                    <FileText className="h-5 w-5 app-text-primary" />
+                    <DynamicIcon name={form.icon} className="h-5 w-5 app-text-primary" />
                   </div>
                   <div className="flex-1 min-w-0 pt-0.5">
                     <h3 className="font-semibold text-gray-900 dark:text-white truncate tracking-tight">{form.displayName}</h3>
