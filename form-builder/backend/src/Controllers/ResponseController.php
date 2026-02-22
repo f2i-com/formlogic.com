@@ -303,8 +303,9 @@ class ResponseController
                 break;
 
             case 'phone':
-                // Basic phone validation - allows common formats
-                if (!preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
+                // Accept E.164 format (+[1-9]...) or legacy loose format
+                if (!preg_match('/^\+[1-9]\d{6,14}$/', $value) &&
+                    !preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
                     return 'Invalid phone number format';
                 }
                 break;

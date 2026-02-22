@@ -9,6 +9,7 @@ import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import { api } from '../lib/api';
+import { PhoneInput } from '../components/ui/PhoneInput';
 import type { FormField } from '../types/form';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
@@ -31,13 +32,24 @@ function FieldResponse({
   const required = isRequired ?? field.required;
   const renderField = () => {
     switch (field.type) {
+      case 'phone':
+        return (
+          <PhoneInput
+            value={(value as string) || ''}
+            onChange={(val) => onChange(val)}
+            placeholder={field.placeholder}
+            primaryColor={primaryColor}
+            textColor={textColor}
+            autoFocus
+          />
+        );
+
       case 'short_text':
       case 'email':
-      case 'phone':
       case 'url':
         return (
           <input
-            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
+            type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}

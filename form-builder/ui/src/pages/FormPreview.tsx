@@ -11,6 +11,7 @@ import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
+import { PhoneInput } from '../components/ui/PhoneInput';
 import type { FormField } from '../types/form';
 
 // Field Preview Component (memoized to prevent re-renders when other fields change)
@@ -24,13 +25,22 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
   const required = isRequired ?? field.required;
   const renderField = () => {
     switch (field.type) {
+      case 'phone':
+        return (
+          <PhoneInput
+            value={(value as string) || ''}
+            onChange={(val) => onChange(val)}
+            placeholder={field.placeholder}
+            textColor={textColor}
+          />
+        );
+
       case 'short_text':
       case 'email':
-      case 'phone':
       case 'url':
         return (
           <input
-            type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
+            type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}

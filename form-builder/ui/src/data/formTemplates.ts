@@ -43,7 +43,7 @@ export const formTemplates: FormTemplate[] = [
       {
         type: 'phone',
         label: 'Phone Number',
-        placeholder: '+1 (555) 123-4567',
+        placeholder: '',
         required: false,
         properties: {},
       },

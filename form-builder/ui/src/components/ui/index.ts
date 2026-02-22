@@ -22,3 +22,5 @@ export { Tooltip } from './Tooltip';
 export { ProgressBar } from './ProgressBar';
 
 export { Switch } from './Switch';
+
+export { PhoneInput } from './PhoneInput';

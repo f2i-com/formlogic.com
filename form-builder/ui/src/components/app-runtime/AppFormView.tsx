@@ -6,6 +6,7 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import { PhoneInput } from '../ui/PhoneInput';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import type { FormField as FormFieldType } from '../../types/form';
 
@@ -43,10 +44,22 @@ function FieldInput({
   const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
-  if (['short_text', 'email', 'phone', 'url'].includes(field.type)) {
+  if (field.type === 'phone') {
+    return (
+      <PhoneInput
+        value={(value as string) || ''}
+        onChange={(val) => onChange(val)}
+        placeholder={field.placeholder}
+        primaryColor={primaryColor}
+        autoFocus
+      />
+    );
+  }
+
+  if (['short_text', 'email', 'url'].includes(field.type)) {
     return (
       <input
-        type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
+        type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder || 'Type your answer here...'}
