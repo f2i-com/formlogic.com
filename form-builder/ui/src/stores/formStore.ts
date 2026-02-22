@@ -349,7 +349,21 @@ export const useFormStore = create<FormState>()(
           ...form,
           id: uuidv4(),
           title: `${form.title} (Copy)`,
-          fields: form.fields.map((field) => ({ ...field })),
+          fields: form.fields.map((field) => ({
+            ...field,
+            properties: {
+              ...field.properties,
+              ...(field.properties.options
+                ? { options: field.properties.options.map((o) => ({ ...o })) }
+                : {}),
+              ...(field.properties.displayFieldIds
+                ? { displayFieldIds: [...field.properties.displayFieldIds] }
+                : {}),
+              ...(field.properties.searchFieldIds
+                ? { searchFieldIds: [...field.properties.searchFieldIds] }
+                : {}),
+            },
+          })),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           status: 'draft',
@@ -497,6 +511,19 @@ export const useFormStore = create<FormState>()(
           id: newFieldId,
           label: `${field.label} (Copy)`,
           order: fieldIndex + 1,
+          // Deep copy properties to avoid shared references with the original
+          properties: {
+            ...field.properties,
+            ...(field.properties.options
+              ? { options: field.properties.options.map((o) => ({ ...o })) }
+              : {}),
+            ...(field.properties.displayFieldIds
+              ? { displayFieldIds: [...field.properties.displayFieldIds] }
+              : {}),
+            ...(field.properties.searchFieldIds
+              ? { searchFieldIds: [...field.properties.searchFieldIds] }
+              : {}),
+          },
         };
 
         // Insert the new field right after the original

@@ -172,8 +172,10 @@ export function AppDataTable() {
   // Check if form has any linked_record fields
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
+  const hasViewPermission = formId ? (canViewOwn(formId) || canViewAll(formId)) : false;
+
   useEffect(() => {
-    if (formId && config) {
+    if (formId && config && hasViewPermission) {
       setLoading(true);
       setError(null);
       let cancelled = false;
@@ -198,7 +200,7 @@ export function AppDataTable() {
       });
       return () => { cancelled = true; };
     }
-  }, [formId, config, hasLinkedFields, fetchResponses]);
+  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses]);
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;

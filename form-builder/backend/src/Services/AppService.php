@@ -248,7 +248,17 @@ class AppService
     {
         $stmt = $this->mysql->prepare("DELETE FROM app_forms WHERE app_id = :app_id AND form_id = :form_id");
         $stmt->execute(['app_id' => $appId, 'form_id' => $formId]);
-        return $stmt->rowCount() > 0;
+        $removed = $stmt->rowCount() > 0;
+
+        if ($removed) {
+            // Clean up orphaned response_links involving the removed form
+            $cleanup = $this->mysql->prepare(
+                "DELETE FROM response_links WHERE source_form_id = :fid OR target_form_id = :fid2"
+            );
+            $cleanup->execute(['fid' => $formId, 'fid2' => $formId]);
+        }
+
+        return $removed;
     }
 
     public function updateAppForm(string $appId, string $formId, array $data): bool

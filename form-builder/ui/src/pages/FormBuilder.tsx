@@ -185,6 +185,12 @@ export default function FormBuilder() {
         maxStars: type === 'rating' ? 5 : undefined,
         scaleStart: type === 'scale' ? 1 : undefined,
         scaleEnd: type === 'scale' ? 10 : undefined,
+        // File upload defaults
+        ...(type === 'file_upload' ? { maxFileSize: 10, allowedTypes: [] } : {}),
+        // Payment defaults
+        ...(type === 'payment' ? { currency: 'USD', amount: 0 } : {}),
+        // Linked record defaults
+        ...(type === 'linked_record' ? { targetFormId: '', displayFieldIds: [], searchFieldIds: [], allowMultiple: false } : {}),
       },
     });
 

@@ -109,33 +109,42 @@ class AppResponseService
 
         if (empty($linkedFields)) return;
 
-        // Delete existing links for this response
-        $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id");
-        $stmt->execute(['id' => $responseId]);
+        // Wrap delete + insert in a transaction to prevent inconsistent reads
+        $this->mysql->beginTransaction();
+        try {
+            // Delete existing links for this response
+            $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id");
+            $stmt->execute(['id' => $responseId]);
 
-        // Insert new links
-        $insertStmt = $this->mysql->prepare("
-            INSERT INTO response_links (id, source_form_id, source_response_id, target_form_id, target_response_id, field_id)
-            VALUES (:id, :source_form_id, :source_response_id, :target_form_id, :target_response_id, :field_id)
-        ");
+            // Insert new links
+            $insertStmt = $this->mysql->prepare("
+                INSERT INTO response_links (id, source_form_id, source_response_id, target_form_id, target_response_id, field_id)
+                VALUES (:id, :source_form_id, :source_response_id, :target_form_id, :target_response_id, :field_id)
+            ");
 
-        foreach ($linkedFields as $field) {
-            $targetFormId = $field['properties']['targetFormId'];
-            $val = $answers[$field['id']] ?? null;
-            if ($val === null) continue;
+            foreach ($linkedFields as $field) {
+                $targetFormId = $field['properties']['targetFormId'];
+                $val = $answers[$field['id']] ?? null;
+                if ($val === null) continue;
 
-            $ids = is_array($val) ? $val : [$val];
-            foreach ($ids as $targetResponseId) {
-                if (!is_string($targetResponseId) || $targetResponseId === '') continue;
-                $insertStmt->execute([
-                    'id' => $this->generateUuid(),
-                    'source_form_id' => $formId,
-                    'source_response_id' => $responseId,
-                    'target_form_id' => $targetFormId,
-                    'target_response_id' => $targetResponseId,
-                    'field_id' => $field['id'],
-                ]);
+                $ids = is_array($val) ? $val : [$val];
+                foreach ($ids as $targetResponseId) {
+                    if (!is_string($targetResponseId) || $targetResponseId === '') continue;
+                    $insertStmt->execute([
+                        'id' => $this->generateUuid(),
+                        'source_form_id' => $formId,
+                        'source_response_id' => $responseId,
+                        'target_form_id' => $targetFormId,
+                        'target_response_id' => $targetResponseId,
+                        'field_id' => $field['id'],
+                    ]);
+                }
             }
+
+            $this->mysql->commit();
+        } catch (\Exception $e) {
+            $this->mysql->rollBack();
+            throw $e;
         }
     }
 

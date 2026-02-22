@@ -73,6 +73,7 @@ export const useAppStore = create<AppState>()(
       },
 
       updateApp: async (id, data) => {
+        set({ isLoading: true });
         try {
           const result = await api.updateApp(id, data);
           if (result.error) {
@@ -86,10 +87,13 @@ export const useAppStore = create<AppState>()(
           }
         } catch {
           toast.error('Update failed', 'Could not update the app. Please try again.');
+        } finally {
+          set({ isLoading: false });
         }
       },
 
       deleteApp: async (id) => {
+        set({ isLoading: true });
         try {
           const result = await api.deleteApp(id);
           if (result.error) {
@@ -102,6 +106,8 @@ export const useAppStore = create<AppState>()(
           }));
         } catch {
           toast.error('Delete failed', 'Could not delete the app. Please try again.');
+        } finally {
+          set({ isLoading: false });
         }
       },
 
