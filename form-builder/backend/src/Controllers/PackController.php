@@ -81,6 +81,57 @@ class PackController
     }
 
     /**
+     * POST /api/packs/adopt
+     * Retroactively register an existing pack installation by matching form titles
+     */
+    public function adopt(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $body = $request->getParsedBody();
+        $packData = $body['pack'] ?? null;
+
+        if (!$packData || !is_array($packData)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+
+        try {
+            $result = $this->packService->adoptExistingPack($packData, $userId);
+
+            if ($this->auditService) {
+                $this->auditService->log(
+                    'pack.adopt',
+                    'pack',
+                    $packData['packMeta']['name'] ?? 'unknown',
+                    $userId,
+                    $this->ipResolver->getClientIp($request),
+                    [
+                        'packName' => $packData['packMeta']['name'] ?? null,
+                        'installationId' => $result['installationId'],
+                        'formsMatched' => $result['formsMatched'],
+                        'appsMatched' => $result['appsMatched'],
+                    ]
+                );
+            }
+
+            return $this->jsonResponse($response, [
+                'success' => true,
+                'installationId' => $result['installationId'],
+                'formsMatched' => $result['formsMatched'],
+                'appsMatched' => $result['appsMatched'],
+            ]);
+
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to adopt pack'], 500);
+        }
+    }
+
+    /**
      * GET /api/packs/installed
      * List all installed packs for the authenticated user
      */

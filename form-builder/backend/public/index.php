@@ -590,6 +590,10 @@ $app->post('/api/packs/import', function ($request, $response) use ($container) 
     return $container->get(PackController::class)->import($request, $response);
 })->add($authRequired);
 
+$app->post('/api/packs/adopt', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->adopt($request, $response);
+})->add($authRequired);
+
 $app->get('/api/packs/installed', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->listInstalled($request, $response);
 })->add($authRequired);

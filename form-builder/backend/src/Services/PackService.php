@@ -276,6 +276,88 @@ class PackService
     }
 
     /**
+     * Adopt an existing (pre-tracking) pack installation.
+     * Matches pack form titles against user's existing forms and creates
+     * an installation record without creating new forms/apps.
+     *
+     * @param array  $packData Full pack JSON structure
+     * @param string $userId   Authenticated user
+     * @return array { installationId, formsMatched, appsMatched }
+     */
+    public function adoptExistingPack(array $packData, string $userId): array
+    {
+        $this->validatePack($packData);
+
+        $meta = $packData['packMeta'];
+        $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
+
+        // Don't adopt if already tracked
+        if ($this->isPackInstalled($packId, $userId)) {
+            throw new \RuntimeException('Pack is already tracked');
+        }
+
+        // Match forms by title
+        $formIds = [];
+        foreach ($packData['forms'] as $packForm) {
+            $stmt = $this->mysql->prepare("
+                SELECT id FROM forms
+                WHERE user_id = :user_id AND title = :title
+                ORDER BY created_at DESC
+                LIMIT 1
+            ");
+            $stmt->execute(['user_id' => $userId, 'title' => $packForm['title']]);
+            $row = $stmt->fetch();
+            if ($row) {
+                $formIds[] = $row['id'];
+            }
+        }
+
+        // Match apps by name
+        $appIds = [];
+        foreach ($packData['apps'] ?? [] as $packApp) {
+            $stmt = $this->mysql->prepare("
+                SELECT id FROM apps
+                WHERE created_by = :user_id AND name = :name
+                ORDER BY created_at DESC
+                LIMIT 1
+            ");
+            $stmt->execute(['user_id' => $userId, 'name' => $packApp['name']]);
+            $row = $stmt->fetch();
+            if ($row) {
+                $appIds[] = $row['id'];
+            }
+        }
+
+        // Must match at least some forms to consider it an existing install
+        if (empty($formIds)) {
+            throw new \RuntimeException('No matching forms found for this pack');
+        }
+
+        // Create installation record
+        $installationId = $this->generateUuid();
+        $stmt = $this->mysql->prepare("
+            INSERT INTO pack_installations (id, user_id, pack_id, pack_name, pack_version, pack_description, form_ids, app_ids)
+            VALUES (:id, :user_id, :pack_id, :pack_name, :pack_version, :pack_description, :form_ids, :app_ids)
+        ");
+        $stmt->execute([
+            'id' => $installationId,
+            'user_id' => $userId,
+            'pack_id' => $packId,
+            'pack_name' => $meta['name'] ?? 'Unknown Pack',
+            'pack_version' => $meta['version'] ?? '1.0.0',
+            'pack_description' => $meta['description'] ?? null,
+            'form_ids' => json_encode($formIds),
+            'app_ids' => json_encode($appIds),
+        ]);
+
+        return [
+            'installationId' => $installationId,
+            'formsMatched' => count($formIds),
+            'appsMatched' => count($appIds),
+        ];
+    }
+
+    /**
      * Check if a pack (by pack_id) is installed for a user.
      */
     public function isPackInstalled(string $packId, string $userId): ?array

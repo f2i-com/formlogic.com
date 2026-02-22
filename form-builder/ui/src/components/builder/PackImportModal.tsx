@@ -72,9 +72,29 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     setLoadingInstallations(true);
     try {
       const result = await api.getInstalledPacks();
-      if (result.data?.installations) {
-        setInstallations(result.data.installations);
+      let installs = result.data?.installations ?? [];
+
+      // Auto-adopt untracked catalog packs (pre-tracking imports)
+      const trackedPackIds = new Set(installs.map((i) => i.packId));
+      let adopted = false;
+      for (const entry of packCatalog) {
+        if (!trackedPackIds.has(entry.id)) {
+          try {
+            await api.adoptPack(entry.pack);
+            adopted = true;
+          } catch {
+            // Pack wasn't previously imported or already tracked — skip
+          }
+        }
       }
+
+      // Reload if we adopted anything
+      if (adopted) {
+        const refreshed = await api.getInstalledPacks();
+        installs = refreshed.data?.installations ?? installs;
+      }
+
+      setInstallations(installs);
     } catch {
       // Silently fail — installed tab will show empty
     } finally {

@@ -708,6 +708,13 @@ class ApiClient {
     return this.request(`/packs/${installationId}`, { method: 'DELETE' });
   }
 
+  async adoptPack(pack: PackData): Promise<ApiResponse<{ success: boolean; installationId: string; formsMatched: number; appsMatched: number }>> {
+    return this.request('/packs/adopt', {
+      method: 'POST',
+      body: JSON.stringify({ pack }),
+    });
+  }
+
   // CSV import
   async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
