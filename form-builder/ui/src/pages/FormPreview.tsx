@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, memo } from 'react';
+import { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -16,7 +16,7 @@ import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay'
 import type { FormField } from '../types/form';
 
 // Field Preview Component (memoized to prevent re-renders when other fields change)
-const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor, allAnswers, allFieldIds }: {
+const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor, allAnswers, allFieldIds, onCalculated }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
@@ -24,6 +24,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
   textColor?: string;
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
+  onCalculated?: (fieldId: string, value: unknown) => void;
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -549,6 +550,8 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
             expression={field.properties.calculationExpression}
             formData={allAnswers || {}}
             allFieldIds={allFieldIds || []}
+            fieldId={field.id}
+            onCalculated={onCalculated}
           >
             {(calcValue, isCalculating) => (
               <div className="p-4 bg-current/5 rounded-lg">
@@ -613,6 +616,14 @@ export default function FormPreview() {
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showNigo, setShowNigo] = useState(false);
+  const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+
+  const handleCalculated = useCallback((fId: string, val: unknown) => {
+    setCalculatedValues(prev => {
+      if (prev[fId] === val) return prev;
+      return { ...prev, [fId]: val };
+    });
+  }, []);
 
   // Load full form data (with fields) from API when entering preview
   useEffect(() => {
@@ -621,10 +632,16 @@ export default function FormPreview() {
 
   const form = formId ? getForm(formId) : undefined;
 
+  // Merge user answers with computed calculated field values
+  const allFormData = useMemo(
+    () => ({ ...answers, ...calculatedValues }),
+    [answers, calculatedValues]
+  );
+
   // Use conditional logic to determine field visibility
   const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
     form?.fields ?? [],
-    answers
+    allFormData
   );
 
   // Get visible fields based on conditional logic
@@ -841,8 +858,9 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
                       isRequired={getFieldRequired(currentField)}
                       textColor={form.theme.textColor}
-                      allAnswers={answers}
+                      allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
+                      onCalculated={handleCalculated}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -890,8 +908,9 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(field.id, val)}
                       isRequired={getFieldRequired(field)}
                       textColor={form.theme.textColor}
-                      allAnswers={answers}
+                      allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
+                      onCalculated={handleCalculated}
                     />
                   </div>
                 ))}

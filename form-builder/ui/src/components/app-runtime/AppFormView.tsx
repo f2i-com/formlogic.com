@@ -37,6 +37,7 @@ function FieldInput({
   formId,
   allAnswers,
   allFieldIds,
+  onCalculated,
 }: {
   field: FormField;
   value: unknown;
@@ -45,6 +46,7 @@ function FieldInput({
   formId?: string;
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
+  onCalculated?: (fieldId: string, value: unknown) => void;
 }) {
   const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
@@ -311,6 +313,8 @@ function FieldInput({
         expression={field.properties?.calculationExpression as string | undefined}
         formData={allAnswers || {}}
         allFieldIds={allFieldIds || []}
+        fieldId={field.id}
+        onCalculated={onCalculated}
       >
         {(calcValue, isCalculating) => (
           <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
@@ -517,6 +521,14 @@ export function AppFormView() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showNigo, setShowNigo] = useState(false);
   const [viewMode, setViewMode] = useState<'focused' | 'classic'>('focused');
+  const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+
+  const handleCalculated = useCallback((fId: string, val: unknown) => {
+    setCalculatedValues(prev => {
+      if (prev[fId] === val) return prev;
+      return { ...prev, [fId]: val };
+    });
+  }, []);
 
   useEffect(() => {
     if (appSlug && formId) {
@@ -549,6 +561,12 @@ export function AppFormView() {
   const presentationMode = (formSettings?.presentationMode as string) || 'both';
   const effectiveMode = presentationMode === 'both' ? viewMode : presentationMode;
   const showModeToggle = presentationMode === 'both';
+
+  // Merge user answers with computed calculated field values
+  const allFormData = useMemo(
+    () => ({ ...answers, ...calculatedValues }),
+    [answers, calculatedValues]
+  );
 
   // Set initial view mode from form settings
   useEffect(() => {
@@ -808,8 +826,9 @@ export function AppFormView() {
                 onChange={(val) => handleSetAnswer(currentField.id, val)}
                 primaryColor={primaryColor}
                 formId={formId}
-                allAnswers={answers}
+                allAnswers={allFormData}
                 allFieldIds={fields.map(f => f.id)}
+                onCalculated={handleCalculated}
               />
 
               {/* Error */}
@@ -944,7 +963,8 @@ export function AppFormView() {
                     onChange={(val) => handleSetAnswer(field.id, val)}
                     primaryColor={primaryColor}
                     formId={formId}
-                    allAnswers={answers}
+                    allAnswers={allFormData}
+                    onCalculated={handleCalculated}
                     allFieldIds={fields.map(f => f.id)}
                   />
                 </div>

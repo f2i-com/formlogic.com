@@ -49,7 +49,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="basic" className="flex-1 flex flex-col">
+      <Tabs key={field.id} defaultValue="basic" className="flex-1 flex flex-col">
         <TabsList className="mx-4 mt-2">
           <TabsTrigger value="basic">Basic</TabsTrigger>
           <TabsTrigger value="validation">

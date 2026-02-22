@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronUp, ChevronDown, Check } from 'lucide-react';
@@ -24,6 +24,7 @@ function FieldResponse({
   isRequired,
   allAnswers,
   allFieldIds,
+  onCalculated,
 }: {
   field: FormField;
   value: unknown;
@@ -33,6 +34,7 @@ function FieldResponse({
   isRequired?: boolean;
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
+  onCalculated?: (fieldId: string, value: unknown) => void;
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -673,6 +675,8 @@ function FieldResponse({
             expression={field.properties.calculationExpression}
             formData={allAnswers || {}}
             allFieldIds={allFieldIds || []}
+            fieldId={field.id}
+            onCalculated={onCalculated}
           >
             {(calcValue, isCalculating) => (
               <div className="p-6 bg-current/5 rounded-lg text-center">
@@ -784,6 +788,14 @@ export default function FormResponse() {
   const [isLoadingForm, setIsLoadingForm] = useState(false);
   const [formLoadError, setFormLoadError] = useState(false);
   const [responseMode, setResponseMode] = useState<'focused' | 'classic'>('focused');
+  const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+
+  const handleCalculated = useCallback((fId: string, val: unknown) => {
+    setCalculatedValues(prev => {
+      if (prev[fId] === val) return prev;
+      return { ...prev, [fId]: val };
+    });
+  }, []);
 
   const storeForm = formId ? getForm(formId) : undefined;
 
@@ -845,11 +857,18 @@ export default function FormResponse() {
   // Use store form (with fields) if available, otherwise fetched form
   const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
 
+  // Merge user answers with computed calculated field values so dependent
+  // calculated fields (e.g. risk_level depending on risk_score) can resolve
+  const allFormData = useMemo(
+    () => ({ ...currentAnswers, ...calculatedValues }),
+    [currentAnswers, calculatedValues]
+  );
+
   // Use conditional logic to determine field visibility
   // Note: hooks must be called before any early returns
   const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
     form?.fields ?? [],
-    currentAnswers
+    allFormData
   );
 
   // Get visible fields based on conditional logic
@@ -1093,8 +1112,9 @@ export default function FormResponse() {
               primaryColor={form.theme.primaryColor}
               textColor={form.theme.textColor}
               isRequired={getFieldRequired(currentField)}
-              allAnswers={currentAnswers}
+              allAnswers={allFormData}
               allFieldIds={form.fields.map(f => f.id)}
+              onCalculated={handleCalculated}
             />
 
             {/* Inline validation error */}
@@ -1175,8 +1195,9 @@ export default function FormResponse() {
                     primaryColor={form.theme.primaryColor}
                     textColor={form.theme.textColor}
                     isRequired={getFieldRequired(field)}
-                    allAnswers={currentAnswers}
+                    allAnswers={allFormData}
                     allFieldIds={form.fields.map(f => f.id)}
+                    onCalculated={handleCalculated}
                   />
                 </div>
               ))}
