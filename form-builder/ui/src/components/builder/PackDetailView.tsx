@@ -46,8 +46,38 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   const fetchApps = useAppStore((s) => s.fetchApps);
 
   useEffect(() => {
-    loadPackDetail();
-    loadRatings();
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      try {
+        const result = await api.getPackDetail(slug);
+        if (!cancelled && result.data?.pack) {
+          setPack(result.data.pack);
+        }
+      } catch {
+        if (!cancelled) toast.error('Failed to load pack details');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+
+      try {
+        const result = await api.getPackRatings(slug);
+        if (!cancelled && result.data) {
+          setRatings(result.data.ratings);
+          if (result.data.userRating) {
+            setUserRating(result.data.userRating);
+            setRatingInput(result.data.userRating.rating);
+            setReviewInput(result.data.userRating.review || '');
+          }
+        }
+      } catch {
+        // silently fail
+      }
+    }
+
+    load();
+    return () => { cancelled = true; };
   }, [slug]);
 
   useEffect(() => {

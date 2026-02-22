@@ -53,9 +53,9 @@ function ToastItem({ toast }: { toast: ToastType }) {
     timeoutRef.current = setTimeout(() => removeToast(toast.id), 150);
   }, [removeToast, toast.id]);
 
-  // Auto-dismiss after timeout
+  // Auto-dismiss after the duration set in the toast store
   useEffect(() => {
-    const duration = toast.type === 'error' ? 6000 : 4000;
+    const duration = toast.duration ?? 5000;
     const autoDismiss = setTimeout(() => handleClose(), duration);
     return () => {
       clearTimeout(autoDismiss);
@@ -63,7 +63,7 @@ function ToastItem({ toast }: { toast: ToastType }) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [handleClose, toast.type]);
+  }, [handleClose, toast.duration]);
 
   return (
     <div

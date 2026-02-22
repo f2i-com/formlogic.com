@@ -97,14 +97,34 @@ class PackCatalogController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
         }
 
+        $name = trim($body['name'] ?? '');
+        if (strlen($name) < 2 || strlen($name) > 255) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack name must be 2-255 characters'], 400);
+        }
+
+        $description = $body['description'] ?? null;
+        if ($description !== null && strlen($description) > 5000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Description must be under 5000 characters'], 400);
+        }
+
+        $tags = $body['tags'] ?? [];
+        if (!is_array($tags) || count($tags) > 20) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Tags must be an array with at most 20 items'], 400);
+        }
+
+        $visibility = $body['visibility'] ?? 'public';
+        if (!in_array($visibility, ['public', 'private', 'unlisted'], true)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid visibility value'], 400);
+        }
+
         $metadata = [
-            'name' => $body['name'] ?? null,
+            'name' => $name,
             'slug' => $body['slug'] ?? null,
-            'description' => $body['description'] ?? null,
+            'description' => $description,
             'icon' => $body['icon'] ?? null,
-            'tags' => $body['tags'] ?? [],
+            'tags' => $tags,
             'category' => $body['category'] ?? null,
-            'visibility' => $body['visibility'] ?? 'public',
+            'visibility' => $visibility,
             'version' => $body['version'] ?? '1.0.0',
             'changelog' => $body['changelog'] ?? 'Initial release',
         ];
@@ -352,6 +372,12 @@ class PackCatalogController
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        // Only allow seeding when the catalog is empty (initial bootstrap)
+        $existing = $this->catalogService->listPublicPacks([], 'popular', 1, 1);
+        if (($existing['total'] ?? 0) > 0) {
+            return $this->jsonResponse($response, ['success' => true, 'seeded' => 0, 'message' => 'Catalog already has packs']);
         }
 
         $body = $request->getParsedBody();

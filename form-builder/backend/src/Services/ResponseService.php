@@ -1010,7 +1010,7 @@ class ResponseService
                         case 'number':
                             if ($value !== '' && !is_numeric($value)) {
                                 $rowErrors[] = "Field '{$fieldId}': non-numeric value '{$value}'";
-                                continue 2;
+                                continue 2; // skip this field, process remaining fields
                             }
                             $value = $value !== '' ? floatval($value) : null;
                             break;

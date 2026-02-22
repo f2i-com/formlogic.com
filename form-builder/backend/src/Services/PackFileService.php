@@ -78,6 +78,9 @@ class PackFileService
      */
     public function storePackFiles(string $catalogId, string $versionId, string $tmpZipPath): string
     {
+        $this->validateId($catalogId);
+        $this->validateId($versionId);
+
         $dir = $this->storagePath . '/' . $catalogId . '/' . $versionId;
         if (!is_dir($dir)) {
             mkdir($dir, 0755, true);
@@ -96,6 +99,9 @@ class PackFileService
      */
     public function getPackFile(string $catalogId, string $versionId): ?string
     {
+        $this->validateId($catalogId);
+        $this->validateId($versionId);
+
         $path = $this->storagePath . '/' . $catalogId . '/' . $versionId . '/pack.zip';
         return file_exists($path) ? $path : null;
     }
@@ -105,6 +111,8 @@ class PackFileService
      */
     public function deletePackFiles(string $catalogId): void
     {
+        $this->validateId($catalogId);
+
         $dir = $this->storagePath . '/' . $catalogId;
         if (is_dir($dir)) {
             $this->removeDirectory($dir);
@@ -114,6 +122,9 @@ class PackFileService
     private function removeDirectory(string $dir): void
     {
         $items = scandir($dir);
+        if ($items === false) {
+            return;
+        }
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') {
                 continue;
@@ -126,5 +137,12 @@ class PackFileService
             }
         }
         rmdir($dir);
+    }
+
+    private function validateId(string $id): void
+    {
+        if (!preg_match('/^[a-f0-9\-]{36}$/', $id)) {
+            throw new \RuntimeException('Invalid ID format');
+        }
     }
 }
