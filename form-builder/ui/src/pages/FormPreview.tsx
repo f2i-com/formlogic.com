@@ -208,7 +208,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
                     onChange(Math.min(maxStars, (currentRating || 0) + 1));
                   } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
                     e.preventDefault();
-                    onChange(Math.max(1, (currentRating || 0) - 1) || 1);
+                    onChange(Math.max((currentRating || 0) - 1, 1));
                   }
                 }}
                 className={cn(
