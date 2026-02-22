@@ -824,6 +824,12 @@ class ResponseController
             $validFieldIds[$field['id']] = true;
         }
         foreach ($columnMapping as $csvCol => $fieldId) {
+            if (!is_string($fieldId)) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => 'Column mapping values must be strings',
+                ], 400);
+            }
             if ($fieldId !== 'skip' && $fieldId !== '' && !isset($validFieldIds[$fieldId])) {
                 return $this->jsonResponse($response, [
                     'error' => true,

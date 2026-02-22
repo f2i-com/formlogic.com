@@ -113,7 +113,9 @@ class ExternalApiController
         }
 
         $data = $request->getParsedBody();
-        $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        // Sanitize answers: strip non-input fields and unknown field IDs
+        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
         if (!empty($validationErrors)) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -167,9 +169,10 @@ class ExternalApiController
             $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
             return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
         }
-        if (!empty($settings['quotaLimit'])) {
+        $quotaLimit = !empty($settings['quotaLimit']) ? (int)$settings['quotaLimit'] : 0;
+        if ($quotaLimit > 0) {
             $responseCount = $this->responseService->getResponseCount($args['formId']);
-            if ($responseCount >= (int)$settings['quotaLimit']) {
+            if ($responseCount >= $quotaLimit) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
             }
         }
@@ -189,8 +192,17 @@ class ExternalApiController
         $userAgent = substr($request->getHeaderLine('User-Agent'), 0, 500);
         $script = $form['logicScript'] ?? null;
         $results = [];
+        $createdCount = 0;
 
         foreach ($items as $index => $item) {
+            // Enforce quota per-item to prevent batch from exceeding limit
+            if ($quotaLimit > 0 && ($responseCount + $createdCount) >= $quotaLimit) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => 'Quota limit reached'];
+                continue;
+            }
+
+            // Sanitize answers: strip non-input fields and unknown field IDs
+            $item['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $item['answers'] ?? []);
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $item['answers'] ?? []);
             if (!empty($validationErrors)) {
                 $results[] = ['index' => $index, 'success' => false, 'errors' => $validationErrors];
@@ -208,6 +220,7 @@ class ExternalApiController
                     $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => true];
                 } else {
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null];
+                    $createdCount++;
                 }
             } catch (\RuntimeException | \InvalidArgumentException $e) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => $e->getMessage()];
@@ -516,6 +529,39 @@ class ExternalApiController
         unset($form['logicPrompt']);
         unset($form['userId']);
         return $form;
+    }
+
+    /**
+     * Strip answers for non-input field types and unknown field IDs.
+     * Mirrors ResponseController::sanitizeAnswers logic.
+     */
+    private function sanitizeAnswers(array $fields, array $answers): array
+    {
+        if (!is_array($answers)) {
+            return [];
+        }
+
+        $inputFieldIds = [];
+        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you'];
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            $type = $field['type'] ?? 'short_text';
+            if (!in_array($type, $nonInputTypes, true)) {
+                $inputFieldIds[$id] = true;
+            }
+        }
+
+        $sanitized = [];
+        foreach ($answers as $fieldId => $value) {
+            if (isset($inputFieldIds[$fieldId])) {
+                $sanitized[$fieldId] = $value;
+            }
+        }
+
+        return $sanitized;
     }
 
     /**
