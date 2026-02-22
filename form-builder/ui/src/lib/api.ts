@@ -946,6 +946,8 @@ interface PackInstallation {
   appCount: number;
   existingFormCount: number;
   existingAppCount: number;
+  formIds: string[];
+  appIds: string[];
   installedAt: string;
 }
 

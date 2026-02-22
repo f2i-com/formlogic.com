@@ -66,9 +66,10 @@ class FormLogicRuntime
         // Register the ctx.http module
         $this->registerHttpModule($engine);
 
-        // Register compliance and finance modules
+        // Register compliance, finance, and safety modules
         $this->registerComplianceModule($engine);
         $this->registerFinanceModule($engine);
+        $this->registerSafetyModule($engine);
 
         try {
             // Validate script safety before execution
@@ -630,6 +631,67 @@ class FormLogicRuntime
                     return new FloatObject($feeSchedule[$key]);
                 }
                 return new FloatObject(55.0);
+            },
+        ]);
+    }
+
+    /**
+     * Register the safety module for OHS risk assessments
+     */
+    private function registerSafetyModule(FormLogicEngine $engine): void
+    {
+        $engine->registerModule('safety', [
+            // Risk matrix: likelihood (1-5) x consequence (1-5) = score 1-25
+            'riskMatrix' => function (array $args): BaseObject {
+                if (count($args) < 2) return new IntegerObject(0);
+                $likelihood = getValue($args[0]);
+                $consequence = getValue($args[1]);
+                if (!is_numeric($likelihood) || !is_numeric($consequence)) return new IntegerObject(0);
+                $l = max(1, min(5, (int) round((float) $likelihood)));
+                $c = max(1, min(5, (int) round((float) $consequence)));
+                return new IntegerObject($l * $c);
+            },
+
+            // Risk level label from score (1-25)
+            // Critical: 20-25, High: 12-19, Medium: 5-11, Low: 1-4
+            'riskLevel' => function (array $args): BaseObject {
+                if (count($args) < 1) return new StringObject('Unknown');
+                $score = getValue($args[0]);
+                if (!is_numeric($score)) return new StringObject('Unknown');
+                $s = (int) $score;
+                if ($s >= 20) return new StringObject('Critical');
+                if ($s >= 12) return new StringObject('High');
+                if ($s >= 5) return new StringObject('Medium');
+                if ($s >= 1) return new StringObject('Low');
+                return new StringObject('Unknown');
+            },
+
+            // Control effectiveness rating (hierarchy of controls)
+            // elimination=5, substitution=4, engineering=3, administrative=2, ppe=1
+            'controlEffectiveness' => function (array $args): BaseObject {
+                if (count($args) < 1) return new IntegerObject(0);
+                $controlType = getValue($args[0]);
+                if (!is_string($controlType)) return new IntegerObject(0);
+                $scores = [
+                    'elimination' => 5, 'substitution' => 4, 'engineering' => 3,
+                    'administrative' => 2, 'ppe' => 1,
+                ];
+                return new IntegerObject($scores[strtolower($controlType)] ?? 0);
+            },
+
+            // Residual risk after control: riskScore * (1 - controlScore/5)
+            'residualRisk' => function (array $args): BaseObject {
+                if (count($args) < 2) return new IntegerObject(0);
+                $riskScore = getValue($args[0]);
+                $controlType = getValue($args[1]);
+                if (!is_numeric($riskScore) || !is_string($controlType)) return new IntegerObject(0);
+                $scores = [
+                    'elimination' => 5, 'substitution' => 4, 'engineering' => 3,
+                    'administrative' => 2, 'ppe' => 1,
+                ];
+                $effectiveness = $scores[strtolower($controlType)] ?? 0;
+                $residual = (int) round((float) $riskScore * (1 - $effectiveness / 5));
+                return new IntegerObject(max(0, $residual));
             },
         ]);
     }

@@ -212,6 +212,8 @@ class PackService
                 'appCount' => count($appIds),
                 'existingFormCount' => $existingForms,
                 'existingAppCount' => $existingApps,
+                'formIds' => $formIds,
+                'appIds' => $appIds,
                 'installedAt' => $row['installed_at'],
             ];
         }

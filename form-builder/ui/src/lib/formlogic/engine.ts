@@ -13,6 +13,7 @@ import {
 import { getValue, isNullish } from './modules/helpers';
 import { complianceModule } from './modules/compliance';
 import { financeModule } from './modules/finance';
+import { safetyModule } from './modules/safety';
 
 // Singleton engine instance
 let engineInstance: FormLogicEngine | null = null;
@@ -179,6 +180,9 @@ function registerFormModules(engine: FormLogicEngine): void {
 
   // Finance module
   engine.registerModule('finance', financeModule);
+
+  // Safety module
+  engine.registerModule('safety', safetyModule);
 
   // Utility functions
   engine.registerBuiltin('isEmpty', (args: BaseObject[]) => {

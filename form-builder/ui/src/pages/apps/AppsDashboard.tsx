@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { api } from '../../lib/api';
+import type { PackInstallation } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import type { App } from '../../types/app';
 
@@ -18,10 +22,68 @@ export function AppsDashboard() {
   const navigate = useNavigate();
   const { apps, isLoading, fetchApps, deleteApp } = useAppStore();
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [packFilter, setPackFilter] = useState<string>('all');
+  const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
 
   useEffect(() => {
     fetchApps();
   }, [fetchApps]);
+
+  // Fetch installed packs on mount
+  useEffect(() => {
+    api.getInstalledPacks().then((result) => {
+      if (!result.error && result.data) {
+        setInstalledPacks(result.data.installations);
+      }
+    });
+  }, []);
+
+  // Build appId → packName map
+  const appPackMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const appId of pack.appIds ?? []) {
+        map[appId] = pack.packName;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
+  // Build appId → packId map for filtering
+  const appPackIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const appId of pack.appIds ?? []) {
+        map[appId] = pack.packId;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
+  // Unique pack names for filter options
+  const packOptions = useMemo(() => {
+    const packs = installedPacks
+      .filter((p) => (p.appIds ?? []).length > 0)
+      .map((p) => ({ id: p.packId, name: p.packName }));
+    const seen = new Set<string>();
+    return packs.filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  }, [installedPacks]);
+
+  // Filter apps by search + pack
+  const filteredApps = useMemo(() =>
+    apps.filter((app) => {
+      if (searchQuery && !app.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+      if (packFilter === 'all') return true;
+      if (packFilter === 'none') return !appPackIdMap[app.id];
+      return appPackIdMap[app.id] === packFilter;
+    }),
+    [apps, searchQuery, packFilter, appPackIdMap]
+  );
 
   return (
     <div className="min-h-screen">
@@ -39,11 +101,38 @@ export function AppsDashboard() {
           <p className="text-gray-500 dark:text-slate-400">Build and manage deployable applications</p>
         </div>
 
+        {/* Search and Filter */}
+        {apps.length > 0 && (
+          <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3">
+            <Input
+              placeholder="Search apps..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              leftIcon={<Search className="h-4 w-4" />}
+              className="w-full sm:max-w-md"
+            />
+            {packOptions.length > 0 && (
+              <select
+                value={packFilter}
+                onChange={(e) => setPackFilter(e.target.value)}
+                aria-label="Filter by pack"
+                className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer"
+              >
+                <option value="all">All Packs</option>
+                <option value="none">No Pack</option>
+                {packOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading apps" />
           </div>
-        ) : apps.length === 0 ? (
+        ) : filteredApps.length === 0 && apps.length === 0 ? (
           <div className="text-center py-20 bg-white dark:bg-slate-900/30 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
             <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center mb-4">
               <Globe className="h-8 w-8 text-gray-400 dark:text-slate-500" />
@@ -54,12 +143,17 @@ export function AppsDashboard() {
               Create Your First App
             </Button>
           </div>
+        ) : filteredApps.length === 0 ? (
+          <div className="text-center py-12 text-gray-500 dark:text-slate-400">
+            No apps match your filters.
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {apps.map((app) => (
+            {filteredApps.map((app) => (
               <AppCard
                 key={app.id}
                 app={app}
+                packName={appPackMap[app.id] ?? null}
                 onClick={() => navigate(`/apps/${app.id}/settings`)}
                 onDelete={() => setDeleteTarget(app)}
               />
@@ -81,7 +175,7 @@ export function AppsDashboard() {
   );
 }
 
-function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; onDelete: () => void }) {
+function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: string | null; onClick: () => void; onDelete: () => void }) {
   return (
     <div
       role="button"
@@ -108,7 +202,15 @@ function AppCard({ app, onClick, onDelete }: { app: App; onClick: () => void; on
             <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
               {app.name}
             </h3>
-            <span className="text-xs text-gray-500 dark:text-slate-500 font-mono">/{app.slug}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 dark:text-slate-500 font-mono">/{app.slug}</span>
+              {packName && (
+                <Badge variant="info" size="sm">
+                  <Package className="h-3 w-3 mr-1 inline" />
+                  {packName}
+                </Badge>
+              )}
+            </div>
           </div>
         </div>
         <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize', statusColors[app.status])}>

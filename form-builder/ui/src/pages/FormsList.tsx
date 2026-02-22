@@ -33,12 +33,15 @@ import { formatRelativeTime } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { PackImportModal } from '../components/builder/PackImportModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { api } from '../lib/api';
+import type { PackInstallation } from '../lib/api';
 import type { Form } from '../types/form';
 
 // Extracted outside FormsList so React maintains a stable component identity across renders
 const FormCard = memo(function FormCard({
   form,
   responseCount,
+  packName,
   activeMenuId,
   activeMenuRect,
   onMenuToggle,
@@ -50,6 +53,7 @@ const FormCard = memo(function FormCard({
 }: {
   form: Form;
   responseCount: number;
+  packName: string | null;
   activeMenuId: string | null;
   activeMenuRect: DOMRect | null;
   onMenuToggle: (id: string, rect: DOMRect) => void;
@@ -71,9 +75,17 @@ const FormCard = memo(function FormCard({
             </div>
             <div className="min-w-0">
               <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title || 'Untitled Form'}</h3>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
-                {form.fieldCount ?? form.fields?.length ?? 0} fields
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
+                  {form.fieldCount ?? form.fields?.length ?? 0} fields
+                </p>
+                {packName && (
+                  <Badge variant="info" size="sm">
+                    <Package className="h-3 w-3 mr-1 inline" />
+                    {packName}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
           <div className="relative">
@@ -215,6 +227,51 @@ export function FormsList() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [showPackImport, setShowPackImport] = useState(false);
+  const [packFilter, setPackFilter] = useState<string>('all');
+  const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
+
+  // Build formId → packName map from installed packs
+  const formPackMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const formId of pack.formIds ?? []) {
+        map[formId] = pack.packName;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
+  // Build formId → packId map for filtering
+  const formPackIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const formId of pack.formIds ?? []) {
+        map[formId] = pack.packId;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
+  // Unique pack names for filter options
+  const packOptions = useMemo(() => {
+    const packs = installedPacks.map((p) => ({ id: p.packId, name: p.packName }));
+    // Deduplicate by packId
+    const seen = new Set<string>();
+    return packs.filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
+  }, [installedPacks]);
+
+  // Fetch installed packs on mount
+  useEffect(() => {
+    api.getInstalledPacks().then((result) => {
+      if (!result.error && result.data) {
+        setInstalledPacks(result.data.installations);
+      }
+    });
+  }, []);
 
   // Close dropdown menu on scroll or resize to prevent stale positioning
   useEffect(() => {
@@ -279,7 +336,12 @@ export function FormsList() {
 
   const filteredForms = useMemo(() =>
     forms
-      .filter((form) => form.title.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter((form) => {
+        if (!form.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
+        if (packFilter === 'all') return true;
+        if (packFilter === 'none') return !formPackIdMap[form.id];
+        return formPackIdMap[form.id] === packFilter;
+      })
       .sort((a, b) => {
         switch (sortBy) {
           case 'name':
@@ -291,7 +353,7 @@ export function FormsList() {
             return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         }
       }),
-    [forms, searchQuery, sortBy, getResponsesByFormId]
+    [forms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap]
   );
 
   const draftForms = useMemo(() => filteredForms.filter((f) => f.status === 'draft'), [filteredForms]);
@@ -303,6 +365,7 @@ export function FormsList() {
       key={form.id}
       form={form}
       responseCount={getResponsesByFormId(form.id).length}
+      packName={formPackMap[form.id] ?? null}
       activeMenuId={activeMenu?.id ?? null}
       activeMenuRect={activeMenu?.id === form.id ? activeMenu.rect : null}
       onMenuToggle={handleMenuToggle}
@@ -351,6 +414,20 @@ export function FormsList() {
             <option value="name">Name A-Z</option>
             <option value="responses">Most Responses</option>
           </select>
+          {packOptions.length > 0 && (
+            <select
+              value={packFilter}
+              onChange={(e) => setPackFilter(e.target.value)}
+              aria-label="Filter by pack"
+              className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer"
+            >
+              <option value="all">All Packs</option>
+              <option value="none">No Pack</option>
+              {packOptions.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Tabs */}
