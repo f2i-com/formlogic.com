@@ -702,16 +702,21 @@ class ResponseService
         // Write UTF-8 BOM so Excel correctly interprets Unicode characters
         fwrite($outputStream, "\xEF\xBB\xBF");
 
-        // Header row
+        // Header row (sanitize against CSV formula injection)
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {
-            $headers[] = $field['label'] ?? $field['id'];
+            $label = $field['label'] ?? $field['id'];
+            if (is_string($label) && preg_match('/^[=+\-@]/', $label)) {
+                $label = "'" . $label;
+            }
+            $headers[] = $label;
         }
         fputcsv($outputStream, $headers);
 
         $batchSize = 500;
         $offset = 0;
         $totalWritten = 0;
+        $maxExportRows = 100000; // Hard limit to prevent DoS
 
         do {
             $batch = $this->getFormResponses($formId, [
@@ -772,7 +777,7 @@ class ResponseService
             }
 
             $offset += $batchSize;
-        } while (count($batch) === $batchSize);
+        } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
 
         return $totalWritten;
     }

@@ -64,7 +64,7 @@ class AuthService
         } catch (\PDOException $e) {
             // Check for duplicate key error (MySQL error code 1062, SQLSTATE 23000)
             if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
-                throw new \RuntimeException('Email already registered');
+                throw new \RuntimeException('Unable to create account. Please try a different email address.');
             }
             // Re-throw other database errors
             throw $e;
@@ -383,7 +383,7 @@ class AuthService
             $stmt = $this->mysql->prepare("SELECT id FROM users WHERE email = :email AND id != :check_id");
             $stmt->execute(['email' => $data['email'], 'check_id' => $userId]);
             if ($stmt->fetch()) {
-                throw new \RuntimeException('Email already in use');
+                throw new \RuntimeException('Unable to update email address');
             }
 
             $updates[] = "email = :email";
@@ -423,7 +423,7 @@ class AuthService
         } catch (\PDOException $e) {
             // Handle UNIQUE constraint violation on email (TOCTOU race condition)
             if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
-                throw new \RuntimeException('Email already in use');
+                throw new \RuntimeException('Unable to update email address');
             }
             throw $e;
         }
