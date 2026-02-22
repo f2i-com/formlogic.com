@@ -14,9 +14,11 @@ class FormService
     private PDO $mysql;
     private SQLiteConnection $sqlite;
     private ?WebhookService $webhookService;
+    private ?FileStorageService $fileStorageService;
 
-    public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null)
+    public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null, ?FileStorageService $fileStorageService = null)
     {
+        $this->fileStorageService = $fileStorageService;
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
         $this->webhookService = $webhookService;
@@ -316,6 +318,15 @@ class FormService
 
         // Only delete SQLite after MySQL succeeds
         $this->sqlite->deleteFormDatabase($formId);
+
+        // Clean up uploaded files for this form
+        if ($this->fileStorageService !== null) {
+            try {
+                $this->fileStorageService->deleteFormFiles($formId);
+            } catch (\Exception $e) {
+                // Don't fail form deletion if file cleanup fails
+            }
+        }
 
         return $deleted;
     }

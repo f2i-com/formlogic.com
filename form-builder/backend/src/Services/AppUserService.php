@@ -269,6 +269,23 @@ class AppUserService
 
     public function updateAppUser(string $appUserId, array $data): bool
     {
+        // Prevent modifying the app owner's role or status
+        $ownerCheck = $this->mysql->prepare("
+            SELECT au.user_id, a.owner_id FROM app_users au
+            JOIN apps a ON a.id = au.app_id
+            WHERE au.id = :id
+        ");
+        $ownerCheck->execute(['id' => $appUserId]);
+        $ownerRow = $ownerCheck->fetch();
+        if ($ownerRow && $ownerRow['user_id'] === $ownerRow['owner_id']) {
+            if (isset($data['roleId'])) {
+                throw new \RuntimeException('Cannot change the app owner\'s role');
+            }
+            if (isset($data['status']) && $data['status'] !== 'active') {
+                throw new \RuntimeException('Cannot suspend or deactivate the app owner');
+            }
+        }
+
         $updates = [];
         $params = ['id' => $appUserId];
 
@@ -351,6 +368,14 @@ class AppUserService
 
     public function createInvitation(string $appId, string $email, string $roleId, string $invitedBy): array
     {
+        // Prevent inviting users with the Owner system role
+        $roleCheck = $this->mysql->prepare("SELECT name, is_system FROM app_roles WHERE id = :id AND app_id = :app_id");
+        $roleCheck->execute(['id' => $roleId, 'app_id' => $appId]);
+        $roleRow = $roleCheck->fetch();
+        if ($roleRow && (int)$roleRow['is_system'] === 1 && $roleRow['name'] === 'Owner') {
+            throw new \RuntimeException('Cannot invite users to the Owner role');
+        }
+
         // Check if email is already a member
         $stmt = $this->mysql->prepare("
             SELECT au.id FROM app_users au
@@ -592,8 +617,11 @@ class AppUserService
             return false;
         }
 
-        // Owner always has all permissions
-        if ($row['role_name'] === 'Owner') {
+        // Owner always has all permissions (check via apps.owner_id, not role name)
+        $ownerStmt = $this->mysql->prepare("SELECT owner_id FROM apps WHERE id = :app_id");
+        $ownerStmt->execute(['app_id' => $appId]);
+        $appRow = $ownerStmt->fetch();
+        if ($appRow && $appRow['owner_id'] === $userId) {
             return true;
         }
 
@@ -630,8 +658,11 @@ class AppUserService
             return ['appLevel' => [], 'formLevel' => []];
         }
 
-        // Owner gets all permissions
-        if ($row['role_name'] === 'Owner') {
+        // Owner gets all permissions (check via apps.owner_id, not role name)
+        $ownerStmt = $this->mysql->prepare("SELECT owner_id FROM apps WHERE id = :app_id");
+        $ownerStmt->execute(['app_id' => $appId]);
+        $appRow = $ownerStmt->fetch();
+        if ($appRow && $appRow['owner_id'] === $userId) {
             return [
                 'appLevel' => AppPermissions::ALL,
                 'formLevel' => [],  // All = app-level grants cover all forms

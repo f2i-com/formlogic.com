@@ -241,7 +241,8 @@ class ResponseService
         // Run migrations to ensure new tables exist
         $this->sqlite->migrateFormDatabase($db);
 
-        $id = $data['id'] ?? $this->generateUuid();
+        // Always generate server-side ID; ignore client-supplied ID to prevent collision attacks
+        $id = $this->generateUuid();
         $now = date('Y-m-d H:i:s');
 
         // 1. Execute script FIRST if exists (to allow rejection)
@@ -277,12 +278,13 @@ class ResponseService
         $stmt->execute([
             'id' => $id,
             'answers' => json_encode($data['answers'] ?? []),
-            'metadata' => json_encode(array_merge($data['metadata'] ?? [], [
+            'metadata' => json_encode([
                 'userAgent' => $data['userAgent'] ?? null,
                 'referrer' => $data['referrer'] ?? null,
                 'completionTime' => $data['completionTime'] ?? null,
                 'ipAddress' => $data['ipAddress'] ?? null,
-            ])),
+                'submittedByUserId' => $data['submittedByUserId'] ?? null,
+            ]),
             'status' => $status,
             'submitted_at' => $now,
             'updated_at' => $now,

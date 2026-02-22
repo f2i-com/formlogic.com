@@ -141,7 +141,8 @@ $container->set(FormService::class, function (Container $c) {
     return new FormService(
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class),
-        $c->get(WebhookService::class)
+        $c->get(WebhookService::class),
+        $c->get(FileStorageService::class)
     );
 });
 
