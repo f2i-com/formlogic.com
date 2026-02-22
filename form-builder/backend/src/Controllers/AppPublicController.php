@@ -175,7 +175,7 @@ class AppPublicController
         }
 
         // Strip sensitive fields from runtime response
-        unset($form['logicScript'], $form['logicPrompt']);
+        unset($form['logicScript'], $form['logicPrompt'], $form['userId']);
 
         return $this->jsonResponse($response, ['form' => $form]);
     }
@@ -304,6 +304,7 @@ class AppPublicController
             }
         }
 
+        $responses = array_map([$this, 'stripSensitiveMetadata'], $responses);
         return $this->jsonResponse($response, ['responses' => $responses, 'count' => count($responses), 'scope' => $scope]);
     }
 
@@ -354,6 +355,7 @@ class AppPublicController
             }
         }
 
+        $resp = $this->stripSensitiveMetadata($resp);
         return $this->jsonResponse($response, ['response' => $resp]);
     }
 
@@ -397,6 +399,10 @@ class AppPublicController
 
         $data = $request->getParsedBody();
 
+        // Strip status from update data — status changes require MANAGE_RESPONSES,
+        // which is implicitly owner-only; EDIT_RESPONSES should not grant status control
+        unset($data['status']);
+
         // Validate answers against form fields if answers are being updated
         if (isset($data['answers'])) {
             $form = $this->formService->getForm($formId);
@@ -418,6 +424,7 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
+        $updated = $this->stripSensitiveMetadata($updated);
         return $this->jsonResponse($response, ['response' => $updated]);
     }
 
@@ -1165,6 +1172,17 @@ class AppPublicController
         }
 
         return null;
+    }
+
+    /**
+     * Strip sensitive metadata (IP, user agent, referrer) from response data.
+     */
+    private function stripSensitiveMetadata(array $resp): array
+    {
+        if (isset($resp['metadata']) && is_array($resp['metadata'])) {
+            unset($resp['metadata']['ipAddress'], $resp['metadata']['userAgent'], $resp['metadata']['referrer']);
+        }
+        return $resp;
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

@@ -121,6 +121,7 @@ class FormLogicRuntime
             $executionTimeMs = (int)((microtime(true) - $startTime) * 1000);
             // Sanitize error message: strip file paths and internal details
             $safeMessage = preg_replace('/\s*in\s+\/[^\s]+/', '', $e->getMessage());
+            $safeMessage = preg_replace('/\s*in\s+[A-Z]:\\\\[^\s]+/i', '', $safeMessage);
             $safeMessage = preg_replace('/\s*on line \d+/', '', $safeMessage);
             return ScriptResult::error(
                 "Script execution error: {$safeMessage}",
