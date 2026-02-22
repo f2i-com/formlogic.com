@@ -28,8 +28,9 @@ class PackCatalogService
         $where[] = "pc.visibility = 'public'";
 
         if (!empty($filters['search'])) {
-            $where[] = "(pc.name LIKE :search OR pc.description LIKE :search)";
-            $params['search'] = '%' . $filters['search'] . '%';
+            $where[] = "(pc.name LIKE :search ESCAPE '\\' OR pc.description LIKE :search ESCAPE '\\')";
+            $escaped = strtr($filters['search'], ['%' => '\%', '_' => '\_']);
+            $params['search'] = '%' . $escaped . '%';
         }
 
         if (!empty($filters['category'])) {

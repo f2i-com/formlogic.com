@@ -1168,7 +1168,11 @@ class ResponseService
                     ]);
                 }
             }
-            throw new \RuntimeException('Import failed: ' . $e->getMessage());
+            $this->logger->error('Import failed', [
+                'formId' => $formId,
+                'error' => $e->getMessage(),
+            ]);
+            throw new \RuntimeException('Import failed. Please check your file format and try again.');
         }
 
         return [

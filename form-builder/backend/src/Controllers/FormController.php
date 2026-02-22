@@ -282,7 +282,10 @@ class FormController
                 try {
                     $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
                 } catch (\Exception $versionErr) {
-                    // Log but don't block the form update
+                    $this->logger->warning('Version creation failed', [
+                        'formId' => $formId,
+                        'error' => $versionErr->getMessage(),
+                    ]);
                 }
             }
 

@@ -44,7 +44,7 @@ class AuthService
     public function register(string $email, string $password, ?string $name = null): array
     {
         $userId = $this->generateUuid();
-        $passwordHash = password_hash($password, PASSWORD_BCRYPT);
+        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
         $now = date('Y-m-d H:i:s');
 
         try {
@@ -406,7 +406,7 @@ class AuthService
                 throw new \RuntimeException('Current password is incorrect');
             }
             $updates[] = "password_hash = :password_hash";
-            $params['password_hash'] = password_hash($data['password'], PASSWORD_BCRYPT);
+            $params['password_hash'] = password_hash($data['password'], PASSWORD_DEFAULT);
         }
 
         if (empty($updates)) {

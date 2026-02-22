@@ -312,6 +312,8 @@ class ExternalApiController
             return $this->jsonResponse($response, ['response' => $this->sanitizeResponseData($formResponse)]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Internal error updating response'], 500);
         }
     }
 

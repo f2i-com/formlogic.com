@@ -33,14 +33,16 @@ class PackFileService
             throw new \RuntimeException('No file uploaded');
         }
 
-        if ($size > $this->maxZipSize) {
+        // Use actual file size, not client-reported size
+        $actualSize = filesize($tmpPath);
+        if ($actualSize === false || $actualSize > $this->maxZipSize) {
             throw new \RuntimeException('File exceeds maximum size of ' . round($this->maxZipSize / 1024 / 1024) . 'MB');
         }
 
-        // Validate file type
+        // Validate file type using server-side detection only (don't trust client-reported type)
         $finfo = new \finfo(FILEINFO_MIME_TYPE);
         $detectedType = $finfo->file($tmpPath);
-        if (!in_array($detectedType, $this->allowedFileTypes) && !in_array($type, $this->allowedFileTypes)) {
+        if (!in_array($detectedType, $this->allowedFileTypes, true)) {
             throw new \RuntimeException('Invalid file type. Only .zip files are accepted.');
         }
 
