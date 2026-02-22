@@ -40,6 +40,10 @@ use FormLogic\Controllers\AppPublicController;
 use FormLogic\Controllers\WebhookController;
 use FormLogic\Services\PackService;
 use FormLogic\Controllers\PackController;
+use FormLogic\Services\ApiKeyService;
+use FormLogic\Controllers\ApiKeyController;
+use FormLogic\Controllers\ExternalApiController;
+use FormLogic\Middleware\ApiKeyMiddleware;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -231,6 +235,27 @@ $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
         $c->get(AuditService::class)
+    );
+});
+
+// Register API Key services
+$container->set(ApiKeyService::class, function (Container $c) {
+    return new ApiKeyService(
+        $c->get(MySQLConnection::class)
+    );
+});
+
+$container->set(ApiKeyController::class, function (Container $c) {
+    return new ApiKeyController(
+        $c->get(ApiKeyService::class)
+    );
+});
+
+$container->set(ExternalApiController::class, function (Container $c) {
+    return new ExternalApiController(
+        $c->get(FormService::class),
+        $c->get(ResponseService::class),
+        $c->get(WebhookService::class)
     );
 });
 
@@ -601,6 +626,101 @@ $app->get('/api/packs/installed', function ($request, $response) use ($container
 $app->delete('/api/packs/{installationId}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->uninstall($request, $response, $getArgs($request));
 })->add($authRequired);
+
+// API Key management routes (cookie auth, protected, rate limited)
+$apiKeyMgmtRateLimiter = new RateLimitMiddleware(10, 60, 'api_key_mgmt');
+$app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(ApiKeyController::class)->index($request, $response);
+    });
+    $group->post('', function ($request, $response) use ($container) {
+        return $container->get(ApiKeyController::class)->create($request, $response);
+    });
+    $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ApiKeyController::class)->revoke($request, $response, $getArgs($request));
+    });
+})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+
+// External API v1 routes (API key auth)
+$apiRateLimiter = new RateLimitMiddleware(120, 60, 'api_v1');
+$apiKeyService = $container->get(ApiKeyService::class);
+
+$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService) {
+    // Forms (forms:read)
+    $formsReadAuth = new ApiKeyMiddleware($apiKeyService, ['forms:read']);
+
+    $group->get('/forms', function ($request, $response) use ($container) {
+        return $container->get(ExternalApiController::class)->listForms($request, $response);
+    })->add($formsReadAuth);
+
+    $group->get('/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->getForm($request, $response, $getArgs($request));
+    })->add($formsReadAuth);
+
+    $group->get('/forms/{formId}/fields', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->getFormFields($request, $response, $getArgs($request));
+    })->add($formsReadAuth);
+
+    // Response submission (responses:write)
+    $responsesWriteAuth = new ApiKeyMiddleware($apiKeyService, ['responses:write']);
+
+    $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->submitResponse($request, $response, $getArgs($request));
+    })->add($responsesWriteAuth);
+
+    $group->post('/forms/{formId}/responses/batch', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->batchSubmitResponses($request, $response, $getArgs($request));
+    })->add($responsesWriteAuth);
+
+    // Response reading (responses:read)
+    $responsesReadAuth = new ApiKeyMiddleware($apiKeyService, ['responses:read']);
+
+    $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->listResponses($request, $response, $getArgs($request));
+    })->add($responsesReadAuth);
+
+    $group->get('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->getResponse($request, $response, $getArgs($request));
+    })->add($responsesReadAuth);
+
+    // Response management (responses:manage)
+    $responsesManageAuth = new ApiKeyMiddleware($apiKeyService, ['responses:manage']);
+
+    $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->updateResponse($request, $response, $getArgs($request));
+    })->add($responsesManageAuth);
+
+    $group->delete('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->deleteResponse($request, $response, $getArgs($request));
+    })->add($responsesManageAuth);
+
+    // Analytics (responses:read)
+    $group->get('/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->analytics($request, $response, $getArgs($request));
+    })->add($responsesReadAuth);
+
+    // Webhooks read (webhooks:read)
+    $webhooksReadAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:read']);
+
+    $group->get('/forms/{formId}/webhooks', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->listWebhooks($request, $response, $getArgs($request));
+    })->add($webhooksReadAuth);
+
+    // Webhooks write (webhooks:write)
+    $webhooksWriteAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:write']);
+
+    $group->post('/forms/{formId}/webhooks', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->createWebhook($request, $response, $getArgs($request));
+    })->add($webhooksWriteAuth);
+
+    $group->put('/forms/{formId}/webhooks/{webhookId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->updateWebhook($request, $response, $getArgs($request));
+    })->add($webhooksWriteAuth);
+
+    $group->delete('/forms/{formId}/webhooks/{webhookId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ExternalApiController::class)->deleteWebhook($request, $response, $getArgs($request));
+    })->add($webhooksWriteAuth);
+})->add($apiRateLimiter);
 
 // Audit verification route (admin, protected)
 $app->get('/api/admin/audit/verify', function ($request, $response) use ($container) {

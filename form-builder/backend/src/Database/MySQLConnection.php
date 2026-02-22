@@ -452,5 +452,26 @@ class MySQLConnection
                 INDEX idx_pack_id (pack_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Create api_keys table
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                key_prefix VARCHAR(12) NOT NULL,
+                key_hash VARCHAR(64) NOT NULL,
+                scopes JSON NOT NULL,
+                form_ids JSON DEFAULT NULL,
+                last_used_at TIMESTAMP NULL,
+                last_used_ip VARCHAR(45) NULL,
+                expires_at TIMESTAMP NULL,
+                is_active TINYINT(1) DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_api_keys_hash (key_hash),
+                INDEX idx_api_keys_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

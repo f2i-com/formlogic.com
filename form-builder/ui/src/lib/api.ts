@@ -796,6 +796,24 @@ class ApiClient {
       method: 'POST',
     });
   }
+
+  // API Key management
+  async getApiKeys(): Promise<ApiResponse<{ keys: ApiKey[] }>> {
+    return this.request('/api-keys');
+  }
+
+  async createApiKey(data: { name: string; scopes: string[]; formIds?: string[]; expiresAt?: string }): Promise<ApiResponse<{ key: ApiKeyCreated }>> {
+    return this.request('/api-keys', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async revokeApiKey(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/api-keys/${id}`, {
+      method: 'DELETE',
+    });
+  }
 }
 
 // Types
@@ -979,8 +997,23 @@ interface AuditVerifyResult {
   brokenAt: { id: string; sequenceNumber: number; action: string; createdAt: string } | null;
 }
 
+interface ApiKey {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  scopes: string[];
+  formIds: string[] | null;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+interface ApiKeyCreated extends ApiKey {
+  key: string;
+}
+
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated };

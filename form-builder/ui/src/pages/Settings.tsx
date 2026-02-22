@@ -19,10 +19,15 @@ import {
   Palette,
   Check,
   Lock,
+  Key,
+  Copy,
+  Trash2,
+  Plus,
+  AlertTriangle,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { api } from '../lib/api';
-import type { AuditVerifyResult } from '../lib/api';
+import type { AuditVerifyResult, ApiKey, ApiKeyCreated } from '../lib/api';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -111,6 +116,16 @@ export function Settings() {
   const [isVerifyingAudit, setIsVerifyingAudit] = useState(false);
   const [auditResult, setAuditResult] = useState<AuditVerifyResult | null>(null);
 
+  // API key state
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [isLoadingKeys, setIsLoadingKeys] = useState(true);
+  const [showCreateKey, setShowCreateKey] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>([]);
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
+
   // Update form when user changes
   useEffect(() => {
     if (user) {
@@ -189,6 +204,80 @@ export function Settings() {
       setIsVerifyingAudit(false);
     }
   };
+
+  const loadApiKeys = async () => {
+    setIsLoadingKeys(true);
+    try {
+      const result = await api.getApiKeys();
+      if (result.data) {
+        setApiKeys(result.data.keys);
+      }
+    } catch {
+      // Silently fail
+    } finally {
+      setIsLoadingKeys(false);
+    }
+  };
+
+  // Load API keys on mount
+  useEffect(() => {
+    loadApiKeys();
+  }, []);
+
+  const handleCreateApiKey = async () => {
+    if (!newKeyName.trim() || newKeyScopes.length === 0) return;
+
+    setIsCreatingKey(true);
+    try {
+      const result = await api.createApiKey({ name: newKeyName.trim(), scopes: newKeyScopes });
+      if (result.data) {
+        setCreatedKey(result.data.key);
+        setShowCreateKey(false);
+        setNewKeyName('');
+        setNewKeyScopes([]);
+        loadApiKeys();
+      } else {
+        toast.error('Failed to create API key', result.error || 'Unknown error');
+      }
+    } catch {
+      toast.error('Failed to create API key', 'An unexpected error occurred');
+    } finally {
+      setIsCreatingKey(false);
+    }
+  };
+
+  const handleRevokeApiKey = async (id: string, name: string) => {
+    if (!confirm(`Revoke API key "${name}"? This action cannot be undone.`)) return;
+
+    const result = await api.revokeApiKey(id);
+    if (result.data) {
+      toast.success('API Key Revoked', `"${name}" has been revoked.`);
+      loadApiKeys();
+    } else {
+      toast.error('Failed to revoke key', result.error || 'Unknown error');
+    }
+  };
+
+  const handleCopyKey = (key: string) => {
+    navigator.clipboard.writeText(key);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
+  };
+
+  const toggleScope = (scope: string) => {
+    setNewKeyScopes(prev =>
+      prev.includes(scope) ? prev.filter(s => s !== scope) : [...prev, scope]
+    );
+  };
+
+  const AVAILABLE_SCOPES = [
+    { id: 'forms:read', label: 'Forms: Read', description: 'List forms, get metadata and fields' },
+    { id: 'responses:read', label: 'Responses: Read', description: 'List and fetch responses, analytics' },
+    { id: 'responses:write', label: 'Responses: Write', description: 'Submit new responses' },
+    { id: 'responses:manage', label: 'Responses: Manage', description: 'Update and delete responses' },
+    { id: 'webhooks:read', label: 'Webhooks: Read', description: 'List webhooks' },
+    { id: 'webhooks:write', label: 'Webhooks: Write', description: 'Create, update, delete webhooks' },
+  ];
 
   return (
     <div className="min-h-screen">
@@ -425,6 +514,165 @@ export function Settings() {
                   Change Password
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* API Keys Section */}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Key}
+              title="API Keys"
+              description="Manage API keys for external integrations"
+              iconBg="bg-amber-500/10"
+              iconColor="text-amber-400"
+            />
+            <div className="space-y-4 ml-0 sm:ml-14">
+              {/* Created key display (one-time) */}
+              {createdKey && (
+                <div className="p-4 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10">
+                  <div className="flex items-start gap-2 mb-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                      Copy your API key now. It won't be shown again.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-600/30 rounded px-3 py-2 font-mono text-gray-900 dark:text-white break-all">
+                      {createdKey.key}
+                    </code>
+                    <button
+                      onClick={() => handleCopyKey(createdKey.key)}
+                      className="flex-shrink-0 p-2 rounded-lg border border-amber-200 dark:border-amber-600/30 bg-white dark:bg-slate-900 hover:bg-amber-50 dark:hover:bg-slate-800 transition-colors"
+                      title="Copy to clipboard"
+                    >
+                      {copiedKey ? (
+                        <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      ) : (
+                        <Copy className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      )}
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setCreatedKey(null)}
+                    className="mt-2 text-xs text-amber-700 dark:text-amber-400 hover:underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {/* Create key form */}
+              {showCreateKey ? (
+                <div className="p-4 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 space-y-4">
+                  <Input
+                    label="Key Name"
+                    placeholder="e.g., CRM Integration"
+                    value={newKeyName}
+                    onChange={(e) => setNewKeyName(e.target.value)}
+                  />
+                  <div>
+                    <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
+                      Scopes
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {AVAILABLE_SCOPES.map((scope) => (
+                        <label
+                          key={scope.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            newKeyScopes.includes(scope.id)
+                              ? 'border-amber-400 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-500/10'
+                              : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={newKeyScopes.includes(scope.id)}
+                            onChange={() => toggleScope(scope.id)}
+                            className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-amber-500 focus:ring-amber-500"
+                          />
+                          <div>
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{scope.label}</p>
+                            <p className="text-xs text-gray-500 dark:text-slate-400">{scope.description}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleCreateApiKey}
+                      disabled={!newKeyName.trim() || newKeyScopes.length === 0 || isCreatingKey}
+                      isLoading={isCreatingKey}
+                    >
+                      Create Key
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => { setShowCreateKey(false); setNewKeyName(''); setNewKeyScopes([]); }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowCreateKey(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1.5" />
+                  Create API Key
+                </Button>
+              )}
+
+              {/* Key list */}
+              {isLoadingKeys ? (
+                <p className="text-sm text-gray-500 dark:text-slate-400">Loading keys...</p>
+              ) : apiKeys.length === 0 ? (
+                <p className="text-sm text-gray-500 dark:text-slate-500">No API keys yet. Create one to get started.</p>
+              ) : (
+                <div className="space-y-2">
+                  {apiKeys.map((key) => (
+                    <div
+                      key={key.id}
+                      className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white">{key.name}</p>
+                          <code className="text-xs bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 px-1.5 py-0.5 rounded font-mono">
+                            {key.keyPrefix}...
+                          </code>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          {key.scopes.map((scope) => (
+                            <span
+                              key={scope}
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-medium"
+                            >
+                              {scope}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                          {key.lastUsedAt
+                            ? `Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`
+                            : 'Never used'}
+                          {' · '}Created {new Date(key.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleRevokeApiKey(key.id, key.name)}
+                        className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
+                        title="Revoke key"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
