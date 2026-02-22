@@ -28,11 +28,11 @@ class PackService
 
     /**
      * Import a pack: create forms, apps, roles, and permissions.
-     * Returns summary of created resources.
+     * Records the installation for future management/uninstall.
      *
      * @param array  $packData Full pack JSON structure
      * @param string $userId   Authenticated user importing the pack
-     * @return array { forms: [{id, title}], apps: [{id, name}] }
+     * @return array { installationId, forms: [{id, title}], apps: [{id, name}] }
      */
     public function importPack(array $packData, string $userId): array
     {
@@ -79,7 +79,6 @@ class PackService
             // 3. Create each app
             $appSummary = [];
             foreach ($packData['apps'] ?? [] as $packApp) {
-                // Create the app (generates slug, creates system roles, adds owner)
                 $appData = [
                     'name' => $packApp['name'],
                     'description' => $packApp['description'] ?? null,
@@ -109,7 +108,6 @@ class PackService
                         'description' => $packRole['description'] ?? null,
                     ]);
 
-                    // Map permissions to real form IDs (app-level permissions have no packFormId)
                     $permissions = [];
                     foreach ($packRole['permissions'] ?? [] as $perm) {
                         if (isset($perm['packFormId']) && $perm['packFormId'] !== null) {
@@ -121,7 +119,6 @@ class PackService
                                 ];
                             }
                         } else {
-                            // App-level permission (no form scope)
                             $permissions[] = [
                                 'formId' => null,
                                 'permission' => $perm['permission'],
@@ -137,9 +134,28 @@ class PackService
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }
 
+            // 6. Record the installation
+            $installationId = $this->generateUuid();
+            $meta = $packData['packMeta'];
+            $stmt = $this->mysql->prepare("
+                INSERT INTO pack_installations (id, user_id, pack_id, pack_name, pack_version, pack_description, form_ids, app_ids)
+                VALUES (:id, :user_id, :pack_id, :pack_name, :pack_version, :pack_description, :form_ids, :app_ids)
+            ");
+            $stmt->execute([
+                'id' => $installationId,
+                'user_id' => $userId,
+                'pack_id' => $meta['id'] ?? $meta['name'] ?? 'custom',
+                'pack_name' => $meta['name'] ?? 'Unknown Pack',
+                'pack_version' => $meta['version'] ?? '1.0.0',
+                'pack_description' => $meta['description'] ?? null,
+                'form_ids' => json_encode($createdFormIds),
+                'app_ids' => json_encode($createdAppIds),
+            ]);
+
             $this->mysql->commit();
 
             return [
+                'installationId' => $installationId,
                 'forms' => $formSummary,
                 'apps' => $appSummary,
             ];
@@ -147,7 +163,7 @@ class PackService
         } catch (\Exception $e) {
             $this->mysql->rollBack();
 
-            // Clean up any created forms
+            // Clean up any created forms (SQLite databases)
             foreach ($createdFormIds as $fid) {
                 try {
                     $this->formService->deleteForm($fid);
@@ -158,6 +174,123 @@ class PackService
 
             throw $e;
         }
+    }
+
+    /**
+     * Get all pack installations for a user.
+     *
+     * @return array List of installation records
+     */
+    public function getInstalledPacks(string $userId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT id, pack_id, pack_name, pack_version, pack_description,
+                   form_ids, app_ids, installed_at
+            FROM pack_installations
+            WHERE user_id = :user_id
+            ORDER BY installed_at DESC
+        ");
+        $stmt->execute(['user_id' => $userId]);
+        $rows = $stmt->fetchAll();
+
+        $installations = [];
+        foreach ($rows as $row) {
+            $formIds = json_decode($row['form_ids'], true) ?? [];
+            $appIds = json_decode($row['app_ids'], true) ?? [];
+
+            // Check which forms/apps still exist
+            $existingForms = $this->countExistingForms($formIds);
+            $existingApps = $this->countExistingApps($appIds);
+
+            $installations[] = [
+                'id' => $row['id'],
+                'packId' => $row['pack_id'],
+                'packName' => $row['pack_name'],
+                'packVersion' => $row['pack_version'],
+                'packDescription' => $row['pack_description'],
+                'formCount' => count($formIds),
+                'appCount' => count($appIds),
+                'existingFormCount' => $existingForms,
+                'existingAppCount' => $existingApps,
+                'installedAt' => $row['installed_at'],
+            ];
+        }
+
+        return $installations;
+    }
+
+    /**
+     * Uninstall a pack: delete all forms and apps created by it.
+     *
+     * @return array { formsDeleted: int, appsDeleted: int }
+     */
+    public function uninstallPack(string $installationId, string $userId): array
+    {
+        // Verify the installation belongs to this user
+        $stmt = $this->mysql->prepare("
+            SELECT id, form_ids, app_ids
+            FROM pack_installations
+            WHERE id = :id AND user_id = :user_id
+        ");
+        $stmt->execute(['id' => $installationId, 'user_id' => $userId]);
+        $installation = $stmt->fetch();
+
+        if (!$installation) {
+            throw new \RuntimeException('Installation not found');
+        }
+
+        $formIds = json_decode($installation['form_ids'], true) ?? [];
+        $appIds = json_decode($installation['app_ids'], true) ?? [];
+
+        $formsDeleted = 0;
+        $appsDeleted = 0;
+
+        // Delete apps first (they reference forms via app_forms)
+        foreach ($appIds as $appId) {
+            try {
+                $this->appService->deleteApp($appId);
+                $appsDeleted++;
+            } catch (\Exception $e) {
+                // App may have been manually deleted already
+            }
+        }
+
+        // Delete forms (and their SQLite databases)
+        foreach ($formIds as $formId) {
+            try {
+                $this->formService->deleteForm($formId);
+                $formsDeleted++;
+            } catch (\Exception $e) {
+                // Form may have been manually deleted already
+            }
+        }
+
+        // Remove the installation record
+        $stmt = $this->mysql->prepare("DELETE FROM pack_installations WHERE id = :id");
+        $stmt->execute(['id' => $installationId]);
+
+        return [
+            'formsDeleted' => $formsDeleted,
+            'appsDeleted' => $appsDeleted,
+        ];
+    }
+
+    /**
+     * Check if a pack (by pack_id) is installed for a user.
+     */
+    public function isPackInstalled(string $packId, string $userId): ?array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT id, installed_at
+            FROM pack_installations
+            WHERE pack_id = :pack_id AND user_id = :user_id
+            ORDER BY installed_at DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['pack_id' => $packId, 'user_id' => $userId]);
+        $row = $stmt->fetch();
+
+        return $row ?: null;
     }
 
     /**
@@ -211,7 +344,7 @@ class PackService
             if (($field['type'] ?? '') === 'linked_record') {
                 $targetFormId = $field['properties']['targetFormId'] ?? null;
                 if (is_string($targetFormId) && str_starts_with($targetFormId, '@pack:')) {
-                    $packFormId = substr($targetFormId, 6); // Remove '@pack:' prefix
+                    $packFormId = substr($targetFormId, 6);
                     if (!isset($formIdMap[$packFormId])) {
                         throw new \RuntimeException(
                             "Linked record field '{$field['id']}' references unknown packFormId '{$packFormId}'"
@@ -223,6 +356,34 @@ class PackService
         }
         unset($field);
         return $fields;
+    }
+
+    /**
+     * Count how many of the given form IDs still exist in the database.
+     */
+    private function countExistingForms(array $formIds): int
+    {
+        if (empty($formIds)) {
+            return 0;
+        }
+        $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+        $stmt = $this->mysql->prepare("SELECT COUNT(*) FROM forms WHERE id IN ($placeholders)");
+        $stmt->execute($formIds);
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * Count how many of the given app IDs still exist in the database.
+     */
+    private function countExistingApps(array $appIds): int
+    {
+        if (empty($appIds)) {
+            return 0;
+        }
+        $placeholders = implode(',', array_fill(0, count($appIds), '?'));
+        $stmt = $this->mysql->prepare("SELECT COUNT(*) FROM apps WHERE id IN ($placeholders)");
+        $stmt->execute($appIds);
+        return (int)$stmt->fetchColumn();
     }
 
     private function generateUuid(): string

@@ -342,6 +342,24 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Pack installations (tracks imported packs for management/uninstall)
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_installations (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                pack_id VARCHAR(100) NOT NULL,
+                pack_name VARCHAR(255) NOT NULL,
+                pack_version VARCHAR(50) DEFAULT '1.0.0',
+                pack_description TEXT,
+                form_ids JSON NOT NULL,
+                app_ids JSON NOT NULL,
+                installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_pack_user (user_id),
+                INDEX idx_pack_id (pack_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // App invitations
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS app_invitations (
@@ -416,5 +434,23 @@ class MySQLConnection
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN field_count INT UNSIGNED DEFAULT 0 AFTER status");
         }
+
+        // Create pack_installations table if it doesn't exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_installations (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                pack_id VARCHAR(100) NOT NULL,
+                pack_name VARCHAR(255) NOT NULL,
+                pack_version VARCHAR(50) DEFAULT '1.0.0',
+                pack_description TEXT,
+                form_ids JSON NOT NULL,
+                app_ids JSON NOT NULL,
+                installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_pack_user (user_id),
+                INDEX idx_pack_id (pack_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

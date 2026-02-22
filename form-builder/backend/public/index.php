@@ -585,9 +585,17 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);
 
-// Pack import route (protected)
+// Pack management routes (protected)
 $app->post('/api/packs/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->import($request, $response);
+})->add($authRequired);
+
+$app->get('/api/packs/installed', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->listInstalled($request, $response);
+})->add($authRequired);
+
+$app->delete('/api/packs/{installationId}', function ($request, $response, $args) use ($container) {
+    return $container->get(PackController::class)->uninstall($request, $response, $args);
 })->add($authRequired);
 
 // Audit verification route (admin, protected)

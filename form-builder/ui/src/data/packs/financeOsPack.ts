@@ -54,6 +54,7 @@ export interface PackApp {
 export interface PackData {
   formatVersion: number;
   packMeta: {
+    id?: string;
     name: string;
     description: string;
     version: string;
@@ -89,6 +90,7 @@ const defaultTheme: Record<string, unknown> = {
 export const financeOsPack: PackData = {
   formatVersion: 1,
   packMeta: {
+    id: 'finance-os',
     name: 'Finance OS',
     description:
       'A comprehensive pack for financial advisors covering client onboarding, compliance, account transfers, and ongoing client management.',

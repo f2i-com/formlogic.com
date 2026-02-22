@@ -54,6 +54,7 @@ class PackController
                     $this->ipResolver->getClientIp($request),
                     [
                         'packName' => $packData['packMeta']['name'] ?? null,
+                        'installationId' => $result['installationId'],
                         'formsCreated' => count($result['forms']),
                         'appsCreated' => count($result['apps']),
                     ]
@@ -67,6 +68,7 @@ class PackController
                     count($result['forms']),
                     count($result['apps'])
                 ),
+                'installationId' => $result['installationId'],
                 'forms' => $result['forms'],
                 'apps' => $result['apps'],
             ], 201);
@@ -75,6 +77,77 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import pack'], 500);
+        }
+    }
+
+    /**
+     * GET /api/packs/installed
+     * List all installed packs for the authenticated user
+     */
+    public function listInstalled(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        try {
+            $installations = $this->packService->getInstalledPacks($userId);
+            return $this->jsonResponse($response, ['installations' => $installations]);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to fetch installations'], 500);
+        }
+    }
+
+    /**
+     * DELETE /api/packs/{installationId}
+     * Uninstall a pack — deletes all forms and apps it created
+     */
+    public function uninstall(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $installationId = $args['installationId'] ?? '';
+        if (!$installationId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Installation ID is required'], 400);
+        }
+
+        try {
+            $result = $this->packService->uninstallPack($installationId, $userId);
+
+            // Audit the uninstall
+            if ($this->auditService) {
+                $this->auditService->log(
+                    'pack.uninstall',
+                    'pack',
+                    $installationId,
+                    $userId,
+                    $this->ipResolver->getClientIp($request),
+                    [
+                        'formsDeleted' => $result['formsDeleted'],
+                        'appsDeleted' => $result['appsDeleted'],
+                    ]
+                );
+            }
+
+            return $this->jsonResponse($response, [
+                'success' => true,
+                'message' => sprintf(
+                    'Uninstalled: %d form(s) and %d app(s) removed',
+                    $result['formsDeleted'],
+                    $result['appsDeleted']
+                ),
+                'formsDeleted' => $result['formsDeleted'],
+                'appsDeleted' => $result['appsDeleted'],
+            ]);
+
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 404);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to uninstall pack'], 500);
         }
     }
 

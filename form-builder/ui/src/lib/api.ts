@@ -692,12 +692,20 @@ class ApiClient {
     return this.request(`/forms/${formId}/webhooks/${webhookId}/deliveries`);
   }
 
-  // Pack import
+  // Pack management
   async importPack(pack: PackData): Promise<ApiResponse<PackImportResult>> {
     return this.request('/packs/import', {
       method: 'POST',
       body: JSON.stringify({ pack }),
     });
+  }
+
+  async getInstalledPacks(): Promise<ApiResponse<{ installations: PackInstallation[] }>> {
+    return this.request('/packs/installed');
+  }
+
+  async uninstallPack(installationId: string): Promise<ApiResponse<PackUninstallResult>> {
+    return this.request(`/packs/${installationId}`, { method: 'DELETE' });
   }
 
   // CSV import
@@ -908,7 +916,7 @@ interface FormVersion {
 
 interface PackData {
   formatVersion: number;
-  packMeta: { name: string; description: string; version: string; author?: string; tags?: string[] };
+  packMeta: { id?: string; name: string; description: string; version: string; author?: string; tags?: string[] };
   forms: Array<Record<string, unknown>>;
   apps?: Array<Record<string, unknown>>;
 }
@@ -916,8 +924,29 @@ interface PackData {
 interface PackImportResult {
   success: boolean;
   message: string;
+  installationId: string;
   forms: Array<{ id: string; title: string }>;
   apps: Array<{ id: string; name: string }>;
+}
+
+interface PackInstallation {
+  id: string;
+  packId: string;
+  packName: string;
+  packVersion: string;
+  packDescription: string | null;
+  formCount: number;
+  appCount: number;
+  existingFormCount: number;
+  existingAppCount: number;
+  installedAt: string;
+}
+
+interface PackUninstallResult {
+  success: boolean;
+  message: string;
+  formsDeleted: number;
+  appsDeleted: number;
 }
 
 interface CsvParseResult {
@@ -945,4 +974,4 @@ interface AuditVerifyResult {
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult };

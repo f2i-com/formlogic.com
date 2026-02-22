@@ -7,16 +7,23 @@ import {
   ChevronRight,
   CheckCircle,
   X,
+  Trash2,
+  AlertTriangle,
+  Loader2,
+  Calendar,
+  Box,
+  Globe,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
-import { api, type PackData, type PackImportResult } from '../../lib/api';
+import { api, type PackData, type PackImportResult, type PackInstallation } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
+import { useAppStore } from '../../stores/appStore';
 import { packCatalog, type PackCatalogEntry } from '../../data/packs';
 
-type Tab = 'catalog' | 'upload';
+type Tab = 'catalog' | 'installed' | 'upload';
 
 interface PackImportModalProps {
   isOpen: boolean;
@@ -27,16 +34,25 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>('catalog');
   const [selectedEntry, setSelectedEntry] = useState<PackCatalogEntry | null>(null);
   const [uploadedPack, setUploadedPack] = useState<PackData | null>(null);
-  const [uploadFileName, setUploadFileName] = useState<string>('');
-  const [uploadError, setUploadError] = useState<string>('');
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadError, setUploadError] = useState('');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<PackImportResult | null>(null);
   const [expandedForms, setExpandedForms] = useState(true);
   const [expandedApps, setExpandedApps] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Installed packs state
+  const [installations, setInstallations] = useState<PackInstallation[]>([]);
+  const [loadingInstallations, setLoadingInstallations] = useState(false);
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null);
+  const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshForms = useFormStore((s) => s.refreshForms);
+  const fetchApps = useAppStore((s) => s.fetchApps);
+  const storageMode = useFormStore((s) => s.storageMode);
 
   // Clean up auto-close timer on unmount
   useEffect(() => {
@@ -45,9 +61,36 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     };
   }, []);
 
+  // Load installed packs when modal opens or tab changes to installed
+  useEffect(() => {
+    if (isOpen && storageMode === 'api') {
+      loadInstallations();
+    }
+  }, [isOpen, storageMode]);
+
+  const loadInstallations = useCallback(async () => {
+    setLoadingInstallations(true);
+    try {
+      const result = await api.getInstalledPacks();
+      if (result.data?.installations) {
+        setInstallations(result.data.installations);
+      }
+    } catch {
+      // Silently fail — installed tab will show empty
+    } finally {
+      setLoadingInstallations(false);
+    }
+  }, []);
+
   const currentPack: PackData | null = activeTab === 'catalog'
     ? selectedEntry?.pack ?? null
-    : uploadedPack;
+    : activeTab === 'upload'
+      ? uploadedPack
+      : null;
+
+  const isPackInstalled = useCallback((packId: string) => {
+    return installations.some((inst) => inst.packId === packId);
+  }, [installations]);
 
   const resetState = useCallback(() => {
     setSelectedEntry(null);
@@ -59,6 +102,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     setExpandedForms(true);
     setExpandedApps(true);
     setIsDragging(false);
+    setConfirmUninstall(null);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -74,6 +118,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     setUploadFileName('');
     setUploadError('');
     setImportResult(null);
+    setConfirmUninstall(null);
   }, []);
 
   const parseFile = useCallback((file: File) => {
@@ -116,11 +161,8 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
       e.preventDefault();
       e.stopPropagation();
       setIsDragging(false);
-
       const file = e.dataTransfer.files[0];
-      if (file) {
-        parseFile(file);
-      }
+      if (file) parseFile(file);
     },
     [parseFile]
   );
@@ -140,10 +182,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) {
-        parseFile(file);
-      }
-      // Reset input so the same file can be selected again
+      if (file) parseFile(file);
       e.target.value = '';
     },
     [parseFile]
@@ -157,17 +196,15 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
       const response = await api.importPack(currentPack);
       if (response.data) {
         setImportResult(response.data);
-        await refreshForms();
+        await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
         toast.success(
           'Pack imported successfully',
           `Imported ${response.data.forms.length} form(s) and ${response.data.apps.length} app(s).`
         );
-        // Close after a brief delay so the user can see the result
-        // Keep importing=true to prevent double-click during delay
         closeTimerRef.current = setTimeout(() => {
           handleClose();
         }, 1500);
-        return; // Skip finally's setImporting(false)
+        return;
       } else {
         toast.error('Import failed', response.error || 'No data returned from the server.');
       }
@@ -176,44 +213,63 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
       toast.error('Import failed', message);
     }
     setImporting(false);
-  }, [currentPack, importing, refreshForms, handleClose]);
+  }, [currentPack, importing, refreshForms, fetchApps, loadInstallations, handleClose]);
+
+  const handleUninstall = useCallback(async (installationId: string) => {
+    setUninstallingId(installationId);
+    try {
+      const response = await api.uninstallPack(installationId);
+      if (response.data?.success) {
+        toast.success(
+          'Pack uninstalled',
+          response.data.message
+        );
+        await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
+      } else {
+        toast.error('Uninstall failed', response.error || 'Could not uninstall the pack.');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An unknown error occurred.';
+      toast.error('Uninstall failed', message);
+    } finally {
+      setUninstallingId(null);
+      setConfirmUninstall(null);
+    }
+  }, [refreshForms, fetchApps, loadInstallations]);
 
   const formCount = currentPack?.forms?.length ?? 0;
   const appCount = currentPack?.apps?.length ?? 0;
 
+  const tabButton = (tab: Tab, icon: React.ReactNode, label: string, badge?: number) => (
+    <button
+      type="button"
+      onClick={() => handleTabChange(tab)}
+      className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+        activeTab === tab
+          ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
+          : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
+      }`}
+    >
+      <span className="inline-flex items-center gap-2">
+        {icon}
+        {label}
+        {badge !== undefined && badge > 0 && (
+          <span className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full text-xs font-semibold bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300">
+            {badge}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Import Pack" size="lg">
+    <Modal isOpen={isOpen} onClose={handleClose} title="Pack Manager" size="lg">
       <div className="p-4 sm:p-6 space-y-4">
         {/* Tabs */}
         <div className="flex border-b border-gray-200 dark:border-slate-800">
-          <button
-            type="button"
-            onClick={() => handleTabChange('catalog')}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
-              activeTab === 'catalog'
-                ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
-                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
-            }`}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Pre-built Packs
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTabChange('upload')}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
-              activeTab === 'upload'
-                ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
-                : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
-            }`}
-          >
-            <span className="inline-flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Upload JSON
-            </span>
-          </button>
+          {tabButton('catalog', <Package className="h-4 w-4" />, 'Catalog')}
+          {tabButton('installed', <Box className="h-4 w-4" />, 'Installed', installations.length)}
+          {tabButton('upload', <Upload className="h-4 w-4" />, 'Upload')}
         </div>
 
         {/* Import result overlay */}
@@ -229,13 +285,13 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           </div>
         )}
 
-        {/* Tab content */}
+        {/* ==================== CATALOG TAB ==================== */}
         {!importResult && activeTab === 'catalog' && (
           <div className="space-y-4">
-            {/* Catalog grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto pr-1">
               {packCatalog.map((entry) => {
                 const isSelected = selectedEntry?.id === entry.id;
+                const installed = isPackInstalled(entry.id);
                 return (
                   <button
                     key={entry.id}
@@ -250,9 +306,14 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                     <div className="flex items-start gap-3">
                       <span className="text-2xl leading-none flex-shrink-0">{entry.icon}</span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
-                          {entry.name}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                            {entry.name}
+                          </p>
+                          {installed && (
+                            <Badge variant="success" size="sm">Installed</Badge>
+                          )}
+                        </div>
                         <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">
                           {entry.description}
                         </p>
@@ -285,9 +346,110 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           </div>
         )}
 
+        {/* ==================== INSTALLED TAB ==================== */}
+        {!importResult && activeTab === 'installed' && (
+          <div className="space-y-3">
+            {loadingInstallations ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400 dark:text-slate-500" />
+              </div>
+            ) : installations.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 dark:text-slate-500">
+                <Box className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm font-medium">No packs installed</p>
+                <p className="text-xs mt-1">
+                  Browse the Catalog tab to find packs to install.
+                </p>
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                {installations.map((inst) => (
+                  <div
+                    key={inst.id}
+                    className="p-3 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">
+                            {inst.packName}
+                          </p>
+                          <Badge variant="default" size="sm">v{inst.packVersion}</Badge>
+                        </div>
+                        {inst.packDescription && (
+                          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">
+                            {inst.packDescription}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 dark:text-slate-400">
+                          <span className="inline-flex items-center gap-1">
+                            <FileJson className="h-3 w-3" />
+                            {inst.existingFormCount}/{inst.formCount} forms
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Globe className="h-3 w-3" />
+                            {inst.existingAppCount}/{inst.appCount} apps
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {new Date(inst.installedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex-shrink-0">
+                        {confirmUninstall === inst.id ? (
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setConfirmUninstall(null)}
+                              disabled={uninstallingId === inst.id}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => handleUninstall(inst.id)}
+                              isLoading={uninstallingId === inst.id}
+                              leftIcon={uninstallingId !== inst.id ? <Trash2 className="h-3.5 w-3.5" /> : undefined}
+                            >
+                              {uninstallingId === inst.id ? 'Removing...' : 'Confirm'}
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setConfirmUninstall(inst.id)}
+                            className="text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Warning if some resources were manually deleted */}
+                    {(inst.existingFormCount < inst.formCount || inst.existingAppCount < inst.appCount) && (
+                      <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                        <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                        <span>
+                          Some resources were manually deleted ({inst.formCount - inst.existingFormCount} form{inst.formCount - inst.existingFormCount !== 1 ? 's' : ''}, {inst.appCount - inst.existingAppCount} app{inst.appCount - inst.existingAppCount !== 1 ? 's' : ''})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ==================== UPLOAD TAB ==================== */}
         {!importResult && activeTab === 'upload' && (
           <div className="space-y-4">
-            {/* File drop zone */}
             <div
               onDrop={handleDrop}
               onDragOver={handleDragOver}
@@ -352,7 +514,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           </div>
         )}
 
-        {/* Preview section */}
+        {/* ==================== PREVIEW SECTION ==================== */}
         {!importResult && currentPack && (
           <div className="space-y-3 border-t border-gray-200 dark:border-slate-800 pt-4">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
@@ -375,11 +537,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   onClick={() => setExpandedForms((v) => !v)}
                   className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
-                  {expandedForms ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )}
+                  {expandedForms ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   Forms ({formCount})
                 </button>
                 {expandedForms && (
@@ -389,11 +547,15 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                       const fields = Array.isArray((form as Record<string, unknown>).fields)
                         ? ((form as Record<string, unknown>).fields as unknown[]).length
                         : 0;
+                      const hasScript = !!(form as Record<string, unknown>).logicScript;
                       return (
                         <li key={i} className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
                           <FileJson className="h-3.5 w-3.5 flex-shrink-0 text-gray-400 dark:text-slate-500" />
                           <span className="truncate">{title}</span>
                           <Badge variant="default" size="sm">{fields} field{fields !== 1 ? 's' : ''}</Badge>
+                          {hasScript && (
+                            <Badge variant="warning" size="sm">script</Badge>
+                          )}
                         </li>
                       );
                     })}
@@ -410,11 +572,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   onClick={() => setExpandedApps((v) => !v)}
                   className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
                 >
-                  {expandedApps ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )}
+                  {expandedApps ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                   Apps ({appCount})
                 </button>
                 {expandedApps && (
@@ -424,13 +582,17 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                       const roles = Array.isArray((app as Record<string, unknown>).roles)
                         ? ((app as Record<string, unknown>).roles as Array<{ name?: string }>)
                         : [];
+                      const appForms = Array.isArray((app as Record<string, unknown>).forms)
+                        ? ((app as Record<string, unknown>).forms as unknown[]).length
+                        : 0;
                       return (
                         <li key={i} className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
-                          <Package className="h-3.5 w-3.5 flex-shrink-0 text-gray-400 dark:text-slate-500" />
+                          <Globe className="h-3.5 w-3.5 flex-shrink-0 text-gray-400 dark:text-slate-500" />
                           <span className="truncate">{name}</span>
+                          <Badge variant="default" size="sm">{appForms} form{appForms !== 1 ? 's' : ''}</Badge>
                           {roles.length > 0 && (
-                            <span className="text-gray-400 dark:text-slate-500">
-                              ({roles.map((r) => r.name || 'Unnamed').join(', ')})
+                            <span className="text-gray-400 dark:text-slate-500 truncate">
+                              {roles.length} role{roles.length !== 1 ? 's' : ''}
                             </span>
                           )}
                         </li>
@@ -443,8 +605,8 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           </div>
         )}
 
-        {/* Action buttons */}
-        {!importResult && (
+        {/* ==================== ACTION BUTTONS ==================== */}
+        {!importResult && activeTab !== 'installed' && (
           <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-slate-800 pt-4">
             <Button variant="outline" onClick={handleClose}>
               Cancel
@@ -457,6 +619,15 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
               leftIcon={importing ? undefined : <Package className="h-4 w-4" />}
             >
               {importing ? 'Importing...' : 'Import Pack'}
+            </Button>
+          </div>
+        )}
+
+        {/* Close button for installed tab */}
+        {!importResult && activeTab === 'installed' && (
+          <div className="flex items-center justify-end border-t border-gray-200 dark:border-slate-800 pt-4">
+            <Button variant="outline" onClick={handleClose}>
+              Close
             </Button>
           </div>
         )}
