@@ -131,6 +131,12 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
 
+        // Verify user is an active member of the app
+        $appUser = $this->appUserService->getAppUser($app['id'], $userId);
+        if (!$appUser || $appUser['status'] !== 'active') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403);
+        }
+
         $permissions = $this->appUserService->getUserPermissions($app['id'], $userId);
         return $this->jsonResponse($response, ['permissions' => $permissions]);
     }
@@ -378,6 +384,17 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
+        // Ownership check: users can only edit their own responses unless they have VIEW_ALL_RESPONSES
+        $existingResp = $this->appResponseService->getResponse($formId, $responseId);
+        if (!$existingResp) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
+        }
+        $isOwn = ($existingResp['metadata']['submittedByUserId'] ?? null) === $userId;
+        $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
+        if (!$isOwn && !$canViewAll) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
         $data = $request->getParsedBody();
 
         // Validate answers against form fields if answers are being updated
@@ -428,6 +445,17 @@ class AppPublicController
         }
 
         if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::DELETE_RESPONSES, $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        // Ownership check: users can only delete their own responses unless they have VIEW_ALL_RESPONSES
+        $existingResp = $this->appResponseService->getResponse($formId, $responseId);
+        if (!$existingResp) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
+        }
+        $isOwn = ($existingResp['metadata']['submittedByUserId'] ?? null) === $userId;
+        $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
+        if (!$isOwn && !$canViewAll) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
@@ -668,11 +696,19 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
         }
 
-        // Check view permission
+        // Check view permission and ownership
         $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
         $canViewOwn = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId);
         if (!$canViewAll && !$canViewOwn) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        // If user only has VIEW_OWN, verify this response belongs to them
+        if (!$canViewAll) {
+            $isOwn = ($targetResp['metadata']['submittedByUserId'] ?? null) === $userId;
+            if (!$isOwn) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+            }
         }
 
         // Pagination parameters

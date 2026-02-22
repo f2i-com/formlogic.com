@@ -582,8 +582,11 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM pack_installations LIKE 'catalog_id'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE pack_installations ADD COLUMN catalog_id VARCHAR(36) DEFAULT NULL AFTER pack_id");
-            $pdo->exec("ALTER TABLE pack_installations ADD COLUMN version_id VARCHAR(36) DEFAULT NULL AFTER catalog_id");
             $pdo->exec("ALTER TABLE pack_installations ADD INDEX idx_catalog (catalog_id)");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_installations LIKE 'version_id'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_installations ADD COLUMN version_id VARCHAR(36) DEFAULT NULL AFTER catalog_id");
         }
 
         // Create api_keys table

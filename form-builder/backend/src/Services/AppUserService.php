@@ -181,6 +181,15 @@ class AppUserService
 
     public function setRolePermissions(string $roleId, array $permissions): void
     {
+        // Prevent modifying system role permissions (Owner, Admin)
+        $role = $this->getRole($roleId);
+        if (!$role) {
+            throw new \RuntimeException('Role not found');
+        }
+        if ($role['isSystem']) {
+            throw new \RuntimeException('Cannot modify system role permissions');
+        }
+
         $inTransaction = $this->mysql->inTransaction();
         if (!$inTransaction) {
             $this->mysql->beginTransaction();
