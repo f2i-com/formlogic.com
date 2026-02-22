@@ -460,6 +460,14 @@ class AppUserService
             throw new \RuntimeException('Invitation has expired');
         }
 
+        // Verify the authenticated user's email matches the invitation target
+        $userStmt = $this->mysql->prepare("SELECT email FROM users WHERE id = :user_id");
+        $userStmt->execute(['user_id' => $userId]);
+        $userRow = $userStmt->fetch();
+        if (!$userRow || strtolower(trim($userRow['email'])) !== strtolower(trim($invitation['email']))) {
+            throw new \RuntimeException('This invitation was sent to a different email address');
+        }
+
         $this->mysql->beginTransaction();
         try {
             // Check if user is already a member

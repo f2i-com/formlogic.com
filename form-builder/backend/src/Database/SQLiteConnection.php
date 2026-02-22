@@ -292,10 +292,11 @@ class SQLiteConnection
      */
     private function setSchemaVersion(PDO $pdo, int $version): void
     {
-        $pdo->exec(
+        $stmt = $pdo->prepare(
             "INSERT OR REPLACE INTO form_data (key, value, updated_at) "
-            . "VALUES ('schema_version', '" . $version . "', datetime('now'))"
+            . "VALUES ('schema_version', :version, datetime('now'))"
         );
+        $stmt->execute(['version' => (string)$version]);
     }
 
     /**

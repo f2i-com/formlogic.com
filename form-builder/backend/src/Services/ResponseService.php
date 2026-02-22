@@ -153,7 +153,9 @@ class ResponseService
         // Build search conditions using json_extract
         if ($searchQuery !== '') {
             $searchConditions = [];
-            $searchParam = '%' . $searchQuery . '%';
+            // Escape LIKE special characters to prevent wildcard injection
+            $escapedSearch = strtr($searchQuery, ['%' => '\%', '_' => '\_']);
+            $searchParam = '%' . $escapedSearch . '%';
 
             if (!empty($searchFieldIds)) {
                 foreach ($searchFieldIds as $i => $fieldId) {
@@ -162,12 +164,12 @@ class ResponseService
                     if ($safeFieldId === '') continue;
                     $paramName = 'search_' . $i;
                     // json_extract path must be a literal, not a bound parameter
-                    $searchConditions[] = "json_extract(answers, '\$.$safeFieldId') LIKE :val_$paramName";
+                    $searchConditions[] = "json_extract(answers, '\$.$safeFieldId') LIKE :val_$paramName ESCAPE '\'";
                     $params['val_' . $paramName] = $searchParam;
                 }
             } else {
                 // Fallback: search the entire answers JSON string
-                $searchConditions[] = "answers LIKE :search_all";
+                $searchConditions[] = "answers LIKE :search_all ESCAPE '\'";
                 $params['search_all'] = $searchParam;
             }
 
@@ -328,9 +330,11 @@ class ResponseService
 
         $createdResponse = $this->getResponse($formId, $id);
 
-        // 8. Dispatch webhook
+        // 8. Dispatch webhook (strip sensitive metadata from payload)
         if ($this->webhookService !== null && $createdResponse) {
-            $this->webhookService->dispatch($formId, 'response.created', $createdResponse);
+            $webhookPayload = $createdResponse;
+            unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+            $this->webhookService->dispatch($formId, 'response.created', $webhookPayload);
         }
 
         return $createdResponse;
@@ -486,9 +490,11 @@ class ResponseService
 
         $updatedResponse = $this->getResponse($formId, $responseId);
 
-        // Dispatch webhook
+        // Dispatch webhook (strip sensitive metadata from payload)
         if ($this->webhookService !== null && $updatedResponse) {
-            $this->webhookService->dispatch($formId, 'response.updated', $updatedResponse);
+            $webhookPayload = $updatedResponse;
+            unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+            $this->webhookService->dispatch($formId, 'response.updated', $webhookPayload);
         }
 
         return $updatedResponse;
