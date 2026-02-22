@@ -165,8 +165,11 @@ class ResponseController
             }
         }
 
+        // Sanitize answers: strip non-input fields and unknown field IDs
+        $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+
         // Validate answers against form fields
-        $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+        $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
         if (!empty($validationErrors)) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -212,6 +215,42 @@ class ResponseController
                 'message' => 'An unexpected error occurred',
             ], 500);
         }
+    }
+
+    /**
+     * Strip answers for non-input field types and unknown field IDs.
+     * Prevents clients from injecting values into calculated, statement,
+     * welcome_screen, or thank_you fields, and discards any field IDs
+     * that don't exist in the form definition.
+     */
+    private function sanitizeAnswers(array $fields, array $answers): array
+    {
+        if (!is_array($answers)) {
+            return [];
+        }
+
+        // Build map of valid input field IDs
+        $inputFieldIds = [];
+        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you'];
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            $type = $field['type'] ?? 'short_text';
+            if (!in_array($type, $nonInputTypes, true)) {
+                $inputFieldIds[$id] = true;
+            }
+        }
+
+        $sanitized = [];
+        foreach ($answers as $fieldId => $value) {
+            if (isset($inputFieldIds[$fieldId])) {
+                $sanitized[$fieldId] = $value;
+            }
+        }
+
+        return $sanitized;
     }
 
     /**
@@ -265,15 +304,6 @@ class ResponseController
             $typeError = $this->validateFieldType($field, $value);
             if ($typeError) {
                 $errors[$fieldId] = $typeError;
-            }
-        }
-
-        // Check for unknown fields (potential injection attempt)
-        foreach ($answers as $fieldId => $value) {
-            if (!isset($fieldMap[$fieldId])) {
-                // Unknown field - could be injection attempt, silently ignore
-                // but log for monitoring
-                $this->logger->warning('Unknown field submitted', ['fieldId' => $fieldId]);
             }
         }
 
@@ -380,6 +410,10 @@ class ResponseController
                 $properties = $field['properties'] ?? [];
                 $options = $properties['options'] ?? [];
                 $allowedValues = array_column($options, 'value');
+                // Limit array size to number of available options (prevent payload bloat)
+                if (count($value) > max(count($allowedValues), 1)) {
+                    return 'Too many selections';
+                }
                 foreach ($value as $selected) {
                     if (!in_array($selected, $allowedValues, true)) {
                         return 'Invalid selection';
@@ -419,6 +453,11 @@ class ResponseController
             case 'file_upload':
                 if (!is_array($value)) {
                     return 'Invalid file upload format';
+                }
+                // Limit file count to prevent payload bloat
+                $maxFiles = $field['properties']['maxFiles'] ?? 20;
+                if (count($value) > $maxFiles) {
+                    return "Maximum of {$maxFiles} files allowed";
                 }
                 foreach ($value as $item) {
                     if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
