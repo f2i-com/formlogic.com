@@ -294,11 +294,11 @@ class AppUserService
 
     public function removeAppUser(string $appUserId): bool
     {
-        // Check if user is the owner
+        // Check if user is the app owner (by owner_id, not role name)
         $stmt = $this->mysql->prepare("
-            SELECT au.*, ar.name as role_name
+            SELECT au.*, a.owner_id
             FROM app_users au
-            JOIN app_roles ar ON ar.id = au.role_id
+            JOIN apps a ON a.id = au.app_id
             WHERE au.id = :id
         ");
         $stmt->execute(['id' => $appUserId]);
@@ -308,7 +308,7 @@ class AppUserService
             return false;
         }
 
-        if ($row['role_name'] === 'Owner') {
+        if ($row['user_id'] === $row['owner_id']) {
             throw new \RuntimeException('Cannot remove the app owner');
         }
 
@@ -351,6 +351,27 @@ class AppUserService
 
     public function createInvitation(string $appId, string $email, string $roleId, string $invitedBy): array
     {
+        // Check if email is already a member
+        $stmt = $this->mysql->prepare("
+            SELECT au.id FROM app_users au
+            JOIN users u ON u.id = au.user_id
+            WHERE au.app_id = :app_id AND u.email = :email
+        ");
+        $stmt->execute(['app_id' => $appId, 'email' => $email]);
+        if ($stmt->fetch()) {
+            throw new \RuntimeException('This user is already a member of the app');
+        }
+
+        // Check for existing pending invitation
+        $stmt = $this->mysql->prepare("
+            SELECT id FROM app_invitations
+            WHERE app_id = :app_id AND email = :email AND status = 'pending' AND expires_at > NOW()
+        ");
+        $stmt->execute(['app_id' => $appId, 'email' => $email]);
+        if ($stmt->fetch()) {
+            throw new \RuntimeException('A pending invitation already exists for this email');
+        }
+
         $id = $this->generateUuid();
         $token = bin2hex(random_bytes(32));
         $tokenHash = hash('sha256', $token);

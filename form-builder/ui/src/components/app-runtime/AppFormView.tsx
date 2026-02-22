@@ -771,7 +771,7 @@ export function AppFormView() {
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed">Your response has been submitted successfully.</p>
           <div className="flex gap-3 justify-center">
             <button
-              onClick={() => { setSubmitted(false); setAnswers({}); setCurrentStep(0); setError(null); }}
+              onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); }}
               className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
             >
               Submit Another
