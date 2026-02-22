@@ -598,8 +598,8 @@ $app->get('/api/packs/installed', function ($request, $response) use ($container
     return $container->get(PackController::class)->listInstalled($request, $response);
 })->add($authRequired);
 
-$app->delete('/api/packs/{installationId}', function ($request, $response, $args) use ($container) {
-    return $container->get(PackController::class)->uninstall($request, $response, $args);
+$app->delete('/api/packs/{installationId}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->uninstall($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // Audit verification route (admin, protected)
