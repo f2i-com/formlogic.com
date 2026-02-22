@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { logger } from '../lib/logger';
 import {
-  FileText,
   Plus,
   Search,
   MoreVertical,
@@ -17,6 +16,7 @@ import {
   Globe,
   Archive,
   Package,
+  FileText,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -26,6 +26,7 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { EmptyState } from '../components/ui/EmptyState';
+import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { toast } from '../stores/toastStore';
@@ -71,7 +72,7 @@ const FormCard = memo(function FormCard({
         <div className="flex items-start justify-between mb-3 gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <div className="p-2 bg-indigo-50 dark:bg-primary-500/10 rounded-lg flex-shrink-0">
-              <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
+              <DynamicIcon name={form.icon} className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-600 dark:text-primary-500" />
             </div>
             <div className="min-w-0">
               <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title || 'Untitled Form'}</h3>

@@ -94,6 +94,7 @@ class AppPublicController
                     'fields' => $formData['fields'],
                     'settings' => $formData['settings'],
                     'theme' => $formData['theme'],
+                    'icon' => $formData['icon'] ?? null,
                 ];
             }
         }

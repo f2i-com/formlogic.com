@@ -26,3 +26,7 @@ export { Switch } from './Switch';
 export { PhoneInput } from './PhoneInput';
 
 export { CalculatedFieldDisplay } from './CalculatedFieldDisplay';
+
+export { DynamicIcon } from './DynamicIcon';
+
+export { IconPicker } from './IconPicker';

@@ -6,7 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
-use FormLogic\Middleware\IpResolver;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;

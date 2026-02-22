@@ -161,8 +161,8 @@ class FormService
 
         // Insert into MySQL
         $stmt = $this->mysql->prepare("
-            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, created_at, updated_at)
-            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :created_at, :updated_at)
+            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, icon, created_at, updated_at)
+            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :icon, :created_at, :updated_at)
         ");
 
         $stmt->execute([
@@ -175,6 +175,7 @@ class FormService
             'theme' => json_encode($data['theme'] ?? []),
             'logic_script' => $data['logicScript'] ?? null,
             'logic_prompt' => $data['logicPrompt'] ?? null,
+            'icon' => $data['icon'] ?? null,
             'created_at' => $now,
             'updated_at' => $now,
         ]);
@@ -258,6 +259,11 @@ class FormService
             $params['logic_prompt'] = $data['logicPrompt'];
         }
 
+        if (array_key_exists('icon', $data)) {
+            $updates[] = "icon = :icon";
+            $params['icon'] = $data['icon'];
+        }
+
         if (!empty($updates)) {
             $updates[] = "updated_at = :updated_at";
             $params['updated_at'] = date('Y-m-d H:i:s');
@@ -338,6 +344,7 @@ class FormService
                 'theme' => $original['theme'],
                 'logicScript' => $original['logicScript'] ?? null,
                 'logicPrompt' => $original['logicPrompt'] ?? null,
+                'icon' => $original['icon'] ?? null,
                 'fields' => $this->generateDuplicateFieldIds($original['fields']),
             ];
 

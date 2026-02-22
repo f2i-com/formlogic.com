@@ -8,6 +8,7 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { PhoneInput } from '../ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../ui/CalculatedFieldDisplay';
+import { DynamicIcon } from '../ui/DynamicIcon';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import type { FormField as FormFieldType } from '../../types/form';
 
@@ -938,6 +939,7 @@ export function AppFormView() {
           <div className="max-w-xl mx-auto w-full">
             {Boolean(form?.title) && (
               <div className="text-center mb-8">
+                {typeof form?.icon === 'string' && form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2 text-gray-900 dark:text-white" />}
                 <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
                   {String(form!.title)}
                 </h1>

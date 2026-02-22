@@ -76,6 +76,7 @@ class MySQLConnection
                 theme JSON,
                 logic_script TEXT DEFAULT NULL,
                 logic_prompt TEXT DEFAULT NULL,
+                icon VARCHAR(255) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 published_at TIMESTAMP NULL,
@@ -428,6 +429,12 @@ class MySQLConnection
                 id INT AUTO_INCREMENT PRIMARY KEY
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Add icon column to forms table if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'icon'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN icon VARCHAR(255) DEFAULT NULL AFTER logic_prompt");
+        }
 
         // Add field_count column to forms table for list view performance
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'field_count'");

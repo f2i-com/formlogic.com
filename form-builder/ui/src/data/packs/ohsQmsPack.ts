@@ -48,6 +48,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'incident-report',
       title: 'Incident Report',
+      icon: 'AlertTriangle',
       description:
         'Report workplace incidents including near-misses, injuries, property damage, environmental, and security events.',
       settings: { ...complianceSettings },
@@ -181,6 +182,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'injury-record',
       title: 'Injury Record',
+      icon: 'HeartPulse',
       description:
         'Document workplace injuries, treatment, and return-to-work tracking.',
       settings: { ...complianceSettings },
@@ -298,6 +300,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'hazard-identification',
       title: 'Hazard Identification',
+      icon: 'AlertCircle',
       description:
         'Identify, assess, and record workplace hazards with risk matrix scoring.',
       settings: { ...complianceSettings },
@@ -434,6 +437,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'action-item',
       title: 'Action Item',
+      icon: 'ClipboardCheck',
       description:
         'Create and track corrective or preventive actions arising from incidents, audits, or hazard reviews.',
       settings: { ...complianceSettings },
@@ -513,6 +517,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'audit-report',
       title: 'Audit Report',
+      icon: 'ClipboardList',
       description:
         'Document internal, external, or ISO compliance audits with findings and observations.',
       settings: { ...complianceSettings },
@@ -632,6 +637,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'car',
       title: 'Corrective Action Request',
+      icon: 'Wrench',
       description:
         'Raise and track corrective action requests for addressing root causes of non-conformances.',
       settings: { ...complianceSettings },
@@ -743,6 +749,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'ncr',
       title: 'Non-Conformance Report',
+      icon: 'FileWarning',
       description:
         'Document non-conformances related to products, processes, systems, or suppliers.',
       settings: { ...complianceSettings },
@@ -870,6 +877,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'complaint-report',
       title: 'Complaint Report',
+      icon: 'MessageSquare',
       description:
         'Record and track complaints from customers, employees, contractors, or regulatory bodies.',
       settings: { ...complianceSettings },
@@ -984,6 +992,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'training-record',
       title: 'Training Record',
+      icon: 'GraduationCap',
       description:
         'Record employee training, certifications, and competency assessments.',
       settings: { ...defaultSettings },
@@ -1078,6 +1087,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'contractor-approval',
       title: 'Contractor Approval',
+      icon: 'BadgeCheck',
       description:
         'Approve contractors for site access with licence, insurance, and compliance verification.',
       settings: { ...complianceSettings },
@@ -1220,6 +1230,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'meeting-record',
       title: 'Meeting / Toolbox Talk',
+      icon: 'Users',
       description:
         'Record safety meetings, toolbox talks, committee meetings, and incident reviews.',
       settings: { ...defaultSettings },
@@ -1311,6 +1322,7 @@ export const ohsQmsPack: PackData = {
     {
       packFormId: 'plant-equipment',
       title: 'Plant & Equipment Register',
+      icon: 'Cog',
       description:
         'Register and track workplace plant, equipment, vehicles, and machinery with maintenance schedules.',
       settings: { ...defaultSettings },

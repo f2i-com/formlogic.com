@@ -8,7 +8,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
 use FormLogic\Constants\AppPermissions;
-use FormLogic\Middleware\IpResolver;
+use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 

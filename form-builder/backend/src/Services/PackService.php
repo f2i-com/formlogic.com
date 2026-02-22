@@ -68,6 +68,7 @@ class PackService
                     'settings' => $packForm['settings'] ?? [],
                     'theme' => $packForm['theme'] ?? [],
                     'logicScript' => $packForm['logicScript'] ?? null,
+                    'icon' => $packForm['icon'] ?? null,
                     'fields' => $fields,
                 ];
 

@@ -195,6 +195,9 @@ class FormController
         if (isset($data['fields']) && !is_array($data['fields'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
         }
+        if (isset($data['icon']) && (!is_string($data['icon']) || mb_strlen($data['icon']) > 100)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Icon must be a string of 100 characters or fewer'], 422);
+        }
         $sizeError = $this->validateFieldSizes($data);
         if ($sizeError !== null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $sizeError], 422);
@@ -262,6 +265,9 @@ class FormController
         }
         if (isset($data['fields']) && !is_array($data['fields'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Fields must be an array'], 422);
+        }
+        if (isset($data['icon']) && (!is_string($data['icon']) || mb_strlen($data['icon']) > 100)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Icon must be a string of 100 characters or fewer'], 422);
         }
         $sizeError = $this->validateFieldSizes($data);
         if ($sizeError !== null) {

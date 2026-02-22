@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import { api } from '../lib/api';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
+import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
@@ -1179,6 +1180,7 @@ export default function FormResponse() {
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-xl mx-auto px-4 py-12 w-full">
             <div className="text-center mb-10">
+              {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" style={{ color: form.theme.textColor }} />}
               <h1 className="text-3xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
                 {form.title}
               </h1>

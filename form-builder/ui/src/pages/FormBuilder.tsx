@@ -33,6 +33,7 @@ import {
 } from '@dnd-kit/sortable';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { IconPicker } from '../components/ui/IconPicker';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
@@ -361,6 +362,10 @@ export default function FormBuilder() {
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
+          <IconPicker
+            value={form.icon}
+            onChange={(icon) => updateForm(form.id, { icon: icon ?? undefined })}
+          />
           <Input
             value={localTitle}
             onChange={(e) => setLocalTitle(e.target.value)}

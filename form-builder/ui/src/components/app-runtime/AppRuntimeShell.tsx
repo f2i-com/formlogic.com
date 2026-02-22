@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Home, FileText, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
+import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
+import { DynamicIcon } from '../ui/DynamicIcon';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
@@ -56,11 +57,12 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const basePath = `/app/${appSlug}`;
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: Home, path: basePath },
+    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, isComponent: true as boolean, path: basePath },
     ...forms.map((f) => ({
       id: f.formId,
       label: f.displayName,
-      icon: FileText,
+      iconName: f.icon ?? null,
+      isComponent: false as boolean,
       path: `${basePath}/form/${f.formId}`,
     })),
   ];
@@ -119,7 +121,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               )}
               title={sidebarCollapsed ? item.label : undefined}
             >
-              <item.icon className="h-4 w-4 flex-shrink-0" />
+              {item.isComponent ? <Home className="h-4 w-4 flex-shrink-0" /> : <DynamicIcon name={item.iconName} className="h-4 w-4 flex-shrink-0" />}
               {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
             </button>
           ))}
@@ -189,7 +191,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                   : 'text-gray-400 dark:text-slate-500'
               )}
             >
-              <item.icon className={cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110')} />
+              {item.isComponent ? <Home className={cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110')} /> : <DynamicIcon name={item.iconName} className={cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110')} />}
               <span className="truncate max-w-[64px]">{item.label}</span>
             </button>
           ))}
@@ -233,7 +235,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80'
                   )}
                 >
-                  <item.icon className="h-4 w-4 flex-shrink-0" />
+                  {item.isComponent ? <Home className="h-4 w-4 flex-shrink-0" /> : <DynamicIcon name={item.iconName} className="h-4 w-4 flex-shrink-0" />}
                   <span className="truncate">{item.label}</span>
                 </button>
               ))}

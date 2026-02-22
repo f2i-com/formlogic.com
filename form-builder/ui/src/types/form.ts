@@ -117,6 +117,7 @@ export interface Form {
   theme: FormTheme;
   logicScript?: string;
   logicPrompt?: string;
+  icon?: string;
   createdAt: string;
   updatedAt: string;
   status: 'draft' | 'published' | 'archived';

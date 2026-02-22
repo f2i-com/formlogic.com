@@ -48,6 +48,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-client-intake',
       title: 'New Client Onboarding',
+      icon: 'UserPlus',
       description:
         'Collect personal, financial, and regulatory information for new advisory clients under Australian regulations.',
       settings: { ...complianceSettings },
@@ -259,6 +260,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-risk-questionnaire',
       title: 'Risk Profile Assessment',
+      icon: 'Scale',
       description:
         'Assess client risk tolerance and generate a suitability profile for Best Interest Duty compliance.',
       settings: { ...complianceSettings },
@@ -382,6 +384,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-off-market-transfer',
       title: 'Off-Market Transfer',
+      icon: 'Send',
       description:
         'Initiate an off-market transfer of securities between platforms.',
       settings: { ...complianceSettings },
@@ -497,6 +500,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-fsg-acknowledgement',
       title: 'Financial Services Guide Acknowledgement',
+      icon: 'FileCheck',
       description:
         'Client acknowledgement of the Financial Services Guide (FSG) as required under the Corporations Act 2001.',
       settings: { ...defaultSettings },
@@ -584,6 +588,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-annual-review',
       title: 'Annual Client Review',
+      icon: 'Calendar',
       description:
         'Document annual portfolio review, updated goals, and any life changes for each client.',
       settings: { ...complianceSettings },
@@ -678,6 +683,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-fee-agreement',
       title: 'Fee Disclosure Statement',
+      icon: 'DollarSign',
       description:
         'Establish advisory fee terms and ongoing fee consent as required under the Corporations Act.',
       settings: { ...complianceSettings },
@@ -777,6 +783,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-document-vault',
       title: 'Document Vault',
+      icon: 'Folder',
       description:
         'Securely store and organise client documents including SOAs, PDSs, tax returns, and insurance policies.',
       settings: { ...defaultSettings },
@@ -847,6 +854,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-tfn-declaration',
       title: 'TFN Declaration',
+      icon: 'FileText',
       description:
         'Tax File Number declaration for superannuation and investment accounts.',
       settings: { ...complianceSettings },
@@ -960,6 +968,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-bdbn',
       title: 'Binding Death Benefit Nomination',
+      icon: 'Heart',
       description:
         'Nominate binding beneficiaries for superannuation death benefits under the SIS Act.',
       settings: { ...complianceSettings },
@@ -1245,6 +1254,7 @@ export const financeOsAuPack: PackData = {
     {
       packFormId: 'au-super-rollover',
       title: 'Superannuation Rollover',
+      icon: 'Wallet',
       description:
         'Initiate a rollover of superannuation benefits between funds.',
       settings: { ...complianceSettings },

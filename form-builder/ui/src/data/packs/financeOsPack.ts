@@ -22,6 +22,7 @@ export interface PackForm {
   packFormId: string;
   title: string;
   description: string;
+  icon?: string;
   settings: Record<string, unknown>;
   theme: Record<string, unknown>;
   logicScript?: string;
@@ -113,6 +114,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'client-intake',
       title: 'New Client Onboarding',
+      icon: 'UserPlus',
       description:
         'Collect personal, financial, and regulatory information for new advisory clients.',
       settings: { ...complianceSettings },
@@ -333,6 +335,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'risk-questionnaire',
       title: 'Risk Tolerance Questionnaire',
+      icon: 'Scale',
       description:
         'Assess client risk tolerance and generate a suitability profile for regulatory compliance.',
       settings: { ...complianceSettings },
@@ -456,6 +459,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'acat-transfer',
       title: 'ACAT / Transfer Form',
+      icon: 'Send',
       description:
         'Initiate an Automated Customer Account Transfer (ACAT) from an external custodian.',
       settings: { ...complianceSettings },
@@ -545,6 +549,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'form-crs',
       title: 'Form CRS & Relationship Summary',
+      icon: 'FileCheck',
       description:
         'Client Relationship Summary disclosure required by SEC regulation.',
       settings: { ...defaultSettings },
@@ -625,6 +630,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'annual-review',
       title: 'Annual Client Review',
+      icon: 'Calendar',
       description:
         'Document annual portfolio review, updated goals, and any life changes for each client.',
       settings: { ...complianceSettings },
@@ -708,6 +714,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'fee-agreement',
       title: 'Fee Agreement',
+      icon: 'DollarSign',
       description:
         'Establish advisory fee terms based on assets under management.',
       settings: { ...complianceSettings },
@@ -783,6 +790,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'document-vault',
       title: 'Document Vault',
+      icon: 'Folder',
       description:
         'Securely store and organize client documents such as tax returns, statements, and legal files.',
       settings: { ...defaultSettings },
@@ -852,6 +860,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'w9-form',
       title: 'W-9 Form',
+      icon: 'FileText',
       description:
         'Request for Taxpayer Identification Number and Certification.',
       settings: { ...complianceSettings },
@@ -940,6 +949,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'beneficiary-designation',
       title: 'Beneficiary Designation',
+      icon: 'Heart',
       description:
         'Designate primary and contingent beneficiaries for an investment account.',
       settings: { ...complianceSettings },
@@ -1088,6 +1098,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'power-of-attorney',
       title: 'Power of Attorney',
+      icon: 'Gavel',
       description:
         'Grant legal authority to an agent to act on the principal\'s behalf in specified matters.',
       settings: { ...defaultSettings },
@@ -1185,6 +1196,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: '1035-exchange',
       title: '1035 Exchange',
+      icon: 'Receipt',
       description:
         'Facilitate a tax-free exchange of an existing life insurance or annuity policy for a new one.',
       settings: { ...defaultSettings },
@@ -1283,6 +1295,7 @@ export const financeOsPack: PackData = {
     {
       packFormId: 'rollover-form',
       title: 'Rollover Form',
+      icon: 'Wallet',
       description:
         'Initiate a rollover of retirement plan assets from an employer plan or existing IRA.',
       settings: { ...complianceSettings },

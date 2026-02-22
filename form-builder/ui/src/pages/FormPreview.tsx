@@ -13,6 +13,7 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
+import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
 
 // Field Preview Component (memoized to prevent re-renders when other fields change)
@@ -894,6 +895,7 @@ export default function FormPreview() {
             <div className="h-full overflow-y-auto p-8">
               <div className="max-w-lg mx-auto space-y-8">
                 <div className="text-center mb-8">
+                  {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" />}
                   <h1 className="text-3xl font-bold tracking-tight">{form.title}</h1>
                   {form.description && (
                     <p className="opacity-70 mt-2">{form.description}</p>
