@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link2, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { RelatedRecordGroup } from '../../lib/api';
+
+const PAGE_SIZE = 50;
 
 interface RelatedRecordsPanelProps {
   appSlug: string;
@@ -14,18 +16,24 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   const navigate = useNavigate();
   const [related, setRelated] = useState<Record<string, RelatedRecordGroup>>({});
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setOffset(0);
     let cancelled = false;
-    api.getRelatedRecords(appSlug, formId, responseId).then((result) => {
+    api.getRelatedRecords(appSlug, formId, responseId, { limit: PAGE_SIZE, offset: 0 }).then((result) => {
       if (cancelled) return;
       if (result.error) {
         setError(result.error);
       } else if (result.data?.related) {
         setRelated(result.data.related);
+        const totalRecords = Object.values(result.data.related).reduce((sum, g) => sum + g.records.length, 0);
+        setHasMore(totalRecords >= PAGE_SIZE);
       }
       setLoading(false);
     }).catch((err) => {
@@ -35,6 +43,35 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
     });
     return () => { cancelled = true; };
   }, [appSlug, formId, responseId]);
+
+  const loadMore = useCallback(async () => {
+    const nextOffset = offset + PAGE_SIZE;
+    setLoadingMore(true);
+    try {
+      const result = await api.getRelatedRecords(appSlug, formId, responseId, { limit: PAGE_SIZE, offset: nextOffset });
+      if (result.data?.related) {
+        setRelated((prev) => {
+          const merged = { ...prev };
+          for (const [key, group] of Object.entries(result.data!.related)) {
+            if (merged[key]) {
+              merged[key] = { ...merged[key], records: [...merged[key].records, ...group.records], count: merged[key].count + group.count };
+            } else {
+              merged[key] = group;
+            }
+          }
+          return merged;
+        });
+        const newRecords = Object.values(result.data.related).reduce((sum, g) => sum + g.records.length, 0);
+        setHasMore(newRecords >= PAGE_SIZE);
+        setOffset(nextOffset);
+      } else {
+        setHasMore(false);
+      }
+    } catch {
+      // silently fail on load more
+    }
+    setLoadingMore(false);
+  }, [appSlug, formId, responseId, offset]);
 
   const groups = Object.values(related);
 
@@ -99,6 +136,23 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
           </div>
         </div>
       ))}
+
+      {hasMore && (
+        <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-700/40">
+          <button
+            type="button"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="w-full text-center text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 disabled:opacity-50 cursor-pointer"
+          >
+            {loadingMore ? (
+              <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</span>
+            ) : (
+              'Load more'
+            )}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

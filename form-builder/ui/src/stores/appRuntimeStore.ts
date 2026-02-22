@@ -27,7 +27,7 @@ interface AppRuntimeState {
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
 
   // Linked records
-  lookupRecords: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number }) => Promise<LinkedRecord[]>;
+  lookupRecords: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; ids?: string[] }) => Promise<LinkedRecord[]>;
 
   // Permission helpers
   canSubmit: (formId: string) => boolean;

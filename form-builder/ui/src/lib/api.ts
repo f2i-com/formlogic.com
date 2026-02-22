@@ -632,7 +632,7 @@ class ApiClient {
   async lookupLinkedRecords(
     slug: string,
     formId: string,
-    options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number }
+    options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }
   ): Promise<ApiResponse<{ records: LinkedRecord[]; count: number }>> {
     const params = new URLSearchParams();
     params.set('targetFormId', options.targetFormId);
@@ -641,12 +641,17 @@ class ApiClient {
     if (options.q) params.set('q', options.q);
     if (options.limit) params.set('limit', String(options.limit));
     if (options.offset) params.set('offset', String(options.offset));
+    if (options.ids?.length) params.set('ids', options.ids.join(','));
     return this.request(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
   }
 
   // Related records (inverse relations)
-  async getRelatedRecords(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
-    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}/related`);
+  async getRelatedRecords(slug: string, formId: string, responseId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.offset) params.set('offset', String(options.offset));
+    const qs = params.toString();
+    return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}/related${qs ? `?${qs}` : ''}`);
   }
 
   // Get app responses with resolve option
@@ -896,6 +901,7 @@ interface LinkedRecord {
   id: string;
   display: string;
   fields: Record<string, unknown>;
+  submittedAt?: string;
 }
 
 interface RelatedRecordGroup {

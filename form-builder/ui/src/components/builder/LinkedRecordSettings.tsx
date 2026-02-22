@@ -36,11 +36,9 @@ export function LinkedRecordSettings({
     setLoading(true);
     api.getAppForms(appId).then((result) => {
       if (result.data?.forms) {
-        // Exclude current form to prevent circular references
-        const forms = (result.data.forms as AppForm[]).filter(
-          (f) => f.formId !== currentFormId
-        );
-        setAppForms(forms);
+        // Allow all forms including the current form (self-referential links
+        // like Employee -> Manager or Task -> Parent Task are valid)
+        setAppForms(result.data.forms as AppForm[]);
       }
       setLoading(false);
     }).catch(() => {

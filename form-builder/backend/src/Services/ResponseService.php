@@ -666,6 +666,14 @@ class ResponseService
      */
     public function exportResponsesStreaming(string $formId, array $fields, $outputStream): int
     {
+        // Identify linked_record fields for display value resolution
+        $linkedFields = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'linked_record' && !empty($field['properties']['targetFormId'])) {
+                $linkedFields[$field['id']] = $field;
+            }
+        }
+
         // Header row
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {
@@ -683,6 +691,12 @@ class ResponseService
                 'offset' => $offset,
             ]);
 
+            // Resolve linked record display values for this batch
+            $linkedDisplayCache = [];
+            if (!empty($linkedFields)) {
+                $linkedDisplayCache = $this->resolveLinkedRecordDisplayValues($batch, $linkedFields);
+            }
+
             foreach ($batch as $response) {
                 $row = [
                     $response['id'],
@@ -692,9 +706,23 @@ class ResponseService
 
                 foreach ($fields as $field) {
                     $value = $response['answers'][$field['id']] ?? '';
-                    if (is_array($value)) {
+
+                    // Resolve linked record IDs to display text
+                    if (isset($linkedFields[$field['id']]) && $value !== '' && $value !== null) {
+                        $targetFormId = $linkedFields[$field['id']]['properties']['targetFormId'];
+                        if (is_array($value)) {
+                            $displayParts = [];
+                            foreach ($value as $refId) {
+                                $displayParts[] = $linkedDisplayCache[$targetFormId][$refId] ?? $refId;
+                            }
+                            $value = implode(', ', $displayParts);
+                        } else {
+                            $value = $linkedDisplayCache[$targetFormId][$value] ?? $value;
+                        }
+                    } elseif (is_array($value)) {
                         $value = implode(', ', $value);
                     }
+
                     $row[] = $value;
                 }
 
@@ -706,6 +734,82 @@ class ResponseService
         } while (count($batch) === $batchSize);
 
         return $totalWritten;
+    }
+
+    /**
+     * Resolve linked record IDs to display text for a batch of responses.
+     * Returns: [targetFormId => [responseId => displayText]]
+     */
+    private function resolveLinkedRecordDisplayValues(array $responses, array $linkedFields): array
+    {
+        // Collect all referenced IDs grouped by target form
+        $refsByForm = []; // targetFormId => [id => true]
+        foreach ($responses as $resp) {
+            $answers = $resp['answers'] ?? [];
+            foreach ($linkedFields as $fieldId => $field) {
+                $targetFormId = $field['properties']['targetFormId'];
+                $val = $answers[$fieldId] ?? null;
+                if ($val === null || $val === '' || $val === []) continue;
+
+                if (!isset($refsByForm[$targetFormId])) {
+                    $refsByForm[$targetFormId] = [];
+                }
+
+                if (is_array($val)) {
+                    foreach ($val as $id) {
+                        if (is_string($id) && $id !== '') {
+                            $refsByForm[$targetFormId][$id] = true;
+                        }
+                    }
+                } elseif (is_string($val) && $val !== '') {
+                    $refsByForm[$targetFormId][$val] = true;
+                }
+            }
+        }
+
+        // Batch-fetch and build display text
+        $cache = []; // targetFormId => [responseId => displayText]
+        foreach ($refsByForm as $targetFormId => $idMap) {
+            $cache[$targetFormId] = [];
+            $targetResponses = $this->getResponsesByIds($targetFormId, array_keys($idMap));
+
+            // Determine display field IDs from the linked field config
+            $displayFieldIds = [];
+            foreach ($linkedFields as $field) {
+                if (($field['properties']['targetFormId'] ?? '') === $targetFormId) {
+                    $displayFieldIds = $field['properties']['displayFieldIds'] ?? [];
+                    break;
+                }
+            }
+
+            foreach ($targetResponses as $tr) {
+                $answers = $tr['answers'] ?? [];
+                $parts = [];
+
+                if (!empty($displayFieldIds)) {
+                    foreach ($displayFieldIds as $dfid) {
+                        $val = $answers[$dfid] ?? null;
+                        if ($val !== null && $val !== '') {
+                            $parts[] = is_array($val) ? implode(', ', $val) : (string)$val;
+                        }
+                    }
+                } else {
+                    // Fallback: use the first text-like values
+                    $count = 0;
+                    foreach ($answers as $val) {
+                        if ($count >= 2) break;
+                        if (is_string($val) && $val !== '') {
+                            $parts[] = $val;
+                            $count++;
+                        }
+                    }
+                }
+
+                $cache[$targetFormId][$tr['id']] = implode(' - ', $parts) ?: ('Record ' . substr($tr['id'], 0, 8));
+            }
+        }
+
+        return $cache;
     }
 
     /**

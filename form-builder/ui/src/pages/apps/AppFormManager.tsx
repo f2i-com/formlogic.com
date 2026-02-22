@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import type { AppForm } from '../../types/app';
@@ -26,6 +27,9 @@ export function AppFormManager() {
   const [loading, setLoading] = useState(true);
   const [busyFormId, setBusyFormId] = useState<string | null>(null);
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
+  const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }> } | null>(null);
+  // Cache loaded form definitions so we can check for linked_record references
+  const loadedFormsRef = useRef<Record<string, Form>>({});
 
   const loadForms = async () => {
     if (!appId) return;
@@ -40,10 +44,13 @@ export function AppFormManager() {
     const results = await Promise.allSettled(forms.map((af) => api.getForm(af.formId)));
     const badges: Record<string, RelationBadge[]> = {};
 
+    // Cache loaded form definitions for referential integrity checks
+    const formDefsCache: Record<string, Form> = {};
     results.forEach((result, idx) => {
       if (result.status !== 'fulfilled' || !result.value.data?.form) return;
       const form = result.value.data!.form as Form;
       const formId = forms[idx].formId;
+      formDefsCache[formId] = form;
 
       form.fields
         .filter((f: FormField) => f.type === 'linked_record' && f.properties.targetFormId)
@@ -70,6 +77,7 @@ export function AppFormManager() {
     });
 
     setRelationBadges(badges);
+    loadedFormsRef.current = formDefsCache;
     setLoading(false);
   };
 
@@ -93,8 +101,35 @@ export function AppFormManager() {
     setBusyFormId(null);
   };
 
-  const handleRemove = async (formId: string) => {
+  const handleRemoveRequest = (formId: string) => {
+    // Check if any other forms have linked_record fields targeting this form
+    const nameMap: Record<string, string> = {};
+    appForms.forEach((f) => { nameMap[f.formId] = f.displayName; });
+    const formName = nameMap[formId] || formId;
+
+    const affectedFields: Array<{ formName: string; fieldLabel: string }> = [];
+    for (const [otherFormId, formDef] of Object.entries(loadedFormsRef.current)) {
+      if (otherFormId === formId) continue;
+      for (const field of formDef.fields) {
+        if (field.type === 'linked_record' && field.properties.targetFormId === formId) {
+          affectedFields.push({
+            formName: nameMap[otherFormId] || formDef.title,
+            fieldLabel: field.label,
+          });
+        }
+      }
+    }
+
+    if (affectedFields.length > 0) {
+      setRemoveConfirm({ formId, formName, affectedFields });
+    } else {
+      handleRemoveConfirmed(formId);
+    }
+  };
+
+  const handleRemoveConfirmed = async (formId: string) => {
     if (!appId) return;
+    setRemoveConfirm(null);
     setBusyFormId(formId);
     await removeFormFromApp(appId, formId);
     await loadForms();
@@ -168,7 +203,7 @@ export function AppFormManager() {
                   <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors cursor-pointer', af.isVisible ? 'text-green-600' : 'text-gray-400')}>
                     {af.isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
                   </button>
-                  <button onClick={() => handleRemove(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors cursor-pointer">
+                  <button onClick={() => handleRemoveRequest(af.formId)} disabled={busyFormId === af.formId} aria-label={`Remove ${af.displayName}`} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 text-gray-400 hover:text-red-600 dark:hover:text-red-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === af.formId ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" /> : <X className="h-4 w-4" />}
                   </button>
                   </div>
@@ -205,6 +240,19 @@ export function AppFormManager() {
       </div>
     </div>
     </div>
+
+      {/* Referential integrity warning dialog */}
+      <ConfirmDialog
+        isOpen={!!removeConfirm}
+        onClose={() => setRemoveConfirm(null)}
+        onConfirm={() => removeConfirm && handleRemoveConfirmed(removeConfirm.formId)}
+        title="Linked Record Dependencies"
+        message={removeConfirm
+          ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\nAre you sure you want to remove this form?`
+          : ''}
+        confirmLabel="Remove Anyway"
+        variant="danger"
+      />
     </div>
   );
 }

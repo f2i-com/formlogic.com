@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X, Link2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X, Link2, AlertTriangle } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { api } from '../../lib/api';
@@ -288,59 +289,63 @@ export function AppResponseDetail() {
                   );
                 })()
               ) : editing && isLinked ? (
-                <div>
-                  {resolved?.[field.id] ? (
-                    <div className="text-sm">
-                      {(() => {
-                        const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
-                        const items = Array.isArray(rv) ? rv : [rv];
-                        return (
-                          <div className="flex flex-wrap gap-2">
-                            {items.map((item) => (
-                              <span key={item.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400">
-                                <Link2 className="h-3 w-3" />
-                                {item.display || 'Record not found'}
-                              </span>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ) : (
-                    <div className="text-sm text-gray-400 dark:text-slate-500 italic">No linked record</div>
-                  )}
-                  <p className="text-xs text-gray-400 dark:text-slate-400 mt-1.5">Linked records can only be changed from the form submission view.</p>
-                </div>
+                (() => {
+                  const linkedTargetFormId = field.properties?.targetFormId as string | undefined;
+                  const displayFieldIds = field.properties?.displayFieldIds as string[] | undefined;
+                  const searchFieldIds = field.properties?.searchFieldIds as string[] | undefined;
+                  const allowMultiple = field.properties?.allowMultiple as boolean | undefined;
+                  if (!linkedTargetFormId || !formId) {
+                    return <p className="text-sm text-gray-400 dark:text-slate-500 italic">Linked record field not configured</p>;
+                  }
+                  return (
+                    <LinkedRecordInput
+                      formId={formId}
+                      targetFormId={linkedTargetFormId}
+                      displayFieldIds={displayFieldIds}
+                      searchFieldIds={searchFieldIds}
+                      allowMultiple={allowMultiple}
+                      value={editedAnswers[field.id]}
+                      onChange={(val) => setEditedAnswers({ ...editedAnswers, [field.id]: val })}
+                      primaryColor="var(--app-primary, #6366f1)"
+                    />
+                  );
+                })()
               ) : isLinked && resolved?.[field.id] ? (
                 <div className="text-sm">
                   {(() => {
                     const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
-                    if (Array.isArray(rv)) {
+                    const items = Array.isArray(rv) ? rv : [rv];
+
+                    const renderLinkedItem = (item: { id?: string; display?: string }) => {
+                      const isBroken = !item.display || item.display === 'Record not found';
+                      if (isBroken) {
+                        return (
+                          <span
+                            key={item.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Record not found
+                          </span>
+                        );
+                      }
                       return (
-                        <div className="flex flex-wrap gap-2">
-                          {rv.map((item) => (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
-                            >
-                              <Link2 className="h-3 w-3" />
-                              {item.display || 'Record not found'}
-                            </button>
-                          ))}
-                        </div>
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          {item.display}
+                        </button>
                       );
-                    }
+                    };
+
                     return (
-                      <button
-                        type="button"
-                        onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${rv.id}`)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
-                      >
-                        <Link2 className="h-3 w-3" />
-                        {rv.display || 'Record not found'}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        {items.map((item) => renderLinkedItem(item))}
+                      </div>
                     );
                   })()}
                 </div>

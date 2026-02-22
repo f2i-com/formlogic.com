@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
-import type { FormResponse } from '../types/form';
+import type { LocalFormResponse } from '../types/form';
 import { useFormStore } from './formStore';
 
 interface ResponseState {
-  responses: FormResponse[];
+  responses: LocalFormResponse[];
 
   // Current form response
   currentFormId: string | null;
@@ -19,12 +19,12 @@ interface ResponseState {
   nextStep: () => void;
   prevStep: () => void;
   goToStep: (step: number) => void;
-  submitResponse: () => FormResponse | null;
+  submitResponse: () => LocalFormResponse | null;
   resetCurrentResponse: () => void;
 
   // Response queries
-  getResponsesByFormId: (formId: string) => FormResponse[];
-  getResponseById: (id: string) => FormResponse | undefined;
+  getResponsesByFormId: (formId: string) => LocalFormResponse[];
+  getResponseById: (id: string) => LocalFormResponse | undefined;
   updateResponse: (id: string, answers: Record<string, unknown>) => void;
   deleteResponse: (id: string) => void;
   deleteResponsesByFormId: (formId: string) => void;
@@ -73,7 +73,7 @@ export const useResponseStore = create<ResponseState>()(
         const state = get();
         if (!state.currentFormId || !state.startTime) return null;
 
-        const response: FormResponse = {
+        const response: LocalFormResponse = {
           id: uuidv4(),
           formId: state.currentFormId,
           answers: state.currentAnswers,

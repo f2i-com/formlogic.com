@@ -24,6 +24,7 @@ class RateLimitMiddleware implements MiddlewareInterface
 
     // In-memory storage (per-process, resets on restart)
     private static array $requests = [];
+    private static int $requestCounter = 0;
 
     /**
      * @param int $maxRequests Maximum requests allowed in the time window
@@ -42,8 +43,14 @@ class RateLimitMiddleware implements MiddlewareInterface
     {
         $clientKey = $this->getClientKey($request);
 
-        // Clean up expired entries
+        // Clean up expired entries for this client
         $this->cleanup($clientKey);
+
+        // Periodically purge all expired entries to prevent unbounded memory growth
+        self::$requestCounter++;
+        if (self::$requestCounter % 100 === 0) {
+            $this->purgeAllExpired();
+        }
 
         // Check if rate limited
         if ($this->isRateLimited($clientKey)) {
@@ -137,7 +144,7 @@ class RateLimitMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Clean up expired requests
+     * Clean up expired requests for a specific key
      */
     private function cleanup(string $key): void
     {
@@ -153,6 +160,23 @@ class RateLimitMiddleware implements MiddlewareInterface
 
         if (empty(self::$requests[$key])) {
             unset(self::$requests[$key]);
+        }
+    }
+
+    /**
+     * Purge all expired entries across all keys to prevent unbounded memory growth
+     * from one-time visitors whose entries would otherwise never be cleaned up.
+     */
+    private function purgeAllExpired(): void
+    {
+        $cutoff = time() - $this->windowSeconds;
+        foreach (self::$requests as $key => $timestamps) {
+            $filtered = array_filter($timestamps, fn($ts) => $ts > $cutoff);
+            if (empty($filtered)) {
+                unset(self::$requests[$key]);
+            } else {
+                self::$requests[$key] = $filtered;
+            }
         }
     }
 }

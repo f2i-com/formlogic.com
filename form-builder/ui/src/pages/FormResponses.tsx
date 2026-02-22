@@ -33,11 +33,11 @@ import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
-import type { Form, FormField, FormResponse } from '../types/form';
+import type { Form, FormField, LocalFormResponse } from '../types/form';
 
 const ITEMS_PER_PAGE = 10;
 
-interface ResponseWithStatus extends FormResponse {
+interface ResponseWithStatus extends LocalFormResponse {
   status?: string;
   tags?: string[];
   computed?: Record<string, unknown>;

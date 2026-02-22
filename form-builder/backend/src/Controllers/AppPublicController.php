@@ -207,6 +207,24 @@ class AppPublicController
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
 
+        // Check if form is closed
+        if ($form) {
+            $settings = $form['settings'] ?? [];
+            if (!empty($settings['isClosed'])) {
+                $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
+                return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+            }
+
+            // Check quota limit
+            if (!empty($settings['quotaLimit'])) {
+                $responseCount = $this->responseService->getResponseCount($formId);
+                if ($responseCount >= (int)$settings['quotaLimit']) {
+                    $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
+                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                }
+            }
+        }
+
         try {
             $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
 
@@ -483,6 +501,7 @@ class AppPublicController
         $displayFieldIds = !empty($queryParams['displayFieldIds']) ? explode(',', $queryParams['displayFieldIds']) : [];
         $searchFieldIds = !empty($queryParams['searchFieldIds']) ? explode(',', $queryParams['searchFieldIds']) : [];
         $searchQuery = $queryParams['q'] ?? '';
+        $idsParam = $queryParams['ids'] ?? '';
         $limit = max(1, min((int)($queryParams['limit'] ?? 20), 100));
         $offset = max(0, (int)($queryParams['offset'] ?? 0));
 
@@ -504,7 +523,12 @@ class AppPublicController
         // Use SQL-level search when a query is provided
         $scope = $canViewAll ? 'all' : 'own';
 
-        if ($searchQuery !== '') {
+        // Resolve specific IDs mode — fetch records by explicit ID list
+        if ($idsParam !== '') {
+            $requestedIds = array_filter(array_map('trim', explode(',', $idsParam)), fn($id) => $id !== '');
+            $matchedResponses = $this->responseService->getResponsesByIds($targetFormId, $requestedIds);
+            $totalCount = count($matchedResponses);
+        } elseif ($searchQuery !== '') {
             // Push search to SQL via json_extract
             $effectiveSearchFields = !empty($searchFieldIds) ? $searchFieldIds : [];
             $searchOptions = ['limit' => $limit, 'offset' => $offset];
@@ -569,6 +593,7 @@ class AppPublicController
                 'id' => $resp['id'],
                 'display' => implode(' - ', $displayParts) ?: ('Record ' . substr($resp['id'], 0, 8)),
                 'fields' => $fieldData,
+                'submittedAt' => $resp['submittedAt'] ?? '',
             ];
         }
 
@@ -614,11 +639,20 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
-        // Use response_links table for efficient inverse lookup
+        // Pagination parameters
+        $queryParams = $request->getQueryParams();
+        $limit = max(1, min((int)($queryParams['limit'] ?? 50), 200));
+        $offset = max(0, (int)($queryParams['offset'] ?? 0));
+
+        // Use response_links table for efficient inverse lookup with pagination
         $stmt = $this->mysql->prepare(
-            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :target_form_id AND target_response_id = :target_response_id"
+            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :target_form_id AND target_response_id = :target_response_id LIMIT :lim OFFSET :off"
         );
-        $stmt->execute(['target_form_id' => $formId, 'target_response_id' => $responseId]);
+        $stmt->bindValue('target_form_id', $formId);
+        $stmt->bindValue('target_response_id', $responseId);
+        $stmt->bindValue('lim', $limit, PDO::PARAM_INT);
+        $stmt->bindValue('off', $offset, PDO::PARAM_INT);
+        $stmt->execute();
         $links = $stmt->fetchAll();
 
         if (empty($links)) {
@@ -631,11 +665,23 @@ class AppPublicController
             $linksByForm[$link['source_form_id']][] = $link;
         }
 
-        // Build app forms lookup for display names
+        // Build app forms lookup for display names and form data
         $appForms = $this->appService->getAppForms($app['id']);
         $appFormMap = [];
         foreach ($appForms as $af) {
             $appFormMap[$af['formId']] = $af;
+        }
+
+        // Batch-load all needed source forms upfront to avoid N+1 queries
+        $sourceFormIds = array_keys($linksByForm);
+        $sourceFormDataMap = [];
+        foreach ($sourceFormIds as $sfId) {
+            if (isset($appFormMap[$sfId])) {
+                $formData = $this->formService->getForm($sfId);
+                if ($formData) {
+                    $sourceFormDataMap[$sfId] = $formData;
+                }
+            }
         }
 
         $related = [];
@@ -648,7 +694,7 @@ class AppPublicController
                 || $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $sourceFormId);
             if (!$canViewOther) continue;
 
-            $sourceForm = $this->formService->getForm($sourceFormId);
+            $sourceForm = $sourceFormDataMap[$sourceFormId] ?? null;
             if (!$sourceForm) continue;
 
             // Get the field info for display

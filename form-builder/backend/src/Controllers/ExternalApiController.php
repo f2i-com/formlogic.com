@@ -17,6 +17,7 @@ class ExternalApiController
     private FormService $formService;
     private ResponseService $responseService;
     private WebhookService $webhookService;
+    private IpResolver $ipResolver;
 
     public function __construct(
         FormService $formService,
@@ -26,6 +27,7 @@ class ExternalApiController
         $this->formService = $formService;
         $this->responseService = $responseService;
         $this->webhookService = $webhookService;
+        $this->ipResolver = IpResolver::fromEnvironment();
     }
 
     // ── Forms ────────────────────────────────────────────────
@@ -40,8 +42,8 @@ class ExternalApiController
 
         $options = [
             'status' => $params['status'] ?? null,
-            'limit' => $params['limit'] ?? 50,
-            'offset' => $params['offset'] ?? 0,
+            'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
+            'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];
 
         $forms = $this->formService->getAllForms($userId, $options);
@@ -107,7 +109,7 @@ class ExternalApiController
             ], 400);
         }
 
-        $data['ipAddress'] = IpResolver::fromEnvironment()->getClientIp($request);
+        $data['ipAddress'] = $this->ipResolver->getClientIp($request);
         $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500);
         $script = $form['logicScript'] ?? null;
 
@@ -155,7 +157,7 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Maximum 100 responses per batch'], 400);
         }
 
-        $ip = IpResolver::fromEnvironment()->getClientIp($request);
+        $ip = $this->ipResolver->getClientIp($request);
         $userAgent = substr($request->getHeaderLine('User-Agent'), 0, 500);
         $script = $form['logicScript'] ?? null;
         $results = [];
@@ -206,8 +208,8 @@ class ExternalApiController
             'status' => $params['status'] ?? null,
             'from' => $params['from'] ?? null,
             'to' => $params['to'] ?? null,
-            'limit' => $params['limit'] ?? 50,
-            'offset' => $params['offset'] ?? 0,
+            'limit' => max(1, min((int)($params['limit'] ?? 50), 1000)),
+            'offset' => max(0, (int)($params['offset'] ?? 0)),
         ];
 
         $responses = $this->responseService->getFormResponses($args['formId'], $options);
@@ -479,12 +481,14 @@ class ExternalApiController
             $isRequired = $field['required'] ?? false;
             $value = $answers[$fieldId] ?? null;
 
-            if ($isRequired && ($value === null || $value === '' || $value === [])) {
+            $isEmpty = $value === null || $value === '' || $value === [] || (is_string($value) && trim($value) === '');
+
+            if ($isRequired && $isEmpty) {
                 $errors[$fieldId] = 'This field is required';
                 continue;
             }
 
-            if ($value === null || $value === '' || $value === []) continue;
+            if ($isEmpty) continue;
 
             // Type-specific validation (mirrors ResponseController::validateFieldType)
             switch ($fieldType) {

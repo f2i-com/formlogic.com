@@ -149,6 +149,22 @@ class ResponseController
             ], 403);
         }
 
+        // Check if form is closed
+        $settings = $form['settings'] ?? [];
+        if (!empty($settings['isClosed'])) {
+            $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
+            return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+        }
+
+        // Check quota limit
+        if (!empty($settings['quotaLimit'])) {
+            $responseCount = $this->responseService->getResponseCount($formId);
+            if ($responseCount >= (int)$settings['quotaLimit']) {
+                $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
+                return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+            }
+        }
+
         // Validate answers against form fields
         $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
         if (!empty($validationErrors)) {

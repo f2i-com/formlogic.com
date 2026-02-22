@@ -48,18 +48,16 @@ export function LinkedRecordInput({
     const unresolvedIds = selectedIds.filter((id) => !resolvedLabels[id]);
     if (unresolvedIds.length === 0) return;
 
-    // Do a lookup without search query to get the selected records
+    // Resolve specific IDs via the ids parameter
     lookupRecords(formId, {
       targetFormId,
       displayFieldIds,
       searchFieldIds,
-      limit: 50,
+      ids: unresolvedIds,
     }).then((records) => {
       const labels: Record<string, string> = {};
       for (const rec of records) {
-        if (unresolvedIds.includes(rec.id)) {
-          labels[rec.id] = rec.display;
-        }
+        labels[rec.id] = rec.display;
       }
       setResolvedLabels((prev) => ({ ...prev, ...labels }));
     }).catch(() => {
@@ -276,6 +274,11 @@ export function LinkedRecordInput({
                 )}
               >
                 <span className="font-medium">{record.display}</span>
+                {record.submittedAt && (
+                  <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+                    {new Date(record.submittedAt).toLocaleDateString()}
+                  </span>
+                )}
               </button>
             ))
           )}

@@ -722,8 +722,25 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($webhooksWriteAuth);
 })->add($apiRateLimiter);
 
-// Audit verification route (admin, protected)
+// Audit verification route (admin, protected — restricted to platform owner)
 $app->get('/api/admin/audit/verify', function ($request, $response) use ($container) {
+    $userId = $request->getAttribute('userId');
+    if (!$userId) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Authentication required']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
+
+    // Only the platform owner (first registered user) may verify the audit chain
+    $mysql = $container->get(MySQLConnection::class)->getConnection();
+    $stmt = $mysql->prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1");
+    $stmt->execute();
+    $firstUser = $stmt->fetch();
+
+    if (!$firstUser || $firstUser['id'] !== $userId) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Admin access required']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
+
     $auditService = $container->get(AuditService::class);
     $result = $auditService->verifyChain();
     $response->getBody()->write(json_encode($result));

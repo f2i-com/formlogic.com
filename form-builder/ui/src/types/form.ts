@@ -124,7 +124,13 @@ export interface Form {
   responseCount: number;
 }
 
-export interface FormResponse {
+/**
+ * LocalFormResponse is used by responseStore for client-side/offline storage.
+ * It intentionally includes extra fields (formId, completionTime at top level)
+ * that the API response (FormResponse in lib/api.ts) structures differently.
+ * The API version puts completionTime inside metadata and includes status.
+ */
+export interface LocalFormResponse {
   id: string;
   formId: string;
   answers: Record<string, unknown>;

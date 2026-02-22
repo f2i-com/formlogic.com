@@ -121,6 +121,9 @@ class SQLiteConnection
         }
 
         if (file_exists($dbPath)) {
+            // Clean up WAL and SHM journal files
+            @unlink($dbPath . '-wal');
+            @unlink($dbPath . '-shm');
             return unlink($dbPath);
         }
 

@@ -508,6 +508,39 @@ function FieldInput({
   );
 }
 
+/**
+ * Validate a field value against the field's validation rules.
+ * Returns an error message string if validation fails, or null if valid.
+ */
+function validateField(field: FormField, value: unknown): string | null {
+  const validations = field.validation;
+  if (!validations?.length) return null;
+
+  for (const rule of validations) {
+    const msg = rule.message || 'Invalid value';
+    switch (rule.type) {
+      case 'minLength':
+        if (typeof value === 'string' && value.length > 0 && value.length < Number(rule.value)) return msg;
+        break;
+      case 'maxLength':
+        if (typeof value === 'string' && value.length > Number(rule.value)) return msg;
+        break;
+      case 'min':
+        if (typeof value === 'number' && value < Number(rule.value)) return msg;
+        break;
+      case 'max':
+        if (typeof value === 'number' && value > Number(rule.value)) return msg;
+        break;
+      case 'pattern':
+        if (typeof value === 'string' && value.length > 0 && rule.value && !new RegExp(String(rule.value)).test(value)) return msg;
+        break;
+      // 'custom' uses expressions - skip for now as it requires the expression engine
+      // 'required' is handled separately in the required-field check
+    }
+  }
+  return null;
+}
+
 export function AppFormView() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
@@ -625,6 +658,15 @@ export function AppFormView() {
         return;
       }
     }
+    // Validate against field validation rules (minLength, maxLength, min, max, pattern)
+    if (currentField) {
+      const answer = answersRef.current[currentField.id];
+      const validationError = validateField(currentField, answer);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+    }
     setError(null);
     if (isLastStep) {
       handleSubmit();
@@ -660,6 +702,15 @@ export function AppFormView() {
     if (missingFields.length > 0) {
       setError(`Please fill in all required fields (${missingFields.length} remaining)`);
       return;
+    }
+    // Validate all fields against their validation rules
+    for (const f of fields) {
+      const answer = answersRef.current[f.id];
+      const validationError = validateField(f, answer);
+      if (validationError) {
+        setError(`${f.label}: ${validationError}`);
+        return;
+      }
     }
     handleSubmit();
   }, [fields, handleSubmit]);
