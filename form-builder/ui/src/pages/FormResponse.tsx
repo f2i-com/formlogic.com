@@ -737,6 +737,7 @@ export default function FormResponse() {
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
   const [isLoadingForm, setIsLoadingForm] = useState(false);
   const [formLoadError, setFormLoadError] = useState(false);
+  const [responseMode, setResponseMode] = useState<'focused' | 'classic'>('focused');
 
   const storeForm = formId ? getForm(formId) : undefined;
 
@@ -829,6 +830,14 @@ export default function FormResponse() {
     return () => resetCurrentResponse();
   }, [formId, resetCurrentResponse, startResponse]);
 
+  // Set initial presentation mode from form settings
+  useEffect(() => {
+    if (form?.settings?.defaultPresentationMode) {
+      setResponseMode(form.settings.defaultPresentationMode);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form?.id]);
+
   // Get dynamic required status for a field
   const getFieldRequired = (field: FormField) => {
     return field.required || isFieldRequired(field.id);
@@ -865,6 +874,11 @@ export default function FormResponse() {
       </div>
     );
   }
+
+  // Determine presentation mode
+  const presentationMode = form.settings.presentationMode || 'both';
+  const effectiveMode = presentationMode === 'both' ? responseMode : presentationMode;
+  const showModeToggle = presentationMode === 'both';
 
   // Ensure currentStep is within bounds when fields change
   const safeCurrentStep = Math.min(currentStep, Math.max(0, visibleFields.length - 1));
@@ -929,6 +943,22 @@ export default function FormResponse() {
     }
   };
 
+  const handleClassicSubmit = () => {
+    setSubmitError(null);
+    setFieldError(null);
+    const missingFields = visibleFields.filter(f => {
+      if (!getFieldRequired(f)) return false;
+      if (['statement', 'calculated'].includes(f.type)) return false;
+      const answer = currentAnswers[f.id];
+      return answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0);
+    });
+    if (missingFields.length > 0) {
+      setSubmitError(`Please fill in all required fields (${missingFields.length} remaining)`);
+      return;
+    }
+    handleSubmit();
+  };
+
   if (isSubmitted) {
     return (
       <div
@@ -959,8 +989,36 @@ export default function FormResponse() {
         color: form.theme.textColor,
         fontFamily: form.theme.fontFamily,
       }}
-      onKeyDown={handleKeyDown}
+      onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
     >
+      {/* Mode Toggle */}
+      {showModeToggle && (
+        <div className="fixed top-3 right-4 z-20 flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }}>
+          <button
+            onClick={() => setResponseMode('focused')}
+            className={cn(
+              'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
+              effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
+            )}
+            style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: '#fff' } : { color: form.theme.textColor }}
+          >
+            Focused
+          </button>
+          <button
+            onClick={() => setResponseMode('classic')}
+            className={cn(
+              'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
+              effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
+            )}
+            style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: '#fff' } : { color: form.theme.textColor }}
+          >
+            Classic
+          </button>
+        </div>
+      )}
+
+      {effectiveMode === 'focused' ? (
+      <>
       {/* Progress Bar */}
       {form.settings.showProgressBar && (
         <div className="fixed top-0 left-0 right-0 z-10">
@@ -1045,6 +1103,52 @@ export default function FormResponse() {
         {safeCurrentStep + 1} / {visibleFields.length}
         {isEvaluating && <span className="ml-1 animate-pulse">...</span>}
       </div>
+      </>
+      ) : (
+        /* Classic Mode */
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-xl mx-auto px-4 py-12 w-full">
+            <div className="text-center mb-10">
+              <h1 className="text-3xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+                {form.title}
+              </h1>
+              {form.description && (
+                <p className="mt-2 opacity-70" style={{ color: form.theme.textColor }}>{form.description}</p>
+              )}
+            </div>
+
+            <div className="space-y-8">
+              {visibleFields.map((field) => (
+                <div key={field.id} className="pb-6 border-b last:border-0" style={{ borderColor: `${form.theme.textColor}15` }}>
+                  <FieldResponse
+                    field={field}
+                    value={currentAnswers[field.id]}
+                    onChange={(val) => setAnswer(field.id, val)}
+                    primaryColor={form.theme.primaryColor}
+                    textColor={form.theme.textColor}
+                    isRequired={getFieldRequired(field)}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {submitError && (
+              <p role="alert" aria-live="polite" className="mt-4 text-red-500 text-sm text-center">{submitError}</p>
+            )}
+
+            <div className="mt-10">
+              <Button
+                size="lg"
+                onClick={handleClassicSubmit}
+                style={{ backgroundColor: form.theme.primaryColor }}
+                className="w-full text-white"
+              >
+                {form.settings.submitButtonText || 'Submit'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
