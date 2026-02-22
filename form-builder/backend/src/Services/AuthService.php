@@ -126,6 +126,13 @@ class AuthService
             throw new \RuntimeException('Invalid email or password');
         }
 
+        // Transparently upgrade hash algorithm/cost if needed
+        if (password_needs_rehash($row['password_hash'], PASSWORD_DEFAULT)) {
+            $newHash = password_hash($password, PASSWORD_DEFAULT);
+            $rehashStmt = $this->mysql->prepare("UPDATE users SET password_hash = :hash WHERE id = :id");
+            $rehashStmt->execute(['hash' => $newHash, 'id' => $row['id']]);
+        }
+
         // Clear rate limits on successful login
         $this->clearRateLimit($rateLimitKey);
         $this->clearEmailRateLimit($emailKey);

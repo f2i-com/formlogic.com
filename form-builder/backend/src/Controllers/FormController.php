@@ -275,11 +275,15 @@ class FormController
         }
 
         try {
-            // Snapshot current state before updating
+            // Snapshot current state before updating (non-blocking: version failure should not prevent saving)
             $changelog = $data['_changelog'] ?? null;
             unset($data['_changelog']);
             if ($this->versionService !== null) {
-                $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
+                try {
+                    $this->versionService->createVersion($formId, $request->getAttribute('userId'), $changelog);
+                } catch (\Exception $versionErr) {
+                    // Log but don't block the form update
+                }
             }
 
             $updatedForm = $this->formService->updateForm($formId, $data);
@@ -462,13 +466,26 @@ class FormController
 
         $version = (int)$args['version'];
         $userId = $request->getAttribute('userId');
+
+        // Warn if restoring over a published form unless explicitly forced
+        if ($form['status'] === 'published') {
+            $body = $request->getParsedBody();
+            if (empty($body['force'])) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => 'This form is currently published. Restoring will immediately change the live form. Send { "force": true } to confirm.',
+                    'requiresForce' => true,
+                ], 409);
+            }
+        }
+
         $restoredForm = $this->versionService->restoreVersion($formId, $version, $userId);
 
         if (!$restoredForm) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Version not found'], 404);
         }
 
-        $this->audit($request, 'form.update', 'form', $formId, ['restoredFromVersion' => $version]);
+        $this->audit($request, 'form.version.restore', 'form', $formId, ['restoredFromVersion' => $version]);
 
         return $this->jsonResponse($response, ['form' => $restoredForm]);
     }

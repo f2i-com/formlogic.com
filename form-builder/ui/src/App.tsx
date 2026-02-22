@@ -19,8 +19,11 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
         error.message.includes('Failed to fetch dynamically imported module') ||
         error.message.includes('Loading chunk') ||
         error.message.includes('Loading CSS chunk');
-      if (isChunkError && !sessionStorage.getItem('lazy_refresh')) {
-        sessionStorage.setItem('lazy_refresh', '1');
+      // Use a timestamp to prevent infinite reload loops: only retry once
+      // within a 30-second window
+      const lastRefresh = Number(sessionStorage.getItem('lazy_refresh') || '0');
+      if (isChunkError && Date.now() - lastRefresh > 30_000) {
+        sessionStorage.setItem('lazy_refresh', String(Date.now()));
         window.location.reload();
         return new Promise(() => {}) as never; // Suspend during reload
       }
@@ -90,7 +93,7 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
   }, [theme]);
 
   useEffect(() => {
-    // Clear chunk retry flag on successful load
+    // Clear chunk retry timestamp on successful load so future deploys can retry
     sessionStorage.removeItem('lazy_refresh');
   }, []);
 

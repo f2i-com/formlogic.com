@@ -880,6 +880,15 @@ class ResponseController
         $dbPath = $this->sqlite->getFormDbPath($formId);
         $filename = $this->sanitizeFilename($form['title']) . '.sqlite';
 
+        // Flush WAL to the main database file so the download is self-contained
+        try {
+            $db = $this->sqlite->getFormDatabase($formId);
+            $db->exec('PRAGMA wal_checkpoint(FULL)');
+        } catch (\Exception $e) {
+            // Non-fatal — the DB is still readable, just may be missing recent WAL data
+            $this->logger->warning('WAL checkpoint failed before SQLite export', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
+
         // Verify file exists and get size
         if (!is_file($dbPath)) {
             return $this->jsonResponse($response, [

@@ -111,7 +111,7 @@ function clearDebounceTimer(formId: string) {
   }
 }
 
-function clearAllDebounceTimers() {
+export function clearAllDebounceTimers() {
   for (const formId of Object.keys(debounceTimers)) {
     clearTimeout(debounceTimers[formId]);
     delete debounceTimers[formId];
@@ -175,7 +175,7 @@ export const useFormStore = create<FormState>()(
 
       initialize: async () => {
         const state = get();
-        if (state.isInitialized) return;
+        if (state.isInitialized || state.isLoading) return;
 
         set({ isLoading: true, error: null });
 

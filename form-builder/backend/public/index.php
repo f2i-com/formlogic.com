@@ -286,7 +286,9 @@ $container->set(FileStorageService::class, function (Container $c) {
 $container->set(FileController::class, function (Container $c) {
     return new FileController(
         $c->get(FileStorageService::class),
-        $c->get(FormService::class)
+        $c->get(FormService::class),
+        $c->get(AppService::class),
+        $c->get(AppUserService::class)
     );
 });
 

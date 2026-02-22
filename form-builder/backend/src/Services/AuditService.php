@@ -48,11 +48,12 @@ class AuditService
             $cleanupStmt = $this->mysql->prepare("DELETE FROM audit_sequence WHERE id < :seq");
             $cleanupStmt->execute(['seq' => $sequenceNumber]);
 
-            // Fetch the most recent entry's integrity hash (handles sequence gaps from rollbacks)
+            // Fetch the most recent entry's integrity hash with lock to prevent chain races
             $stmt = $this->mysql->query("
                 SELECT integrity_hash FROM audit_log
                 WHERE integrity_hash IS NOT NULL
                 ORDER BY sequence_number DESC LIMIT 1
+                FOR UPDATE
             ");
             $prevRow = $stmt->fetch(PDO::FETCH_ASSOC);
             $previousHash = ($prevRow && $prevRow['integrity_hash'] !== null)

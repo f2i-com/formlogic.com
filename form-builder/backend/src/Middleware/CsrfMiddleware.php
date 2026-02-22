@@ -77,12 +77,12 @@ class CsrfMiddleware implements MiddlewareInterface
      */
     private function isExempt(string $path, string $method): bool
     {
-        // Login/register/logout - these set/clear the CSRF token
+        // Login/register - these set the CSRF token
         // Note: /api/auth/me (GET/PUT) is NOT exempt — profile updates need CSRF protection
+        // Note: /api/auth/logout is NOT exempt — CSRF logout attack prevention
         $authExemptPaths = [
             '/api/auth/login',
             '/api/auth/register',
-            '/api/auth/logout',
         ];
         if (in_array($path, $authExemptPaths, true)) {
             return true;

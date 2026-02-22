@@ -221,6 +221,7 @@ class WebhookService
                 CURLOPT_TIMEOUT => 5,
                 CURLOPT_CONNECTTIMEOUT => 3,
                 CURLOPT_FOLLOWLOCATION => false, // Block redirects to prevent SSRF via redirect
+                CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
                 CURLOPT_HTTPHEADER => [
                     'Content-Type: application/json',
                     'X-FormLogic-Event: ' . $event,

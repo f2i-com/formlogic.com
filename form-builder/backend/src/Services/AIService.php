@@ -184,6 +184,10 @@ class AIService
             ],
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_TIMEOUT => 120,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
         ]);
 
         try {

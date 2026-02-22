@@ -6,6 +6,8 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\FileStorageService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\AppService;
+use FormLogic\Services\AppUserService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -13,11 +15,15 @@ class FileController
 {
     private FileStorageService $fileStorage;
     private FormService $formService;
+    private ?AppService $appService;
+    private ?AppUserService $appUserService;
 
-    public function __construct(FileStorageService $fileStorage, FormService $formService)
+    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null)
     {
         $this->fileStorage = $fileStorage;
         $this->formService = $formService;
+        $this->appService = $appService;
+        $this->appUserService = $appUserService;
     }
 
     /**
@@ -81,9 +87,36 @@ class FileController
     public function appUpload(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
+        $slug = $args['slug'] ?? '';
 
-        // The form ID is validated by the app route group already
-        // Just need to handle the file upload
+        // Verify the user is an active member of the app and the form belongs to it
+        $userId = $request->getAttribute('userId');
+        if (!$userId || !$this->appService || !$this->appUserService) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+
+        $appUser = $this->appUserService->getAppUser($app['id'], $userId);
+        if (!$appUser || $appUser['status'] !== 'active') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403);
+        }
+
+        // Verify the form belongs to this app
+        $appForms = $this->appService->getAppForms($app['id']);
+        $formBelongsToApp = false;
+        foreach ($appForms as $af) {
+            if ($af['formId'] === $formId) {
+                $formBelongsToApp = true;
+                break;
+            }
+        }
+        if (!$formBelongsToApp) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found in this app'], 404);
+        }
 
         $uploadedFiles = $request->getUploadedFiles();
         $file = $uploadedFiles['file'] ?? null;

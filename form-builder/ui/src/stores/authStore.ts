@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
-import { useFormStore } from './formStore';
+import { useFormStore, clearAllDebounceTimers } from './formStore';
 import { useAppStore } from './appStore';
 import { useAppRuntimeStore } from './appRuntimeStore';
+import { useResponseStore } from './responseStore';
 
 interface User {
   id: string;
@@ -139,11 +140,16 @@ export const useAuthStore = create<AuthState>()(
         }
         set({ user: null, error: null });
 
+        // Cancel pending debounced saves before clearing state to prevent
+        // stale callbacks from firing after logout
+        clearAllDebounceTimers();
+
         // Clear in-memory state of all user-specific stores immediately
         // so stale data never leaks between sessions
         useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null });
         useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, error: null });
         useAppRuntimeStore.getState().reset();
+        useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
 
         // Clear persisted data from localStorage to prevent data
         // leakage if another user logs in on the same browser
