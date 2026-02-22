@@ -597,7 +597,7 @@ export function AppFormView() {
   const handleNext = useCallback(() => {
     if (currentField?.required && !['statement', 'calculated'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
-      if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
+      if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');
         return;
       }
@@ -632,7 +632,7 @@ export function AppFormView() {
       if (!f.required) return false;
       if (['statement', 'calculated'].includes(f.type)) return false;
       const answer = answersRef.current[f.id];
-      return answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0);
+      return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
     });
     if (missingFields.length > 0) {
       setError(`Please fill in all required fields (${missingFields.length} remaining)`);
