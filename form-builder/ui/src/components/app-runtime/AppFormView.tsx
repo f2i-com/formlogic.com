@@ -252,7 +252,7 @@ function FieldInput({
     const range = Math.max(1, max - min + 1);
     return (
       <div className="space-y-3">
-        <div className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
+        <div role="radiogroup" aria-label={field.label} className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
           {Array.from({ length: range }, (_, i) => {
             const num = min + i;
             const selected = value === num;
