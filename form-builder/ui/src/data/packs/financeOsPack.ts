@@ -77,6 +77,12 @@ const defaultSettings: Record<string, unknown> = {
   isClosed: false,
 };
 
+/** Settings for compliance-sensitive forms with NIGO prevention dashboard enabled. */
+const complianceSettings: Record<string, unknown> = {
+  ...defaultSettings,
+  showNigoDashboard: true,
+};
+
 const defaultTheme: Record<string, unknown> = {
   primaryColor: '#6366f1',
   backgroundColor: '#ffffff',
@@ -109,9 +115,17 @@ export const financeOsPack: PackData = {
       title: 'New Client Onboarding',
       description:
         'Collect personal, financial, and regulatory information for new advisory clients.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
+        {
+          id: 'welcome',
+          type: 'welcome_screen',
+          label: 'Welcome to Client Onboarding',
+          description: 'This form collects personal, financial, and regulatory information required to open your advisory account. All data is kept confidential and secure.',
+          required: false,
+          properties: {},
+        },
         {
           id: 'first_name',
           type: 'short_text',
@@ -148,6 +162,14 @@ export const financeOsPack: PackData = {
           properties: {},
         },
         {
+          id: 'age',
+          type: 'number',
+          label: 'Age',
+          description: 'Used for risk assessment and suitability calculations.',
+          required: true,
+          properties: { placeholder: 'Enter age', min: 18, max: 120 },
+        },
+        {
           id: 'ssn',
           type: 'short_text',
           label: 'Social Security Number',
@@ -176,9 +198,10 @@ export const financeOsPack: PackData = {
           required: true,
           properties: {
             options: [
-              { id: 'us', label: 'US', value: 'us' },
-              { id: 'non-us', label: 'Non-US', value: 'non-us' },
-              { id: 'dual', label: 'Dual', value: 'dual' },
+              { id: 'us', label: 'U.S. Citizen', value: 'us' },
+              { id: 'permanent_resident', label: 'U.S. Permanent Resident', value: 'permanent_resident' },
+              { id: 'non_resident_alien', label: 'Non-Resident Alien', value: 'non_resident_alien' },
+              { id: 'dual', label: 'Dual Citizenship', value: 'dual' },
             ],
           },
         },
@@ -236,6 +259,7 @@ export const financeOsPack: PackData = {
           id: 'time_horizon',
           type: 'scale',
           label: 'Investment Time Horizon (years)',
+          description: '1 = Less than 1 year, 15 = Medium-term, 30 = 30+ years.',
           required: true,
           properties: { min: 1, max: 30, step: 1 },
         },
@@ -243,6 +267,7 @@ export const financeOsPack: PackData = {
           id: 'risk_tolerance',
           type: 'scale',
           label: 'Risk Tolerance',
+          description: '1 = Very conservative (prefer safety), 10 = Very aggressive (accept high volatility).',
           required: true,
           properties: { min: 1, max: 10, step: 1 },
         },
@@ -250,9 +275,30 @@ export const financeOsPack: PackData = {
           id: 'risk_score',
           type: 'calculated',
           label: 'Risk Score',
+          description: 'Weighted score (1-100) based on age, investment horizon, and risk tolerance.',
           required: false,
           properties: {
-            calculationExpression: 'finance.riskScore(dob, time_horizon, risk_tolerance)',
+            calculationExpression: 'finance.riskScore(age, time_horizon, risk_tolerance)',
+          },
+        },
+        {
+          id: 'accredited_investor',
+          type: 'calculated',
+          label: 'Accredited Investor Status',
+          description: 'SEC Rule 501(a): income > $200k or net worth > $1M.',
+          required: false,
+          properties: {
+            calculationExpression: 'compliance.accreditedInvestor(annual_income, net_worth)',
+          },
+        },
+        {
+          id: 'portfolio_allocation',
+          type: 'calculated',
+          label: 'Suggested Portfolio Allocation',
+          description: 'Equity:Bond:Cash ratio based on risk score.',
+          required: false,
+          properties: {
+            calculationExpression: 'finance.portfolioAllocation(risk_score)',
           },
         },
         {
@@ -272,6 +318,14 @@ export const financeOsPack: PackData = {
           required: true,
           properties: {},
         },
+        {
+          id: 'thank_you',
+          type: 'thank_you_screen',
+          label: 'Onboarding Complete',
+          description: 'Thank you for completing the onboarding form. Your advisor will review the information and reach out with next steps.',
+          required: false,
+          properties: {},
+        },
       ],
     },
 
@@ -281,7 +335,7 @@ export const financeOsPack: PackData = {
       title: 'Risk Tolerance Questionnaire',
       description:
         'Assess client risk tolerance and generate a suitability profile for regulatory compliance.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -292,22 +346,56 @@ export const financeOsPack: PackData = {
           properties: { targetFormId: '@pack:client-intake' },
         },
         {
+          id: 'client_age',
+          type: 'number',
+          label: 'Client Age',
+          description: 'Confirm the client\'s current age for suitability calculations.',
+          required: true,
+          properties: { placeholder: 'Age', min: 18, max: 120 },
+        },
+        {
+          id: 'client_income',
+          type: 'number',
+          label: 'Annual Income ($)',
+          description: 'Confirm the client\'s annual income for suitability analysis.',
+          required: true,
+          properties: { placeholder: '0', min: 0 },
+        },
+        {
+          id: 'client_net_worth',
+          type: 'number',
+          label: 'Net Worth ($)',
+          description: 'Confirm the client\'s total net worth.',
+          required: true,
+          properties: { placeholder: '0', min: 0 },
+        },
+        {
+          id: 'time_horizon',
+          type: 'scale',
+          label: 'Investment Time Horizon (years)',
+          description: '1 = Less than 1 year, 30 = 30+ years.',
+          required: true,
+          properties: { min: 1, max: 30, step: 1 },
+        },
+        {
           id: 'market_reaction',
           type: 'multiple_choice',
           label: 'If the market dropped 20% tomorrow, what would you do?',
           required: true,
           properties: {
             options: [
-              { id: 'sell', label: 'Sell', value: 'sell' },
-              { id: 'hold', label: 'Hold', value: 'hold' },
-              { id: 'buy_more', label: 'Buy More', value: 'buy_more' },
+              { id: 'sell', label: 'Sell everything', value: 'sell' },
+              { id: 'sell_some', label: 'Sell some holdings', value: 'sell_some' },
+              { id: 'hold', label: 'Hold and wait', value: 'hold' },
+              { id: 'buy_more', label: 'Buy more at the discount', value: 'buy_more' },
             ],
           },
         },
         {
           id: 'loss_capacity',
           type: 'scale',
-          label: 'How much loss can you absorb without affecting your lifestyle?',
+          label: 'How much portfolio loss can you absorb without affecting your lifestyle?',
+          description: '1 = Very little (< 5%), 10 = Significant (> 40%).',
           required: true,
           properties: { min: 1, max: 10, step: 1 },
         },
@@ -318,10 +406,25 @@ export const financeOsPack: PackData = {
           required: true,
           properties: {
             options: [
-              { id: 'none', label: 'None', value: 'none' },
-              { id: 'limited', label: 'Limited', value: 'limited' },
+              { id: 'none', label: 'None (0 years)', value: 'none' },
+              { id: 'limited', label: 'Limited (1-3 years)', value: 'limited' },
+              { id: 'moderate', label: 'Moderate (3-10 years)', value: 'moderate' },
+              { id: 'extensive', label: 'Extensive (10+ years)', value: 'extensive' },
+            ],
+          },
+        },
+        {
+          id: 'portfolio_type',
+          type: 'dropdown',
+          label: 'Recommended Portfolio Type',
+          description: 'Select the portfolio type to validate against the suitability score.',
+          required: true,
+          properties: {
+            options: [
+              { id: 'conservative', label: 'Conservative', value: 'conservative' },
               { id: 'moderate', label: 'Moderate', value: 'moderate' },
-              { id: 'extensive', label: 'Extensive', value: 'extensive' },
+              { id: 'aggressive', label: 'Aggressive', value: 'aggressive' },
+              { id: 'speculative', label: 'Speculative', value: 'speculative' },
             ],
           },
         },
@@ -329,19 +432,21 @@ export const financeOsPack: PackData = {
           id: 'risk_profile_score',
           type: 'calculated',
           label: 'Risk Profile Score',
+          description: 'Weighted suitability score (1-100) based on age, income, net worth, tolerance, and horizon.',
           required: false,
           properties: {
             calculationExpression:
-              'compliance.suitabilityScore(35, annual_income, net_worth, risk_tolerance, time_horizon)',
+              'compliance.suitabilityScore(client_age, client_income, client_net_worth, loss_capacity, time_horizon)',
           },
         },
         {
           id: 'reg_bi_check',
           type: 'calculated',
-          label: 'Reg BI Check',
+          label: 'Reg BI Suitability Check',
+          description: 'Validates that the selected portfolio type is suitable for this client\'s risk profile.',
           required: false,
           properties: {
-            calculationExpression: 'compliance.regBICheck(risk_profile_score, "moderate")',
+            calculationExpression: 'compliance.regBICheck(risk_profile_score, portfolio_type)',
           },
         },
       ],
@@ -353,7 +458,7 @@ export const financeOsPack: PackData = {
       title: 'ACAT / Transfer Form',
       description:
         'Initiate an Automated Customer Account Transfer (ACAT) from an external custodian.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -444,26 +549,49 @@ export const financeOsPack: PackData = {
       theme: { ...defaultTheme },
       fields: [
         {
+          id: 'client_record',
+          type: 'linked_record',
+          label: 'Client',
+          required: true,
+          properties: { targetFormId: '@pack:client-intake' },
+        },
+        {
           id: 'firm_statement',
           type: 'statement',
-          label: 'Firm Statement',
-          description: 'This document describes our services, fees, and conflicts of interest',
+          label: 'Introduction',
+          description: 'This Client Relationship Summary ("Form CRS") is required by the SEC and provides important information about our firm, services, fees, conflicts of interest, and disciplinary history. Please review each section carefully before signing.',
           required: false,
           properties: {},
         },
         {
           id: 'services_statement',
           type: 'statement',
-          label: 'Services',
-          description: 'We provide investment advisory services including...',
+          label: 'What investment services and advice can you provide me?',
+          description: 'We provide investment advisory services including portfolio management, financial planning, and retirement planning. We offer both discretionary and non-discretionary account management. Account minimums and other requirements may apply.',
           required: false,
           properties: {},
         },
         {
           id: 'fees_statement',
           type: 'statement',
-          label: 'Fees',
-          description: 'Our fees are based on a percentage of assets under management...',
+          label: 'What fees will I pay?',
+          description: 'Our fees are based on a percentage of assets under management (AUM), charged quarterly in arrears. The more assets you have in your account, the more you will pay in fees, giving us an incentive to encourage you to increase your account size. You may also incur brokerage, custody, and fund expense charges.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'conflicts_statement',
+          type: 'statement',
+          label: 'What are your legal obligations to me?',
+          description: 'When we act as your investment adviser, we must act in your best interest and not place our interests ahead of yours. We are held to a fiduciary standard under the Investment Advisers Act of 1940.',
+          required: false,
+          properties: {},
+        },
+        {
+          id: 'disciplinary_statement',
+          type: 'statement',
+          label: 'Do you or your financial professionals have legal or disciplinary history?',
+          description: 'Visit Investor.gov/CRS to research our firm and financial professionals. You can also ask us: "As a financial professional, do you have any disciplinary history? If so, for what type of conduct?"',
           required: false,
           properties: {},
         },
@@ -515,9 +643,20 @@ export const financeOsPack: PackData = {
           properties: { placeholder: '0', min: 0 },
         },
         {
+          id: 'current_annual_fee',
+          type: 'calculated',
+          label: 'Current Annual Fee',
+          description: 'Tiered advisory fee based on current AUM.',
+          required: false,
+          properties: {
+            calculationExpression: 'finance.aumFee(current_aum)',
+          },
+        },
+        {
           id: 'goal_progress',
           type: 'scale',
           label: 'Goal Progress',
+          description: '1 = Significantly behind, 5 = On track, 10 = Exceeding goals.',
           required: true,
           properties: { min: 1, max: 10, step: 1 },
         },
@@ -542,6 +681,7 @@ export const financeOsPack: PackData = {
           id: 'updated_risk_tolerance',
           type: 'scale',
           label: 'Updated Risk Tolerance',
+          description: '1 = Very conservative, 10 = Very aggressive. Leave unchanged if risk profile has not shifted.',
           required: false,
           properties: { min: 1, max: 10, step: 1 },
         },
@@ -681,8 +821,13 @@ export const financeOsPack: PackData = {
           id: 'expiry_date',
           type: 'date',
           label: 'Expiry Date',
+          description: 'Applicable for documents with an expiration (insurance policies, legal agreements, etc.).',
           required: false,
           properties: {},
+          conditionalLogic: {
+            expression: 'document_type == "insurance" || document_type == "legal_document"',
+            action: 'show',
+          },
         },
         {
           id: 'notes',
@@ -700,7 +845,7 @@ export const financeOsPack: PackData = {
       title: 'W-9 Form',
       description:
         'Request for Taxpayer Identification Number and Certification.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -781,7 +926,7 @@ export const financeOsPack: PackData = {
       title: 'Beneficiary Designation',
       description:
         'Designate primary and contingent beneficiaries for an investment account.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -841,6 +986,37 @@ export const financeOsPack: PackData = {
           properties: { min: 0, max: 100, placeholder: '%' },
         },
         {
+          id: 'primary_name_3',
+          type: 'short_text',
+          label: 'Primary Beneficiary 3 — Name',
+          required: false,
+          properties: { placeholder: 'Full legal name' },
+        },
+        {
+          id: 'primary_relationship_3',
+          type: 'short_text',
+          label: 'Primary Beneficiary 3 — Relationship',
+          required: false,
+          properties: { placeholder: 'e.g. Spouse, Child' },
+        },
+        {
+          id: 'primary_percentage_3',
+          type: 'number',
+          label: 'Primary Beneficiary 3 — Percentage',
+          required: false,
+          properties: { min: 0, max: 100, placeholder: '%' },
+        },
+        {
+          id: 'primary_nigo',
+          type: 'calculated',
+          label: 'Primary Beneficiary Completeness',
+          description: 'Lists any incomplete primary beneficiary fields (empty = all complete).',
+          required: false,
+          properties: {
+            calculationExpression: 'compliance.nigoCheck(primary_name_1, primary_relationship_1, primary_percentage_1)',
+          },
+        },
+        {
           id: 'contingent_name_1',
           type: 'short_text',
           label: 'Contingent Beneficiary 1 — Name',
@@ -858,6 +1034,27 @@ export const financeOsPack: PackData = {
           id: 'contingent_percentage_1',
           type: 'number',
           label: 'Contingent Beneficiary 1 — Percentage',
+          required: false,
+          properties: { min: 0, max: 100, placeholder: '%' },
+        },
+        {
+          id: 'contingent_name_2',
+          type: 'short_text',
+          label: 'Contingent Beneficiary 2 — Name',
+          required: false,
+          properties: { placeholder: 'Full legal name' },
+        },
+        {
+          id: 'contingent_relationship_2',
+          type: 'short_text',
+          label: 'Contingent Beneficiary 2 — Relationship',
+          required: false,
+          properties: { placeholder: 'e.g. Sibling, Trust' },
+        },
+        {
+          id: 'contingent_percentage_2',
+          type: 'number',
+          label: 'Contingent Beneficiary 2 — Percentage',
           required: false,
           properties: { min: 0, max: 100, placeholder: '%' },
         },
@@ -1018,11 +1215,36 @@ export const financeOsPack: PackData = {
           properties: { placeholder: 'e.g. Term, Whole Life, Variable Annuity' },
         },
         {
+          id: 'estimated_value',
+          type: 'number',
+          label: 'Estimated Policy / Contract Value ($)',
+          required: true,
+          properties: { placeholder: '0', min: 0 },
+        },
+        {
+          id: 'has_surrender_charges',
+          type: 'multiple_choice',
+          label: 'Are there surrender charges on the existing policy?',
+          required: true,
+          properties: {
+            options: [
+              { id: 'yes', label: 'Yes', value: 'yes' },
+              { id: 'no', label: 'No', value: 'no' },
+              { id: 'unknown', label: 'Unknown', value: 'unknown' },
+            ],
+          },
+        },
+        {
           id: 'surrender_charges',
           type: 'number',
           label: 'Surrender Charges ($)',
+          description: 'Enter the estimated surrender charge amount if applicable.',
           required: false,
           properties: { placeholder: '0', min: 0 },
+          conditionalLogic: {
+            expression: 'has_surrender_charges == "yes"',
+            action: 'show',
+          },
         },
         {
           id: 'signature',
@@ -1040,7 +1262,7 @@ export const financeOsPack: PackData = {
       title: 'Rollover Form',
       description:
         'Initiate a rollover of retirement plan assets from an employer plan or existing IRA.',
-      settings: { ...defaultSettings },
+      settings: { ...complianceSettings },
       theme: { ...defaultTheme },
       fields: [
         {
@@ -1065,11 +1287,23 @@ export const financeOsPack: PackData = {
           },
         },
         {
+          id: 'roth_tax_warning',
+          type: 'statement',
+          label: 'Roth Conversion Tax Notice',
+          description: 'Converting pre-tax retirement assets to a Roth account is a taxable event. The converted amount will be added to your gross income for the tax year. Please consult a tax professional before proceeding.',
+          required: false,
+          properties: {},
+          conditionalLogic: {
+            expression: 'rollover_type == "traditional_to_roth"',
+            action: 'show',
+          },
+        },
+        {
           id: 'current_custodian',
           type: 'short_text',
-          label: 'Current Custodian',
+          label: 'Current Custodian / Plan Administrator',
           required: true,
-          properties: { placeholder: 'Name of current plan custodian' },
+          properties: { placeholder: 'Name of current plan custodian or administrator' },
         },
         {
           id: 'current_account_number',
@@ -1077,6 +1311,21 @@ export const financeOsPack: PackData = {
           label: 'Current Account Number',
           required: true,
           properties: { placeholder: 'Account number at current custodian' },
+        },
+        {
+          id: 'receiving_custodian',
+          type: 'short_text',
+          label: 'Receiving Custodian',
+          required: true,
+          properties: { placeholder: 'Name of custodian receiving the rollover' },
+        },
+        {
+          id: 'receiving_account_number',
+          type: 'short_text',
+          label: 'Receiving Account Number',
+          description: 'Leave blank if a new account will be opened.',
+          required: false,
+          properties: { placeholder: 'Account number at receiving custodian' },
         },
         {
           id: 'estimated_value',
@@ -1089,12 +1338,25 @@ export const financeOsPack: PackData = {
           id: 'direct_or_indirect',
           type: 'multiple_choice',
           label: 'Direct or Indirect Rollover',
+          description: 'Direct: funds transfer custodian-to-custodian. Indirect: funds sent to you, must be redeposited within 60 days.',
           required: true,
           properties: {
             options: [
-              { id: 'direct', label: 'Direct', value: 'direct' },
-              { id: 'indirect', label: 'Indirect', value: 'indirect' },
+              { id: 'direct', label: 'Direct (trustee-to-trustee)', value: 'direct' },
+              { id: 'indirect', label: 'Indirect (60-day rollover)', value: 'indirect' },
             ],
+          },
+        },
+        {
+          id: 'indirect_warning',
+          type: 'statement',
+          label: '60-Day Rollover Deadline',
+          description: 'With an indirect rollover, you must deposit the funds into a qualifying retirement account within 60 calendar days. Failure to do so may result in the distribution being treated as taxable income plus a 10% early withdrawal penalty if under age 59½.',
+          required: false,
+          properties: {},
+          conditionalLogic: {
+            expression: 'direct_or_indirect == "indirect"',
+            action: 'show',
           },
         },
         {
