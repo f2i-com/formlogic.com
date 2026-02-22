@@ -583,6 +583,8 @@ class AppPublicController
         // Resolve specific IDs mode — fetch records by explicit ID list
         if ($idsParam !== '') {
             $requestedIds = array_filter(array_map('trim', explode(',', $idsParam)), fn($id) => $id !== '');
+            // Cap the number of IDs to prevent memory exhaustion
+            $requestedIds = array_slice($requestedIds, 0, 500);
             $matchedResponses = $this->responseService->getResponsesByIds($targetFormId, $requestedIds);
             // Apply scope filtering: if user can only view own, filter out others' responses
             if ($scope === 'own') {
