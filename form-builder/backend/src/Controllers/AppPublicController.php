@@ -862,6 +862,13 @@ class AppPublicController
             return $responses;
         }
 
+        // Build set of forms that belong to this app (cross-tenant guard)
+        $appForms = $this->appService->getAppForms($appId);
+        $appFormIds = [];
+        foreach ($appForms as $af) {
+            $appFormIds[$af['formId']] = true;
+        }
+
         // Collect all referenced response IDs grouped by target form
         $refsByForm = []; // targetFormId => [responseId => true]
         foreach ($responses as $resp) {
@@ -892,6 +899,12 @@ class AppPublicController
         $resolvedCache = []; // targetFormId => responseId => { id, display }
         foreach ($refsByForm as $targetFormId => $idMap) {
             $resolvedCache[$targetFormId] = [];
+
+            // Cross-tenant guard: only resolve forms that belong to this app
+            if (!isset($appFormIds[$targetFormId])) {
+                continue;
+            }
+
             $targetForm = $this->formService->getForm($targetFormId);
             if (!$targetForm) continue;
 

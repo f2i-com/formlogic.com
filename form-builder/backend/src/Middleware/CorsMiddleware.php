@@ -131,7 +131,7 @@ class CorsMiddleware implements MiddlewareInterface
             ->withHeader('Access-Control-Allow-Origin', $allowedOrigin)
             ->withHeader('Access-Control-Allow-Headers', 'X-Requested-With, Content-Type, Accept, Origin, Authorization, X-CSRF-Token')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-            ->withHeader('Access-Control-Max-Age', '86400');
+            ->withHeader('Access-Control-Max-Age', '3600');
 
         // Only allow credentials for non-wildcard origins
         // In wildcard mode, the origin is reflected but credentials must NOT be allowed
