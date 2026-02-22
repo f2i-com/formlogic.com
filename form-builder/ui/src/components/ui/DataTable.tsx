@@ -21,6 +21,8 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   className?: string;
   actions?: (item: T) => React.ReactNode;
+  totalCount?: number;
+  searchBarExtra?: React.ReactNode;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -34,6 +36,8 @@ export function DataTable<T extends Record<string, unknown>>({
   emptyMessage = 'No data found',
   className,
   actions,
+  totalCount,
+  searchBarExtra,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -85,16 +89,19 @@ export function DataTable<T extends Record<string, unknown>>({
   return (
     <div className={cn('w-full', className)}>
       {searchable && (
-        <div className="mb-4 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-            placeholder={searchPlaceholder}
-            aria-label="Search table"
-            className="w-full max-w-sm pl-9 pr-3.5 py-2 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200"
-          />
+        <div className="mb-4 flex items-center gap-2">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              placeholder={searchPlaceholder}
+              aria-label="Search table"
+              className="w-full pl-9 pr-3.5 py-2 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200"
+            />
+          </div>
+          {searchBarExtra}
         </div>
       )}
 
@@ -168,7 +175,7 @@ export function DataTable<T extends Record<string, unknown>>({
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-slate-400">
           <span>
-            Showing {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, sorted.length)} of {sorted.length}
+            Showing {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, sorted.length)} of {sorted.length}{totalCount != null && sorted.length !== totalCount ? ` (${totalCount} total)` : ''}
           </span>
           <div className="flex items-center gap-2">
             <button

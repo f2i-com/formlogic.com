@@ -214,7 +214,7 @@ export const financeOsAuPack: PackData = {
           description: 'Weighted score (1-100) based on age, investment horizon, and risk tolerance.',
           required: false,
           properties: {
-            calculationExpression: 'finance.riskScore(age, time_horizon, risk_tolerance)',
+            calculationExpression: 'Math.round((risk_tolerance * 5) + (time_horizon * 2) + ((120 - age) / 2))',
           },
         },
         {
@@ -224,17 +224,7 @@ export const financeOsAuPack: PackData = {
           description: 'Corporations Act s761G: gross income >= $250k OR net assets >= $2.5M.',
           required: false,
           properties: {
-            calculationExpression: 'compliance.wholesaleClient(annual_income, net_assets)',
-          },
-        },
-        {
-          id: 'kyc_status',
-          type: 'calculated',
-          label: 'KYC Status',
-          required: false,
-          properties: {
-            calculationExpression:
-              'compliance.kycComplete(first_name, last_name, email, dob, tfn, address)',
+            calculationExpression: 'annual_income >= 250000 || net_assets >= 2500000 ? "Yes" : "No"',
           },
         },
         {
@@ -364,8 +354,7 @@ export const financeOsAuPack: PackData = {
             'Weighted suitability score (1-100) based on age, income, net assets, tolerance, and horizon.',
           required: false,
           properties: {
-            calculationExpression:
-              'compliance.suitabilityScore(client_age, client_income, client_net_assets, loss_capacity, time_horizon)',
+            calculationExpression: 'Math.round((loss_capacity * 5) + (time_horizon * 2) + ((120 - client_age) / 2))',
           },
         },
         {
@@ -404,10 +393,10 @@ export const financeOsAuPack: PackData = {
           required: true,
           properties: {
             options: [
-              { id: 'bt_panorama', label: 'BT Panorama', value: 'bt panorama' },
+              { id: 'bt_panorama', label: 'BT Panorama', value: 'bt_panorama' },
               { id: 'macquarie', label: 'Macquarie Wrap', value: 'macquarie' },
               { id: 'netwealth', label: 'Netwealth', value: 'netwealth' },
-              { id: 'cfs', label: 'CFS FirstChoice', value: 'cfs firstchoice' },
+              { id: 'cfs', label: 'CFS FirstChoice', value: 'cfs_firstchoice' },
               { id: 'hub24', label: 'HUB24', value: 'hub24' },
               { id: 'other_dp', label: 'Other', value: 'other' },
             ],
@@ -471,7 +460,7 @@ export const financeOsAuPack: PackData = {
           label: 'Estimated Transfer Fee',
           required: false,
           properties: {
-            calculationExpression: 'finance.auTransferFee(estimated_value, delivering_platform)',
+            calculationExpression: '54.50',
           },
         },
         {
@@ -615,7 +604,7 @@ export const financeOsAuPack: PackData = {
           description: 'Tiered advisory fee based on current portfolio value (GST inclusive).',
           required: false,
           properties: {
-            calculationExpression: 'finance.auAumFee(current_portfolio_value)',
+            calculationExpression: 'current_portfolio_value <= 500000 ? (current_portfolio_value * 0.011) : current_portfolio_value <= 1000000 ? (current_portfolio_value * 0.0088) : (current_portfolio_value * 0.0077)',
           },
         },
         {
@@ -723,7 +712,7 @@ export const financeOsAuPack: PackData = {
           description: 'Tiered advisory fee based on portfolio value (GST inclusive).',
           required: false,
           properties: {
-            calculationExpression: 'finance.auAumFee(portfolio_value)',
+            calculationExpression: 'portfolio_value <= 500000 ? (portfolio_value * 0.011) : portfolio_value <= 1000000 ? (portfolio_value * 0.0088) : (portfolio_value * 0.0077)',
           },
         },
         {
@@ -836,7 +825,7 @@ export const financeOsAuPack: PackData = {
           required: false,
           properties: {},
           conditionalLogic: {
-            expression: 'document_type == "insurance"',
+            expression: 'document_type == "insurance" || document_type == "pds" || document_type == "soa"',
             action: 'show',
           },
         },
@@ -1103,17 +1092,6 @@ export const financeOsAuPack: PackData = {
           label: 'Primary Beneficiary 3 \u2014 Percentage',
           required: false,
           properties: { min: 0, max: 100, placeholder: '%' },
-        },
-        {
-          id: 'primary_total_check',
-          type: 'calculated',
-          label: 'Primary Beneficiary Completeness',
-          description: 'Lists any incomplete primary beneficiary fields (empty = all complete).',
-          required: false,
-          properties: {
-            calculationExpression:
-              'compliance.nigoCheck(primary_name_1, primary_relationship_1, primary_percentage_1)',
-          },
         },
         // Contingent beneficiaries
         {

@@ -53,6 +53,9 @@ export function AppDashboard() {
                   </div>
                   <div className="flex-1 min-w-0 pt-0.5">
                     <h3 className="font-semibold text-gray-900 dark:text-white truncate tracking-tight">{form.displayName}</h3>
+                    {form.description && (
+                      <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5 line-clamp-2">{String(form.description).length > 80 ? String(form.description).substring(0, 80) + '\u2026' : String(form.description)}</p>
+                    )}
                   </div>
                 </div>
 

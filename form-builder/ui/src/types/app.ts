@@ -126,6 +126,7 @@ export interface AppRuntimeForm {
   formId: string;
   displayName: string;
   icon?: string;
+  description?: string | null;
   fields: unknown[];
   settings: Record<string, unknown>;
 }

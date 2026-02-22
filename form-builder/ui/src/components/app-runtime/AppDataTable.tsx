@@ -1,12 +1,15 @@
-import { useState, useEffect, useMemo, memo } from 'react';
+import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2, ChevronRight, ChevronLeft, Inbox } from 'lucide-react';
+import { ArrowLeft, Trash2, ChevronRight, ChevronLeft, Inbox, Columns3 } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 
 const MOBILE_PAGE_SIZE = 15;
+
+// Exclude non-data field types from columns
+const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you_screen', 'statement', 'signature', 'file_upload']);
 
 const MobileCardList = memo(function MobileCardList({
   responses,
@@ -129,9 +132,42 @@ export function AppDataTable() {
   const [error, setError] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [colDropdownOpen, setColDropdownOpen] = useState(false);
+  const colDropdownRef = useRef<HTMLDivElement>(null);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
-  const fields = (runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>;
+  const fields = useMemo(() =>
+    ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>)
+      .filter((f) => !EXCLUDED_FIELD_TYPES.has(f.type)),
+    [runtimeForm?.fields]
+  );
+
+  // Column visibility: default to first 6 fields
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => {
+    const initial = new Set<string>(['submittedAt', 'status']);
+    fields.slice(0, 6).forEach((f) => initial.add(f.id));
+    return initial;
+  });
+
+  // Re-initialize visible columns when fields change (different form)
+  useEffect(() => {
+    const initial = new Set<string>(['submittedAt', 'status']);
+    fields.slice(0, 6).forEach((f) => initial.add(f.id));
+    setVisibleColumns(initial);
+  }, [formId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (colDropdownRef.current && !colDropdownRef.current.contains(e.target as Node)) {
+        setColDropdownOpen(false);
+      }
+    }
+    if (colDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [colDropdownOpen]);
 
   // Check if form has any linked_record fields
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
@@ -175,41 +211,57 @@ export function AppDataTable() {
     setDeleteId(null);
   };
 
-  // Build columns from form fields
-  const columns: Column<Record<string, unknown>>[] = [
-    { key: 'submittedAt', label: 'Submitted', sortable: true, render: (r) => {
+  const toggleColumn = (id: string) => {
+    setVisibleColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  // Build ALL columns from form fields (no slice)
+  const allFieldColumns: Column<Record<string, unknown>>[] = fields.map((field) => ({
+    key: `answer_${field.id}`,
+    label: field.label,
+    sortable: true,
+    render: (r: Record<string, unknown>) => {
+      // For linked_record fields, use resolved display values
+      if (field.type === 'linked_record') {
+        const resolved = r._resolved as Record<string, unknown> | undefined;
+        if (resolved?.[field.id]) {
+          const resolvedVal = resolved[field.id] as { display?: string } | Array<{ display?: string }>;
+          if (Array.isArray(resolvedVal)) {
+            const joined = resolvedVal.map((rv) => rv.display || '?').join(', ');
+            return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
+          }
+          return (resolvedVal as { display?: string }).display || '-';
+        }
+      }
+      const answers = r.answers as Record<string, unknown> | undefined;
+      const val = answers?.[field.id];
+      if (val == null) return '-';
+      if (Array.isArray(val)) {
+        const joined = val.join(', ');
+        return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
+      }
+      const str = String(val);
+      return str.length > 50 ? str.substring(0, 50) + '\u2026' : str;
+    },
+  }));
+
+  const submittedAtCol: Column<Record<string, unknown>> = {
+    key: 'submittedAt', label: 'Submitted', sortable: true, render: (r) => {
       const date = r.submittedAt as string;
       return date ? new Date(date).toLocaleString() : '-';
-    }},
-    ...fields.slice(0, 4).map((field) => ({
-      key: `answer_${field.id}`,
-      label: field.label,
-      sortable: true,
-      render: (r: Record<string, unknown>) => {
-        // For linked_record fields, use resolved display values
-        if (field.type === 'linked_record') {
-          const resolved = r._resolved as Record<string, unknown> | undefined;
-          if (resolved?.[field.id]) {
-            const resolvedVal = resolved[field.id] as { display?: string } | Array<{ display?: string }>;
-            if (Array.isArray(resolvedVal)) {
-              const joined = resolvedVal.map((rv) => rv.display || '?').join(', ');
-              return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
-            }
-            return (resolvedVal as { display?: string }).display || '-';
-          }
-        }
-        const answers = r.answers as Record<string, unknown> | undefined;
-        const val = answers?.[field.id];
-        if (val == null) return '-';
-        if (Array.isArray(val)) {
-          const joined = val.join(', ');
-          return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
-        }
-        const str = String(val);
-        return str.length > 50 ? str.substring(0, 50) + '\u2026' : str;
-      },
-    })),
-    { key: 'status', label: 'Status', sortable: true, render: (r) => {
+    },
+  };
+
+  const statusCol: Column<Record<string, unknown>> = {
+    key: 'status', label: 'Status', sortable: true, render: (r) => {
       const s = String(r.status ?? 'submitted');
       return (
         <span className={cn(
@@ -219,8 +271,56 @@ export function AppDataTable() {
           {s.charAt(0).toUpperCase() + s.slice(1)}
         </span>
       );
-    }},
+    },
+  };
+
+  // Filter columns by visibility
+  const columns: Column<Record<string, unknown>>[] = [
+    ...(visibleColumns.has('submittedAt') ? [submittedAtCol] : []),
+    ...allFieldColumns.filter((col) => {
+      const fieldId = col.key.replace('answer_', '');
+      return visibleColumns.has(fieldId);
+    }),
+    ...(visibleColumns.has('status') ? [statusCol] : []),
   ];
+
+  // Visible fields for mobile cards
+  const mobileFields = useMemo(() =>
+    fields.filter((f) => visibleColumns.has(f.id)).slice(0, 3),
+    [fields, visibleColumns]
+  );
+
+  const columnVisibilityDropdown = (
+    <div className="relative" ref={colDropdownRef}>
+      <button
+        onClick={() => setColDropdownOpen((v) => !v)}
+        className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+        aria-label="Toggle columns"
+      >
+        <Columns3 className="h-4 w-4" />
+        <span className="hidden sm:inline">Columns</span>
+      </button>
+      {colDropdownOpen && (
+        <div className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
+          {/* Fixed columns */}
+          <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
+            <input type="checkbox" checked={visibleColumns.has('submittedAt')} onChange={() => toggleColumn('submittedAt')} className="accent-primary-500 rounded" />
+            <span className="text-gray-700 dark:text-slate-300">Submitted</span>
+          </label>
+          {fields.map((f) => (
+            <label key={f.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
+              <input type="checkbox" checked={visibleColumns.has(f.id)} onChange={() => toggleColumn(f.id)} className="accent-primary-500 rounded" />
+              <span className="text-gray-700 dark:text-slate-300 truncate">{f.label}</span>
+            </label>
+          ))}
+          <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
+            <input type="checkbox" checked={visibleColumns.has('status')} onChange={() => toggleColumn('status')} className="accent-primary-500 rounded" />
+            <span className="text-gray-700 dark:text-slate-300">Status</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
@@ -243,7 +343,10 @@ export function AppDataTable() {
         <div className="flex-1">
           <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Responses'}</h1>
         </div>
-        <span className="text-sm font-medium text-gray-400 dark:text-slate-500 tabular-nums">
+        <span className={cn(
+          'text-xs font-medium px-2.5 py-1 rounded-full tabular-nums',
+          'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+        )}>
           {responses.length} {responses.length === 1 ? 'response' : 'responses'}
         </span>
       </div>
@@ -265,6 +368,8 @@ export function AppDataTable() {
               columns={columns}
               searchable
               pageSize={15}
+              totalCount={responses.length}
+              searchBarExtra={columnVisibilityDropdown}
               onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
               actions={formId && canDelete(formId) ? (r) => (
                 <button
@@ -281,7 +386,7 @@ export function AppDataTable() {
           {/* Mobile card layout */}
           <MobileCardList
             responses={responses}
-            fields={fields}
+            fields={mobileFields}
             appSlug={appSlug}
             formId={formId}
             navigate={navigate}

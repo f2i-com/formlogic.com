@@ -253,7 +253,7 @@ export function AppResponseDetail() {
                     return (
                       <div className="space-y-1.5">
                         {options.map((o) => (
-                          <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
                             <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="accent-primary-500" />
                             {o.label}
                           </label>
@@ -267,7 +267,7 @@ export function AppResponseDetail() {
                     return (
                       <div className="space-y-1.5">
                         {options.map((o) => (
-                          <label key={o.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
                             <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => {
                               const newVals = e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value);
                               setEditedAnswers({ ...editedAnswers, [field.id]: newVals });
@@ -352,7 +352,42 @@ export function AppResponseDetail() {
               ) : (
                 <div className="text-sm text-gray-800 dark:text-slate-200">
                   {answers[field.id] != null
-                    ? (Array.isArray(answers[field.id]) ? (answers[field.id] as unknown[]).join(', ') : String(answers[field.id]))
+                    ? (() => {
+                        const val = answers[field.id];
+                        // Boolean yes/no chip
+                        if (val === 'yes' || val === 'no') {
+                          return (
+                            <span className={cn(
+                              'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                              val === 'yes' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+                            )}>
+                              {val === 'yes' ? 'Yes' : 'No'}
+                            </span>
+                          );
+                        }
+                        // Date formatting
+                        if (field.type === 'date' && typeof val === 'string' && val) {
+                          try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch { return String(val); }
+                        }
+                        // Time formatting
+                        if (field.type === 'time' && typeof val === 'string' && val) {
+                          try {
+                            const [h, m] = val.split(':').map(Number);
+                            return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                          } catch { return String(val); }
+                        }
+                        // Datetime formatting
+                        if (field.type === 'datetime' && typeof val === 'string' && val) {
+                          try { return new Date(val).toLocaleString(); } catch { return String(val); }
+                        }
+                        // Long text: preserve whitespace
+                        if (field.type === 'long_text' && typeof val === 'string') {
+                          return <span className="whitespace-pre-wrap">{val}</span>;
+                        }
+                        // Arrays (checkboxes, etc.)
+                        if (Array.isArray(val)) return (val as unknown[]).join(', ');
+                        return String(val);
+                      })()
                     : <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
                   }
                 </div>

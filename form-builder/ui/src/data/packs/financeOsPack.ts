@@ -280,7 +280,7 @@ export const financeOsPack: PackData = {
           description: 'Weighted score (1-100) based on age, investment horizon, and risk tolerance.',
           required: false,
           properties: {
-            calculationExpression: 'finance.riskScore(age, time_horizon, risk_tolerance)',
+            calculationExpression: 'Math.round((risk_tolerance * 5) + (time_horizon * 2) + ((120 - age) / 2))',
           },
         },
         {
@@ -290,7 +290,7 @@ export const financeOsPack: PackData = {
           description: 'SEC Rule 501(a): income > $200k or net worth > $1M.',
           required: false,
           properties: {
-            calculationExpression: 'compliance.accreditedInvestor(annual_income, net_worth)',
+            calculationExpression: 'annual_income > 200000 || net_worth > 1000000 ? "Yes" : "No"',
           },
         },
         {
@@ -300,17 +300,7 @@ export const financeOsPack: PackData = {
           description: 'Equity:Bond:Cash ratio based on risk score.',
           required: false,
           properties: {
-            calculationExpression: 'finance.portfolioAllocation(risk_score)',
-          },
-        },
-        {
-          id: 'kyc_status',
-          type: 'calculated',
-          label: 'KYC Status',
-          required: false,
-          properties: {
-            calculationExpression:
-              'compliance.kycComplete(first_name, last_name, email, dob, ssn, address)',
+            calculationExpression: 'risk_score >= 70 ? "80/15/5" : risk_score >= 40 ? "60/30/10" : "30/50/20"',
           },
         },
         {
@@ -438,8 +428,7 @@ export const financeOsPack: PackData = {
           description: 'Weighted suitability score (1-100) based on age, income, net worth, tolerance, and horizon.',
           required: false,
           properties: {
-            calculationExpression:
-              'compliance.suitabilityScore(client_age, client_income, client_net_worth, loss_capacity, time_horizon)',
+            calculationExpression: 'Math.round((loss_capacity * 5) + (time_horizon * 2) + ((120 - client_age) / 2))',
           },
         },
         {
@@ -449,7 +438,7 @@ export const financeOsPack: PackData = {
           description: 'Validates that the selected portfolio type is suitable for this client\'s risk profile.',
           required: false,
           properties: {
-            calculationExpression: 'compliance.regBICheck(risk_profile_score, portfolio_type)',
+            calculationExpression: 'risk_profile_score >= 70 && (portfolio_type == "conservative" || portfolio_type == "moderate") ? "Review needed" : risk_profile_score < 30 && (portfolio_type == "aggressive" || portfolio_type == "speculative") ? "Review needed" : "Suitable"',
           },
         },
       ],
@@ -532,7 +521,7 @@ export const financeOsPack: PackData = {
           label: 'Estimated Transfer Fee',
           required: false,
           properties: {
-            calculationExpression: 'finance.transferFee(estimated_value, custodian)',
+            calculationExpression: '75',
           },
         },
         {
@@ -657,7 +646,7 @@ export const financeOsPack: PackData = {
           description: 'Tiered advisory fee based on current AUM.',
           required: false,
           properties: {
-            calculationExpression: 'finance.aumFee(current_aum)',
+            calculationExpression: 'current_aum <= 500000 ? (current_aum * 0.01) : current_aum <= 1000000 ? (current_aum * 0.0085) : (current_aum * 0.007)',
           },
         },
         {
@@ -753,7 +742,7 @@ export const financeOsPack: PackData = {
           label: 'Calculated Annual Fee',
           required: false,
           properties: {
-            calculationExpression: 'finance.aumFee(account_value)',
+            calculationExpression: 'account_value <= 500000 ? (account_value * 0.01) : account_value <= 1000000 ? (account_value * 0.0085) : (account_value * 0.007)',
           },
         },
         {
@@ -1031,16 +1020,6 @@ export const financeOsPack: PackData = {
           label: 'Primary Beneficiary 3 — Percentage',
           required: false,
           properties: { min: 0, max: 100, placeholder: '%' },
-        },
-        {
-          id: 'primary_nigo',
-          type: 'calculated',
-          label: 'Primary Beneficiary Completeness',
-          description: 'Lists any incomplete primary beneficiary fields (empty = all complete).',
-          required: false,
-          properties: {
-            calculationExpression: 'compliance.nigoCheck(primary_name_1, primary_relationship_1, primary_percentage_1)',
-          },
         },
         {
           id: 'contingent_name_1',

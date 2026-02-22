@@ -374,7 +374,7 @@ export const ohsQmsPack: PackData = {
           description: 'Likelihood x Consequence (1-25)',
           required: false,
           properties: {
-            calculationExpression: 'safety.riskMatrix(likelihood, consequence)',
+            calculationExpression: 'likelihood * consequence',
           },
         },
         {
@@ -384,7 +384,7 @@ export const ohsQmsPack: PackData = {
           description: 'Critical / High / Medium / Low based on risk score.',
           required: false,
           properties: {
-            calculationExpression: 'safety.riskLevel(risk_score)',
+            calculationExpression: 'risk_score >= 20 ? "Critical" : risk_score >= 12 ? "High" : risk_score >= 6 ? "Medium" : "Low"',
           },
         },
         {
@@ -417,7 +417,7 @@ export const ohsQmsPack: PackData = {
           description: 'Estimated risk after controls are applied.',
           required: false,
           properties: {
-            calculationExpression: 'safety.residualRisk(risk_score, control_type)',
+            calculationExpression: 'control_type == "elimination" ? 0 : control_type == "substitution" ? Math.round(risk_score * 0.3) : control_type == "engineering" ? Math.round(risk_score * 0.4) : control_type == "administrative" ? Math.round(risk_score * 0.6) : Math.round(risk_score * 0.8)',
           },
         },
         {
@@ -474,6 +474,30 @@ export const ohsQmsPack: PackData = {
               { id: 'other_src', label: 'Other', value: 'other' },
             ],
           },
+        },
+        {
+          id: 'source_incident',
+          type: 'linked_record',
+          label: 'Source Incident',
+          description: 'Link to the related incident report, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:incident-report' },
+        },
+        {
+          id: 'source_hazard',
+          type: 'linked_record',
+          label: 'Source Hazard',
+          description: 'Link to the related hazard identification, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:hazard-identification' },
+        },
+        {
+          id: 'source_audit',
+          type: 'linked_record',
+          label: 'Source Audit',
+          description: 'Link to the related audit report, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:audit-report' },
         },
         {
           id: 'priority',
@@ -680,6 +704,22 @@ export const ohsQmsPack: PackData = {
           properties: { placeholder: 'e.g. Audit #123, NCR #456' },
         },
         {
+          id: 'source_audit',
+          type: 'linked_record',
+          label: 'Source Audit',
+          description: 'Link to the related audit report, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:audit-report' },
+        },
+        {
+          id: 'source_incident',
+          type: 'linked_record',
+          label: 'Source Incident',
+          description: 'Link to the related incident report, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:incident-report' },
+        },
+        {
           id: 'raised_by',
           type: 'short_text',
           label: 'Raised By',
@@ -812,6 +852,14 @@ export const ohsQmsPack: PackData = {
               { id: 'other_src', label: 'Other', value: 'other' },
             ],
           },
+        },
+        {
+          id: 'source_audit',
+          type: 'linked_record',
+          label: 'Source Audit',
+          description: 'Link to the related audit report, if applicable.',
+          required: false,
+          properties: { targetFormId: '@pack:audit-report' },
         },
         {
           id: 'raised_by',
@@ -1211,17 +1259,6 @@ export const ohsQmsPack: PackData = {
           label: 'Approval Expiry Date',
           required: true,
           properties: {},
-        },
-        {
-          id: 'nigo_check',
-          type: 'calculated',
-          label: 'Completeness Check',
-          description: 'Lists any incomplete required fields (empty = all complete).',
-          required: false,
-          properties: {
-            calculationExpression:
-              'compliance.nigoCheck(business_name, abn, contact_name, contact_email, services)',
-          },
         },
       ],
     },
