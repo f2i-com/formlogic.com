@@ -200,8 +200,8 @@ class DocumentConverter
         );
         $this->executeWithTimeout($command);
 
-        // Find the generated PDF
-        $baseName = pathinfo($wordPath, PATHINFO_FILENAME);
+        // Find the generated PDF (sanitize basename to prevent path traversal)
+        $baseName = preg_replace('/[^a-zA-Z0-9._\-]/', '_', pathinfo($wordPath, PATHINFO_FILENAME));
         $pdfPath = $pdfDir . '/' . $baseName . '.pdf';
 
         if (!file_exists($pdfPath)) {

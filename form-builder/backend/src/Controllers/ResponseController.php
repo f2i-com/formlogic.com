@@ -180,6 +180,8 @@ class ResponseController
         $data['ipAddress'] = $this->getClientIp($request);
         $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500); // Limit length
         $data['referrer'] = substr($request->getHeaderLine('Referer'), 0, 2000); // Limit length
+        // Strip client-supplied fields that must be server-controlled
+        unset($data['submittedByUserId'], $data['status']);
 
         // Get the script from the form (if any)
         $script = $form['logicScript'] ?? null;

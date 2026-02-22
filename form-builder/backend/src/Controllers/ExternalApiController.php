@@ -99,6 +99,19 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is not accepting responses'], 403);
         }
 
+        // Check form closure and quota limits (same checks as public endpoint)
+        $settings = $form['settings'] ?? [];
+        if (!empty($settings['isClosed'])) {
+            $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
+            return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+        }
+        if (!empty($settings['quotaLimit'])) {
+            $responseCount = $this->responseService->getResponseCount($args['formId']);
+            if ($responseCount >= (int)$settings['quotaLimit']) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
+            }
+        }
+
         $data = $request->getParsedBody();
         $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
         if (!empty($validationErrors)) {
@@ -111,6 +124,8 @@ class ExternalApiController
 
         $data['ipAddress'] = $this->ipResolver->getClientIp($request);
         $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500);
+        // Strip client-supplied fields that must be server-controlled
+        unset($data['submittedByUserId'], $data['status']);
         $script = $form['logicScript'] ?? null;
 
         try {
@@ -146,6 +161,19 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is not accepting responses'], 403);
         }
 
+        // Check form closure and quota limits
+        $settings = $form['settings'] ?? [];
+        if (!empty($settings['isClosed'])) {
+            $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
+            return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+        }
+        if (!empty($settings['quotaLimit'])) {
+            $responseCount = $this->responseService->getResponseCount($args['formId']);
+            if ($responseCount >= (int)$settings['quotaLimit']) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
+            }
+        }
+
         $data = $request->getParsedBody();
         $items = $data['responses'] ?? [];
 
@@ -171,6 +199,8 @@ class ExternalApiController
 
             $item['ipAddress'] = $ip;
             $item['userAgent'] = $userAgent;
+            // Strip client-supplied fields that must be server-controlled
+            unset($item['submittedByUserId'], $item['status']);
 
             try {
                 $result = $this->responseService->createResponse($args['formId'], $item, $script);

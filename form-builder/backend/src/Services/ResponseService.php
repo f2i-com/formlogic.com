@@ -264,9 +264,10 @@ class ResponseService
         }
 
         // 2. Determine initial status (may be overridden by script)
-        $status = $data['status'] ?? 'submitted';
+        $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'];
+        $status = 'submitted'; // Always default to 'submitted' — ignore client-supplied status
         if ($scriptResult !== null && $scriptResult->success && $scriptResult->status !== null) {
-            $status = $scriptResult->status;
+            $status = in_array($scriptResult->status, $allowedStatuses, true) ? $scriptResult->status : 'submitted';
         }
 
         // 3. Insert into SQLite
