@@ -264,6 +264,7 @@ export const useFormStore = create<FormState>()(
               set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
               logger.error('Failed to create form on server:', result.error);
               toast.error('Failed to create form', typeof result.error === 'string' ? result.error : 'Please try again');
+              return form; // Return form so caller knows creation was attempted
             } else if (result.data) {
               // Update with server response (may have different ID)
               set((s) => ({
@@ -278,6 +279,7 @@ export const useFormStore = create<FormState>()(
             set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
             logger.error('Failed to create form on server:', error);
             toast.error('Failed to create form', 'Please check your connection and try again');
+            return form; // Return form so caller knows creation was attempted
           }
         }
 
@@ -377,6 +379,11 @@ export const useFormStore = create<FormState>()(
         if (state.storageMode === 'api') {
           try {
             const result = await api.duplicateForm(id);
+            if (result.error) {
+              set((s) => ({ forms: s.forms.filter((f) => f.id !== newForm.id) }));
+              toast.error('Failed to duplicate form', typeof result.error === 'string' ? result.error : 'Please try again');
+              return null;
+            }
             if (result.data) {
               set((s) => ({
                 forms: s.forms.map((f) =>
@@ -386,8 +393,10 @@ export const useFormStore = create<FormState>()(
               return result.data.form as Form;
             }
           } catch (error) {
+            set((s) => ({ forms: s.forms.filter((f) => f.id !== newForm.id) }));
             logger.error('Failed to duplicate form on server:', error);
             toast.error('Failed to duplicate form', 'Please try again');
+            return null;
           }
         }
 

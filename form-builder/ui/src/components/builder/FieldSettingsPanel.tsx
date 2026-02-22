@@ -104,7 +104,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                       value={option.label}
                       onChange={(e) => {
                         const newOptions = [...(field.properties.options || [])];
-                        newOptions[index] = { ...option, label: e.target.value, value: e.target.value };
+                        newOptions[index] = { ...option, label: e.target.value };
                         onUpdate({ properties: { ...field.properties, options: newOptions } });
                       }}
                       placeholder={`Option ${index + 1}`}

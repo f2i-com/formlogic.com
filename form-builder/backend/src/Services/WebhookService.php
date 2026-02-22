@@ -187,8 +187,12 @@ class WebhookService
                 throw new \RuntimeException('Webhook URL has no valid host');
             }
 
-            // Block known metadata endpoints and localhost
-            $blockedHosts = ['localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal', '0.0.0.0', '::1'];
+            // Block known metadata endpoints and localhost (including IPv4-mapped IPv6)
+            $blockedHosts = [
+                'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
+                '0.0.0.0', '::1', '::ffff:127.0.0.1', '::ffff:0:127.0.0.1',
+                '::ffff:169.254.169.254', '::ffff:0.0.0.0',
+            ];
             if (in_array(strtolower($host), $blockedHosts, true)) {
                 throw new \RuntimeException('Webhook URL host is not allowed');
             }
@@ -197,7 +201,12 @@ class WebhookService
             $resolvedIps = gethostbynamel($host);
             if ($resolvedIps !== false) {
                 foreach ($resolvedIps as $ip) {
-                    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    // Strip IPv4-mapped IPv6 prefix for validation
+                    $checkIp = $ip;
+                    if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
+                        $checkIp = $m[1];
+                    }
+                    if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                         throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
                     }
                 }

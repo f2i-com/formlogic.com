@@ -742,8 +742,8 @@ class FormLogicRuntime
             }
         }
 
-        // Add Bearer token if provided
-        if (isset($options['bearerToken']) && is_string($options['bearerToken'])) {
+        // Add Bearer token if provided (only if no Authorization header already set)
+        if (isset($options['bearerToken']) && is_string($options['bearerToken']) && !$this->hasHeader($headers, 'authorization')) {
             $headers[] = 'Authorization: Bearer ' . $options['bearerToken'];
         }
 

@@ -528,6 +528,13 @@ class AppPublicController
         if ($idsParam !== '') {
             $requestedIds = array_filter(array_map('trim', explode(',', $idsParam)), fn($id) => $id !== '');
             $matchedResponses = $this->responseService->getResponsesByIds($targetFormId, $requestedIds);
+            // Apply scope filtering: if user can only view own, filter out others' responses
+            if ($scope === 'own') {
+                $matchedResponses = array_filter($matchedResponses, function ($r) use ($userId) {
+                    return ($r['metadata']['submittedByUserId'] ?? null) === $userId;
+                });
+                $matchedResponses = array_values($matchedResponses);
+            }
             $totalCount = count($matchedResponses);
         } elseif ($searchQuery !== '') {
             // Push search to SQL via json_extract
