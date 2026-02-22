@@ -15,4 +15,6 @@ export { LinkedRecordSettings } from './LinkedRecordSettings';
 export { WebhookManager } from './WebhookManager';
 export { NigoDashboard } from './NigoDashboard';
 export { PackImportModal } from './PackImportModal';
+export { PackDetailView } from './PackDetailView';
+export { PublishPackDialog } from './PublishPackDialog';
 export { CsvImportWizard } from './CsvImportWizard';

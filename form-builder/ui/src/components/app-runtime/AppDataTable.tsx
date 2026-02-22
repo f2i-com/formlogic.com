@@ -9,7 +9,7 @@ import { cn } from '../../lib/utils';
 const MOBILE_PAGE_SIZE = 15;
 
 // Exclude non-data field types from columns
-const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you_screen', 'statement', 'signature', 'file_upload']);
+const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
 
 const MobileCardList = memo(function MobileCardList({
   responses,

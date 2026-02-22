@@ -96,5 +96,11 @@ return [
                 'image/webp',
             ],
         ],
+
+        'packs' => [
+            'storagePath' => __DIR__ . '/../storage/packs',
+            'maxZipSize' => 50 * 1024 * 1024, // 50MB
+            'allowedFileTypes' => ['application/zip', 'application/x-zip-compressed'],
+        ],
     ],
 ];

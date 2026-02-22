@@ -384,8 +384,8 @@ export function FormsList() {
         title="My Forms"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} title="Import Pack">
-              <span className="hidden sm:inline">Import Pack</span>
+            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} title="Manage Packs">
+              <span className="hidden sm:inline">Manage Packs</span>
             </Button>
             <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
               <span className="hidden sm:inline">New Form</span>

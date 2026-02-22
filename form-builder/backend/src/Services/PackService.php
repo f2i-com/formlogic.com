@@ -34,7 +34,7 @@ class PackService
      * @param string $userId   Authenticated user importing the pack
      * @return array { installationId, forms: [{id, title}], apps: [{id, name}] }
      */
-    public function importPack(array $packData, string $userId): array
+    public function importPack(array $packData, string $userId, ?string $catalogId = null, ?string $versionId = null): array
     {
         // Validate structure
         $this->validatePack($packData);
@@ -139,13 +139,15 @@ class PackService
             $installationId = $this->generateUuid();
             $meta = $packData['packMeta'];
             $stmt = $this->mysql->prepare("
-                INSERT INTO pack_installations (id, user_id, pack_id, pack_name, pack_version, pack_description, form_ids, app_ids)
-                VALUES (:id, :user_id, :pack_id, :pack_name, :pack_version, :pack_description, :form_ids, :app_ids)
+                INSERT INTO pack_installations (id, user_id, pack_id, catalog_id, version_id, pack_name, pack_version, pack_description, form_ids, app_ids)
+                VALUES (:id, :user_id, :pack_id, :catalog_id, :version_id, :pack_name, :pack_version, :pack_description, :form_ids, :app_ids)
             ");
             $stmt->execute([
                 'id' => $installationId,
                 'user_id' => $userId,
                 'pack_id' => $meta['id'] ?? $meta['name'] ?? 'custom',
+                'catalog_id' => $catalogId,
+                'version_id' => $versionId,
                 'pack_name' => $meta['name'] ?? 'Unknown Pack',
                 'pack_version' => $meta['version'] ?? '1.0.0',
                 'pack_description' => $meta['description'] ?? null,
@@ -185,7 +187,7 @@ class PackService
     public function getInstalledPacks(string $userId): array
     {
         $stmt = $this->mysql->prepare("
-            SELECT id, pack_id, pack_name, pack_version, pack_description,
+            SELECT id, pack_id, catalog_id, version_id, pack_name, pack_version, pack_description,
                    form_ids, app_ids, installed_at
             FROM pack_installations
             WHERE user_id = :user_id
@@ -206,6 +208,8 @@ class PackService
             $installations[] = [
                 'id' => $row['id'],
                 'packId' => $row['pack_id'],
+                'catalogId' => $row['catalog_id'] ?? null,
+                'versionId' => $row['version_id'] ?? null,
                 'packName' => $row['pack_name'],
                 'packVersion' => $row['pack_version'],
                 'packDescription' => $row['pack_description'],

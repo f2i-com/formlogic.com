@@ -236,7 +236,7 @@ export const financeOsAuPack: PackData = {
         },
         {
           id: 'thank_you',
-          type: 'thank_you_screen',
+          type: 'thank_you',
           label: 'Onboarding Complete',
           description:
             'Thank you for completing the onboarding form. Your adviser will review the information and reach out with next steps.',

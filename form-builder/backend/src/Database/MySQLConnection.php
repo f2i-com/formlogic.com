@@ -361,6 +361,66 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Pack catalog — marketplace registry
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_catalog (
+                id VARCHAR(36) PRIMARY KEY,
+                slug VARCHAR(100) NOT NULL UNIQUE,
+                publisher_id VARCHAR(36) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                icon VARCHAR(50),
+                tags JSON,
+                category VARCHAR(100),
+                visibility ENUM('public','private','unlisted') DEFAULT 'public',
+                status ENUM('draft','published','archived') DEFAULT 'draft',
+                download_count INT UNSIGNED DEFAULT 0,
+                avg_rating DECIMAL(3,2) DEFAULT 0,
+                rating_count INT UNSIGNED DEFAULT 0,
+                featured TINYINT(1) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (publisher_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_category (category),
+                INDEX idx_visibility_status (visibility, status),
+                INDEX idx_featured (featured)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Pack versions — versioned pack content
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_versions (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                version VARCHAR(50) NOT NULL,
+                changelog TEXT,
+                pack_data JSON NOT NULL,
+                file_path VARCHAR(500),
+                form_count INT UNSIGNED DEFAULT 0,
+                app_count INT UNSIGNED DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                UNIQUE KEY idx_catalog_version (catalog_id, version),
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Pack ratings — user reviews
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_ratings (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                rating TINYINT UNSIGNED NOT NULL,
+                review TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY idx_user_pack (catalog_id, user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // App invitations
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS app_invitations (
@@ -459,6 +519,72 @@ class MySQLConnection
                 INDEX idx_pack_id (pack_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Create pack_catalog table if it doesn't exist (marketplace)
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_catalog (
+                id VARCHAR(36) PRIMARY KEY,
+                slug VARCHAR(100) NOT NULL UNIQUE,
+                publisher_id VARCHAR(36) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                description TEXT,
+                icon VARCHAR(50),
+                tags JSON,
+                category VARCHAR(100),
+                visibility ENUM('public','private','unlisted') DEFAULT 'public',
+                status ENUM('draft','published','archived') DEFAULT 'draft',
+                download_count INT UNSIGNED DEFAULT 0,
+                avg_rating DECIMAL(3,2) DEFAULT 0,
+                rating_count INT UNSIGNED DEFAULT 0,
+                featured TINYINT(1) DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (publisher_id) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_category (category),
+                INDEX idx_visibility_status (visibility, status),
+                INDEX idx_featured (featured)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_versions (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                version VARCHAR(50) NOT NULL,
+                changelog TEXT,
+                pack_data JSON NOT NULL,
+                file_path VARCHAR(500),
+                form_count INT UNSIGNED DEFAULT 0,
+                app_count INT UNSIGNED DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                UNIQUE KEY idx_catalog_version (catalog_id, version),
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS pack_ratings (
+                id VARCHAR(36) PRIMARY KEY,
+                catalog_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                rating TINYINT UNSIGNED NOT NULL,
+                review TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (catalog_id) REFERENCES pack_catalog(id) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY idx_user_pack (catalog_id, user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Add catalog_id and version_id columns to pack_installations if they don't exist
+        $result = $pdo->query("SHOW COLUMNS FROM pack_installations LIKE 'catalog_id'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_installations ADD COLUMN catalog_id VARCHAR(36) DEFAULT NULL AFTER pack_id");
+            $pdo->exec("ALTER TABLE pack_installations ADD COLUMN version_id VARCHAR(36) DEFAULT NULL AFTER catalog_id");
+            $pdo->exec("ALTER TABLE pack_installations ADD INDEX idx_catalog (catalog_id)");
+        }
 
         // Create api_keys table
         $pdo->exec("

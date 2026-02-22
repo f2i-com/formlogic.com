@@ -39,7 +39,12 @@ use FormLogic\Controllers\AppUserController;
 use FormLogic\Controllers\AppPublicController;
 use FormLogic\Controllers\WebhookController;
 use FormLogic\Services\PackService;
+use FormLogic\Services\PackCatalogService;
+use FormLogic\Services\PackFileService;
+use FormLogic\Services\PackRatingService;
 use FormLogic\Controllers\PackController;
+use FormLogic\Controllers\PackCatalogController;
+use FormLogic\Controllers\PackRatingController;
 use FormLogic\Services\ApiKeyService;
 use FormLogic\Controllers\ApiKeyController;
 use FormLogic\Controllers\ExternalApiController;
@@ -234,6 +239,35 @@ $container->set(PackService::class, function (Container $c) {
 $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
+        $c->get(AuditService::class)
+    );
+});
+
+// Pack marketplace services
+$container->set(PackCatalogService::class, function (Container $c) {
+    return new PackCatalogService($c->get(MySQLConnection::class));
+});
+
+$container->set(PackFileService::class, function (Container $c) {
+    return new PackFileService($c->get('settings')['packs'] ?? []);
+});
+
+$container->set(PackRatingService::class, function (Container $c) {
+    return new PackRatingService($c->get(MySQLConnection::class));
+});
+
+$container->set(PackCatalogController::class, function (Container $c) {
+    return new PackCatalogController(
+        $c->get(PackCatalogService::class),
+        $c->get(PackFileService::class),
+        $c->get(AuditService::class)
+    );
+});
+
+$container->set(PackRatingController::class, function (Container $c) {
+    return new PackRatingController(
+        $c->get(PackRatingService::class),
+        $c->get(PackCatalogService::class),
         $c->get(AuditService::class)
     );
 });
@@ -625,6 +659,60 @@ $app->get('/api/packs/installed', function ($request, $response) use ($container
 
 $app->delete('/api/packs/{installationId}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackController::class)->uninstall($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Pack Marketplace routes (must register /mine and /upload before /{slug})
+$app->get('/api/packs/catalog/mine', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->myPacks($request, $response);
+})->add($authRequired);
+
+$app->get('/api/packs/catalog', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->browse($request, $response);
+})->add($authOptional);
+
+$app->post('/api/packs/catalog', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->publish($request, $response);
+})->add($authRequired);
+
+$app->post('/api/packs/catalog/upload', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->uploadZip($request, $response);
+})->add($authRequired);
+
+$app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->seed($request, $response);
+})->add($authRequired);
+
+$app->get('/api/packs/catalog/{slug}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackCatalogController::class)->detail($request, $response, $getArgs($request));
+})->add($authOptional);
+
+$app->get('/api/packs/catalog/{slug}/download', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackCatalogController::class)->download($request, $response, $getArgs($request));
+})->add($authOptional);
+
+$app->post('/api/packs/catalog/{slug}/versions', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackCatalogController::class)->publishVersion($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->put('/api/packs/catalog/{slug}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackCatalogController::class)->update($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->delete('/api/packs/catalog/{slug}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackCatalogController::class)->archive($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Pack ratings
+$app->post('/api/packs/catalog/{slug}/ratings', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackRatingController::class)->rate($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->get('/api/packs/catalog/{slug}/ratings', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackRatingController::class)->listRatings($request, $response, $getArgs($request));
+})->add($authOptional);
+
+$app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackRatingController::class)->deleteRating($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // API Key management routes (cookie auth, protected, rate limited)

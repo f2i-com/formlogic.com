@@ -521,7 +521,7 @@ export function Dashboard() {
             />
             <QuickActionButton
               icon={Package}
-              label="Import Pack"
+              label="Manage Packs"
               onClick={() => setShowPackImport(true)}
             />
             <QuickActionButton

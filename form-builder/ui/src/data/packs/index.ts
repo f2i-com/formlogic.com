@@ -2,6 +2,9 @@ import type { PackData } from '../../lib/api';
 import { financeOsPack } from './financeOsPack';
 import { financeOsAuPack } from './financeOsAuPack';
 import { ohsQmsPack } from './ohsQmsPack';
+import { hrPeoplePack } from './hrPeoplePack';
+import { eventManagementPack } from './eventManagementPack';
+import { customerServicePack } from './customerServicePack';
 
 export interface PackCatalogEntry {
   id: string;
@@ -47,5 +50,38 @@ export const packCatalog: PackCatalogEntry[] = [
     appCount: ohsQmsPack.apps?.length ?? 0,
     icon: '\u26D1\uFE0F', // ⛑️
     pack: ohsQmsPack as unknown as PackData,
+  },
+  {
+    id: 'hr-people',
+    name: 'HR & People Management',
+    description:
+      'Complete human resources workflow covering recruitment, onboarding, leave management, performance reviews, expense claims, training requests, and exit interviews. Includes 8 forms and 1 app.',
+    tags: ['hr', 'people', 'recruitment', 'onboarding', 'leave', 'performance'],
+    formCount: hrPeoplePack.forms.length,
+    appCount: hrPeoplePack.apps?.length ?? 0,
+    icon: '\uD83D\uDC65', // 👥
+    pack: hrPeoplePack as unknown as PackData,
+  },
+  {
+    id: 'event-management',
+    name: 'Event Management',
+    description:
+      'Complete event management workflow covering registration, speaker submissions, vendor applications, volunteer coordination, incident logging, budget tracking, and post-event feedback. Includes 7 forms and 1 app.',
+    tags: ['events', 'registration', 'speakers', 'vendors', 'volunteers', 'feedback'],
+    formCount: eventManagementPack.forms.length,
+    appCount: eventManagementPack.apps?.length ?? 0,
+    icon: '\uD83C\uDF89', // 🎉
+    pack: eventManagementPack as unknown as PackData,
+  },
+  {
+    id: 'customer-service',
+    name: 'Customer Service',
+    description:
+      'Complete customer service and support workflow covering support tickets, bug reports, feature requests, customer feedback, refund requests, escalation management, and knowledge base. Includes 7 forms and 1 app.',
+    tags: ['customer-service', 'support', 'crm', 'tickets', 'feedback', 'helpdesk'],
+    formCount: customerServicePack.forms.length,
+    appCount: customerServicePack.apps?.length ?? 0,
+    icon: '\uD83C\uDFA7', // 🎧
+    pack: customerServicePack as unknown as PackData,
   },
 ];

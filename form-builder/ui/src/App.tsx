@@ -51,6 +51,10 @@ const AppRelationsManager = lazyWithRetry(() => import('./pages/apps/AppRelation
 // Lazy load app runtime
 const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppRuntimeRoot').then(m => ({ default: m.AppRuntimeRoot })));
 
+// Lazy load pack marketplace pages
+const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
+const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
+
 /** Error boundary that auto-resets when the user navigates to a different route */
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -149,6 +153,9 @@ function AppRoutes() {
         <Route path="/signup" element={<Signup />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
+        {/* Pack marketplace (public) */}
+        <Route path="/packs" element={<PackGalleryPage />} />
+        <Route path="/packs/:slug" element={<PackDetailPage />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -187,6 +194,10 @@ function AppRoutes() {
 
       {/* Preview route (full screen) */}
       <Route path="/preview/:formId" element={<FormPreview />} />
+
+      {/* Pack marketplace */}
+      <Route path="/packs" element={<PackGalleryPage />} />
+      <Route path="/packs/:slug" element={<PackDetailPage />} />
 
       {/* Public form response route */}
       <Route path="/form/:formId" element={<FormResponse />} />

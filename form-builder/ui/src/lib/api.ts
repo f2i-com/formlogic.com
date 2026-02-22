@@ -720,6 +720,110 @@ class ApiClient {
     });
   }
 
+  // Pack Marketplace
+  async browsePacks(params?: { search?: string; category?: string; tag?: string; sort?: string; page?: number; limit?: number }): Promise<ApiResponse<PackCatalogBrowseResult>> {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.tag) qs.set('tag', params.tag);
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return this.request(`/packs/catalog${q ? `?${q}` : ''}`);
+  }
+
+  async getPackDetail(slug: string): Promise<ApiResponse<{ pack: CatalogPack & { versions: PackVersionInfo[] } }>> {
+    return this.request(`/packs/catalog/${slug}`);
+  }
+
+  async publishPack(data: { pack: PackData; name: string; description?: string; tags?: string[]; icon?: string; category?: string; visibility?: string; version?: string; changelog?: string; slug?: string }): Promise<ApiResponse<{ success: boolean; catalogId: string; versionId: string; slug: string }>> {
+    return this.request('/packs/catalog', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async publishPackVersion(slug: string, data: { pack: PackData; version: string; changelog?: string }): Promise<ApiResponse<{ success: boolean; versionId: string; version: string }>> {
+    return this.request(`/packs/catalog/${slug}/versions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updatePackMeta(slug: string, meta: Partial<{ name: string; description: string; icon: string; tags: string[]; category: string; visibility: string }>): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/packs/catalog/${slug}`, {
+      method: 'PUT',
+      body: JSON.stringify(meta),
+    });
+  }
+
+  async archivePack(slug: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/packs/catalog/${slug}`, { method: 'DELETE' });
+  }
+
+  async getMyPacks(): Promise<ApiResponse<{ packs: CatalogPack[] }>> {
+    return this.request('/packs/catalog/mine');
+  }
+
+  async downloadPack(slug: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string; versionId: string }>> {
+    return this.request(`/packs/catalog/${slug}/download`);
+  }
+
+  async uploadPackZip(file: File): Promise<ApiResponse<{ success: boolean; pack: PackData; formCount: number; appCount: number }>> {
+    const url = `${this.baseUrl}/packs/catalog/upload`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        fetchHeaders['X-CSRF-Token'] = csrfToken;
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to upload pack' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  async seedPacks(packs: Array<{ name: string; description?: string; icon?: string; tags?: string[]; category?: string; pack: PackData }>): Promise<ApiResponse<{ success: boolean; seeded: number }>> {
+    return this.request('/packs/catalog/seed', {
+      method: 'POST',
+      body: JSON.stringify({ packs }),
+    });
+  }
+
+  // Pack Ratings
+  async ratePack(slug: string, rating: number, review?: string): Promise<ApiResponse<{ success: boolean; rating: { id: string; rating: number; review: string | null } }>> {
+    return this.request(`/packs/catalog/${slug}/ratings`, {
+      method: 'POST',
+      body: JSON.stringify({ rating, review }),
+    });
+  }
+
+  async getPackRatings(slug: string, page?: number): Promise<ApiResponse<PackRatingsResult>> {
+    const qs = page ? `?page=${page}` : '';
+    return this.request(`/packs/catalog/${slug}/ratings${qs}`);
+  }
+
+  async deletePackRating(slug: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/packs/catalog/${slug}/ratings`, { method: 'DELETE' });
+  }
+
   // CSV import
   async parseImportCsv(formId: string, file: File): Promise<ApiResponse<CsvParseResult>> {
     const url = `${this.baseUrl}/forms/${formId}/responses/import`;
@@ -963,6 +1067,8 @@ interface PackImportResult {
 interface PackInstallation {
   id: string;
   packId: string;
+  catalogId: string | null;
+  versionId: string | null;
   packName: string;
   packVersion: string;
   packDescription: string | null;
@@ -973,6 +1079,64 @@ interface PackInstallation {
   formIds: string[];
   appIds: string[];
   installedAt: string;
+}
+
+interface CatalogPack {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  tags: string[];
+  category: string | null;
+  visibility: string;
+  status: string;
+  downloadCount: number;
+  avgRating: number;
+  ratingCount: number;
+  featured: boolean;
+  publisherId: string;
+  publisherName: string | null;
+  latestVersion: string | null;
+  formCount: number;
+  appCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PackVersionInfo {
+  id: string;
+  version: string;
+  changelog: string | null;
+  form_count: number;
+  app_count: number;
+  created_at: string;
+}
+
+interface PackCatalogBrowseResult {
+  packs: CatalogPack[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+interface PackRatingEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  rating: number;
+  review: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PackRatingsResult {
+  ratings: PackRatingEntry[];
+  total: number;
+  page: number;
+  totalPages: number;
+  userRating: { rating: number; review: string | null } | null;
 }
 
 interface PackUninstallResult {
@@ -1022,4 +1186,4 @@ interface ApiKeyCreated extends ApiKey {
 export const api = new ApiClient(API_BASE_URL);
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackRatingEntry, PackRatingsResult };
