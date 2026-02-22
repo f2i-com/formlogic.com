@@ -771,9 +771,9 @@ class ResponseService
                     $row[] = $value;
                 }
 
-                // Prevent CSV formula injection
+                // Prevent CSV formula injection (also check after trimming whitespace/tabs)
                 foreach ($row as &$cell) {
-                    if (is_string($cell) && preg_match('/^[=+\-@]/', $cell)) {
+                    if (is_string($cell) && preg_match('/^\s*[=+\-@\t\r]/', $cell)) {
                         $cell = "'" . $cell;
                     }
                 }

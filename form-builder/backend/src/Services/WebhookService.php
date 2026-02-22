@@ -190,8 +190,8 @@ class WebhookService
             // Block known metadata endpoints and localhost (including IPv4-mapped IPv6)
             $blockedHosts = [
                 'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
-                '0.0.0.0', '::1', '::ffff:127.0.0.1', '::ffff:0:127.0.0.1',
-                '::ffff:169.254.169.254', '::ffff:0.0.0.0',
+                'metadata.azure.internal', '0.0.0.0', '::1', '::ffff:127.0.0.1',
+                '::ffff:0:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
             ];
             if (in_array(strtolower($host), $blockedHosts, true)) {
                 throw new \RuntimeException('Webhook URL host is not allowed');
