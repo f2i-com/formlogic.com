@@ -17,7 +17,7 @@ class FileStorageService
         $this->allowedTypes = $config['allowedTypes'] ?? [];
 
         if (!is_dir($this->storagePath)) {
-            mkdir($this->storagePath, 0755, true);
+            mkdir($this->storagePath, 0700, true);
         }
     }
 
@@ -59,7 +59,7 @@ class FileStorageService
         // Create form directory
         $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
         if (!is_dir($formDir)) {
-            mkdir($formDir, 0755, true);
+            mkdir($formDir, 0700, true);
         }
 
         // Generate unique file ID and safe stored filename
@@ -90,13 +90,20 @@ class FileStorageService
      */
     public function getFilePath(string $formId, string $fileId): ?string
     {
+        if ($this->sanitizeId($formId) === '' || $this->sanitizeId($fileId) === '') {
+            return null;
+        }
         $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
         if (!is_dir($formDir)) {
             return null;
         }
 
         // Find the file by ID prefix
-        $pattern = $formDir . '/' . $this->sanitizeId($fileId) . '.*';
+        $safeFileId = $this->sanitizeId($fileId);
+        if ($safeFileId === '') {
+            return null;
+        }
+        $pattern = $formDir . '/' . $safeFileId . '.*';
         $matches = glob($pattern);
         if (empty($matches)) {
             // Try exact match (no extension)
@@ -134,11 +141,14 @@ class FileStorageService
      */
     public function deleteFormFiles(string $formId): void
     {
+        if ($this->sanitizeId($formId) === '') {
+            return;
+        }
         $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
         if (is_dir($formDir)) {
             $files = glob($formDir . '/*');
             foreach ($files as $file) {
-                if (is_file($file)) {
+                if (is_file($file) && !is_link($file)) {
                     unlink($file);
                 }
             }

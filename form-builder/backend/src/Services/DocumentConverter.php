@@ -25,7 +25,7 @@ class DocumentConverter
         $this->commandTimeoutSeconds = 60; // Maximum time for any command
 
         if (!is_dir($this->tempDir)) {
-            mkdir($this->tempDir, 0755, true);
+            mkdir($this->tempDir, 0700, true);
         }
     }
 
@@ -288,7 +288,7 @@ class DocumentConverter
         $now = time();
 
         foreach ($files as $file) {
-            if (is_file($file) && ($now - filemtime($file)) > $maxAgeSeconds) {
+            if (is_file($file) && !is_link($file) && ($now - filemtime($file)) > $maxAgeSeconds) {
                 unlink($file);
             }
         }
