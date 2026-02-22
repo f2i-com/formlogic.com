@@ -825,6 +825,7 @@ export default function FormPreview() {
           style={{
             backgroundColor: form.theme.backgroundColor,
             color: form.theme.textColor,
+            fontFamily: form.theme.fontFamily,
           }}
         >
           {visibleFields.length === 0 ? (

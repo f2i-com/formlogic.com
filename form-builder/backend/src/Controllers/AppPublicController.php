@@ -379,6 +379,22 @@ class AppPublicController
         }
 
         $data = $request->getParsedBody();
+
+        // Validate answers against form fields if answers are being updated
+        if (isset($data['answers'])) {
+            $form = $this->formService->getForm($formId);
+            if ($form) {
+                $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
+                if (!empty($validationErrors)) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'message' => 'Validation failed',
+                        'errors' => $validationErrors,
+                    ], 400);
+                }
+            }
+        }
+
         $updated = $this->appResponseService->updateResponse($formId, $responseId, $data);
 
         if (!$updated) {
@@ -431,7 +447,7 @@ class AppPublicController
         }
         $app = $this->appService->getAppBySlug($slug);
 
-        if (!$app) {
+        if (!$app || $app['status'] !== 'published') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 

@@ -504,10 +504,16 @@ class ResponseService
         $stmt->execute(['id' => $responseId]);
         $deleted = $stmt->rowCount() > 0;
 
-        // Delete from MySQL metadata
+        // Delete from MySQL metadata and clean up response_links
         if ($deleted) {
             $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id");
             $mysqlStmt->execute(['id' => $responseId]);
+
+            // Clean up response_links referencing this response
+            $linkStmt = $this->mysql->prepare(
+                "DELETE FROM response_links WHERE source_response_id = :id1 OR target_response_id = :id2"
+            );
+            $linkStmt->execute(['id1' => $responseId, 'id2' => $responseId]);
 
             // Dispatch webhook
             if ($this->webhookService !== null) {

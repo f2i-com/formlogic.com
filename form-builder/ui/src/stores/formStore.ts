@@ -533,6 +533,10 @@ export const useFormStore = create<FormState>()(
               ? { searchFieldIds: [...field.properties.searchFieldIds] }
               : {}),
           },
+          // Deep copy validation rules to avoid shared mutable references
+          validation: field.validation?.map((v) => ({ ...v })),
+          // Deep copy conditional logic
+          conditionalLogic: field.conditionalLogic ? { ...field.conditionalLogic } : undefined,
         };
 
         // Insert the new field right after the original

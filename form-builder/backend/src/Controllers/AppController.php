@@ -40,6 +40,34 @@ class AppController
         return $app;
     }
 
+    /**
+     * Authorize access for owner OR member (for read-only endpoints like show)
+     */
+    private function authorizeAppAccess(Request $request, string $appId): ?array
+    {
+        $app = $this->appService->getApp($appId);
+        if (!$app) {
+            return null;
+        }
+
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return null;
+        }
+
+        // Allow if owner
+        if ($app['ownerId'] === $userId) {
+            return $app;
+        }
+
+        // Allow if app member
+        if ($this->appService->isAppMember($appId, $userId)) {
+            return $app;
+        }
+
+        return null;
+    }
+
     public function index(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
@@ -77,7 +105,7 @@ class AppController
 
     public function show(Request $request, Response $response, array $args): Response
     {
-        $app = $this->authorizeAppOwnership($request, $args['id']);
+        $app = $this->authorizeAppAccess($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }

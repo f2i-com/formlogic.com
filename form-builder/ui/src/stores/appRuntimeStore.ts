@@ -62,7 +62,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         };
         api.onSessionExpired(_appRuntimeSessionCallback);
 
-        set({ isLoading: true, error: null, appSlug });
+        set({ isLoading: true, error: null, appSlug, config: null, permissions: null, roleName: null, activeFormId: null });
         try {
           const result = await api.getAppRuntime(appSlug);
           if (result.error) {

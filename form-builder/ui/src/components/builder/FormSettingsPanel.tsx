@@ -208,12 +208,12 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
                     <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Response Quota (optional)</label>
                     <Input
                       type="number"
-                      min={0}
+                      min={1}
                       value={editedSettings.quotaLimit || ''}
                       onChange={(e) => {
                         if (!e.target.value) { updateSettings({ quotaLimit: undefined }); return; }
                         const val = parseInt(e.target.value);
-                        updateSettings({ quotaLimit: isNaN(val) ? undefined : Math.max(0, val) });
+                        updateSettings({ quotaLimit: isNaN(val) ? undefined : Math.max(1, val) });
                       }}
                       placeholder="Unlimited"
                     />

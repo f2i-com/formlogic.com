@@ -50,6 +50,16 @@ class AppService
         return App::fromArray($row)->toArray();
     }
 
+    /**
+     * Check if a user is a member of an app (via app_users table)
+     */
+    public function isAppMember(string $appId, string $userId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM app_users WHERE app_id = :app_id AND user_id = :user_id LIMIT 1");
+        $stmt->execute(['app_id' => $appId, 'user_id' => $userId]);
+        return (bool) $stmt->fetch();
+    }
+
     public function getAppBySlug(string $slug): ?array
     {
         $stmt = $this->mysql->prepare("SELECT * FROM apps WHERE slug = :slug");

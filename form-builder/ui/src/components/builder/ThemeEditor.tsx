@@ -173,7 +173,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   const handleReset = () => {
     const defaultPreset = THEME_PRESETS.find((p) => p.id === 'default');
     if (defaultPreset) {
-      setEditedTheme({ ...defaultPreset.theme });
+      setEditedTheme({ ...defaultPreset.theme, logo: editedTheme.logo, backgroundImage: editedTheme.backgroundImage });
       setActivePreset('default');
     }
   };
