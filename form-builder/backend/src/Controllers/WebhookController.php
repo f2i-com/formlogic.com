@@ -111,7 +111,10 @@ class WebhookController
             }
         }
 
-        $updated = $this->webhookService->updateWebhook($webhookId, $data);
+        // Only allow known fields to prevent mass-assignment
+        $allowedFields = ['url', 'events', 'is_active', 'description'];
+        $filtered = array_intersect_key($data, array_flip($allowedFields));
+        $updated = $this->webhookService->updateWebhook($webhookId, $filtered);
         return $this->jsonResponse($response, ['webhook' => $updated]);
     }
 

@@ -242,7 +242,7 @@ class ResponseController
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you'], true)) {
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
                 continue;
             }
 
@@ -553,7 +553,7 @@ class ResponseController
 
         return $response
             ->withBody($body)
-            ->withHeader('Content-Type', 'text/csv')
+            ->withHeader('Content-Type', 'text/csv; charset=utf-8')
             ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }
 

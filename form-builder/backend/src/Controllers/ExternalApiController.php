@@ -374,6 +374,10 @@ class ExternalApiController
             if (!filter_var($data['url'], FILTER_VALIDATE_URL)) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'A valid URL is required'], 400);
             }
+            $scheme = parse_url($data['url'], PHP_URL_SCHEME);
+            if ($scheme !== 'https' && $scheme !== 'http') {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
+            }
         }
 
         if (isset($data['events'])) {
@@ -388,7 +392,10 @@ class ExternalApiController
             }
         }
 
-        $updated = $this->webhookService->updateWebhook($args['webhookId'], $data);
+        // Only allow known fields to prevent mass-assignment
+        $allowedFields = ['url', 'events', 'is_active', 'description'];
+        $filtered = array_intersect_key($data, array_flip($allowedFields));
+        $updated = $this->webhookService->updateWebhook($args['webhookId'], $filtered);
         return $this->jsonResponse($response, ['webhook' => $updated]);
     }
 

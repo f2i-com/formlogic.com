@@ -990,11 +990,47 @@ export default function FormResponse() {
     setFieldError(null);
     setSubmitError(null);
 
-    if (currentField && getFieldRequired(currentField)) {
+    if (currentField) {
       const answer = currentAnswers[currentField.id];
-      if (answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
-        setFieldError('This field is required');
-        return;
+
+      // Check required
+      if (getFieldRequired(currentField)) {
+        if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
+          setFieldError('This field is required');
+          return;
+        }
+      }
+
+      // Run field validation rules (minLength, maxLength, pattern, min, max)
+      if (answer !== undefined && answer !== null && answer !== '' && currentField.validation?.length) {
+        for (const rule of currentField.validation) {
+          if (rule.type === 'minLength' && typeof answer === 'string' && answer.length < (rule.value as number)) {
+            setFieldError(rule.message || `Minimum ${rule.value} characters required`);
+            return;
+          }
+          if (rule.type === 'maxLength' && typeof answer === 'string' && answer.length > (rule.value as number)) {
+            setFieldError(rule.message || `Maximum ${rule.value} characters allowed`);
+            return;
+          }
+          if (rule.type === 'min' && typeof answer === 'number' && answer < (rule.value as number)) {
+            setFieldError(rule.message || `Minimum value is ${rule.value}`);
+            return;
+          }
+          if (rule.type === 'max' && typeof answer === 'number' && answer > (rule.value as number)) {
+            setFieldError(rule.message || `Maximum value is ${rule.value}`);
+            return;
+          }
+          if (rule.type === 'pattern' && typeof answer === 'string') {
+            try {
+              if (!new RegExp(rule.value as string).test(answer)) {
+                setFieldError(rule.message || 'Invalid format');
+                return;
+              }
+            } catch {
+              // Invalid regex pattern, skip
+            }
+          }
+        }
       }
     }
 
@@ -1021,12 +1057,50 @@ export default function FormResponse() {
       if (!getFieldRequired(f)) return false;
       if (['statement', 'calculated'].includes(f.type)) return false;
       const answer = currentAnswers[f.id];
-      return answer === undefined || answer === '' || (Array.isArray(answer) && answer.length === 0);
+      return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
     });
     if (missingFields.length > 0) {
       setSubmitError(`Please fill in all required fields (${missingFields.length} remaining)`);
       return;
     }
+
+    // Run field validation rules
+    for (const f of visibleFields) {
+      if (['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(f.type)) continue;
+      const answer = currentAnswers[f.id];
+      if (answer === undefined || answer === null || answer === '') continue;
+      if (f.validation?.length) {
+        for (const rule of f.validation) {
+          if (rule.type === 'minLength' && typeof answer === 'string' && answer.length < (rule.value as number)) {
+            setSubmitError(`${f.label}: ${rule.message || `Minimum ${rule.value} characters required`}`);
+            return;
+          }
+          if (rule.type === 'maxLength' && typeof answer === 'string' && answer.length > (rule.value as number)) {
+            setSubmitError(`${f.label}: ${rule.message || `Maximum ${rule.value} characters allowed`}`);
+            return;
+          }
+          if (rule.type === 'min' && typeof answer === 'number' && answer < (rule.value as number)) {
+            setSubmitError(`${f.label}: ${rule.message || `Minimum value is ${rule.value}`}`);
+            return;
+          }
+          if (rule.type === 'max' && typeof answer === 'number' && answer > (rule.value as number)) {
+            setSubmitError(`${f.label}: ${rule.message || `Maximum value is ${rule.value}`}`);
+            return;
+          }
+          if (rule.type === 'pattern' && typeof answer === 'string') {
+            try {
+              if (!new RegExp(rule.value as string).test(answer)) {
+                setSubmitError(`${f.label}: ${rule.message || 'Invalid format'}`);
+                return;
+              }
+            } catch {
+              // Invalid regex pattern, skip
+            }
+          }
+        }
+      }
+    }
+
     handleSubmit();
   };
 

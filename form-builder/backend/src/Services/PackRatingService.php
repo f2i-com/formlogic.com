@@ -32,31 +32,24 @@ class PackRatingService
             throw new \RuntimeException('Pack not found');
         }
 
-        // Upsert
+        // Atomic upsert to prevent race conditions with concurrent requests
+        $ratingId = $this->generateUuid();
+        $stmt = $this->mysql->prepare("
+            INSERT INTO pack_ratings (id, catalog_id, user_id, rating, review)
+            VALUES (:id, :catalog_id, :user_id, :rating, :review)
+            ON DUPLICATE KEY UPDATE rating = VALUES(rating), review = VALUES(review), updated_at = CURRENT_TIMESTAMP
+        ");
+        $stmt->execute([
+            'id' => $ratingId,
+            'catalog_id' => $catalogId,
+            'user_id' => $userId,
+            'rating' => $rating,
+            'review' => $review,
+        ]);
+
+        // Retrieve the actual ID (may differ if it was an update)
         $existing = $this->getUserRating($catalogId, $userId);
-
-        if ($existing) {
-            $stmt = $this->mysql->prepare("
-                UPDATE pack_ratings SET rating = :rating, review = :review WHERE id = :id
-            ");
-            $stmt->execute(['rating' => $rating, 'review' => $review, 'id' => $existing['id']]);
-            $ratingId = $existing['id'];
-        } else {
-            $ratingId = $this->generateUuid();
-            $stmt = $this->mysql->prepare("
-                INSERT INTO pack_ratings (id, catalog_id, user_id, rating, review)
-                VALUES (:id, :catalog_id, :user_id, :rating, :review)
-            ");
-            $stmt->execute([
-                'id' => $ratingId,
-                'catalog_id' => $catalogId,
-                'user_id' => $userId,
-                'rating' => $rating,
-                'review' => $review,
-            ]);
-        }
-
-        return ['id' => $ratingId, 'rating' => $rating, 'review' => $review];
+        return ['id' => $existing['id'] ?? $ratingId, 'rating' => $rating, 'review' => $review];
     }
 
     /**

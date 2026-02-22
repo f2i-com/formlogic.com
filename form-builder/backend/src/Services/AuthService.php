@@ -310,19 +310,20 @@ class AuthService
                 return null;
             }
 
-            // Validate issuer if configured
+            // Validate issuer (must be present and match)
             $expectedIssuer = $this->jwtConfig['issuer'] ?? 'formlogic';
-            if (isset($decoded->iss) && $decoded->iss !== $expectedIssuer) {
+            if (!isset($decoded->iss) || $decoded->iss !== $expectedIssuer) {
                 return null;
             }
 
-            // Validate audience if configured
+            // Validate audience (must be present and match)
             $expectedAudience = $this->jwtConfig['audience'] ?? 'formlogic-api';
-            if (isset($decoded->aud)) {
-                $audiences = is_array($decoded->aud) ? $decoded->aud : [$decoded->aud];
-                if (!in_array($expectedAudience, $audiences, true)) {
-                    return null;
-                }
+            if (!isset($decoded->aud)) {
+                return null;
+            }
+            $audiences = is_array($decoded->aud) ? $decoded->aud : [$decoded->aud];
+            if (!in_array($expectedAudience, $audiences, true)) {
+                return null;
             }
 
             return $this->getUserById($decoded->sub);
@@ -383,6 +384,20 @@ class AuthService
         }
 
         if (isset($data['password'])) {
+            // Require current password verification before allowing change
+            if (!isset($data['currentPassword'])) {
+                throw new \RuntimeException('Current password is required to set a new password');
+            }
+            $currentUser = $this->getUserById($userId);
+            if (!$currentUser) {
+                throw new \RuntimeException('User not found');
+            }
+            $stmt = $this->mysql->prepare("SELECT password_hash FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            $row = $stmt->fetch();
+            if (!$row || !password_verify($data['currentPassword'], $row['password_hash'])) {
+                throw new \RuntimeException('Current password is incorrect');
+            }
             $updates[] = "password_hash = :password_hash";
             $params['password_hash'] = password_hash($data['password'], PASSWORD_BCRYPT);
         }

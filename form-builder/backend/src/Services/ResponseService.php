@@ -674,6 +674,9 @@ class ResponseService
             }
         }
 
+        // Write UTF-8 BOM so Excel correctly interprets Unicode characters
+        fwrite($outputStream, "\xEF\xBB\xBF");
+
         // Header row
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {

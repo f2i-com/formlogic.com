@@ -37,14 +37,16 @@ export const useToastStore = create<ToastState>((set) => ({
       toasts: [...state.toasts, newToast],
     }));
 
-    // Auto-remove after duration
+    // Auto-remove after duration + animation buffer (150ms)
+    // The Toast component also has its own timer that triggers the exit animation,
+    // so this acts as a fallback cleanup in case the component unmounts without cleanup.
     if (newToast.duration && newToast.duration > 0) {
       const timeoutId = setTimeout(() => {
         timeoutMap.delete(id);
         set((state) => ({
           toasts: state.toasts.filter((t) => t.id !== id),
         }));
-      }, newToast.duration);
+      }, newToast.duration + 200);
       timeoutMap.set(id, timeoutId);
     }
   },

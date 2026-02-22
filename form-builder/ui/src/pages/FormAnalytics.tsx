@@ -278,12 +278,13 @@ export default function FormAnalytics() {
       }
 
       const escapeCell = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
-      const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...form.fields.map((f) => f.label)];
+      const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+      const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...inputFields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
         r.id,
         new Date(r.submittedAt).toLocaleString(),
         Math.round(r.completionTime / 1000),
-        ...form.fields.map((f) => {
+        ...inputFields.map((f) => {
           const v = r.answers[f.id];
           return Array.isArray(v) ? v.map(item => typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item)).join(', ') : (v ?? '');
         }),

@@ -280,9 +280,11 @@ class FormService
 
         $updatedForm = $this->getForm($formId);
 
-        // Dispatch webhook when form is published
+        // Dispatch webhook when form is published (strip sensitive internal fields)
         if ($this->webhookService !== null && isset($data['status']) && $data['status'] === 'published' && $existing['status'] !== 'published' && $updatedForm) {
-            $this->webhookService->dispatch($formId, 'form.published', $updatedForm);
+            $webhookPayload = $updatedForm;
+            unset($webhookPayload['logicScript'], $webhookPayload['logicPrompt']);
+            $this->webhookService->dispatch($formId, 'form.published', $webhookPayload);
         }
 
         return $updatedForm;
@@ -293,18 +295,29 @@ class FormService
      */
     public function deleteForm(string $formId): bool
     {
-        // Delete SQLite database first (fail-fast to avoid orphaned MySQL record without data)
+        // Delete MySQL first within a transaction, then SQLite file
+        // This ensures MySQL failure doesn't leave orphaned records with deleted data
+        $this->mysql->beginTransaction();
+        try {
+            // Clean up response_links referencing this form (no FK cascade on this table)
+            $linkStmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :id1 OR target_form_id = :id2");
+            $linkStmt->execute(['id1' => $formId, 'id2' => $formId]);
+
+            // Delete from MySQL (cascades to related tables)
+            $stmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
+            $stmt->execute(['id' => $formId]);
+            $deleted = $stmt->rowCount() > 0;
+
+            $this->mysql->commit();
+        } catch (\Exception $e) {
+            $this->mysql->rollBack();
+            throw $e;
+        }
+
+        // Only delete SQLite after MySQL succeeds
         $this->sqlite->deleteFormDatabase($formId);
 
-        // Clean up response_links referencing this form (no FK cascade on this table)
-        $linkStmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :id1 OR target_form_id = :id2");
-        $linkStmt->execute(['id1' => $formId, 'id2' => $formId]);
-
-        // Delete from MySQL (cascades to related tables)
-        $stmt = $this->mysql->prepare("DELETE FROM forms WHERE id = :id");
-        $stmt->execute(['id' => $formId]);
-
-        return $stmt->rowCount() > 0;
+        return $deleted;
     }
 
     /**
@@ -401,28 +414,36 @@ class FormService
 
         $db = $this->sqlite->getFormDatabase($formId);
 
-        // Clear existing fields
-        $db->exec("DELETE FROM fields");
+        // Wrap delete + insert in a transaction to prevent partial field loss on failure
+        $db->beginTransaction();
+        try {
+            // Clear existing fields
+            $db->exec("DELETE FROM fields");
 
-        // Insert new fields
-        $stmt = $db->prepare("
-            INSERT INTO fields (id, type, label, description, placeholder, required, field_order, properties, validation, conditional_logic)
-            VALUES (:id, :type, :label, :description, :placeholder, :required, :field_order, :properties, :validation, :conditional_logic)
-        ");
+            // Insert new fields
+            $stmt = $db->prepare("
+                INSERT INTO fields (id, type, label, description, placeholder, required, field_order, properties, validation, conditional_logic)
+                VALUES (:id, :type, :label, :description, :placeholder, :required, :field_order, :properties, :validation, :conditional_logic)
+            ");
 
-        foreach ($fields as $index => $field) {
-            $stmt->execute([
-                'id' => $field['id'] ?? $this->generateHumanFieldId($field['label'] ?? ''),
-                'type' => $field['type'],
-                'label' => $field['label'] ?? null,
-                'description' => $field['description'] ?? null,
-                'placeholder' => $field['placeholder'] ?? null,
-                'required' => (int)($field['required'] ?? false),
-                'field_order' => $field['order'] ?? $index,
-                'properties' => json_encode($field['properties'] ?? []),
-                'validation' => json_encode($field['validation'] ?? []),
-                'conditional_logic' => json_encode($field['conditionalLogic'] ?? null),
-            ]);
+            foreach ($fields as $index => $field) {
+                $stmt->execute([
+                    'id' => $field['id'] ?? $this->generateHumanFieldId($field['label'] ?? ''),
+                    'type' => $field['type'],
+                    'label' => $field['label'] ?? null,
+                    'description' => $field['description'] ?? null,
+                    'placeholder' => $field['placeholder'] ?? null,
+                    'required' => (int)($field['required'] ?? false),
+                    'field_order' => $field['order'] ?? $index,
+                    'properties' => json_encode($field['properties'] ?? []),
+                    'validation' => json_encode($field['validation'] ?? []),
+                    'conditional_logic' => json_encode($field['conditionalLogic'] ?? null),
+                ]);
+            }
+            $db->commit();
+        } catch (\Exception $e) {
+            $db->rollBack();
+            throw $e;
         }
 
         // Keep field_count in MySQL in sync for list views

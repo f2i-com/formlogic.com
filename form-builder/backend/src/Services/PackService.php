@@ -324,7 +324,7 @@ class PackService
         foreach ($packData['apps'] ?? [] as $packApp) {
             $stmt = $this->mysql->prepare("
                 SELECT id FROM apps
-                WHERE created_by = :user_id AND name = :name
+                WHERE owner_id = :user_id AND name = :name
                 ORDER BY created_at DESC
                 LIMIT 1
             ");

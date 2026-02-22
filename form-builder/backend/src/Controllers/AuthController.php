@@ -199,7 +199,10 @@ class AuthController
         }
 
         try {
-            $updatedUser = $this->authService->updateUser($user->id, $data);
+            // Only allow known fields to prevent mass-assignment
+            $allowedFields = ['name', 'email', 'password', 'currentPassword'];
+            $filteredData = array_intersect_key($data ?? [], array_flip($allowedFields));
+            $updatedUser = $this->authService->updateUser($user->id, $filteredData);
             return $this->jsonResponse($response, [
                 'user' => $updatedUser->toArray(),
             ]);

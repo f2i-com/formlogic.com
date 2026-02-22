@@ -36,6 +36,8 @@ class FormVersionService
             'settings' => $form['settings'],
             'theme' => $form['theme'],
             'logicScript' => $form['logicScript'] ?? null,
+            'icon' => $form['icon'] ?? null,
+            'logicPrompt' => $form['logicPrompt'] ?? null,
         ];
 
         // Retry loop to handle concurrent version creation race condition
@@ -154,6 +156,8 @@ class FormVersionService
             'settings' => $data['settings'] ?? null,
             'theme' => $data['theme'] ?? null,
             'logicScript' => $data['logicScript'] ?? null,
+            'icon' => $data['icon'] ?? null,
+            'logicPrompt' => $data['logicPrompt'] ?? null,
         ]);
     }
 
