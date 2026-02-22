@@ -387,15 +387,17 @@ export const useFormStore = create<FormState>()(
         // In local mode, the form is already fully loaded
         if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
 
-        // Check if the form already has fields loaded
+        // Check if the form already has fields loaded (use _fieldsLoaded flag
+        // since a form with 0 fields is valid and shouldn't trigger a refetch)
         const existing = state.forms.find((f) => f.id === id);
+        if (existing && (existing as Form & { _fieldsLoaded?: boolean })._fieldsLoaded) return existing;
         if (existing && existing.fields.length > 0) return existing;
 
         // Fetch full form (with fields) from API
         try {
           const result = await api.getForm(id);
           if (!result.error && result.data?.form) {
-            const fullForm = result.data.form as Form;
+            const fullForm = { ...(result.data.form as Form), _fieldsLoaded: true } as Form;
             set((s) => ({
               forms: s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f)),
             }));
