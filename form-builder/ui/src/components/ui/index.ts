@@ -24,3 +24,5 @@ export { ProgressBar } from './ProgressBar';
 export { Switch } from './Switch';
 
 export { PhoneInput } from './PhoneInput';
+
+export { CalculatedFieldDisplay } from './CalculatedFieldDisplay';

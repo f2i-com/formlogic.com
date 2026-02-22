@@ -10,6 +10,7 @@ import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
 import { api } from '../lib/api';
 import { PhoneInput } from '../components/ui/PhoneInput';
+import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import type { FormField } from '../types/form';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
@@ -21,6 +22,8 @@ function FieldResponse({
   primaryColor,
   textColor,
   isRequired,
+  allAnswers,
+  allFieldIds,
 }: {
   field: FormField;
   value: unknown;
@@ -28,6 +31,8 @@ function FieldResponse({
   primaryColor: string;
   textColor?: string;
   isRequired?: boolean;
+  allAnswers?: Record<string, unknown>;
+  allFieldIds?: string[];
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -664,17 +669,25 @@ function FieldResponse({
 
       case 'calculated':
         return (
-          <div className="p-6 bg-current/5 rounded-lg text-center">
-            <p className="text-sm opacity-60 mb-2">Calculated result:</p>
-            <p className="text-4xl font-bold" style={{ color: primaryColor }}>
-              {value !== undefined ? String(value) : '—'}
-            </p>
-            {field.properties.calculationExpression && (
-              <p className="text-sm opacity-50 mt-3">
-                Based on: {field.properties.calculationExpression}
-              </p>
+          <CalculatedFieldDisplay
+            expression={field.properties.calculationExpression}
+            formData={allAnswers || {}}
+            allFieldIds={allFieldIds || []}
+          >
+            {(calcValue, isCalculating) => (
+              <div className="p-6 bg-current/5 rounded-lg text-center">
+                <p className="text-sm opacity-60 mb-2">Calculated result:</p>
+                <p className="text-4xl font-bold" style={{ color: primaryColor }}>
+                  {isCalculating ? '...' : calcValue !== undefined && calcValue !== null ? String(calcValue) : '—'}
+                </p>
+                {field.properties.calculationExpression && (
+                  <p className="text-sm opacity-50 mt-3">
+                    Based on: {field.properties.calculationExpression}
+                  </p>
+                )}
+              </div>
             )}
-          </div>
+          </CalculatedFieldDisplay>
         );
 
       case 'linked_record':
@@ -1080,6 +1093,8 @@ export default function FormResponse() {
               primaryColor={form.theme.primaryColor}
               textColor={form.theme.textColor}
               isRequired={getFieldRequired(currentField)}
+              allAnswers={currentAnswers}
+              allFieldIds={form.fields.map(f => f.id)}
             />
 
             {/* Inline validation error */}
@@ -1160,6 +1175,8 @@ export default function FormResponse() {
                     primaryColor={form.theme.primaryColor}
                     textColor={form.theme.textColor}
                     isRequired={getFieldRequired(field)}
+                    allAnswers={currentAnswers}
+                    allFieldIds={form.fields.map(f => f.id)}
                   />
                 </div>
               ))}

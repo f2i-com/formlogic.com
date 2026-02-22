@@ -12,15 +12,18 @@ import { cn } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { PhoneInput } from '../components/ui/PhoneInput';
+import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import type { FormField } from '../types/form';
 
 // Field Preview Component (memoized to prevent re-renders when other fields change)
-const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor }: {
+const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequired, textColor, allAnswers, allFieldIds }: {
   field: FormField;
   value: unknown;
   onChange: (value: unknown) => void;
   isRequired?: boolean;
   textColor?: string;
+  allAnswers?: Record<string, unknown>;
+  allFieldIds?: string[];
 }) {
   const required = isRequired ?? field.required;
   const renderField = () => {
@@ -542,17 +545,25 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
 
       case 'calculated':
         return (
-          <div className="p-4 bg-current/5 rounded-lg">
-            <p className="text-sm opacity-60 mb-1">Calculated value:</p>
-            <p className="text-2xl font-semibold">
-              {value !== undefined ? String(value) : '—'}
-            </p>
-            {field.properties.calculationExpression && (
-              <p className="text-xs opacity-50 mt-2">
-                Formula: {field.properties.calculationExpression}
-              </p>
+          <CalculatedFieldDisplay
+            expression={field.properties.calculationExpression}
+            formData={allAnswers || {}}
+            allFieldIds={allFieldIds || []}
+          >
+            {(calcValue, isCalculating) => (
+              <div className="p-4 bg-current/5 rounded-lg">
+                <p className="text-sm opacity-60 mb-1">Calculated value:</p>
+                <p className="text-2xl font-semibold">
+                  {isCalculating ? '...' : calcValue !== undefined && calcValue !== null ? String(calcValue) : '—'}
+                </p>
+                {field.properties.calculationExpression && (
+                  <p className="text-xs opacity-50 mt-2">
+                    Formula: {field.properties.calculationExpression}
+                  </p>
+                )}
+              </div>
             )}
-          </div>
+          </CalculatedFieldDisplay>
         );
 
       case 'linked_record':
@@ -830,6 +841,8 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
                       isRequired={getFieldRequired(currentField)}
                       textColor={form.theme.textColor}
+                      allAnswers={answers}
+                      allFieldIds={form.fields.map(f => f.id)}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -877,6 +890,8 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(field.id, val)}
                       isRequired={getFieldRequired(field)}
                       textColor={form.theme.textColor}
+                      allAnswers={answers}
+                      allFieldIds={form.fields.map(f => f.id)}
                     />
                   </div>
                 ))}

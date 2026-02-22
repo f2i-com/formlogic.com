@@ -7,6 +7,7 @@ import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { PhoneInput } from '../ui/PhoneInput';
+import { CalculatedFieldDisplay } from '../ui/CalculatedFieldDisplay';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import type { FormField as FormFieldType } from '../../types/form';
 
@@ -34,12 +35,16 @@ function FieldInput({
   onChange,
   primaryColor,
   formId,
+  allAnswers,
+  allFieldIds,
 }: {
   field: FormField;
   value: unknown;
   onChange: (val: unknown) => void;
   primaryColor: string;
   formId?: string;
+  allAnswers?: Record<string, unknown>;
+  allFieldIds?: string[];
 }) {
   const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
@@ -302,12 +307,20 @@ function FieldInput({
 
   if (field.type === 'calculated') {
     return (
-      <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-        <p className="text-sm text-gray-500 dark:text-slate-400 mb-1">Calculated value</p>
-        <p className="text-2xl font-semibold text-gray-900 dark:text-white">
-          {value !== undefined && value !== null ? String(value) : '—'}
-        </p>
-      </div>
+      <CalculatedFieldDisplay
+        expression={field.properties?.calculationExpression as string | undefined}
+        formData={allAnswers || {}}
+        allFieldIds={allFieldIds || []}
+      >
+        {(calcValue, isCalculating) => (
+          <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-1">Calculated value</p>
+            <p className="text-2xl font-semibold text-gray-900 dark:text-white">
+              {isCalculating ? '...' : calcValue !== undefined && calcValue !== null ? String(calcValue) : '—'}
+            </p>
+          </div>
+        )}
+      </CalculatedFieldDisplay>
     );
   }
 
@@ -795,6 +808,8 @@ export function AppFormView() {
                 onChange={(val) => handleSetAnswer(currentField.id, val)}
                 primaryColor={primaryColor}
                 formId={formId}
+                allAnswers={answers}
+                allFieldIds={fields.map(f => f.id)}
               />
 
               {/* Error */}
@@ -929,6 +944,8 @@ export function AppFormView() {
                     onChange={(val) => handleSetAnswer(field.id, val)}
                     primaryColor={primaryColor}
                     formId={formId}
+                    allAnswers={answers}
+                    allFieldIds={fields.map(f => f.id)}
                   />
                 </div>
               ))}

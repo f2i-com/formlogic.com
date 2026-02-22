@@ -125,6 +125,8 @@ class ExternalApiController
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Internal error processing response'], 500);
         }
     }
 
