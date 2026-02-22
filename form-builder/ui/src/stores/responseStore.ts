@@ -141,6 +141,11 @@ export const useResponseStore = create<ResponseState>()(
         responses: useFormStore.getState().storageMode === 'api'
           ? []
           : state.responses.slice(-500),
+        // Don't persist in-progress answers (File objects can't survive JSON serialization)
+        currentFormId: null,
+        currentAnswers: {},
+        currentStep: 0,
+        startTime: null,
       }),
     }
   )

@@ -118,7 +118,9 @@ function FieldResponse({
       case 'multiple_choice':
         return (
           <div className="space-y-3" role="radiogroup" aria-label={field.label}>
-            {field.properties.options?.map((option, index) => (
+            {(field.properties.options?.length ?? 0) === 0 ? (
+              <p className="opacity-50 italic text-sm">No options configured</p>
+            ) : field.properties.options?.map((option, index) => (
               <button
                 key={option.id}
                 role="radio"
@@ -148,10 +150,13 @@ function FieldResponse({
         );
 
       case 'checkboxes': {
+
         const selectedValues = (value as string[]) || [];
         return (
           <div className="space-y-3" role="group" aria-label={field.label}>
-            {field.properties.options?.map((option) => (
+            {(field.properties.options?.length ?? 0) === 0 ? (
+              <p className="opacity-50 italic text-sm">No options configured</p>
+            ) : field.properties.options?.map((option) => (
               <button
                 key={option.id}
                 role="checkbox"
@@ -187,7 +192,9 @@ function FieldResponse({
       }
 
       case 'dropdown':
-        return (
+        return (field.properties.options?.length ?? 0) === 0 ? (
+          <p className="opacity-50 italic text-sm">No options configured</p>
+        ) : (
           <select
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
@@ -247,7 +254,10 @@ function FieldResponse({
               <span>{field.properties.scaleStartLabel || `${start}`}</span>
               <span>{field.properties.scaleEndLabel || `${end}`}</span>
             </div>
-            <div className={cn(
+            <div
+              role="radiogroup"
+              aria-label={field.label}
+              className={cn(
               "grid gap-2",
               scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
             )}>
@@ -256,7 +266,19 @@ function FieldResponse({
                 return (
                   <button
                     key={num}
+                    role="radio"
+                    aria-checked={scaleValue === num}
+                    aria-label={`${num} out of ${end}`}
                     onClick={() => onChange(num)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        onChange(Math.min(end, (scaleValue ?? start) + 1));
+                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        onChange(Math.max(start, (scaleValue ?? start) - 1));
+                      }
+                    }}
                     className={cn(
                       'py-4 min-h-[44px] rounded-lg border-2 font-bold text-lg transition-all cursor-pointer',
                       scaleValue === num
