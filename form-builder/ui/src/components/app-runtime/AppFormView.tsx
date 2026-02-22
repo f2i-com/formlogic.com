@@ -595,16 +595,20 @@ export function AppFormView() {
     setAnswers((prev) => ({ ...prev, [fieldId]: val }));
   }, []);
 
-  // Use ref to avoid stale closure when handleSubmit is called from memoized handleNext
+  // Use refs to avoid stale closure when handleSubmit is called from memoized handleNext
   const answersRef = useRef(answers);
   answersRef.current = answers;
+  const calculatedRef = useRef(calculatedValues);
+  calculatedRef.current = calculatedValues;
 
   const handleSubmit = useCallback(async () => {
     if (!formId) return;
     setSubmitting(true);
     setError(null);
     try {
-      await createResponse(formId, answersRef.current);
+      // Merge calculated field values into submission so they're stored with the response
+      const submissionData = { ...answersRef.current, ...calculatedRef.current };
+      await createResponse(formId, submissionData);
       setSubmitted(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit');

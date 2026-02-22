@@ -795,7 +795,9 @@ export default function FormResponse() {
       if (prev[fId] === val) return prev;
       return { ...prev, [fId]: val };
     });
-  }, []);
+    // Also store in response store so calculated values are included in submission
+    setAnswer(fId, val);
+  }, [setAnswer]);
 
   const storeForm = formId ? getForm(formId) : undefined;
 

@@ -303,10 +303,17 @@ class ResponseController
                 break;
 
             case 'phone':
-                // Accept E.164 format (+[1-9]...) or legacy loose format
+                // Accept E.164 format (+[1-9]...) or legacy loose format (must contain at least 6 digits)
                 if (!preg_match('/^\+[1-9]\d{6,14}$/', $value) &&
                     !preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
                     return 'Invalid phone number format';
+                }
+                // Require at least 6 actual digits in loose format
+                if (!preg_match('/^\+[1-9]\d{6,14}$/', $value)) {
+                    $digitCount = preg_match_all('/\d/', $value);
+                    if ($digitCount < 6) {
+                        return 'Phone number must contain at least 6 digits';
+                    }
                 }
                 break;
 

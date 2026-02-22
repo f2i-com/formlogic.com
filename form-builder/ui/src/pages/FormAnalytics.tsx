@@ -153,6 +153,8 @@ export default function FormAnalytics() {
       localResponses.forEach((response) => {
         const answer = response.answers[field.id];
         if (answer === undefined || answer === null || answer === '') return;
+        // Skip empty checkbox arrays (no selections made)
+        if (Array.isArray(answer) && answer.length === 0) return;
 
         totalAnswers++;
 
@@ -279,11 +281,11 @@ export default function FormAnalytics() {
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...form.fields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
         r.id,
-        r.submittedAt,
+        new Date(r.submittedAt).toLocaleString(),
         Math.round(r.completionTime / 1000),
         ...form.fields.map((f) => {
           const v = r.answers[f.id];
-          return Array.isArray(v) ? v.join(', ') : (v ?? '');
+          return Array.isArray(v) ? v.map(item => typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item)).join(', ') : (v ?? '');
         }),
       ]);
 
