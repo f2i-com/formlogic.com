@@ -176,11 +176,11 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   type="number"
                   min={0}
                   max={99}
-                  value={field.properties.scaleStart || 1}
+                  value={field.properties.scaleStart ?? 1}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
                     const start = isNaN(val) ? 1 : Math.max(0, Math.min(99, val));
-                    const end = field.properties.scaleEnd || 10;
+                    const end = field.properties.scaleEnd ?? 10;
                     onUpdate({
                       properties: { ...field.properties, scaleStart: start, scaleEnd: Math.max(start + 1, end) },
                     });
@@ -191,11 +191,11 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   type="number"
                   min={1}
                   max={100}
-                  value={field.properties.scaleEnd || 10}
+                  value={field.properties.scaleEnd ?? 10}
                   onChange={(e) => {
                     const val = parseInt(e.target.value);
                     const end = isNaN(val) ? 10 : Math.max(1, Math.min(100, val));
-                    const start = field.properties.scaleStart || 1;
+                    const start = field.properties.scaleStart ?? 1;
                     onUpdate({
                       properties: { ...field.properties, scaleEnd: end, scaleStart: Math.min(end - 1, start) },
                     });

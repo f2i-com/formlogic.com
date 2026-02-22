@@ -8,6 +8,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
 use FormLogic\Constants\AppPermissions;
+use FormLogic\Middleware\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -494,7 +495,7 @@ class AppUserController
     {
         if ($this->auditService === null) return;
         $userId = $request->getAttribute('userId');
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? null;
+        $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
     }
 

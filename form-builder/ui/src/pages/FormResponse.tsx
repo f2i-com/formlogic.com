@@ -244,8 +244,8 @@ function FieldResponse({
       }
 
       case 'scale': {
-        const start = field.properties.scaleStart || 1;
-        const end = field.properties.scaleEnd || 10;
+        const start = field.properties.scaleStart ?? 1;
+        const end = field.properties.scaleEnd ?? 10;
         const scaleValue = (value as number) || null;
         const scaleLength = end - start + 1;
         return (

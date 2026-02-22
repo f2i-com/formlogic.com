@@ -186,8 +186,8 @@ export default function FormAnalytics() {
           });
         }
       } else if (field.type === 'scale') {
-        const start = field.properties.scaleStart || 1;
-        const end = field.properties.scaleEnd || 10;
+        const start = field.properties.scaleStart ?? 1;
+        const end = field.properties.scaleEnd ?? 10;
         for (let i = start; i <= end; i++) {
           const count = counts[String(i)] || 0;
           data.push({

@@ -627,6 +627,14 @@ class ResponseController
             ], 400);
         }
 
+        // Verify this is a genuine upload (prevents path traversal)
+        if (!is_uploaded_file($file['tmp_name'])) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Invalid file upload',
+            ], 400);
+        }
+
         // Parse CSV
         $handle = fopen($file['tmp_name'], 'r');
         if ($handle === false) {

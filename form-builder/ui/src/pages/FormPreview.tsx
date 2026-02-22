@@ -221,8 +221,8 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
       }
 
       case 'scale': {
-        const start = field.properties.scaleStart || 1;
-        const end = field.properties.scaleEnd || 10;
+        const start = field.properties.scaleStart ?? 1;
+        const end = field.properties.scaleEnd ?? 10;
         const scaleValue = (value as number) || null;
         const scaleLength = Math.max(1, end - start + 1);
         return (

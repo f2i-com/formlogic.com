@@ -484,7 +484,7 @@ class ExternalApiController
 
             if ($value === null || $value === '' || $value === []) continue;
 
-            // Type-specific validation
+            // Type-specific validation (mirrors ResponseController::validateFieldType)
             switch ($fieldType) {
                 case 'email':
                     if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
@@ -506,6 +506,61 @@ class ExternalApiController
                     if (!preg_match('/^\+[1-9]\d{6,14}$/', $value) &&
                         !preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
                         $errors[$fieldId] = 'Invalid phone number format';
+                    }
+                    break;
+                case 'date':
+                case 'datetime':
+                case 'time':
+                    if (is_string($value) && strlen($value) > 100) {
+                        $errors[$fieldId] = 'Invalid date/time format';
+                    }
+                    break;
+                case 'rating':
+                    $properties = $field['properties'] ?? [];
+                    $maxStars = $properties['maxStars'] ?? 5;
+                    if (!is_numeric($value) || $value < 1 || $value > $maxStars) {
+                        $errors[$fieldId] = "Rating must be between 1 and {$maxStars}";
+                    }
+                    break;
+                case 'scale':
+                    $properties = $field['properties'] ?? [];
+                    $min = $properties['scaleStart'] ?? 1;
+                    $max = $properties['scaleEnd'] ?? 10;
+                    if (!is_numeric($value) || $value < $min || $value > $max) {
+                        $errors[$fieldId] = "Value must be between {$min} and {$max}";
+                    }
+                    break;
+                case 'dropdown':
+                case 'multiple_choice':
+                    $properties = $field['properties'] ?? [];
+                    $options = $properties['options'] ?? [];
+                    $allowedValues = array_column($options, 'value');
+                    if (!in_array($value, $allowedValues, true)) {
+                        $errors[$fieldId] = 'Invalid selection';
+                    }
+                    break;
+                case 'checkboxes':
+                    if (!is_array($value)) {
+                        $errors[$fieldId] = 'Invalid selection format';
+                    } else {
+                        $properties = $field['properties'] ?? [];
+                        $options = $properties['options'] ?? [];
+                        $allowedValues = array_column($options, 'value');
+                        foreach ($value as $selected) {
+                            if (!in_array($selected, $allowedValues, true)) {
+                                $errors[$fieldId] = 'Invalid selection';
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                case 'short_text':
+                case 'long_text':
+                    if (is_string($value)) {
+                        $maxLength = $fieldType === 'short_text' ? 1000 : 50000;
+                        if (strlen($value) > $maxLength) {
+                            $errors[$fieldId] = "Text exceeds maximum length of {$maxLength} characters";
+                        }
                     }
                     break;
             }

@@ -166,7 +166,7 @@ export function Dropdown({
             id={listboxId}
             role="listbox"
             aria-label={label || placeholder}
-            className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto"
+            className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto"
           >
             {options.map((option, index) => (
               <div
