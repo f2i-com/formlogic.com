@@ -8,8 +8,8 @@ use Monolog\Logger;
 $isProduction = ($_ENV['APP_ENV'] ?? 'development') === 'production';
 
 // Get JWT secret - fail hard in production if using default
-$jwtSecret = $_ENV['JWT_SECRET'] ?? 'change-me-in-production';
-if ($isProduction && ($jwtSecret === 'change-me-in-production' || strlen($jwtSecret) < 32)) {
+$jwtSecret = $_ENV['JWT_SECRET'] ?? 'formlogic-dev-jwt-secret-change!';
+if ($isProduction && ($jwtSecret === 'formlogic-dev-jwt-secret-change!' || strlen($jwtSecret) < 32)) {
     throw new \RuntimeException(
         'SECURITY ERROR: JWT_SECRET must be set to a secure value (minimum 32 characters) in production. ' .
         'Generate one with: openssl rand -base64 32'

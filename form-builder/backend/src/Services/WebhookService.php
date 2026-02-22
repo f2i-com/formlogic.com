@@ -76,6 +76,17 @@ class WebhookService
 
     public function updateWebhook(string $webhookId, array $data): ?array
     {
+        // Defense-in-depth: validate URL at service layer too
+        if (isset($data['url'])) {
+            $parsed = parse_url($data['url']);
+            if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+                throw new \InvalidArgumentException('Invalid webhook URL');
+            }
+            if (!in_array($parsed['scheme'], ['http', 'https'], true)) {
+                throw new \InvalidArgumentException('Webhook URL must use HTTP or HTTPS');
+            }
+        }
+
         $updates = [];
         $params = ['id' => $webhookId];
 
@@ -170,6 +181,31 @@ class WebhookService
     {
         $deliveryId = $this->generateUuid();
         $body = json_encode(['event' => $event, 'payload' => $payload, 'deliveryId' => $deliveryId]);
+
+        // Cap payload size to prevent OOM and excessive bandwidth
+        if (strlen($body) > 5 * 1024 * 1024) {
+            $this->logger->warning('Webhook payload too large, skipping delivery', [
+                'webhookId' => $webhook['id'],
+                'event' => $event,
+                'payloadSize' => strlen($body),
+            ]);
+            // Log a failed delivery
+            try {
+                $stmt = $this->mysql->prepare("
+                    INSERT INTO webhook_deliveries (id, webhook_id, event, payload, response_status, response_body, duration_ms, success, error_message)
+                    VALUES (:id, :webhook_id, :event, NULL, NULL, NULL, 0, 0, :error_message)
+                ");
+                $stmt->execute([
+                    'id' => $deliveryId,
+                    'webhook_id' => $webhook['id'],
+                    'event' => $event,
+                    'error_message' => 'Payload exceeded 5MB size limit',
+                ]);
+            } catch (\Exception $e) {
+                $this->logger->error('Failed to log oversized webhook delivery', ['exception' => $e->getMessage()]);
+            }
+            return;
+        }
         $signature = 'sha256=' . hash_hmac('sha256', $body, $webhook['secret']);
 
         $startTime = microtime(true);

@@ -294,7 +294,7 @@ class AppUserService
     {
         // Prevent modifying the app owner's role or status
         $ownerCheck = $this->mysql->prepare("
-            SELECT au.user_id, a.owner_id FROM app_users au
+            SELECT au.user_id, au.app_id, a.owner_id FROM app_users au
             JOIN apps a ON a.id = au.app_id
             WHERE au.id = :id
         ");
@@ -306,6 +306,16 @@ class AppUserService
             }
             if (isset($data['status']) && $data['status'] !== 'active') {
                 throw new \RuntimeException('Cannot suspend or deactivate the app owner');
+            }
+        }
+
+        // Prevent assigning system roles (Owner) to non-owner users
+        if (isset($data['roleId']) && $ownerRow) {
+            $roleCheck = $this->mysql->prepare("SELECT name, is_system FROM app_roles WHERE id = :id AND app_id = :app_id");
+            $roleCheck->execute(['id' => $data['roleId'], 'app_id' => $ownerRow['app_id']]);
+            $roleRow = $roleCheck->fetch();
+            if ($roleRow && (int)$roleRow['is_system'] === 1 && $roleRow['name'] === 'Owner') {
+                throw new \RuntimeException('Cannot assign the Owner role');
             }
         }
 
