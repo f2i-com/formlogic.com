@@ -300,7 +300,7 @@ function closeFormPopup() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => window.open(formUrl, '_blank')}
+                    onClick={() => window.open(formUrl, '_blank', 'noopener,noreferrer')}
                   >
                     <ExternalLink className="h-4 w-4" />
                   </Button>

@@ -99,7 +99,7 @@ export function AppDeploySettings() {
             <Button variant="outline" size="sm" onClick={handleCopy} leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
               {copied ? 'Copied' : 'Copy'}
             </Button>
-            <Button variant="outline" size="sm" onClick={() => window.open(appUrl, '_blank')} leftIcon={<ExternalLink className="h-4 w-4" />}>
+            <Button variant="outline" size="sm" onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')} leftIcon={<ExternalLink className="h-4 w-4" />}>
               Open
             </Button>
           </div>

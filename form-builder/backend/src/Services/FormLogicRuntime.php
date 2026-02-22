@@ -745,11 +745,17 @@ class FormLogicRuntime
         if (isset($options['headers']) && is_array($options['headers'])) {
             foreach ($options['headers'] as $key => $value) {
                 if (is_string($key) && (is_string($value) || is_numeric($value))) {
+                    $key = (string)$key;
+                    $value = (string)$value;
+                    // Reject header injection via CRLF characters
+                    if (preg_match('/[\r\n\x00]/', $key . $value)) {
+                        continue;
+                    }
                     // Prevent host header override
                     if (strtolower($key) !== 'host') {
                         $headers[] = "{$key}: {$value}";
                         if (strtolower($key) === 'content-type') {
-                            $contentType = (string)$value;
+                            $contentType = $value;
                         }
                     }
                 }
@@ -758,7 +764,11 @@ class FormLogicRuntime
 
         // Add Bearer token if provided (only if no Authorization header already set)
         if (isset($options['bearerToken']) && is_string($options['bearerToken']) && !$this->hasHeader($headers, 'authorization')) {
-            $headers[] = 'Authorization: Bearer ' . $options['bearerToken'];
+            $token = $options['bearerToken'];
+            // Reject CRLF injection in bearer token
+            if (!preg_match('/[\r\n\x00]/', $token)) {
+                $headers[] = 'Authorization: Bearer ' . $token;
+            }
         }
 
         // Set content type if not already set and we have a body

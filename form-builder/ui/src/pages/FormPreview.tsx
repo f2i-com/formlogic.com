@@ -732,7 +732,7 @@ export default function FormPreview() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => window.open(`/form/${form.id}`, '_blank')}
+            onClick={() => window.open(`/form/${form.id}`, '_blank', 'noopener,noreferrer')}
           >
             <ExternalLink className="h-4 w-4 sm:mr-2" />
             <span className="hidden sm:inline">Open</span>

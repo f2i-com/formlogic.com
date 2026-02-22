@@ -230,7 +230,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           {app.status === 'published' && (
             <button
-              onClick={() => window.open(`/app/${app.slug}`, '_blank')}
+              onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer')}
               className="p-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
               aria-label="Open app"
             >
