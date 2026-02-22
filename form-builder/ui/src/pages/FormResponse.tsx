@@ -8,7 +8,9 @@ import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { toast } from '../stores/toastStore';
 import { cn } from '../lib/utils';
+import { api } from '../lib/api';
 import type { FormField } from '../types/form';
+import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
 // Field Response Component
 function FieldResponse({
@@ -699,7 +701,7 @@ function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: 
 // Main Form Response Component
 export default function FormResponse() {
   const { formId } = useParams<{ formId: string }>();
-  const { getForm, updateForm } = useFormStore();
+  const { getForm, loadFullForm, updateForm } = useFormStore();
   const {
     startResponse,
     setAnswer,
@@ -716,8 +718,69 @@ export default function FormResponse() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
+  const [isLoadingForm, setIsLoadingForm] = useState(false);
+  const [formLoadError, setFormLoadError] = useState(false);
 
-  const form = formId ? getForm(formId) : undefined;
+  const storeForm = formId ? getForm(formId) : undefined;
+
+  // Load form: try store (with full fields), then fall back to public API
+  useEffect(() => {
+    if (!formId) return;
+
+    // If store has the form with fields loaded, use it
+    if (storeForm && storeForm.fields.length > 0) {
+      setPublicForm(null);
+      return;
+    }
+
+    // Try to load full form from authenticated API first (owner case with empty fields),
+    // then fall back to public API (visitor case)
+    let cancelled = false;
+    setIsLoadingForm(true);
+    setFormLoadError(false);
+
+    (async () => {
+      // If form is in store but fields are empty, try loadFullForm
+      if (storeForm) {
+        const full = await loadFullForm(formId);
+        if (!cancelled && full && full.fields.length > 0) {
+          setIsLoadingForm(false);
+          return;
+        }
+      }
+
+      // Fall back to public form API
+      const result = await api.getPublicForm(formId);
+      if (cancelled) return;
+
+      if (result.data?.form) {
+        const raw = result.data.form;
+        // Normalize settings/theme (PHP returns [] for empty objects)
+        const normalized = {
+          ...raw,
+          settings: Array.isArray(raw.settings) || !raw.settings
+            ? DEFAULT_FORM_SETTINGS
+            : { ...DEFAULT_FORM_SETTINGS, ...raw.settings },
+          theme: Array.isArray(raw.theme) || !raw.theme
+            ? DEFAULT_FORM_THEME
+            : { ...DEFAULT_FORM_THEME, ...raw.theme },
+          fields: raw.fields ?? [],
+          responseCount: raw.responseCount ?? 0,
+        };
+        setPublicForm(normalized as ReturnType<typeof getForm>);
+        setIsLoadingForm(false);
+      } else {
+        setFormLoadError(true);
+        setIsLoadingForm(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [formId, storeForm?.id, storeForm?.fields.length]);
+
+  // Use store form (with fields) if available, otherwise public form
+  const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
 
   // Use conditional logic to determine field visibility
   // Note: hooks must be called before any early returns
@@ -755,7 +818,15 @@ export default function FormResponse() {
     return field.required || isFieldRequired(field.id);
   };
 
-  if (!form) {
+  if (isLoadingForm) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" />
+      </div>
+    );
+  }
+
+  if (!form || formLoadError) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
         <p className="text-gray-500 dark:text-slate-400">Form not found</p>
