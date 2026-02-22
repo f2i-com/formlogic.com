@@ -208,6 +208,18 @@ class AppPublicController
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
 
+        // Validate answers against form fields
+        if ($form) {
+            $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+            if (!empty($validationErrors)) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'message' => 'Validation failed',
+                    'errors' => $validationErrors,
+                ], 400);
+            }
+        }
+
         // Check if form is closed
         if ($form) {
             $settings = $form['settings'] ?? [];
@@ -901,6 +913,143 @@ class AppPublicController
         unset($resp);
 
         return $responses;
+    }
+
+    /**
+     * Validate answers against form field definitions
+     */
+    private function validateAnswers(array $fields, array $answers): array
+    {
+        $errors = [];
+
+        foreach ($fields as $field) {
+            $fieldId = $field['id'] ?? null;
+            if (!$fieldId) {
+                continue;
+            }
+
+            $isRequired = $field['required'] ?? false;
+            $fieldType = $field['type'] ?? 'short_text';
+
+            // Skip validation for non-input field types
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
+                continue;
+            }
+
+            $value = $answers[$fieldId] ?? null;
+
+            // Check required fields
+            if ($isRequired && ($value === null || $value === '' || $value === [] || (is_string($value) && trim($value) === ''))) {
+                $errors[$fieldId] = 'This field is required';
+                continue;
+            }
+
+            // Skip further validation if empty and not required
+            if ($value === null || $value === '' || $value === [] || (is_string($value) && trim($value) === '')) {
+                continue;
+            }
+
+            // Type-specific validation
+            $typeError = $this->validateFieldType($field, $value);
+            if ($typeError) {
+                $errors[$fieldId] = $typeError;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * Validate a field value against its type
+     */
+    private function validateFieldType(array $field, $value): ?string
+    {
+        $type = $field['type'] ?? 'short_text';
+
+        switch ($type) {
+            case 'email':
+                if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                    return 'Invalid email address';
+                }
+                break;
+            case 'url':
+                if (!filter_var($value, FILTER_VALIDATE_URL)) {
+                    return 'Invalid URL';
+                }
+                break;
+            case 'number':
+                if (!is_numeric($value)) {
+                    return 'Must be a number';
+                }
+                break;
+            case 'phone':
+                if (!preg_match('/^\+[1-9]\d{6,14}$/', $value) &&
+                    !preg_match('/^[\d\s\-\+\(\)\.]+$/', $value)) {
+                    return 'Invalid phone number format';
+                }
+                if (!preg_match('/^\+[1-9]\d{6,14}$/', $value)) {
+                    $digitCount = preg_match_all('/\d/', $value);
+                    if ($digitCount < 6) {
+                        return 'Phone number must contain at least 6 digits';
+                    }
+                }
+                break;
+            case 'date':
+            case 'datetime':
+            case 'time':
+                if (is_string($value) && strlen($value) > 100) {
+                    return 'Invalid date/time format';
+                }
+                break;
+            case 'rating':
+                $properties = $field['properties'] ?? [];
+                $maxStars = $properties['maxStars'] ?? 5;
+                if (!is_numeric($value) || $value < 1 || $value > $maxStars) {
+                    return "Rating must be between 1 and {$maxStars}";
+                }
+                break;
+            case 'scale':
+                $properties = $field['properties'] ?? [];
+                $min = $properties['scaleStart'] ?? 1;
+                $max = $properties['scaleEnd'] ?? 10;
+                if (!is_numeric($value) || $value < $min || $value > $max) {
+                    return "Value must be between {$min} and {$max}";
+                }
+                break;
+            case 'dropdown':
+            case 'multiple_choice':
+                $properties = $field['properties'] ?? [];
+                $options = $properties['options'] ?? [];
+                $allowedValues = array_column($options, 'value');
+                if (!in_array($value, $allowedValues, true)) {
+                    return 'Invalid selection';
+                }
+                break;
+            case 'checkboxes':
+                if (!is_array($value)) {
+                    return 'Invalid selection format';
+                }
+                $properties = $field['properties'] ?? [];
+                $options = $properties['options'] ?? [];
+                $allowedValues = array_column($options, 'value');
+                foreach ($value as $selected) {
+                    if (!in_array($selected, $allowedValues, true)) {
+                        return 'Invalid selection';
+                    }
+                }
+                break;
+            case 'short_text':
+            case 'long_text':
+                if (is_string($value)) {
+                    $maxLength = $type === 'short_text' ? 1000 : 50000;
+                    if (strlen($value) > $maxLength) {
+                        return "Text exceeds maximum length of {$maxLength} characters";
+                    }
+                }
+                break;
+        }
+
+        return null;
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response
