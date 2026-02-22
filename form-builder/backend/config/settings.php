@@ -26,7 +26,7 @@ if ($isProduction && $dbPassword === 'password') {
 
 return [
     'settings' => [
-        'displayErrorDetails' => ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
+        'displayErrorDetails' => !$isProduction && ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
         'logErrors' => true,
         'logErrorDetails' => !$isProduction,
         'isProduction' => $isProduction,

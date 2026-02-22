@@ -504,7 +504,13 @@ function validateField(field: FormField, value: unknown): string | null {
         if (typeof value === 'number' && value > Number(rule.value)) return msg;
         break;
       case 'pattern':
-        if (typeof value === 'string' && value.length > 0 && rule.value && !new RegExp(String(rule.value)).test(value)) return msg;
+        if (typeof value === 'string' && value.length > 0 && rule.value) {
+          const pat = String(rule.value);
+          // ReDoS protection: limit length and reject catastrophic backtracking patterns
+          if (pat.length > 500) return msg;
+          if (/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/.test(pat) || /\([^)]*\|[^)]*\)\+/.test(pat)) return msg;
+          try { if (!new RegExp(pat).test(value)) return msg; } catch { return msg; }
+        }
         break;
       // 'custom' uses expressions - skip for now as it requires the expression engine
       // 'required' is handled separately in the required-field check
@@ -607,8 +613,10 @@ export function AppFormView() {
   const calculatedRef = useRef(calculatedValues);
   calculatedRef.current = calculatedValues;
 
+  const submittingRef = useRef(false);
   const handleSubmit = useCallback(async () => {
-    if (!formId) return;
+    if (!formId || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -620,6 +628,7 @@ export function AppFormView() {
       setError(err instanceof Error ? err.message : 'Failed to submit');
     }
     setSubmitting(false);
+    submittingRef.current = false;
   }, [formId, createResponse]);
 
   const handleNext = useCallback(() => {

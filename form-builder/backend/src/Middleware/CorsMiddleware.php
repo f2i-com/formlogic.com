@@ -14,6 +14,7 @@ class CorsMiddleware implements MiddlewareInterface
 {
     private string $defaultOrigin;
     private ?array $allowedOrigins;
+    private bool $isWildcardMode = false;
 
     /**
      * @param string $defaultOrigin Default allowed origin (for single-origin mode)
@@ -23,6 +24,7 @@ class CorsMiddleware implements MiddlewareInterface
     {
         $this->defaultOrigin = $defaultOrigin;
         $this->allowedOrigins = $allowedOrigins;
+        $this->isWildcardMode = ($defaultOrigin === '*');
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -132,7 +134,8 @@ class CorsMiddleware implements MiddlewareInterface
             ->withHeader('Access-Control-Max-Age', '86400');
 
         // Only allow credentials for non-wildcard origins
-        if ($allowedOrigin !== '*') {
+        // In wildcard mode, the origin is reflected but credentials must NOT be allowed
+        if ($allowedOrigin !== '*' && !$this->isWildcardMode) {
             $response = $response->withHeader('Access-Control-Allow-Credentials', 'true');
         }
 

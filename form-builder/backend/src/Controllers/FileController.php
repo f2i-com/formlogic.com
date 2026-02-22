@@ -138,7 +138,7 @@ class FileController
         return $response
             ->withHeader('Content-Type', $mimeType)
             ->withHeader('Content-Length', (string) $fileSize)
-            ->withHeader('Content-Disposition', 'inline; filename="' . addslashes($filename) . '"')
+            ->withHeader('Content-Disposition', 'inline; filename="' . preg_replace('/[\x00-\x1f\x7f"\\\\]/', '_', $filename) . '"')
             ->withHeader('Cache-Control', 'public, max-age=31536000, immutable')
             ->withBody($body);
     }
