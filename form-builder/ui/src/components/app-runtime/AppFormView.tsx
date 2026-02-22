@@ -49,7 +49,6 @@ function FieldInput({
       <PhoneInput
         value={(value as string) || ''}
         onChange={(val) => onChange(val)}
-        placeholder={field.placeholder}
         primaryColor={primaryColor}
         autoFocus
       />

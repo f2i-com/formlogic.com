@@ -40,7 +40,6 @@ function getPlaceholder(iso: string): string {
 interface PhoneInputProps {
   value: string;
   onChange: (val: string) => void;
-  placeholder?: string;
   primaryColor?: string;
   textColor?: string;
   className?: string;
@@ -79,20 +78,31 @@ export function PhoneInput({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const numberInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync from external value changes
+  // Track what we last emitted so we don't re-sync our own onChange calls
+  const lastEmittedRef = useRef(value || '');
+
+  // Sync from external value changes (e.g. form reset, programmatic set)
   useEffect(() => {
+    if (value === lastEmittedRef.current) return;
     const parsed = parseE164(value || '');
     if (parsed && COUNTRY_BY_ISO[parsed.countryIso]) {
       setSelectedCountry(COUNTRY_BY_ISO[parsed.countryIso]);
       setNationalNumber(parsed.nationalNumber);
+      lastEmittedRef.current = value || '';
     }
   }, [value]);
 
-  // Focus search input when dropdown opens
+  // Focus search input and scroll to selected country when dropdown opens
   useEffect(() => {
-    if (isOpen && searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
+    if (!isOpen) return;
+    searchInputRef.current?.focus();
+    // Scroll to currently selected country
+    requestAnimationFrame(() => {
+      const selected = dropdownRef.current?.querySelector('[data-selected="true"]');
+      if (selected) {
+        selected.scrollIntoView({ block: 'nearest' });
+      }
+    });
   }, [isOpen]);
 
   // Close dropdown on click outside or Escape
@@ -111,6 +121,7 @@ export function PhoneInput({
 
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.stopPropagation();
         setIsOpen(false);
         setSearch('');
         numberInputRef.current?.focus();
@@ -133,27 +144,34 @@ export function PhoneInput({
     );
   }, [search]);
 
+  const emitChange = (dialCode: string, num: string) => {
+    const e164 = toE164(dialCode, num);
+    lastEmittedRef.current = e164;
+    onChange(e164);
+  };
+
   const handleCountrySelect = (country: CountryData) => {
     setSelectedCountry(country);
     setIsOpen(false);
     setSearch('');
-    const e164 = toE164(country.dialCode, nationalNumber);
-    onChange(e164);
+    emitChange(country.dialCode, nationalNumber);
     // Focus the number input after selection
     setTimeout(() => numberInputRef.current?.focus(), 0);
   };
 
   const handleNumberChange = (raw: string) => {
     // If the user typed/pasted the dial code at the start, strip it
+    // Only for codes with 2+ digits to avoid false positives (e.g. +1)
     let num = raw;
     const codeDigits = selectedCountry.dialCode.slice(1); // e.g. "61" for +61
-    const rawDigits = raw.replace(/\D/g, '');
-    if (rawDigits.startsWith(codeDigits) && rawDigits.length > codeDigits.length + 4) {
-      num = rawDigits.slice(codeDigits.length);
+    if (codeDigits.length >= 2) {
+      const rawDigits = raw.replace(/\D/g, '');
+      if (rawDigits.startsWith(codeDigits) && rawDigits.length > codeDigits.length + 4) {
+        num = rawDigits.slice(codeDigits.length);
+      }
     }
     setNationalNumber(num);
-    const e164 = toE164(selectedCountry.dialCode, num);
-    onChange(e164);
+    emitChange(selectedCountry.dialCode, num);
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -164,9 +182,11 @@ export function PhoneInput({
       if (parsed && COUNTRY_BY_ISO[parsed.countryIso]) {
         setSelectedCountry(COUNTRY_BY_ISO[parsed.countryIso]);
         setNationalNumber(parsed.nationalNumber);
-        onChange(pasted.replace(/[^\d+]/g, ''));
+        const clean = pasted.replace(/[^\d+]/g, '');
+        lastEmittedRef.current = clean;
+        onChange(clean);
       } else {
-        // Just set the raw value if we can't parse it
+        lastEmittedRef.current = pasted;
         onChange(pasted);
       }
     }
@@ -222,6 +242,7 @@ export function PhoneInput({
                   <button
                     key={country.iso}
                     type="button"
+                    data-selected={country.iso === selectedCountry.iso || undefined}
                     onClick={() => handleCountrySelect(country)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left transition-colors cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700 ${
                       country.iso === selectedCountry.iso ? 'bg-blue-50 dark:bg-slate-700' : ''

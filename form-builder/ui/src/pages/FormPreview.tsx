@@ -30,7 +30,6 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
           <PhoneInput
             value={(value as string) || ''}
             onChange={(val) => onChange(val)}
-            placeholder={field.placeholder}
             textColor={textColor}
           />
         );
