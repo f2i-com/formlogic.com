@@ -84,11 +84,18 @@ export function PhoneInput({
   // Sync from external value changes (e.g. form reset, programmatic set)
   useEffect(() => {
     if (value === lastEmittedRef.current) return;
-    const parsed = parseE164(value || '');
+    lastEmittedRef.current = value || '';
+
+    // Handle cleared/empty value (form reset)
+    if (!value) {
+      setNationalNumber('');
+      return;
+    }
+
+    const parsed = parseE164(value);
     if (parsed && COUNTRY_BY_ISO[parsed.countryIso]) {
       setSelectedCountry(COUNTRY_BY_ISO[parsed.countryIso]);
       setNationalNumber(parsed.nationalNumber);
-      lastEmittedRef.current = value || '';
     }
   }, [value]);
 
@@ -140,7 +147,7 @@ export function PhoneInput({
     if (!search) return COUNTRIES;
     const q = search.toLowerCase();
     return COUNTRIES.filter(
-      c => c.name.toLowerCase().includes(q) || c.dialCode.includes(q)
+      c => c.name.toLowerCase().includes(q) || c.dialCode.includes(q) || c.iso.toLowerCase() === q
     );
   }, [search]);
 
@@ -192,7 +199,10 @@ export function PhoneInput({
     }
   };
 
-  const borderColor = primaryColor || 'currentColor';
+  // Compute border colors: use hex alpha for explicit colors, opacity classes for currentColor
+  const hasPrimaryColor = !!primaryColor;
+  const activeBorder = hasPrimaryColor ? `${primaryColor}99` : undefined;
+  const inactiveBorder = hasPrimaryColor ? `${primaryColor}4d` : undefined;
 
   return (
     <div className={`flex items-end gap-0 ${className || ''}`}>
@@ -202,9 +212,11 @@ export function PhoneInput({
           ref={buttonRef}
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1 py-2 pr-2 border-b-2 text-lg transition-colors cursor-pointer whitespace-nowrap"
+          className={`flex items-center gap-1 py-2 pr-2 border-b-2 text-lg transition-colors cursor-pointer whitespace-nowrap ${
+            !hasPrimaryColor ? (nationalNumber ? 'border-current/60' : 'border-current/30') : ''
+          }`}
           style={{
-            borderColor: nationalNumber ? `${borderColor}60` : `${borderColor}30`,
+            borderColor: hasPrimaryColor ? (nationalNumber ? activeBorder : inactiveBorder) : undefined,
             color: textColor,
           }}
         >
@@ -228,6 +240,17 @@ export function PhoneInput({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  // Stop Enter from bubbling to parent form handlers
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Select the first filtered country
+                    if (filteredCountries.length > 0) {
+                      handleCountrySelect(filteredCountries[0]);
+                    }
+                  }
+                }}
                 placeholder="Search countries..."
                 className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-md outline-none focus:border-blue-400 dark:focus:border-blue-500 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
@@ -270,9 +293,11 @@ export function PhoneInput({
         onPaste={handlePaste}
         placeholder={getPlaceholder(selectedCountry.iso)}
         autoFocus={autoFocus}
-        className="flex-1 bg-transparent border-b-2 outline-none py-2 text-xl transition-colors min-w-0"
+        className={`flex-1 bg-transparent border-b-2 outline-none py-2 text-xl transition-colors min-w-0 ${
+          !hasPrimaryColor ? (nationalNumber ? 'border-current/60' : 'border-current/30') : ''
+        }`}
         style={{
-          borderColor: nationalNumber ? `${borderColor}60` : `${borderColor}30`,
+          borderColor: hasPrimaryColor ? (nationalNumber ? activeBorder : inactiveBorder) : undefined,
           color: textColor,
         }}
       />

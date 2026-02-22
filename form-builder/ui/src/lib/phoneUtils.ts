@@ -60,6 +60,15 @@ export function toE164(dialCode: string, nationalNumber: string): string {
   return dialCode + digits;
 }
 
+// Cache sorted dial codes (longest first) for efficient prefix matching
+let _sortedDialCodes: string[] | null = null;
+function getSortedDialCodes(): string[] {
+  if (!_sortedDialCodes) {
+    _sortedDialCodes = Object.keys(COUNTRIES_BY_DIAL_CODE).sort((a, b) => b.length - a.length);
+  }
+  return _sortedDialCodes;
+}
+
 export function parseE164(value: string): { countryIso: string; dialCode: string; nationalNumber: string } | null {
   if (!value || !value.startsWith('+')) return null;
 
@@ -67,10 +76,7 @@ export function parseE164(value: string): { countryIso: string; dialCode: string
   if (!digits) return null;
 
   // Try longest dial code first (e.g., +1684 before +1)
-  // Collect all known dial codes sorted by length descending
-  const dialCodes = Object.keys(COUNTRIES_BY_DIAL_CODE).sort((a, b) => b.length - a.length);
-
-  for (const code of dialCodes) {
+  for (const code of getSortedDialCodes()) {
     const codeDigits = code.slice(1); // remove +
     if (digits.startsWith(codeDigits)) {
       const countries = COUNTRIES_BY_DIAL_CODE[code];
