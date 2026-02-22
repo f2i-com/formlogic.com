@@ -57,7 +57,7 @@ class PackFileService
             throw new \RuntimeException('Zip file must contain a manifest.json');
         }
 
-        $packData = json_decode($manifestContent, true);
+        $packData = json_decode($manifestContent, true, 128);
         if (!$packData || json_last_error() !== JSON_ERROR_NONE) {
             $zip->close();
             throw new \RuntimeException('Invalid JSON in manifest.json');

@@ -162,8 +162,8 @@ class FileController
         $mimeType = $this->fileStorage->getMimeType($filePath);
         $fileSize = filesize($filePath);
 
-        // Determine filename for Content-Disposition
-        $filename = $args['filename'] ?? basename($filePath);
+        // Always use actual stored filename — ignore user-supplied filename parameter
+        $filename = basename($filePath);
 
         $stream = fopen($filePath, 'rb');
         $body = new \Slim\Psr7\Stream($stream);

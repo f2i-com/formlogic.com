@@ -1,0 +1,12 @@
+# Prevent script execution in uploads directory
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|phps|phar|cgi|pl|py|sh|bash)$">
+    Require all denied
+</FilesMatch>
+
+# Force all files to be served as their detected MIME type, not executed
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes

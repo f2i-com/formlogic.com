@@ -39,9 +39,9 @@ class FileStorageService
             throw new \RuntimeException('Invalid file upload');
         }
 
-        // Validate file size
-        $size = $uploadedFile['size'] ?? filesize($uploadedFile['tmp_name']);
-        if ($size > $this->maxFileSize) {
+        // Validate file size (always use actual file size, not client-reported)
+        $size = filesize($uploadedFile['tmp_name']);
+        if ($size === false || $size > $this->maxFileSize) {
             throw new \RuntimeException(
                 'File too large. Maximum size is ' . $this->formatFileSize($this->maxFileSize)
             );
@@ -51,8 +51,8 @@ class FileStorageService
         $finfo = new \finfo(FILEINFO_MIME_TYPE);
         $mimeType = $finfo->file($uploadedFile['tmp_name']);
 
-        // Validate MIME type if allowlist is configured
-        if (!empty($this->allowedTypes) && !in_array($mimeType, $this->allowedTypes, true)) {
+        // Validate MIME type against allowlist (fail-closed: reject if no allowlist configured)
+        if (empty($this->allowedTypes) || !in_array($mimeType, $this->allowedTypes, true)) {
             throw new \RuntimeException('File type not allowed: ' . $mimeType);
         }
 
@@ -101,13 +101,20 @@ class FileStorageService
         if (empty($matches)) {
             // Try exact match (no extension)
             $exact = $formDir . '/' . $this->sanitizeId($fileId);
-            if (file_exists($exact)) {
+            if (file_exists($exact) && !is_link($exact)) {
                 return $exact;
             }
             return null;
         }
 
-        return $matches[0];
+        $filePath = $matches[0];
+
+        // Reject symlinks to prevent symlink-based file read attacks
+        if (is_link($filePath)) {
+            return null;
+        }
+
+        return $filePath;
     }
 
     /**

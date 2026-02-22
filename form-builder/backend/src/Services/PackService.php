@@ -39,17 +39,18 @@ class PackService
         // Validate structure
         $this->validatePack($packData);
 
-        // Prevent duplicate imports of the same pack
-        $meta = $packData['packMeta'];
-        $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
-        if ($packId !== 'custom' && $this->isPackInstalled($packId, $userId)) {
-            throw new \RuntimeException('This pack is already installed');
-        }
-
         $createdFormIds = [];
         $createdAppIds = [];
 
         $this->mysql->beginTransaction();
+
+        // Prevent duplicate imports of the same pack (inside transaction to avoid TOCTOU race)
+        $meta = $packData['packMeta'];
+        $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
+        if ($packId !== 'custom' && $this->isPackInstalled($packId, $userId)) {
+            $this->mysql->rollBack();
+            throw new \RuntimeException('This pack is already installed');
+        }
 
         try {
             // 1. Build form ID map: packFormId → new UUID
