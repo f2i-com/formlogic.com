@@ -234,8 +234,8 @@ export function LinkedRecordInput({
             onFocus={() => setIsOpen(true)}
             onKeyDown={handleKeyDown}
             placeholder="Search records..."
-            className="w-full pl-10 pr-10 py-3 bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none transition-colors focus:border-current"
-            style={{ '--focus-color': primaryColor } as React.CSSProperties}
+            className="w-full pl-10 pr-10 py-3 bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none transition-colors"
+            style={{ borderColor: query ? primaryColor : undefined }}
           />
           {loading ? (
             <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 animate-spin" />
