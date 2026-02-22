@@ -39,6 +39,13 @@ class PackService
         // Validate structure
         $this->validatePack($packData);
 
+        // Prevent duplicate imports of the same pack
+        $meta = $packData['packMeta'];
+        $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
+        if ($packId !== 'custom' && $this->isPackInstalled($packId, $userId)) {
+            throw new \RuntimeException('This pack is already installed');
+        }
+
         $createdFormIds = [];
         $createdAppIds = [];
 
@@ -253,8 +260,12 @@ class PackService
         $appsDeleted = 0;
 
         // Delete apps first (they reference forms via app_forms)
+        // Verify ownership before deleting to prevent deletion of other users' resources
         foreach ($appIds as $appId) {
             try {
+                $checkStmt = $this->mysql->prepare("SELECT id FROM apps WHERE id = :id AND owner_id = :owner_id");
+                $checkStmt->execute(['id' => $appId, 'owner_id' => $userId]);
+                if (!$checkStmt->fetch()) continue; // Skip if not owned or already deleted
                 $this->appService->deleteApp($appId);
                 $appsDeleted++;
             } catch (\Exception $e) {
@@ -263,8 +274,12 @@ class PackService
         }
 
         // Delete forms (and their SQLite databases)
+        // Verify ownership before deleting
         foreach ($formIds as $formId) {
             try {
+                $checkStmt = $this->mysql->prepare("SELECT id FROM forms WHERE id = :id AND user_id = :user_id");
+                $checkStmt->execute(['id' => $formId, 'user_id' => $userId]);
+                if (!$checkStmt->fetch()) continue; // Skip if not owned or already deleted
                 $this->formService->deleteForm($formId);
                 $formsDeleted++;
             } catch (\Exception $e) {
@@ -399,6 +414,14 @@ class PackService
             throw new \RuntimeException('Pack must contain at least one form');
         }
 
+        // Enforce size limits to prevent resource exhaustion
+        if (count($packData['forms']) > 50) {
+            throw new \RuntimeException('Pack cannot contain more than 50 forms');
+        }
+        if (isset($packData['apps']) && is_array($packData['apps']) && count($packData['apps']) > 20) {
+            throw new \RuntimeException('Pack cannot contain more than 20 apps');
+        }
+
         // Check for duplicate packFormIds
         $seenFormIds = [];
         foreach ($packData['forms'] as $i => $form) {
@@ -407,6 +430,9 @@ class PackService
             }
             if (empty($form['title'])) {
                 throw new \RuntimeException("Form '{$form['packFormId']}' is missing title");
+            }
+            if (isset($form['fields']) && is_array($form['fields']) && count($form['fields']) > 200) {
+                throw new \RuntimeException("Form '{$form['packFormId']}' has too many fields (max 200)");
             }
             if (isset($seenFormIds[$form['packFormId']])) {
                 throw new \RuntimeException("Duplicate packFormId: '{$form['packFormId']}'");

@@ -88,6 +88,10 @@ class FormLogicRuntime
             // Check for rejection
             if (is_array($nativeResult) && ($nativeResult['reject'] ?? false) === true) {
                 $message = $nativeResult['message'] ?? 'Submission rejected';
+                // Truncate to prevent oversized rejection messages
+                if (strlen($message) > 500) {
+                    $message = substr($message, 0, 500);
+                }
                 return ScriptResult::rejection($message, $instructionCount, $executionTimeMs);
             }
 

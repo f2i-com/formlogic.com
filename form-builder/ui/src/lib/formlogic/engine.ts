@@ -1,6 +1,7 @@
 import { logger } from '../logger';
 import {
   FormLogicEngine,
+  FormLogicConfig,
   BooleanObject,
   StringObject,
   IntegerObject,
@@ -23,7 +24,12 @@ let engineInstance: FormLogicEngine | null = null;
  */
 export function getEngine(): FormLogicEngine {
   if (!engineInstance) {
-    engineInstance = new FormLogicEngine();
+    // Apply execution limits to prevent browser tab DoS via malicious expressions
+    const config = new FormLogicConfig({
+      maxInstructions: 50_000,
+      maxWallTime: 2_000,
+    });
+    engineInstance = new FormLogicEngine(config);
     registerFormModules(engineInstance);
   }
   return engineInstance;

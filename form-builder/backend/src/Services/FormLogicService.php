@@ -18,6 +18,8 @@ class FormLogicService
     public function __construct()
     {
         $this->engine = new FormLogicEngine();
+        // Apply execution limits to prevent DoS via user-provided expressions
+        $this->engine->setLimits(10000, 1000, 50);
     }
 
     /**

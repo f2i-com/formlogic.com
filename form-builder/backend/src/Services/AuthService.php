@@ -411,7 +411,15 @@ class AuthService
 
         $sql = "UPDATE users SET " . implode(', ', $updates) . " WHERE id = :id";
         $stmt = $this->mysql->prepare($sql);
-        $stmt->execute($params);
+        try {
+            $stmt->execute($params);
+        } catch (\PDOException $e) {
+            // Handle UNIQUE constraint violation on email (TOCTOU race condition)
+            if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
+                throw new \RuntimeException('Email already in use');
+            }
+            throw $e;
+        }
 
         return $this->getUserById($userId);
     }
