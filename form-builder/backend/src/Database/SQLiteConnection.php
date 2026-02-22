@@ -9,6 +9,14 @@ use PDOException;
 
 class SQLiteConnection
 {
+    /**
+     * Increment this when adding new migrations in applyMigrations().
+     * v1 = base tables (form_data, fields, responses, field_groups)
+     * v2 = computed, tags, script_logs tables
+     * v3 = compound indexes for common query patterns
+     */
+    private const SCHEMA_VERSION = 3;
+
     private string $storagePath;
     private array $connections = [];
 
@@ -55,6 +63,8 @@ class SQLiteConnection
 
             if ($isNew) {
                 $this->initializeFormSchema($pdo);
+            } else {
+                $this->ensureSchemaUpToDate($pdo);
             }
 
             $this->connections[$formId] = $pdo;
@@ -226,60 +236,122 @@ class SQLiteConnection
             )
         ");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
-    }
-
-    /**
-     * Run migrations on an existing form database
-     */
-    public function migrateFormDatabase(PDO $pdo): void
-    {
-        // Add computed table if it doesn't exist
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS computed (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                response_id TEXT NOT NULL,
-                field_name TEXT NOT NULL,
-                field_value TEXT,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
-                UNIQUE(response_id, field_name)
-            )
-        ");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response ON computed(response_id)");
-
-        // Add tags table if it doesn't exist
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                response_id TEXT NOT NULL,
-                tag TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
-                UNIQUE(response_id, tag)
-            )
-        ");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response ON tags(response_id)");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)");
-
-        // Add script_logs table if it doesn't exist
-        $pdo->exec("
-            CREATE TABLE IF NOT EXISTS script_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                response_id TEXT NOT NULL,
-                success INTEGER DEFAULT 1,
-                error_message TEXT,
-                execution_time_ms INTEGER,
-                instruction_count INTEGER,
-                created_at TEXT DEFAULT (datetime('now')),
-                FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
-            )
-        ");
-        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
 
         // Compound indexes for common query patterns
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_status_submitted ON responses(status, submitted_at)");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response_field ON computed(response_id, field_name)");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response_tag ON tags(response_id, tag)");
+
+        // Record schema version
+        $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);
+    }
+
+    /**
+     * Run migrations on an existing form database.
+     * Kept for backward compatibility — delegates to version-based migration.
+     */
+    public function migrateFormDatabase(PDO $pdo): void
+    {
+        $this->ensureSchemaUpToDate($pdo);
+    }
+
+    /**
+     * Check schema version and apply any pending migrations.
+     */
+    private function ensureSchemaUpToDate(PDO $pdo): void
+    {
+        $version = $this->getSchemaVersion($pdo);
+        if ($version >= self::SCHEMA_VERSION) {
+            return;
+        }
+        $this->applyMigrations($pdo, $version);
+    }
+
+    /**
+     * Get the current schema version from form_data table.
+     * Returns 0 for pre-versioning databases.
+     */
+    private function getSchemaVersion(PDO $pdo): int
+    {
+        try {
+            $stmt = $pdo->prepare("SELECT value FROM form_data WHERE key = 'schema_version'");
+            $stmt->execute();
+            $row = $stmt->fetch();
+            return $row ? (int)$row['value'] : 0;
+        } catch (PDOException $e) {
+            // form_data table might not exist in very old databases
+            return 0;
+        }
+    }
+
+    /**
+     * Set the schema version in form_data table.
+     */
+    private function setSchemaVersion(PDO $pdo, int $version): void
+    {
+        $pdo->exec(
+            "INSERT OR REPLACE INTO form_data (key, value, updated_at) "
+            . "VALUES ('schema_version', '" . $version . "', datetime('now'))"
+        );
+    }
+
+    /**
+     * Apply incremental migrations from $fromVersion to SCHEMA_VERSION.
+     * All migrations are idempotent (IF NOT EXISTS).
+     */
+    private function applyMigrations(PDO $pdo, int $fromVersion): void
+    {
+        // v0→v2: Add computed, tags, script_logs tables
+        if ($fromVersion < 2) {
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS computed (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    response_id TEXT NOT NULL,
+                    field_name TEXT NOT NULL,
+                    field_value TEXT,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                    UNIQUE(response_id, field_name)
+                )
+            ");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response ON computed(response_id)");
+
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS tags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    response_id TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE,
+                    UNIQUE(response_id, tag)
+                )
+            ");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response ON tags(response_id)");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)");
+
+            $pdo->exec("
+                CREATE TABLE IF NOT EXISTS script_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    response_id TEXT NOT NULL,
+                    success INTEGER DEFAULT 1,
+                    error_message TEXT,
+                    execution_time_ms INTEGER,
+                    instruction_count INTEGER,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
+                )
+            ");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_script_logs_response ON script_logs(response_id)");
+        }
+
+        // v2→v3: Compound indexes for common query patterns
+        if ($fromVersion < 3) {
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_status_submitted ON responses(status, submitted_at)");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response_field ON computed(response_id, field_name)");
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response_tag ON tags(response_id, tag)");
+        }
+
+        $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);
     }
 
     /**

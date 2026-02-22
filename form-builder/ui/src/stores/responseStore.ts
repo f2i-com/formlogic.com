@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { FormResponse } from '../types/form';
+import { useFormStore } from './formStore';
 
 interface ResponseState {
   responses: FormResponse[];
@@ -135,8 +136,11 @@ export const useResponseStore = create<ResponseState>()(
     {
       name: 'formlogic-responses',
       partialize: (state) => ({
-        // Only persist the most recent 500 responses to prevent unbounded localStorage growth
-        responses: state.responses.slice(-500),
+        // In API mode, responses are server-backed — don't waste localStorage
+        // In local mode, keep the most recent 500
+        responses: useFormStore.getState().storageMode === 'api'
+          ? []
+          : state.responses.slice(-500),
       }),
     }
   )

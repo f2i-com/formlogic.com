@@ -8,14 +8,16 @@
 
 **Total issues identified**: 80+ across security, architecture, performance, UX, and developer experience. Organized into 6 phases by priority and dependency.
 
-| Phase | Focus | Issues | Effort |
-|-------|-------|--------|--------|
-| 1 | Critical Security & Data Integrity | 12 | 1-2 weeks |
-| 2 | Error Handling & Reliability | 14 | 1-2 weeks |
-| 3 | Performance & Scalability | 11 | 1-2 weeks |
-| 4 | Frontend Quality & UX | 13 | 1-2 weeks |
-| 5 | Testing & Developer Experience | 10 | 2-3 weeks |
-| 6 | Architecture & Long-term | 8 | Ongoing |
+| Phase | Focus | Issues | Completed | Remaining |
+|-------|-------|--------|-----------|-----------|
+| 1 | Critical Security & Data Integrity | 12 | 11 | 1 (partial) |
+| 2 | Error Handling & Reliability | 14 | 12 | 2 (infrastructure) |
+| 3 | Performance & Scalability | 11 | 10 | 1 (Redis) |
+| 4 | Frontend Quality & UX | 13 | 13 | 0 |
+| 5 | Testing & Developer Experience | 10 | 4 | 6 (tooling/infra) |
+| 6 | Architecture & Long-term | 8 | 0 | 8 (ongoing) |
+
+**Overall: 50 of 68 actionable items completed.** Remaining items require infrastructure (Redis, Docker), tooling setup (Vitest, PHPUnit, ESLint), or are architectural long-term improvements.
 
 ---
 
@@ -186,14 +188,15 @@ const handleCreateForm = async () => {
 **Problem**: `exportJson` loads ALL responses (up to 10,000) into memory. For forms with many large responses, this can exhaust PHP memory.
 **Fix**: Rewrote to stream JSON in batches of 500 responses instead of loading all into memory.
 
-### 2.5 CSV Import Error Recovery
+### 2.5 CSV Import Error Recovery [DONE]
 **Severity**: MEDIUM
 **File**: `backend/src/Services/ResponseService.php` ~L867-1000
 **Problem**: CSV import starts a transaction but uses `continue 2` in nested loops, which could skip transaction commits or leave partial state.
 **Fix**:
-- Wrap the entire import in a try/catch that always rolls back on exception
-- Track imported response IDs so compensating MySQL deletes can clean up on partial failure
-- Return partial success results (X of Y imported, errors on rows Z)
+- Already had solid transaction wrapping and per-row error handling
+- Added `$mysqlInsertedIds` tracking array for compensating deletes
+- If SQLite commit fails, outer catch now cleans up orphaned MySQL rows
+- Partial success results already returned (created/skipped/total/errors)
 
 ### 2.6 Script Error Message Information Disclosure [DONE]
 **Severity**: MEDIUM
@@ -341,24 +344,24 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 - Changed `updateForm` to use `${id}-meta` debounce key and send only the specific `updates` payload
 - Separate debounce keys now: `-meta`, `-fields`, `-settings`, `-theme`
 
-### 3.9 Response Store Unbounded localStorage Growth
+### 3.9 Response Store Unbounded localStorage Growth [DONE]
 **Severity**: MEDIUM
 **File**: `ui/src/stores/responseStore.ts` ~L87-88
 **Problem**: Responses are capped at 500 globally via `.slice(-500)`, but with 20+ forms, localStorage can still hold significant data. No per-form limit.
 **Fix**:
-- Add per-form response cap (e.g., 50 per form) in addition to global cap
-- Consider not persisting responses at all in API mode (they're server-backed)
-- Add a size check before persisting: `if (JSON.stringify(responses).length > 2 * 1024 * 1024)` → prune oldest
+- In API mode, responses are server-backed — `partialize` now persists empty array (matching 4.13 pattern for formStore)
+- Local mode retains the 500-response cap
+- Prevents unnecessary localStorage bloat in production API deployments
 
-### 3.10 Export Operations Load Full Dataset Into Memory
+### 3.10 Export Operations Load Full Dataset Into Memory [DONE]
 **Severity**: MEDIUM
 **Files**: `backend/src/Controllers/ResponseController.php` (export, exportSqlite, exportJson)
 **Problem**: Exports load all responses into memory before sending. Large forms can exhaust PHP memory.
 **Fix**:
-- CSV export: stream rows using `fputcsv()` to `php://output` with `ob_flush()`
-- JSON export: stream using incremental JSON encoding
-- SQLite export: stream the file directly (already a file — just stream it)
-- Add response count check: if >5000, require date range filter
+- CSV export: added `exportResponsesStreaming()` in ResponseService — fetches in batches of 500, writes to stream
+- JSON export: already streaming in batches (done in 2.4)
+- SQLite export: already streams the file directly via `Slim\Psr7\Stream`
+- Controller updated to use streaming CSV method with `Slim\Psr7\Stream`
 
 ### 3.11 PWA Aggressive Caching of Form Definitions [DONE]
 **Severity**: MEDIUM
@@ -520,14 +523,14 @@ useEffect(() => {
 - Pre-commit: run ESLint on staged .ts/.tsx files, run `php -l` on staged .php files
 - Pre-push: run `npm run build` (frontend type check)
 
-### 5.5 Remove Production console.log/console.error
+### 5.5 Remove Production console.log/console.error [DONE]
 **Severity**: MEDIUM
 **Files**: 23+ instances across stores and pages
 **Problem**: `console.error()` calls in production code go nowhere useful. They clutter browser console and leak implementation details.
 **Fix**:
-- Create a `logger` utility: in development, logs to console; in production, sends to error tracking service (or no-ops)
-- Replace all `console.error` with `logger.error()`
-- Add ESLint rule: `no-console: warn`
+- Created `ui/src/lib/logger.ts` utility: log/warn suppressed in production, error always logs
+- Replaced all 28 `console.error()` calls across 9 files with `logger.error()`
+- Zero raw `console.*` calls remain outside the logger module
 
 ### 5.6 Add API Documentation
 **Severity**: MEDIUM
@@ -563,14 +566,16 @@ VITE_API_URL=http://localhost:8080/api
 - `react-hooks/exhaustive-deps` — error
 - `no-console` — warn
 
-### 5.10 SQLite Schema Version Tracking
+### 5.10 SQLite Schema Version Tracking [DONE]
 **Severity**: LOW
 **File**: `backend/src/Database/SQLiteConnection.php`
 **Problem**: No version tracking for per-form SQLite schema changes. Migrations are ad-hoc.
 **Fix**:
-- Add `schema_version` key to `form_data` table on creation
-- Check version on each connection, apply incremental migrations
-- Provides safe evolution path for SQLite schemas
+- Added `SCHEMA_VERSION` constant (currently 3) and version-based migration system
+- New databases get version stamped in `form_data` table on creation
+- Existing databases auto-migrate on connection via `ensureSchemaUpToDate()`
+- Incremental migrations: v0→v2 (computed/tags/script_logs), v2→v3 (compound indexes)
+- `migrateFormDatabase()` kept for backward compat, delegates to version system
 
 ---
 
@@ -687,6 +692,7 @@ VITE_API_URL=http://localhost:8080/api
 
 ### Phase 2 continued (2)
 - [x] 2.4 (streaming JSON export) — DONE
+- [x] 2.5 (CSV import error recovery — MySQL orphan cleanup) — DONE
 
 ### Phase 3 Performance
 - [x] 3.2 (N+1 query in form listing) — DONE
@@ -695,6 +701,8 @@ VITE_API_URL=http://localhost:8080/api
 - [x] 3.5 (AppDataTable MobileCardList memo) — DONE
 - [x] 3.6 (SQLite WAL mode + busy_timeout) — DONE
 - [x] 3.8 (debounce race condition) — DONE
+- [x] 3.9 (response store — skip localStorage in API mode) — DONE
+- [x] 3.10 (streaming CSV/JSON exports) — DONE
 - [x] 3.11 (PWA form definition caching) — DONE
 
 ### Phase 4 Frontend Quality
@@ -710,11 +718,24 @@ VITE_API_URL=http://localhost:8080/api
 - [x] 4.12 (event listener cleanup) — already correct
 - [x] 4.13 (don't persist API forms to localStorage) — DONE
 
-### Requires Careful Testing
-- 1.3 (dual-database consistency) — affects core data flow
+### Phase 5 Developer Experience
+- [x] 5.5 (logger utility, console.error cleanup) — DONE
+- [x] 5.8 (frontend .env.example) — DONE (already existed)
+- [x] 5.10 (SQLite schema version tracking) — DONE
+
+### Deferred — Requires Infrastructure or Long-term Work
+- 1.3 (dual-database consistency) — PARTIAL, remaining needs careful testing
+- 2.10 (webhook delivery retry) — needs new table + background process
+- 2.14 (stale closure in AppInitializer) — assessed as not a real bug
 - 3.1 (rate limiting replacement) — needs Redis infrastructure
-- 3.8 (debounce race condition) — affects all form saves
-- 5.1-5.2 (test infrastructure) — foundational for future quality
+- 3.7 (synchronous webhook delivery) — needs job queue
+- 5.1-5.2 (test infrastructure) — Vitest/PHPUnit setup, foundational for future quality
+- 5.3 (PHPStan static analysis) — needs installation + incremental error fixing
+- 5.4 (pre-commit hooks) — husky + lint-staged
+- 5.6 (API documentation) — OpenAPI spec or docs
+- 5.7 (Docker Compose) — containerized dev environment
+- 5.9 (ESLint rules) — import ordering, no-console rule
+- 6.1-6.8 (architecture improvements) — API typing, base controller, job queue, structured logging, error tracking, read replicas, API versioning, CSP
 
 ### Dependencies Between Items
 - 3.1 (Redis rate limiting) enables 6.3 (job queue) if using Redis

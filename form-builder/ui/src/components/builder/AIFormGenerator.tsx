@@ -3,6 +3,7 @@ import { Sparkles, FileText, Image, Upload, AlertCircle, Wand2 } from 'lucide-re
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
 import type { FormField } from '../../types/form';
 import { v4 as uuidv4 } from 'uuid';
@@ -149,7 +150,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       onGenerate(title, description || '', formFields, activeTab === 'prompt' ? prompt : additionalPrompt);
       resetAndClose();
     } catch (error) {
-      console.error('AI generation error:', error);
+      logger.error('AI generation error:', error);
       toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);

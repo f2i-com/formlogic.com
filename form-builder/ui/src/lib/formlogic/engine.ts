@@ -1,3 +1,4 @@
+import { logger } from '../logger';
 import {
   FormLogicEngine,
   BooleanObject,
@@ -244,7 +245,7 @@ export async function evaluateCondition(
     const value = getValue(result);
     return Boolean(value);
   } catch (error) {
-    console.error('Error evaluating condition:', error);
+    logger.error('Error evaluating condition:', error);
     return false;
   }
 }
@@ -274,7 +275,7 @@ export async function validateWithExpression(
     // If result is truthy or null, validation passed
     return null;
   } catch (error) {
-    console.error('Error in validation expression:', error);
+    logger.error('Error in validation expression:', error);
     return 'Validation error';
   }
 }
@@ -291,7 +292,7 @@ export async function calculateValue(
     const result = await engine.runWithContext(expression, formData);
     return getValue(result);
   } catch (error) {
-    console.error('Error calculating value:', error);
+    logger.error('Error calculating value:', error);
     return null;
   }
 }

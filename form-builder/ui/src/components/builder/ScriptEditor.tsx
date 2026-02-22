@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Play, Book, AlertCircle, CheckCircle, Code2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
 
 interface ScriptEditorProps {
@@ -325,7 +326,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
         toast.success('Script Generated', 'Review the generated script in the editor');
       }
     } catch (error) {
-      console.error('AI script generation error:', error);
+      logger.error('AI script generation error:', error);
       toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);
@@ -361,7 +362,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
         toast.success('Script Improved', 'Review the updated script in the editor');
       }
     } catch (error) {
-      console.error('AI script improvement error:', error);
+      logger.error('AI script improvement error:', error);
       toast.error('Improvement Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);

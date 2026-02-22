@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { logger } from '../lib/logger';
 import {
   FileText,
   Plus,
@@ -235,7 +236,7 @@ export function FormsList() {
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
     } catch (error) {
-      console.error('Failed to create form:', error);
+      logger.error('Failed to create form:', error);
       toast.error('Failed to create form', 'Please try again');
     } finally {
       setIsCreating(false);
@@ -254,7 +255,7 @@ export function FormsList() {
         navigate(`/builder/${newForm.id}`);
       }
     } catch (error) {
-      console.error('Failed to duplicate form:', error);
+      logger.error('Failed to duplicate form:', error);
       toast.error('Failed to duplicate form', 'Please try again');
     }
     setActiveMenu(null);

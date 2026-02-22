@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuidv4 } from 'uuid';
 import type { Form, FormField, FormSettings, FormTheme } from '../types/form';
 import { api } from '../lib/api';
+import { logger } from '../lib/logger';
 import { toast } from './toastStore';
 
 // Generate a human-friendly field ID from a label
@@ -198,7 +199,7 @@ export const useFormStore = create<FormState>()(
           // Fallback to localStorage (already loaded by persist middleware)
           set({ isLoading: false, isInitialized: true });
         } catch (error) {
-          console.error('Failed to initialize form store:', error);
+          logger.error('Failed to initialize form store:', error);
           toast.error('Loading Error', 'Failed to load forms. Using local storage.');
           set({
             error: 'Failed to load forms',
@@ -229,7 +230,7 @@ export const useFormStore = create<FormState>()(
             set({ error: result.error || 'Failed to load forms', isLoading: false });
           }
         } catch (error) {
-          console.error('Failed to refresh forms:', error);
+          logger.error('Failed to refresh forms:', error);
           toast.error('Refresh Failed', 'Could not refresh forms from server.');
           set({ error: 'Failed to load forms', isLoading: false });
         }
@@ -261,7 +262,7 @@ export const useFormStore = create<FormState>()(
             if (result.error) {
               // Rollback optimistic update
               set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
-              console.error('Failed to create form on server:', result.error);
+              logger.error('Failed to create form on server:', result.error);
               toast.error('Failed to create form', typeof result.error === 'string' ? result.error : 'Please try again');
             } else if (result.data) {
               // Update with server response (may have different ID)
@@ -275,7 +276,7 @@ export const useFormStore = create<FormState>()(
           } catch (error) {
             // Rollback optimistic update
             set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
-            console.error('Failed to create form on server:', error);
+            logger.error('Failed to create form on server:', error);
             toast.error('Failed to create form', 'Please check your connection and try again');
           }
         }
@@ -303,7 +304,7 @@ export const useFormStore = create<FormState>()(
             try {
               await api.updateForm(id, updates);
             } catch (error) {
-              console.error('Failed to update form on server:', error);
+              logger.error('Failed to update form on server:', error);
               toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
             } finally {
               markSaving(id, false);
@@ -332,7 +333,7 @@ export const useFormStore = create<FormState>()(
           try {
             await api.deleteForm(id);
           } catch (error) {
-            console.error('Failed to delete form on server:', error);
+            logger.error('Failed to delete form on server:', error);
             toast.error('Failed to delete form', 'Please try again');
           }
         }
@@ -371,7 +372,7 @@ export const useFormStore = create<FormState>()(
               return result.data.form as Form;
             }
           } catch (error) {
-            console.error('Failed to duplicate form on server:', error);
+            logger.error('Failed to duplicate form on server:', error);
             toast.error('Failed to duplicate form', 'Please try again');
           }
         }
@@ -401,7 +402,7 @@ export const useFormStore = create<FormState>()(
             return fullForm;
           }
         } catch (error) {
-          console.error('Failed to load full form:', error);
+          logger.error('Failed to load full form:', error);
         }
         return existing;
       },

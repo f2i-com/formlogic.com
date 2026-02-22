@@ -658,46 +658,66 @@ class ResponseService
     /**
      * Export responses to CSV format
      */
-    public function exportResponses(string $formId, array $fields): string
+    /**
+     * Export responses as CSV, writing to the provided stream in batches.
+     * Returns headers array for Content-Disposition.
+     *
+     * @param resource $outputStream A writable stream (e.g. php://output)
+     */
+    public function exportResponsesStreaming(string $formId, array $fields, $outputStream): int
     {
-        $responses = $this->getFormResponses($formId);
-
-        if (empty($responses)) {
-            return '';
-        }
-
-        $output = fopen('php://temp', 'r+');
-
         // Header row
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {
             $headers[] = $field['label'] ?? $field['id'];
         }
-        fputcsv($output, $headers);
+        fputcsv($outputStream, $headers);
 
-        // Data rows
-        foreach ($responses as $response) {
-            $row = [
-                $response['id'],
-                $response['submittedAt'],
-                $response['status'],
-            ];
+        $batchSize = 500;
+        $offset = 0;
+        $totalWritten = 0;
 
-            foreach ($fields as $field) {
-                $value = $response['answers'][$field['id']] ?? '';
-                if (is_array($value)) {
-                    $value = implode(', ', $value);
+        do {
+            $batch = $this->getFormResponses($formId, [
+                'limit' => $batchSize,
+                'offset' => $offset,
+            ]);
+
+            foreach ($batch as $response) {
+                $row = [
+                    $response['id'],
+                    $response['submittedAt'],
+                    $response['status'],
+                ];
+
+                foreach ($fields as $field) {
+                    $value = $response['answers'][$field['id']] ?? '';
+                    if (is_array($value)) {
+                        $value = implode(', ', $value);
+                    }
+                    $row[] = $value;
                 }
-                $row[] = $value;
+
+                fputcsv($outputStream, $row);
+                $totalWritten++;
             }
 
-            fputcsv($output, $row);
-        }
+            $offset += $batchSize;
+        } while (count($batch) === $batchSize);
 
+        return $totalWritten;
+    }
+
+    /**
+     * @deprecated Use exportResponsesStreaming() for memory-efficient export
+     */
+    public function exportResponses(string $formId, array $fields): string
+    {
+        $output = fopen('php://temp', 'r+');
+        $this->exportResponsesStreaming($formId, $fields, $output);
         rewind($output);
         $csv = stream_get_contents($output);
         fclose($output);
-
         return $csv;
     }
 
@@ -863,6 +883,7 @@ class ResponseService
         $skipped = 0;
         $errors = [];
         $total = count($rows);
+        $mysqlInsertedIds = []; // Track for cleanup if SQLite commit fails
 
         $db->beginTransaction();
 
@@ -956,6 +977,7 @@ class ResponseService
                             'status' => 'submitted',
                             'submitted_at' => $now,
                         ]);
+                        $mysqlInsertedIds[] = $id;
                     } catch (\Exception $mysqlErr) {
                         // Roll back the SQLite insert to keep databases in sync
                         $db->exec("DELETE FROM responses WHERE id = " . $db->quote($id));
@@ -973,6 +995,23 @@ class ResponseService
             $db->commit();
         } catch (\Exception $e) {
             $db->rollBack();
+            // Clean up orphaned MySQL rows from successful inserts before the failure
+            if (!empty($mysqlInsertedIds)) {
+                try {
+                    $placeholders = implode(',', array_fill(0, count($mysqlInsertedIds), '?'));
+                    $cleanupStmt = $this->mysql->prepare(
+                        "DELETE FROM response_metadata WHERE id IN ($placeholders)"
+                    );
+                    $cleanupStmt->execute($mysqlInsertedIds);
+                } catch (\Exception $cleanupErr) {
+                    // Log but don't mask the original error
+                    $this->logger->warning('Failed to clean up MySQL rows after import rollback', [
+                        'formId' => $formId,
+                        'orphanedIds' => count($mysqlInsertedIds),
+                        'error' => $cleanupErr->getMessage(),
+                    ]);
+                }
+            }
             throw new \RuntimeException('Import failed: ' . $e->getMessage());
         }
 

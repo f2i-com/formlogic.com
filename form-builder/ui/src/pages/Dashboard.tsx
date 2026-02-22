@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
+import { logger } from '../lib/logger';
 import {
   FileText,
   Eye,
@@ -161,7 +162,7 @@ function FormActionsDropdown({
     try {
       await api.downloadSqlite(formId, formTitle);
     } catch (error) {
-      console.error('Failed to export SQLite:', error);
+      logger.error('Failed to export SQLite:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
     } finally {
       setIsExporting(false);
@@ -174,7 +175,7 @@ function FormActionsDropdown({
     try {
       await api.downloadJson(formId, formTitle);
     } catch (error) {
-      console.error('Failed to export JSON:', error);
+      logger.error('Failed to export JSON:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
     } finally {
       setIsExporting(false);
@@ -196,7 +197,7 @@ function FormActionsDropdown({
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Failed to export CSV:', error);
+      logger.error('Failed to export CSV:', error);
       toast.error('Export Failed', 'Failed to export CSV');
     } finally {
       setIsExporting(false);
@@ -401,7 +402,7 @@ export function Dashboard() {
             avgCompletionRate: formsWithAnalytics > 0 ? Math.round(totalCompletionRate / formsWithAnalytics) : 0,
           });
         } catch (error) {
-          console.error('Failed to fetch dashboard stats:', error);
+          logger.error('Failed to fetch dashboard stats:', error);
           toast.warning('Connection Issue', 'Using local data. Some stats may not be up to date.');
           setStats(localStats);
         }

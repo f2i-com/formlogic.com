@@ -8,6 +8,7 @@ import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
+import { logger } from '../lib/logger';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
@@ -98,7 +99,7 @@ export default function FormAnalytics() {
             setAnalytics(result.data.analytics);
           }
         } catch (error) {
-          console.error('Failed to fetch analytics:', error);
+          logger.error('Failed to fetch analytics:', error);
           toast.warning('Connection Issue', 'Using local analytics data.');
         } finally {
           setIsLoading(false);
@@ -264,7 +265,7 @@ export default function FormAnalytics() {
           URL.revokeObjectURL(url);
           return;
         } catch (error) {
-          console.error('Failed to export from API, falling back to local:', error);
+          logger.error('Failed to export from API, falling back to local:', error);
         }
       }
 
@@ -295,7 +296,7 @@ export default function FormAnalytics() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Failed to export CSV:', error);
+      logger.error('Failed to export CSV:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export CSV');
     } finally {
       setIsExporting(false);
@@ -309,7 +310,7 @@ export default function FormAnalytics() {
     try {
       await api.downloadSqlite(form.id, form.title);
     } catch (error) {
-      console.error('Failed to export SQLite:', error);
+      logger.error('Failed to export SQLite:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
     } finally {
       setIsExporting(false);
@@ -323,7 +324,7 @@ export default function FormAnalytics() {
     try {
       await api.downloadJson(form.id, form.title);
     } catch (error) {
-      console.error('Failed to export JSON:', error);
+      logger.error('Failed to export JSON:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
     } finally {
       setIsExporting(false);

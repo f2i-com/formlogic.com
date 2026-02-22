@@ -3,6 +3,7 @@
  */
 
 import type { Form } from '../types/form';
+import { logger } from './logger';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -122,7 +123,7 @@ class ApiClient {
 
       return { data };
     } catch (error) {
-      console.error('API request failed:', error);
+      logger.error('API request failed:', error);
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
   }
@@ -378,7 +379,7 @@ class ApiClient {
 
       return { data };
     } catch (error) {
-      console.error('API request failed:', error);
+      logger.error('API request failed:', error);
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
   }

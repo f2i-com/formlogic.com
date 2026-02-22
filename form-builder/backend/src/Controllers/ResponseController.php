@@ -517,15 +517,20 @@ class ResponseController
             ], 404);
         }
 
-        $csv = $this->responseService->exportResponses($formId, $form['fields']);
-
         $this->audit($request, 'response.export', 'form', $formId, ['format' => 'csv']);
 
-        $response->getBody()->write($csv);
+        // Stream CSV in batches to avoid loading all responses into memory
+        $filename = $this->sanitizeFilename($form['title']) . '-responses.csv';
+        $stream = fopen('php://temp', 'r+');
+        $this->responseService->exportResponsesStreaming($formId, $form['fields'], $stream);
+        rewind($stream);
+
+        $body = new \Slim\Psr7\Stream($stream);
 
         return $response
+            ->withBody($body)
             ->withHeader('Content-Type', 'text/csv')
-            ->withHeader('Content-Disposition', 'attachment; filename="' . $this->sanitizeFilename($form['title']) . '-responses.csv"');
+            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"');
     }
 
     /**
