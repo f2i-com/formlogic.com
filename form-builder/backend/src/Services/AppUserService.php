@@ -190,6 +190,15 @@ class AppUserService
             throw new \RuntimeException('Cannot modify system role permissions');
         }
 
+        // Build set of valid form IDs for this app (to validate formId in permissions)
+        $appId = $role['appId'];
+        $validFormIds = [];
+        $fStmt = $this->mysql->prepare("SELECT form_id FROM app_forms WHERE app_id = :app_id");
+        $fStmt->execute(['app_id' => $appId]);
+        foreach ($fStmt->fetchAll() as $row) {
+            $validFormIds[$row['form_id']] = true;
+        }
+
         $inTransaction = $this->mysql->inTransaction();
         if (!$inTransaction) {
             $this->mysql->beginTransaction();
@@ -209,10 +218,15 @@ class AppUserService
                 if (!in_array($perm['permission'], AppPermissions::ALL, true)) {
                     continue;
                 }
+                $formId = $perm['formId'] ?? null;
+                // Skip permissions referencing forms not in this app
+                if ($formId !== null && !isset($validFormIds[$formId])) {
+                    continue;
+                }
                 $stmt->execute([
                     'id' => $this->generateUuid(),
                     'role_id' => $roleId,
-                    'form_id' => $perm['formId'] ?? null,
+                    'form_id' => $formId,
                     'permission' => $perm['permission'],
                 ]);
             }
