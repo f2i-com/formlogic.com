@@ -21,6 +21,22 @@ export function AppShell() {
     return () => window.removeEventListener('resize', checkMobile);
   }, [setIsMobile]);
 
+  // Auto-collapse sidebar at medium resolutions (768-1024px)
+  const { toggleSidebar } = useUIStore();
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth;
+      if (width >= 768 && width < 1024 && !sidebarCollapsed) {
+        toggleSidebar();
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+    // Only run on mount and when crossing breakpoints
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="min-h-screen">
       {/* Offline Banner */}

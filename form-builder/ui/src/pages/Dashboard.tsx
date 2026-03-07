@@ -464,7 +464,7 @@ export function Dashboard() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
           <StatCard
             icon={FileText}
             iconBg="bg-indigo-50 dark:bg-indigo-500/10"
@@ -504,7 +504,7 @@ export function Dashboard() {
           <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">
             Quick Actions
           </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
             <QuickActionButton
               icon={Plus}
               label="New Form"
@@ -655,7 +655,7 @@ export function Dashboard() {
                               onClick={() => navigate(`/builder/${form.id}`)}
                               title="Edit form"
                               aria-label="Edit form"
-                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
+                              className="hidden sm:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Pencil className="h-4 w-4" />
                             </Button>
@@ -665,7 +665,7 @@ export function Dashboard() {
                               onClick={() => navigate(`/preview/${form.id}`)}
                               title="Preview form"
                               aria-label="Preview form"
-                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
+                              className="hidden sm:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Eye className="h-4 w-4" />
                             </Button>
@@ -675,7 +675,7 @@ export function Dashboard() {
                               onClick={() => navigate(`/analytics/${form.id}`)}
                               title="View analytics"
                               aria-label="View analytics"
-                              className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
+                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <BarChart3 className="h-4 w-4" />
                             </Button>
@@ -685,7 +685,7 @@ export function Dashboard() {
                               onClick={() => navigate(`/responses/${form.id}`)}
                               title="View data"
                               aria-label="View data"
-                              className="hidden lg:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
+                              className="hidden md:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
                             >
                               <Table className="h-4 w-4" />
                             </Button>

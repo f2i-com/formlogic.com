@@ -401,22 +401,22 @@ function FormResponses() {
       <Header
         title={`${form.title} - Responses`}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => navigate(`/analytics/${formId}`)}>
-              <ArrowLeft className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Back to Analytics</span>
+          <div className="flex flex-wrap gap-1.5 sm:gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate(`/analytics/${formId}`)} title="Back to Analytics">
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Analytics</span>
             </Button>
-            <Button variant="outline" onClick={() => setShowEmbedModal(true)} title="Share & Embed">
-              <Share2 className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Share</span>
+            <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
+              <Share2 className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Share</span>
             </Button>
-            <Button variant="outline" onClick={() => setShowCsvImport(true)} title="Import CSV">
-              <Upload className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Import CSV</span>
+            <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV">
+              <Upload className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Import</span>
             </Button>
-            <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0} title="Export CSV">
-              <Download className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Export CSV</span>
+            <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={responses.length === 0} title="Export CSV">
+              <Download className="h-4 w-4" />
+              <span className="hidden md:inline ml-2">Export</span>
             </Button>
           </div>
         }

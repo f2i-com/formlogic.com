@@ -103,20 +103,20 @@ export function AppsDashboard() {
 
         {/* Search and Filter */}
         {apps.length > 0 && (
-          <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3">
+          <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3 sm:items-center">
             <Input
               placeholder="Search apps..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search className="h-4 w-4" />}
-              className="w-full sm:max-w-md"
+              className="w-full sm:max-w-xs lg:max-w-md"
             />
             {packOptions.length > 0 && (
               <select
                 value={packFilter}
                 onChange={(e) => setPackFilter(e.target.value)}
                 aria-label="Filter by pack"
-                className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer"
+                className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer w-full sm:w-auto"
               >
                 <option value="all">All Packs</option>
                 <option value="none">No Pack</option>
@@ -148,7 +148,7 @@ export function AppsDashboard() {
             No apps match your filters.
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {filteredApps.map((app) => (
               <AppCard
                 key={app.id}
@@ -189,22 +189,22 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
         'transition-all duration-200 cursor-pointer group'
       )}
     >
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-center gap-3">
+      <div className="flex items-start justify-between gap-2 mb-4">
+        <div className="flex items-center gap-3 min-w-0">
           {app.logoUrl ? (
-            <img src={app.logoUrl} alt={app.name} className="w-10 h-10 rounded-xl object-cover"
+            <img src={app.logoUrl} alt={app.name} className="w-10 h-10 rounded-xl object-cover flex-shrink-0"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
           ) : (
-            <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center flex-shrink-0">
               <Globe className="h-5 w-5 text-primary-600 dark:text-primary-400" />
             </div>
           )}
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
               {app.name}
             </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 dark:text-slate-500 font-mono">/{app.slug}</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 dark:text-slate-500 font-mono truncate max-w-[140px]">/{app.slug}</span>
               {packName && (
                 <Badge variant="info" size="sm">
                   <Package className="h-3 w-3 mr-1 inline" />
@@ -214,7 +214,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             </div>
           </div>
         </div>
-        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize', statusColors[app.status])}>
+        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize flex-shrink-0', statusColors[app.status])}>
           {app.status}
         </span>
       </div>
