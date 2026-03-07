@@ -7,4 +7,4 @@ export {
   testExpression,
 } from './engine';
 
-export type { FormLogicEngine } from './engine';
+export type { WasmFormLogicEngine } from './engine';
