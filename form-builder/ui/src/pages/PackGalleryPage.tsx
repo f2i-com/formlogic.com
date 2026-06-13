@@ -36,6 +36,7 @@ export default function PackGalleryPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [error, setError] = useState<string | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadSeqRef = useRef(0);
 
@@ -67,6 +68,7 @@ export default function PackGalleryPage() {
     // otherwise a slow earlier query/page can overwrite newer results.
     const seq = ++loadSeqRef.current;
     setLoading(true);
+    setError(null);
     try {
       const result = await api.browsePacks({
         search: searchQuery || undefined,
@@ -76,12 +78,14 @@ export default function PackGalleryPage() {
         limit: 12,
       });
       if (seq !== loadSeqRef.current) return;
-      if (result.data) {
+      if (result.error) {
+        setError(typeof result.error === 'string' ? result.error : 'Failed to load packs');
+      } else if (result.data) {
         setPacks(result.data.packs);
         setTotalPages(result.data.totalPages);
       }
     } catch {
-      // silently fail
+      if (seq === loadSeqRef.current) setError('Failed to load packs. Please check your connection and try again.');
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
     }
@@ -210,6 +214,13 @@ export default function PackGalleryPage() {
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+          </div>
+        ) : error ? (
+          <div role="alert" className="text-center py-16 text-gray-500 dark:text-slate-400">
+            <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+            <p className="text-lg font-medium text-gray-700 dark:text-slate-300">Couldn’t load packs</p>
+            <p className="text-sm mt-1">{error}</p>
+            <Button variant="outline" className="mt-4" onClick={() => loadPacks()}>Try again</Button>
           </div>
         ) : packs.length === 0 ? (
           <div className="text-center py-16 text-gray-400 dark:text-slate-500">

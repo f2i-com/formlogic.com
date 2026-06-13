@@ -4,6 +4,7 @@ import { X, Palette, RotateCcw, Upload, Image, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
+import { readableForegroundColor } from '../../lib/color';
 import type { FormTheme } from '../../types/form';
 
 interface ThemeEditorProps {
@@ -560,13 +561,13 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                 <button
                   disabled
                   className={cn(
-                    'px-6 py-2 text-white font-medium',
+                    'px-6 py-2 font-medium',
                     editedTheme.borderRadius === 'none' && 'rounded-none',
                     editedTheme.borderRadius === 'small' && 'rounded',
                     editedTheme.borderRadius === 'medium' && 'rounded-lg',
                     editedTheme.borderRadius === 'large' && 'rounded-xl'
                   )}
-                  style={{ backgroundColor: editedTheme.primaryColor }}
+                  style={{ backgroundColor: editedTheme.primaryColor, color: readableForegroundColor(editedTheme.primaryColor) }}
                 >
                   Continue
                 </button>

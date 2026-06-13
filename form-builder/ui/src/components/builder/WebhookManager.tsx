@@ -32,7 +32,9 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
 
   const loadWebhooks = useCallback(async () => {
     const result = await api.getWebhooks(formId);
-    if (result.data) {
+    if (result.error) {
+      toast.error('Failed to load webhooks', typeof result.error === 'string' ? result.error : 'Please try again.');
+    } else if (result.data) {
       setWebhooks(result.data.webhooks);
     }
     setLoading(false);

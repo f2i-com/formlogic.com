@@ -212,6 +212,9 @@ export function PhoneInput({
           ref={buttonRef}
           type="button"
           onClick={() => setIsOpen(!isOpen)}
+          aria-label={`Country code: ${selectedCountry.name} (${selectedCountry.dialCode})`}
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
           className={`flex items-center gap-1 py-2 pr-2 border-b-2 text-lg transition-colors cursor-pointer whitespace-nowrap ${
             !hasPrimaryColor ? (nationalNumber ? 'border-current/60' : 'border-current/30') : ''
           }`}
