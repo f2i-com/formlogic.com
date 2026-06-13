@@ -689,6 +689,7 @@ export default function FormBuilder() {
         isOpen={activeModal === 'settings'}
         onClose={closeModal}
         settings={form.settings}
+        formId={form.id}
         onSave={(settings) => updateForm(form.id, { settings })}
       />
 

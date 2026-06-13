@@ -151,7 +151,12 @@ class WebhookService
     }
 
     /**
-     * Dispatch a webhook event to all active webhooks for a form
+     * Dispatch a webhook event to all active webhooks for a form.
+     *
+     * Deliveries run in parallel via curl_multi so a form with N webhooks (or a
+     * single slow endpoint) no longer serializes N × the timeout onto the
+     * submitter's request — the whole batch is bounded by the slowest single
+     * delivery instead of their sum.
      */
     public function dispatch(string $formId, string $event, array $payload): void
     {
@@ -161,12 +166,16 @@ class WebhookService
             );
             $stmt->execute(['form_id' => $formId]);
 
+            $matching = [];
             while ($webhook = $stmt->fetch()) {
                 $events = json_decode($webhook['events'], true) ?? [];
-                if (!in_array($event, $events)) {
-                    continue;
+                if (in_array($event, $events, true)) {
+                    $matching[] = $webhook;
                 }
-                $this->deliver($webhook, $event, $payload);
+            }
+
+            if (!empty($matching)) {
+                $this->deliverBatch($matching, $event, $payload);
             }
         } catch (\Exception $e) {
             $this->logger->error('Webhook dispatch error', [
@@ -177,119 +186,176 @@ class WebhookService
         }
     }
 
-    private function deliver(array $webhook, string $event, array $payload): void
+    /**
+     * Deliver an event to multiple webhooks concurrently with curl_multi.
+     */
+    private function deliverBatch(array $webhooks, string $event, array $payload): void
     {
-        $deliveryId = $this->generateUuid();
-        $body = json_encode(['event' => $event, 'payload' => $payload, 'deliveryId' => $deliveryId]);
+        $mh = curl_multi_init();
+        // deliveryId => ['ch' => handle, 'webhook' => row, 'body' => string, 'start' => float]
+        $handles = [];
 
-        // Cap payload size to prevent OOM and excessive bandwidth
-        if (strlen($body) > 5 * 1024 * 1024) {
-            $this->logger->warning('Webhook payload too large, skipping delivery', [
-                'webhookId' => $webhook['id'],
-                'event' => $event,
-                'payloadSize' => strlen($body),
-            ]);
-            // Log a failed delivery
-            try {
-                $stmt = $this->mysql->prepare("
-                    INSERT INTO webhook_deliveries (id, webhook_id, event, payload, response_status, response_body, duration_ms, success, error_message)
-                    VALUES (:id, :webhook_id, :event, NULL, NULL, NULL, 0, 0, :error_message)
-                ");
-                $stmt->execute([
-                    'id' => $deliveryId,
-                    'webhook_id' => $webhook['id'],
+        foreach ($webhooks as $webhook) {
+            $deliveryId = $this->generateUuid();
+            $body = json_encode(['event' => $event, 'payload' => $payload, 'deliveryId' => $deliveryId]);
+
+            // Cap payload size to prevent OOM and excessive bandwidth
+            if (strlen($body) > 5 * 1024 * 1024) {
+                $this->logger->warning('Webhook payload too large, skipping delivery', [
+                    'webhookId' => $webhook['id'],
                     'event' => $event,
-                    'error_message' => 'Payload exceeded 5MB size limit',
+                    'payloadSize' => strlen($body),
                 ]);
-            } catch (\Exception $e) {
-                $this->logger->error('Failed to log oversized webhook delivery', ['exception' => $e->getMessage()]);
+                $this->logDelivery($deliveryId, $webhook['id'], $event, null, null, null, 0, false, 'Payload exceeded 5MB size limit');
+                continue;
             }
+
+            try {
+                $ch = $this->buildDeliveryHandle($webhook, $event, $body, $deliveryId);
+            } catch (\Throwable $e) {
+                // SSRF / URL validation failure — log and skip this webhook.
+                $this->logDelivery($deliveryId, $webhook['id'], $event, $body, null, null, 0, false, $e->getMessage());
+                continue;
+            }
+
+            curl_multi_add_handle($mh, $ch);
+            $handles[$deliveryId] = ['ch' => $ch, 'webhook' => $webhook, 'body' => $body, 'start' => microtime(true)];
+        }
+
+        if (empty($handles)) {
+            curl_multi_close($mh);
             return;
         }
-        $signature = 'sha256=' . hash_hmac('sha256', $body, $webhook['secret']);
 
-        $startTime = microtime(true);
-        $responseStatus = null;
-        $responseBody = null;
-        $success = false;
-        $errorMessage = null;
-
-        try {
-            // SSRF protection: resolve hostname and block private/reserved IPs
-            $parsedUrl = parse_url($webhook['url']);
-            $host = $parsedUrl['host'] ?? '';
-            $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
-            if ($host === '') {
-                throw new \RuntimeException('Webhook URL has no valid host');
+        // Drive the parallel transfers to completion.
+        do {
+            $status = curl_multi_exec($mh, $running);
+            if ($running) {
+                curl_multi_select($mh, 1.0);
             }
+        } while ($running && $status === CURLM_OK);
 
-            // Block known metadata endpoints and localhost (including IPv4-mapped IPv6)
-            $blockedHosts = [
-                'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
-                'metadata.azure.internal', '0.0.0.0', '::1', '::ffff:127.0.0.1',
-                '::ffff:0:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
-            ];
-            if (in_array(strtolower($host), $blockedHosts, true)) {
-                throw new \RuntimeException('Webhook URL host is not allowed');
-            }
+        foreach ($handles as $deliveryId => $h) {
+            $ch = $h['ch'];
+            $responseBody = curl_multi_getcontent($ch);
+            $responseStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $errno = curl_errno($ch);
+            $success = false;
+            $errorMessage = null;
 
-            $resolvedIps = gethostbynamel($host);
-            if ($resolvedIps === false || empty($resolvedIps)) {
-                throw new \RuntimeException('Unable to resolve webhook URL hostname');
-            }
-            foreach ($resolvedIps as $ip) {
-                // Strip IPv4-mapped IPv6 prefix for validation
-                $checkIp = $ip;
-                if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
-                    $checkIp = $m[1];
-                }
-                if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                    throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
+            if ($errno || $responseBody === false || $responseStatus === 0) {
+                $errorMessage = curl_error($ch) ?: 'curl transfer failed';
+            } else {
+                $success = $responseStatus >= 200 && $responseStatus < 300;
+                if (!$success) {
+                    $errorMessage = 'HTTP ' . $responseStatus;
                 }
             }
-            $resolvedIp = $resolvedIps[0];
 
-            $ch = curl_init($webhook['url']);
-            $curlOpts = [
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => $body,
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_TIMEOUT => 5,
-                CURLOPT_CONNECTTIMEOUT => 3,
-                CURLOPT_FOLLOWLOCATION => false, // Block redirects to prevent SSRF via redirect
-                CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
-                CURLOPT_HTTPHEADER => [
-                    'Content-Type: application/json',
-                    'X-FormLogic-Event: ' . $event,
-                    'X-FormLogic-Signature: ' . $signature,
-                    'X-FormLogic-Delivery: ' . $deliveryId,
-                ],
-            ];
-            // DNS pinning: connect to the resolved IP to prevent TOCTOU DNS rebinding
-            if ($resolvedIp !== null) {
-                $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
-            }
-            curl_setopt_array($ch, $curlOpts);
+            $durationMs = (int)((microtime(true) - $h['start']) * 1000);
+            $this->logDelivery(
+                $deliveryId,
+                $h['webhook']['id'],
+                $event,
+                $h['body'],
+                $responseStatus ?: null,
+                is_string($responseBody) ? $responseBody : null,
+                $durationMs,
+                $success,
+                $errorMessage
+            );
 
-            try {
-                $responseBody = curl_exec($ch);
-                $responseStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-                if ($responseBody === false || curl_errno($ch)) {
-                    $errorMessage = curl_error($ch) ?: 'curl_exec failed';
-                } else {
-                    $success = $responseStatus >= 200 && $responseStatus < 300;
-                }
-            } finally {
-                curl_close($ch);
-            }
-        } catch (\Exception $e) {
-            $errorMessage = $e->getMessage();
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
         }
 
-        $durationMs = (int)((microtime(true) - $startTime) * 1000);
+        curl_multi_close($mh);
+    }
 
-        // Log delivery
+    /**
+     * Build an SSRF-guarded curl handle for a single webhook delivery.
+     * Throws on any URL/host/IP validation failure.
+     *
+     * @return \CurlHandle
+     */
+    private function buildDeliveryHandle(array $webhook, string $event, string $body, string $deliveryId)
+    {
+        $signature = 'sha256=' . hash_hmac('sha256', $body, $webhook['secret']);
+
+        // SSRF protection: resolve hostname and block private/reserved IPs
+        $parsedUrl = parse_url($webhook['url']);
+        $host = $parsedUrl['host'] ?? '';
+        $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
+        if ($host === '') {
+            throw new \RuntimeException('Webhook URL has no valid host');
+        }
+
+        // Block known metadata endpoints and localhost (including IPv4-mapped IPv6)
+        $blockedHosts = [
+            'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
+            'metadata.azure.internal', '0.0.0.0', '::1', '::ffff:127.0.0.1',
+            '::ffff:0:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
+        ];
+        if (in_array(strtolower($host), $blockedHosts, true)) {
+            throw new \RuntimeException('Webhook URL host is not allowed');
+        }
+
+        $resolvedIps = gethostbynamel($host);
+        if ($resolvedIps === false || empty($resolvedIps)) {
+            throw new \RuntimeException('Unable to resolve webhook URL hostname');
+        }
+        foreach ($resolvedIps as $ip) {
+            // Strip IPv4-mapped IPv6 prefix for validation
+            $checkIp = $ip;
+            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
+                $checkIp = $m[1];
+            }
+            if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
+            }
+        }
+        $resolvedIp = $resolvedIps[0];
+
+        $ch = curl_init($webhook['url']);
+        $curlOpts = [
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $body,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_FOLLOWLOCATION => false, // Block redirects to prevent SSRF via redirect
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'X-FormLogic-Event: ' . $event,
+                'X-FormLogic-Signature: ' . $signature,
+                'X-FormLogic-Delivery: ' . $deliveryId,
+            ],
+        ];
+        // DNS pinning: connect to the resolved IP to prevent TOCTOU DNS rebinding
+        if ($resolvedIp !== null) {
+            $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
+        }
+        curl_setopt_array($ch, $curlOpts);
+
+        return $ch;
+    }
+
+    /**
+     * Persist a delivery attempt record. Best-effort — logging must never break
+     * the submission flow.
+     */
+    private function logDelivery(
+        string $deliveryId,
+        string $webhookId,
+        string $event,
+        ?string $payload,
+        ?int $responseStatus,
+        ?string $responseBody,
+        int $durationMs,
+        bool $success,
+        ?string $errorMessage
+    ): void {
         try {
             $stmt = $this->mysql->prepare("
                 INSERT INTO webhook_deliveries (id, webhook_id, event, payload, response_status, response_body, duration_ms, success, error_message)
@@ -297,11 +363,11 @@ class WebhookService
             ");
             $stmt->execute([
                 'id' => $deliveryId,
-                'webhook_id' => $webhook['id'],
+                'webhook_id' => $webhookId,
                 'event' => $event,
-                'payload' => $body,
+                'payload' => $payload,
                 'response_status' => $responseStatus,
-                'response_body' => $responseBody ? substr($responseBody, 0, 2000) : null,
+                'response_body' => $responseBody !== null ? substr($responseBody, 0, 2000) : null,
                 'duration_ms' => $durationMs,
                 'success' => $success ? 1 : 0,
                 'error_message' => $errorMessage,
