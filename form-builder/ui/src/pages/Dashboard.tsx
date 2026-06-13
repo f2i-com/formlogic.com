@@ -396,9 +396,13 @@ export function Dashboard() {
           if (cancelled) return;
           for (const result of analyticsResults) {
             if (result.data?.analytics) {
-              totalResponses += result.data.analytics.totalResponses;
-              if (result.data.analytics.completionRate > 0) {
-                totalCompletionRate += result.data.analytics.completionRate;
+              const a = result.data.analytics;
+              totalResponses += a.totalResponses;
+              // Include every form that has received responses in the average —
+              // even genuine 0% completion forms — so the average isn't biased
+              // upward by silently dropping them from the denominator.
+              if (a.totalResponses > 0) {
+                totalCompletionRate += a.completionRate;
                 formsWithAnalytics++;
               }
             }

@@ -174,6 +174,9 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
         }
 
+        // Record a view for analytics (best-effort; never blocks form serving).
+        $this->responseService->recordView($formId);
+
         // Strip sensitive fields from runtime response
         unset($form['logicScript'], $form['logicPrompt'], $form['userId']);
 

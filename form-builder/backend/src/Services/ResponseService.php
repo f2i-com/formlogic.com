@@ -701,13 +701,23 @@ class ResponseService
             $mysqlStmt->execute(['form_id' => $formId]);
             $aggregates = $mysqlStmt->fetch() ?: [];
 
-            $totalStarts = (int)($aggregates['total_starts'] ?? $responseCount);
-            $totalCompletions = (int)($aggregates['total_completions'] ?? $responseCount);
-            $completionRate = $totalStarts > 0 ? ($totalCompletions / $totalStarts) * 100 : 0;
+            $totalViews = (int)($aggregates['total_views'] ?? 0);
+            $totalStarts = (int)($aggregates['total_starts'] ?? 0);
+            $totalCompletions = (int)($aggregates['total_completions'] ?? 0) ?: $responseCount;
+
+            // Completion (conversion) rate = completed submissions vs form views.
+            // Capped at 100% because a single view can yield multiple completions
+            // (refresh, embeds) and because completions recorded before view
+            // tracking shipped have no matching view. Falls back to starts, then
+            // to "100% if there are responses" when no view data exists yet.
+            $denominator = $totalViews > 0 ? $totalViews : $totalStarts;
+            $completionRate = $denominator > 0
+                ? min(100, ($totalCompletions / $denominator) * 100)
+                : ($responseCount > 0 ? 100 : 0);
 
             return [
                 'totalResponses' => $responseCount,
-                'totalViews' => (int)($aggregates['total_views'] ?? 0),
+                'totalViews' => $totalViews,
                 'totalStarts' => $totalStarts,
                 'completionRate' => round($completionRate, 2),
                 'averageCompletionTime' => round((float)$avgTime, 2),
@@ -930,6 +940,20 @@ class ResponseService
         $csv = stream_get_contents($output);
         fclose($output);
         return $csv;
+    }
+
+    /**
+     * Record a form view for analytics. Best-effort — never throws so it can be
+     * called inline from public form-serving endpoints without risking the
+     * response. Powers the completion/conversion rate in form analytics.
+     */
+    public function recordView(string $formId): void
+    {
+        try {
+            $this->updateAnalytics($formId, 'view');
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to record form view', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
     }
 
     /**

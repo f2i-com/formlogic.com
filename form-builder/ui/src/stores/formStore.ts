@@ -133,7 +133,8 @@ export const useFormStore = create<FormState>()(
         if (next > 0) {
           return { savingFormIds: { ...s.savingFormIds, [formId]: next } };
         }
-        const { [formId]: _, ...rest } = s.savingFormIds;
+        const rest = { ...s.savingFormIds };
+        delete rest[formId];
         return { savingFormIds: rest };
       });
     };

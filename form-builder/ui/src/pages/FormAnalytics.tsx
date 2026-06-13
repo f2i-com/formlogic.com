@@ -114,7 +114,14 @@ export default function FormAnalytics() {
           const respResult = await api.getResponses(formId, { limit: 200 });
           if (cancelled) return;
           if (respResult.data?.responses) {
-            setApiResponses(respResult.data.responses as unknown as ReturnType<typeof getResponsesByFormId>);
+            // Normalize completionTime: the server nests it under
+            // metadata.completionTime, but the UI reads it at the top level
+            // (otherwise the Recent Responses table renders "NaNs").
+            const norm = (respResult.data.responses as Array<{ completionTime?: number; metadata?: { completionTime?: number } }>).map((r) => ({
+              ...r,
+              completionTime: r.completionTime ?? r.metadata?.completionTime ?? 0,
+            }));
+            setApiResponses(norm as unknown as ReturnType<typeof getResponsesByFormId>);
           }
         } catch (error) {
           if (cancelled) return;
@@ -242,6 +249,31 @@ export default function FormAnalytics() {
     return breakdown;
   }, [formFields, responses]);
 
+  // Week-over-week change. In cloud mode localResponses is empty, so prefer the
+  // server's per-day series (covers ALL responses, not just the fetched page);
+  // fall back to the in-memory responses for local mode.
+  const weeklyChange = useMemo(() => {
+    const now = Date.now();
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
+    let thisWeek = 0;
+    let lastWeek = 0;
+    if (analytics?.responsesByDate?.length) {
+      for (const { date, count } of analytics.responsesByDate) {
+        const t = new Date(date).getTime();
+        if (t >= oneWeekAgo) thisWeek += count;
+        else if (t >= twoWeeksAgo && t < oneWeekAgo) lastWeek += count;
+      }
+    } else {
+      for (const r of responses) {
+        const t = new Date(r.submittedAt).getTime();
+        if (t >= oneWeekAgo) thisWeek++;
+        else if (t >= twoWeeksAgo && t < oneWeekAgo) lastWeek++;
+      }
+    }
+    return lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
+  }, [analytics, responses]);
+
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center transition-colors">
@@ -268,7 +300,6 @@ export default function FormAnalytics() {
     : localAnalytics.dailyResponses;
 
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
-  const weeklyChange = localAnalytics.weeklyChange;
 
   const handleExportCSV = async () => {
     setIsExporting(true);
@@ -595,7 +626,7 @@ export default function FormAnalytics() {
                           {formatDate(response.submittedAt)}
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
-                          {Math.round(response.completionTime / 1000)}s
+                          {Math.round((response.completionTime || 0) / 1000)}s
                         </td>
                         {form.fields.slice(0, 3).map((field) => {
                           const val = response.answers[field.id];

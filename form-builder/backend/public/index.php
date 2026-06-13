@@ -698,6 +698,11 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
         return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
     }
 
+    // Record a view for analytics (best-effort; never blocks form serving).
+    try {
+        $container->get(\FormLogic\Services\ResponseService::class)->recordView($args['id']);
+    } catch (\Throwable $e) { /* analytics is non-critical */ }
+
     // Return form without sensitive data
     unset($form['userId']);
     unset($form['logicScript']);

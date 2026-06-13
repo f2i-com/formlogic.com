@@ -43,6 +43,35 @@ interface ResponseWithStatus extends LocalFormResponse {
   computed?: Record<string, unknown>;
 }
 
+// Fetch EVERY response for a form. The API caps each page (default 100, max
+// 1000), so a single request silently truncates large forms — corrupting stats,
+// search, sort, and CSV export. Loop until exhausted so the page reflects the
+// full set. Also normalizes completionTime, which the server nests under
+// metadata.completionTime but the UI reads at the top level.
+async function fetchAllApiResponses(
+  formId: string
+): Promise<{ responses: ResponseWithStatus[]; truncated: boolean }> {
+  const PAGE = 1000;
+  const MAX_PAGES = 100; // 100k safety cap, mirrors the server-side export cap
+  const all: ResponseWithStatus[] = [];
+  let truncated = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await api.getResponses(formId, { limit: PAGE, offset: page * PAGE });
+    const batch = result.data?.responses;
+    if (!batch) {
+      if (page === 0) throw new Error(result.error || 'Failed to load responses');
+      break;
+    }
+    for (const r of batch) {
+      const rr = r as unknown as ResponseWithStatus & { metadata?: { completionTime?: number } };
+      all.push({ ...rr, completionTime: rr.completionTime ?? rr.metadata?.completionTime ?? 0 });
+    }
+    if (batch.length < PAGE) break;
+    if (page === MAX_PAGES - 1) truncated = true;
+  }
+  return { responses: all, truncated };
+}
+
 // Stats card component for consistency
 function StatCard({
   icon: Icon,
@@ -128,12 +157,16 @@ function FormResponses() {
 
       // Load responses
       if (storageMode === 'api') {
-        const result = await api.getResponses(formId);
-        if (cancelled) return;
-        if (result.data?.responses) {
-          setResponses(result.data.responses as ResponseWithStatus[]);
-        } else {
-          toast.error('Failed to load responses', result.error || 'Unknown error');
+        try {
+          const { responses: all, truncated } = await fetchAllApiResponses(formId);
+          if (cancelled) return;
+          setResponses(all);
+          if (truncated) {
+            toast.error('Showing first 100,000 responses', 'This form has more responses than can be displayed at once.');
+          }
+        } catch (e) {
+          if (cancelled) return;
+          toast.error('Failed to load responses', e instanceof Error ? e.message : 'Unknown error');
         }
       } else {
         const localResps = localResponses(formId);
@@ -836,10 +869,8 @@ function FormResponses() {
           // Reload responses and refresh form list counts after import
           if (storageMode === 'api' && formId) {
             try {
-              const result = await api.getResponses(formId);
-              if (result.data?.responses) {
-                setResponses(result.data.responses as ResponseWithStatus[]);
-              }
+              const { responses: all } = await fetchAllApiResponses(formId);
+              setResponses(all);
             } catch {
               // Responses will refresh on next page load
             }
@@ -1008,6 +1039,29 @@ function renderEditField(
         );
       }
       return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No location captured</p>;
+
+    case 'signature':
+      // A signature is a data-URL — editing it as text would corrupt it. Show a
+      // read-only preview; the value is preserved untouched on save.
+      if (typeof currentValue === 'string' && currentValue.startsWith('data:image')) {
+        return (
+          <div className="space-y-1">
+            <img src={currentValue} alt="Signature" className="max-h-24 rounded-lg border border-gray-200 dark:border-slate-700 bg-white" />
+            <p className="text-xs text-gray-400 dark:text-slate-500 italic">Signatures can't be edited here — value preserved.</p>
+          </div>
+        );
+      }
+      return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No signature captured</p>;
+
+    case 'linked_record':
+      // Linked records reference other responses and are only editable in the
+      // app runtime. Preserve the value rather than clobbering it as text.
+      return (
+        <p className="text-sm text-gray-500 dark:text-slate-400">
+          {currentValue ? String(Array.isArray(currentValue) ? currentValue.join(', ') : currentValue) : '—'}
+          <span className="block text-xs text-gray-400 dark:text-slate-500 italic mt-0.5">Linked records can't be edited here — value preserved.</span>
+        </p>
+      );
 
     default:
       return (
