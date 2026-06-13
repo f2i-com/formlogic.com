@@ -58,6 +58,7 @@ class MySQLConnection
                 email VARCHAR(255) NOT NULL UNIQUE,
                 password_hash VARCHAR(255) NOT NULL,
                 name VARCHAR(255),
+                token_version INT NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_email (email)
@@ -607,6 +608,25 @@ class MySQLConnection
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE INDEX idx_api_keys_hash (key_hash),
                 INDEX idx_api_keys_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Add token_version column to users for JWT revocation (R2). Without this
+        // on the runtime path, revocation silently no-ops (getTokenVersion fails open).
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'token_version'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN token_version INT NOT NULL DEFAULT 0");
+        }
+
+        // Create rate_limits table for persistent rate limiting / login throttling (R1).
+        // Without this on the runtime path, RateLimiter fails open and throttling is a no-op.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS rate_limits (
+                bucket CHAR(64) NOT NULL,
+                window_start BIGINT NOT NULL,
+                hits INT NOT NULL DEFAULT 0,
+                PRIMARY KEY (bucket, window_start),
+                INDEX idx_window_start (window_start)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
     }

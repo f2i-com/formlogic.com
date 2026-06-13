@@ -42,7 +42,7 @@ class PackRatingController
 
         $slug = $args['slug'] ?? '';
         $catalog = $this->catalogService->getCatalogBySlug($slug);
-        if (!$catalog) {
+        if (!$catalog || $this->packHiddenFrom($catalog, $userId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
         }
 
@@ -72,7 +72,7 @@ class PackRatingController
     {
         $slug = $args['slug'] ?? '';
         $catalog = $this->catalogService->getCatalogBySlug($slug);
-        if (!$catalog) {
+        if (!$catalog || $this->packHiddenFrom($catalog, $request->getAttribute('userId'))) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
         }
 
@@ -112,7 +112,7 @@ class PackRatingController
 
         $slug = $args['slug'] ?? '';
         $catalog = $this->catalogService->getCatalogBySlug($slug);
-        if (!$catalog) {
+        if (!$catalog || $this->packHiddenFrom($catalog, $userId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
         }
 
@@ -123,6 +123,15 @@ class PackRatingController
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete rating'], 500);
         }
+    }
+
+    /**
+     * A private pack is only visible to its publisher; everyone else gets a 404.
+     */
+    private function packHiddenFrom(array $catalog, ?string $userId): bool
+    {
+        return ($catalog['visibility'] ?? 'public') === 'private'
+            && ($catalog['publisher_id'] ?? null) !== $userId;
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

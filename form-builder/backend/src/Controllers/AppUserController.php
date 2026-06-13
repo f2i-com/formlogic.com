@@ -235,7 +235,7 @@ class AppUserController
         }
 
         try {
-            $this->appUserService->updateAppUser($args['id'], $data);
+            $this->appUserService->updateAppUser($args['id'], $data, $userId, $appId);
             $users = $this->appUserService->getAppUsers($appId);
             return $this->jsonResponse($response, ['users' => $users]);
         } catch (\Exception $e) {

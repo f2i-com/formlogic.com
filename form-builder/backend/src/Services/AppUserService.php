@@ -186,6 +186,22 @@ class AppUserService
         return $permissions;
     }
 
+    /**
+     * Does this role grant any app-level permission (MANAGE_APP / MANAGE_USERS /
+     * MANAGE_ROLES / VIEW_ANALYTICS)? Used to enforce a privilege ceiling so a
+     * delegated MANAGE_USERS holder cannot assign an app-admin role and escalate.
+     */
+    private function roleGrantsAppLevel(string $roleId): bool
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT 1 FROM app_role_permissions WHERE role_id = ? AND permission IN ("
+            . implode(',', array_fill(0, count(AppPermissions::APP_LEVEL), '?'))
+            . ") LIMIT 1"
+        );
+        $stmt->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function setRolePermissions(string $roleId, array $permissions, bool $actorIsOwner = false): void
     {
         // Prevent modifying system role permissions (Owner, Admin)
@@ -303,7 +319,7 @@ class AppUserService
         return $user;
     }
 
-    public function updateAppUser(string $appUserId, array $data): bool
+    public function updateAppUser(string $appUserId, array $data, ?string $actorUserId = null, ?string $appId = null): bool
     {
         // Prevent modifying the app owner's role or status
         $ownerCheck = $this->mysql->prepare("
@@ -329,6 +345,15 @@ class AppUserService
             $roleRow = $roleCheck->fetch();
             if ($roleRow && (int)$roleRow['is_system'] === 1 && $roleRow['name'] === 'Owner') {
                 throw new \RuntimeException('Cannot assign the Owner role');
+            }
+        }
+
+        // Privilege ceiling: only the app owner may assign a role that grants any
+        // app-level permission. Otherwise a delegated MANAGE_USERS holder could move
+        // a confederate (or themselves via a second account) into an app-admin role.
+        if (isset($data['roleId']) && $actorUserId !== null && $appId !== null) {
+            if (!$this->isAppOwner($appId, $actorUserId) && $this->roleGrantsAppLevel($data['roleId'])) {
+                throw new \RuntimeException('Only the app owner can assign roles with app-level permissions');
             }
         }
 
@@ -420,6 +445,12 @@ class AppUserService
         $roleRow = $roleCheck->fetch();
         if ($roleRow && (int)$roleRow['is_system'] === 1 && $roleRow['name'] === 'Owner') {
             throw new \RuntimeException('Cannot invite users to the Owner role');
+        }
+
+        // Privilege ceiling: only the app owner may invite into a role that grants
+        // app-level permissions (mirrors updateAppUser — closes the invite escalation path).
+        if (!$this->isAppOwner($appId, $invitedBy) && $this->roleGrantsAppLevel($roleId)) {
+            throw new \RuntimeException('Only the app owner can invite users to roles with app-level permissions');
         }
 
         // Check if email is already a member
