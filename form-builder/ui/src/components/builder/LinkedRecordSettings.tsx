@@ -52,7 +52,12 @@ export function LinkedRecordSettings({
       setTargetFields([]);
       return;
     }
+    // Cancellation guard so a slow fetch for a previously-selected target form
+    // can't resolve last and show the wrong form's fields (last-resolved wins),
+    // which would let the user pick field IDs that belong to a different form.
+    let cancelled = false;
     api.getForm(targetFormId).then((result) => {
+      if (cancelled) return;
       if (result.data?.form) {
         const form = result.data.form as { fields: Array<{ id: string; label: string; type: string }> };
         // Only show data fields (exclude layout types)
@@ -62,8 +67,9 @@ export function LinkedRecordSettings({
         setTargetFields(dataFields);
       }
     }).catch(() => {
-      setTargetFields([]);
+      if (!cancelled) setTargetFields([]);
     });
+    return () => { cancelled = true; };
   }, [targetFormId]);
 
   if (!appId) {

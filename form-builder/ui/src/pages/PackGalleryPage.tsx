@@ -37,6 +37,7 @@ export default function PackGalleryPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadSeqRef = useRef(0);
 
   useEffect(() => {
     loadFeatured();
@@ -62,6 +63,9 @@ export default function PackGalleryPage() {
   }, []);
 
   const loadPacks = useCallback(async () => {
+    // Ignore out-of-order responses: only the latest request may apply results,
+    // otherwise a slow earlier query/page can overwrite newer results.
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const result = await api.browsePacks({
@@ -71,6 +75,7 @@ export default function PackGalleryPage() {
         page,
         limit: 12,
       });
+      if (seq !== loadSeqRef.current) return;
       if (result.data) {
         setPacks(result.data.packs);
         setTotalPages(result.data.totalPages);
@@ -78,7 +83,7 @@ export default function PackGalleryPage() {
     } catch {
       // silently fail
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [searchQuery, sortBy, categoryFilter, page]);
 

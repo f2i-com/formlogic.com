@@ -211,6 +211,13 @@ function FormResponses() {
     return filteredResponses.slice(start, start + ITEMS_PER_PAGE);
   }, [filteredResponses, currentPage]);
 
+  // Clamp the current page when the result set shrinks (e.g. deleting the only
+  // row on the last page) so the user isn't stranded on an empty page.
+  useEffect(() => {
+    const tp = Math.max(1, Math.ceil(filteredResponses.length / ITEMS_PER_PAGE));
+    if (currentPage > tp) setCurrentPage(tp);
+  }, [filteredResponses.length, currentPage]);
+
   // Handle view response
   const handleView = (response: ResponseWithStatus) => {
     setSelectedResponse(response);

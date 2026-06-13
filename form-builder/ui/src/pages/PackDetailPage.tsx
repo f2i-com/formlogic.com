@@ -43,33 +43,38 @@ export default function PackDetailPage() {
   const fetchApps = useAppStore((s) => s.fetchApps);
 
   useEffect(() => {
-    if (slug) {
-      loadPackDetail();
-      loadRatings();
-      checkInstalled();
-    }
+    if (!slug) return;
+    // Guard against stale responses: if the user navigates slug A -> B while A's
+    // requests are in flight, A must not clobber B's pack/ratings on resolve.
+    let cancelled = false;
+    const shouldApply = () => !cancelled;
+    loadPackDetail(shouldApply);
+    loadRatings(shouldApply);
+    checkInstalled();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  const loadPackDetail = useCallback(async () => {
+  const loadPackDetail = useCallback(async (shouldApply: () => boolean = () => true) => {
     if (!slug) return;
     setLoading(true);
     try {
       const result = await api.getPackDetail(slug);
-      if (result.data?.pack) {
+      if (shouldApply() && result.data?.pack) {
         setPack(result.data.pack);
       }
     } catch {
       // silently fail
     } finally {
-      setLoading(false);
+      if (shouldApply()) setLoading(false);
     }
   }, [slug]);
 
-  const loadRatings = useCallback(async () => {
+  const loadRatings = useCallback(async (shouldApply: () => boolean = () => true) => {
     if (!slug) return;
     try {
       const result = await api.getPackRatings(slug);
-      if (result.data) {
+      if (shouldApply() && result.data) {
         setRatings(result.data.ratings);
         if (result.data.userRating) {
           setUserRating(result.data.userRating);
@@ -130,11 +135,15 @@ export default function PackDetailPage() {
     setSubmittingRating(true);
     try {
       const result = await api.ratePack(slug, ratingInput, reviewInput || undefined);
-      if (result.data?.success) {
-        toast.success('Rating submitted');
-        setUserRating({ rating: ratingInput, review: reviewInput || null });
-        await Promise.all([loadPackDetail(), loadRatings()]);
+      if (result.error || !result.data?.success) {
+        // api.request resolves (not throws) on non-2xx, so handle result.error here
+        // or the user gets zero feedback that the rating failed to persist.
+        toast.error('Failed to submit rating', typeof result.error === 'string' ? result.error : undefined);
+        return;
       }
+      toast.success('Rating submitted');
+      setUserRating({ rating: ratingInput, review: reviewInput || null });
+      await Promise.all([loadPackDetail(), loadRatings()]);
     } catch {
       toast.error('Failed to submit rating');
     } finally {

@@ -513,6 +513,16 @@ export default function FormPreview() {
     if (formId) loadFullForm(formId);
   }, [formId, loadFullForm]);
 
+  // Reset per-form preview state when switching forms. This is a single route
+  // component reused across /preview/:formId, so without this, answers/step/
+  // calculated values from the previous form leak into the next form (fields
+  // sharing a slug id render pre-filled with the wrong value).
+  useEffect(() => {
+    setAnswers({});
+    setCalculatedValues({});
+    setCurrentStep(0);
+  }, [formId]);
+
   const form = formId ? getForm(formId) : undefined;
 
   // Merge user answers with computed calculated field values

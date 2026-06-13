@@ -88,7 +88,21 @@ export function AppResponseDetail() {
     setSaveError(null);
     try {
       await updateResponse(formId, responseId, { answers: editedAnswers });
-      setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
+      // For linked-record fields the read-only view renders from `_resolved`, not
+      // `answers`, so an optimistic answers-only patch would leave stale chips
+      // (and links pointing at the old record). Refetch the resolved response.
+      if (hasLinkedFields && appSlug) {
+        const result = await api.getAppResponseByIdResolved(appSlug, formId, responseId);
+        if (result.data?.response) {
+          const r = result.data.response as Record<string, unknown>;
+          setResponse(r);
+          setEditedAnswers((r.answers as Record<string, unknown>) ?? {});
+        } else {
+          setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
+        }
+      } else {
+        setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
+      }
       setEditing(false);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save changes');

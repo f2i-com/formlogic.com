@@ -315,8 +315,13 @@ export const useFormStore = create<FormState>()(
             try {
               const currentForm = get().forms.find((f) => f.id === id);
               if (currentForm) {
-                const { title, description, status, icon } = currentForm;
-                await api.updateForm(id, { title, description, status, icon });
+                // Send ALL editable meta fields, not just title/description/status/icon.
+                // The Theme/Settings/Script/AI editors all route through updateForm, so
+                // omitting theme/settings/logicScript/logicPrompt here silently dropped
+                // them server-side (data loss + false "saved" toast). `fields` are synced
+                // separately via the `-fields` debounce, so they are intentionally excluded.
+                const { title, description, status, icon, theme, settings, logicScript, logicPrompt } = currentForm;
+                await api.updateForm(id, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
               }
             } catch (error) {
               logger.error('Failed to update form on server:', error);

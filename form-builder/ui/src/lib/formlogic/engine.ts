@@ -441,8 +441,12 @@ export async function evaluateCondition(
     const result = engine.eval(source);
     return Boolean(result);
   } catch (error) {
+    // Rethrow so the caller can distinguish "condition is false" from "condition
+    // errored". Swallowing to `false` made errored conditions silently HIDE a
+    // show-gated field (or wrongly reveal a hide-gated one) on live forms; the
+    // consumer (useConditionalLogic) catches this and fails OPEN instead.
     logger.error('Error evaluating condition:', error);
-    return false;
+    throw error instanceof Error ? error : new Error('Condition evaluation failed');
   }
 }
 

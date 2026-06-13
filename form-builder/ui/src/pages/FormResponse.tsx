@@ -42,6 +42,28 @@ function FieldResponse({
   formId?: string;
 }) {
   const required = isRequired ?? field.required;
+
+  // Restore a previously-drawn signature onto the canvas after (re)mount — in
+  // focused mode FieldResponse remounts per step, so navigating back to a
+  // signature field would otherwise show a blank canvas even though the data URL
+  // is still the saved value. Keyed on the field (not value) so it runs once on
+  // mount and never fights the per-stroke onChange while the user is drawing.
+  useEffect(() => {
+    if (field.type !== 'signature') return;
+    if (typeof value !== 'string' || !value.startsWith('data:image')) return;
+    const canvas = document.getElementById(`signature-canvas-${field.id}`) as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    };
+    img.src = value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [field.id, field.type]);
+
   const renderField = () => {
     switch (field.type) {
       case 'phone':
@@ -638,6 +660,7 @@ export default function FormResponse() {
   } = useResponseStore();
 
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
@@ -813,6 +836,11 @@ export default function FormResponse() {
   const handleSubmit = async () => {
     setSubmitError(null);
     if (!form) return;
+    // In-flight guard: pressing Enter twice or double-clicking Submit must not
+    // POST the same answers twice (the server has no dedup, so it would create
+    // duplicate responses).
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
     // Capture completion time before the store clears in-progress state.
     const startTime = useResponseStore.getState().startTime;
@@ -830,6 +858,8 @@ export default function FormResponse() {
       }
     } catch (err) {
       logger.error('Failed to submit response to server', err);
+    } finally {
+      setIsSubmitting(false);
     }
 
     // Record locally (clears in-progress answers) and reflect in the local view.
@@ -858,6 +888,9 @@ export default function FormResponse() {
   const handleNext = () => {
     setFieldError(null);
     setSubmitError(null);
+
+    // Don't advance/submit while a submission is in flight (prevents a double Enter).
+    if (isSubmitting) return;
 
     if (currentField) {
       const answer = currentAnswers[currentField.id];
@@ -1083,6 +1116,8 @@ export default function FormResponse() {
               <Button
                 size="lg"
                 onClick={handleNext}
+                disabled={isSubmitting}
+                isLoading={isLastStep && isSubmitting}
                 style={{ backgroundColor: form.theme.primaryColor }}
                 className="text-white px-8"
               >
@@ -1169,6 +1204,8 @@ export default function FormResponse() {
               <Button
                 size="lg"
                 onClick={handleClassicSubmit}
+                disabled={isSubmitting}
+                isLoading={isSubmitting}
                 style={{ backgroundColor: form.theme.primaryColor }}
                 className="w-full text-white"
               >

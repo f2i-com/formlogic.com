@@ -93,7 +93,6 @@ function SectionHeader({
 export function Settings() {
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
-  const isLoading = useAuthStore((state) => state.isLoading);
 
   // Profile form state
   const [name, setName] = useState(user?.name || '');
@@ -112,6 +111,10 @@ export function Settings() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  // Dedicated flag for the profile save so it doesn't share the global auth
+  // `isLoading` with the password change (which spun/disabled the unrelated
+  // Profile button while a password change was in flight).
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   // Audit verification state
   const [isVerifyingAudit, setIsVerifyingAudit] = useState(false);
@@ -145,12 +148,17 @@ export function Settings() {
   }, [name, email, user]);
 
   const handleSaveProfile = async () => {
-    const result = await updateProfile({ name, email });
-    if (result.success) {
-      toast.success('Profile Updated', 'Your profile has been saved successfully.');
-      setHasProfileChanges(false);
-    } else {
-      toast.error('Update Failed', result.error || 'Could not update your profile.');
+    setIsSavingProfile(true);
+    try {
+      const result = await updateProfile({ name, email });
+      if (result.success) {
+        toast.success('Profile Updated', 'Your profile has been saved successfully.');
+        setHasProfileChanges(false);
+      } else {
+        toast.error('Update Failed', result.error || 'Could not update your profile.');
+      }
+    } finally {
+      setIsSavingProfile(false);
     }
   };
 
@@ -319,8 +327,8 @@ export function Settings() {
               <div className="pt-2">
                 <Button
                   onClick={handleSaveProfile}
-                  disabled={!hasProfileChanges || isLoading}
-                  isLoading={isLoading}
+                  disabled={!hasProfileChanges || isSavingProfile}
+                  isLoading={isSavingProfile}
                 >
                   {hasProfileChanges ? 'Save Changes' : 'No Changes'}
                 </Button>

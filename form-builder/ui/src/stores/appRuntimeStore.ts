@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions } from '../types/app';
 
@@ -109,11 +110,15 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       fetchResponses: async (formId, options) => {
         const slug = get().appSlug;
         if (!slug) return [];
+        // Throw on API/network failure so the consumer's .catch surfaces an error
+        // state instead of rendering a misleading empty "0 responses" table.
         if (options?.resolve) {
           const result = await api.getAppResponsesResolved(slug, formId, options);
+          if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load responses');
           return result.data?.responses ?? [];
         }
         const result = await api.getAppResponses(slug, formId, options);
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load responses');
         return result.data?.responses ?? [];
       },
 
@@ -139,13 +144,20 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const slug = get().appSlug;
         if (!slug) return false;
         const result = await api.deleteAppResponse(slug, formId, responseId);
-        return !result.error;
+        if (result.error) {
+          // Surface the failure — otherwise the dialog just closes, the row stays,
+          // and the user gets no signal that the delete failed.
+          toast.error('Delete failed', typeof result.error === 'string' ? result.error : 'Could not delete this response. Please try again.');
+          return false;
+        }
+        return true;
       },
 
       lookupRecords: async (formId, options) => {
         const slug = get().appSlug;
         if (!slug) return [];
         const result = await api.lookupLinkedRecords(slug, formId, options);
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to look up records');
         return result.data?.records ?? [];
       },
 

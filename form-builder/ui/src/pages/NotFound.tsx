@@ -8,7 +8,11 @@ export function NotFound() {
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
+    // Restore the prior title on unmount — this is an SPA, so navigating away
+    // (e.g. "Go Home") would otherwise leave the tab stuck on the 404 title.
+    const prevTitle = document.title;
     document.title = '404 - Page Not Found | FormLogic';
+    return () => { document.title = prevTitle; };
   }, []);
 
   return (

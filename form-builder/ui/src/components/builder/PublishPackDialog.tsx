@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Upload,
   FileJson,
@@ -87,6 +87,19 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
     resetState();
     onClose();
   }, [resetState, onClose]);
+
+  // Re-seed from initialPack each time the dialog OPENS. The component stays
+  // mounted across opens, so useState initializers don't re-run — without this,
+  // a pack passed via "Publish to Marketplace" is ignored and the dialog opens
+  // empty on the Upload step. Keyed on the open transition so it never wipes
+  // edits while the dialog is already open.
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      resetState();
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen, resetState]);
 
   const parseFile = useCallback((file: File) => {
     setUploadError('');

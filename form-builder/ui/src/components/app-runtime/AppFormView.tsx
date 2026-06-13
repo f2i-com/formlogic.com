@@ -561,21 +561,36 @@ export function AppFormView() {
   }, []);
 
   useEffect(() => {
-    if (appSlug && formId) {
-      setLoading(true);
-      setFetchError(null);
-      api.getAppForm(appSlug, formId).then((result) => {
-        if (result.data?.form) {
-          setForm(result.data.form as Record<string, unknown>);
-        } else if (result.error) {
-          setFetchError(result.error);
-        }
-        setLoading(false);
-      }).catch((err) => {
-        setFetchError(err instanceof Error ? err.message : 'Failed to load form');
-        setLoading(false);
-      });
-    }
+    if (!appSlug || !formId) return;
+
+    // This component instance is reused across /form/:formId navigations, so
+    // reset all per-form state — otherwise the previous form's answers/step leak
+    // into (and get submitted with) the next form.
+    setAnswers({});
+    setCalculatedValues({});
+    setCurrentStep(0);
+    setSubmitted(false);
+    setError(null);
+
+    // Cancellation guard so a slow request for the previous form can't resolve
+    // after the new one and render a stale form under the new URL.
+    let cancelled = false;
+    setLoading(true);
+    setFetchError(null);
+    api.getAppForm(appSlug, formId).then((result) => {
+      if (cancelled) return;
+      if (result.data?.form) {
+        setForm(result.data.form as Record<string, unknown>);
+      } else if (result.error) {
+        setFetchError(result.error);
+      }
+      setLoading(false);
+    }).catch((err) => {
+      if (cancelled) return;
+      setFetchError(err instanceof Error ? err.message : 'Failed to load form');
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
   }, [appSlug, formId]);
 
   const fields = useMemo(
@@ -953,7 +968,6 @@ export function AppFormView() {
                   const idx = fields.findIndex((f) => f.id === fieldId);
                   if (idx >= 0) setCurrentStep(idx);
                 }}
-                collapsed={false}
               />
             </div>
           )}

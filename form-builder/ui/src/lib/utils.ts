@@ -121,11 +121,20 @@ export function createFieldVariableMap(
       varName = 'field';
     }
 
-    // Handle duplicates by appending a number
-    if (usedNames[varName] !== undefined) {
-      usedNames[varName]++;
-      varName = `${varName}${usedNames[varName]}`;
-    } else {
+    // Handle duplicates by appending a number. Keep incrementing until the
+    // candidate collides with NEITHER a prior deduped name NOR another field's
+    // natural name (e.g. 'Email'+'Email 2'+'Email' must not collapse 'email2'),
+    // otherwise two fields would map to the same variable and one reference is lost.
+    if (usedNames[varName] !== undefined || toId[varName] !== undefined) {
+      const base = varName;
+      let counter = usedNames[base] ?? 1;
+      do {
+        counter++;
+        varName = `${base}${counter}`;
+      } while (toId[varName] !== undefined);
+      usedNames[base] = counter;
+    }
+    if (usedNames[varName] === undefined) {
       usedNames[varName] = 1;
     }
 
@@ -171,8 +180,15 @@ export function replaceIdsWithVariables(
 ): string {
   let result = expression;
 
-  for (const [id, varName] of Object.entries(idToVar)) {
-    result = result.replace(new RegExp(escapeRegExp(id), 'g'), varName);
+  // Sort by length descending and match whole tokens only — mirrors
+  // replaceVariablesWithIds. Field IDs are human-readable slugs, so without this
+  // a shorter id ('first_name') would corrupt a longer one ('first_name_1') by
+  // matching its prefix mid-token.
+  const sortedIds = Object.keys(idToVar).sort((a, b) => b.length - a.length);
+
+  for (const id of sortedIds) {
+    const regex = new RegExp(`\\b${escapeRegExp(id)}\\b`, 'g');
+    result = result.replace(regex, idToVar[id]);
   }
 
   return result;
