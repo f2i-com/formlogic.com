@@ -81,7 +81,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
                           onChange={() => togglePermission(form.formId, perm)}
                           disabled={disabled}
                           aria-label={`${APP_PERMISSION_LABELS[perm]} for ${form.displayName}`}
-                          className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:ring-primary-500 cursor-pointer disabled:cursor-not-allowed"
                         />
                       </td>
                     ))}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { cn } from '../../lib/utils';
 
 interface TooltipProps {
@@ -15,6 +15,7 @@ export function Tooltip({
   delay = 200,
 }: TooltipProps) {
   const [isVisible, setIsVisible] = useState(false);
+  const tooltipId = useId();
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -54,6 +55,13 @@ export function Tooltip({
     right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-800 dark:border-r-slate-700',
   };
 
+  // Associate the tooltip with the trigger so screen readers announce it.
+  const trigger = React.isValidElement(children)
+    ? React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
+        'aria-describedby': isVisible ? tooltipId : undefined,
+      })
+    : children;
+
   return (
     <div
       className="relative inline-flex"
@@ -61,10 +69,13 @@ export function Tooltip({
       onMouseLeave={hideTooltip}
       onFocus={showTooltip}
       onBlur={hideTooltip}
+      onTouchStart={showTooltip}
+      onKeyDown={(e) => { if (e.key === 'Escape') hideTooltip(); }}
     >
-      {children}
+      {trigger}
       {isVisible && (
         <div
+          id={tooltipId}
           role="tooltip"
           className={cn(
             'absolute z-50 px-2.5 py-1.5 text-xs font-medium text-white',

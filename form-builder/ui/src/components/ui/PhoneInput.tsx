@@ -291,6 +291,7 @@ export function PhoneInput({
         ref={numberInputRef}
         type="tel"
         inputMode="tel"
+        aria-label="Phone number"
         value={nationalNumber}
         onChange={(e) => handleNumberChange(e.target.value)}
         onPaste={handlePaste}
