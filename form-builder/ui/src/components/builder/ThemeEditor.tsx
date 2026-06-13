@@ -319,6 +319,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                   </div>
                   <input
                     type="color"
+                    aria-label="Primary color picker"
                     value={editedTheme.primaryColor}
                     onChange={(e) => updateTheme({ primaryColor: e.target.value })}
                     className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
@@ -345,6 +346,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                   </div>
                   <input
                     type="color"
+                    aria-label="Background color picker"
                     value={editedTheme.backgroundColor}
                     onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
                     className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
@@ -371,6 +373,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
                   </div>
                   <input
                     type="color"
+                    aria-label="Text color picker"
                     value={editedTheme.textColor}
                     onChange={(e) => updateTheme({ textColor: e.target.value })}
                     className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"

@@ -384,6 +384,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search packs..."
+                    aria-label="Search packs"
                     className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500/30 focus:border-primary-500 transition-shadow"
                   />
                 </div>

@@ -192,7 +192,9 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
               {WEBHOOK_EVENTS.map(evt => (
                 <button
                   key={evt.value}
+                  type="button"
                   onClick={() => toggleEvent(evt.value)}
+                  aria-pressed={newEvents.includes(evt.value)}
                   className={cn(
                     'p-2 rounded-lg border text-left text-xs transition-all cursor-pointer',
                     newEvents.includes(evt.value)

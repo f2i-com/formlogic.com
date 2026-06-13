@@ -341,6 +341,7 @@ export function CsvImportWizard({
                       </td>
                       <td className="px-4 py-3">
                         <select
+                          aria-label={`Map column "${header}" to field`}
                           value={columnMapping[header] || 'skip'}
                           onChange={(e) =>
                             setColumnMapping((prev) => ({

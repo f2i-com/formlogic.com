@@ -387,7 +387,7 @@ export function LogicEditor({
                       <button
                         key={f.id}
                         onClick={() => setExpression((prev) => prev + varName)}
-                        className="px-2 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors font-mono cursor-pointer"
+                        className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer"
                         title={f.label}
                       >
                         {varName}
@@ -399,9 +399,9 @@ export function LogicEditor({
             </div>
 
             {/* Quick Reference */}
-            <div className="bg-blue-50 dark:bg-blue-900/10 rounded-lg p-4 border border-blue-100 dark:border-blue-900/20">
-              <h4 className="text-sm font-medium text-blue-800 dark:text-blue-400 mb-2">Quick Reference</h4>
-              <div className="grid grid-cols-2 gap-2 text-xs text-blue-700 dark:text-blue-300/80">
+            <div className="bg-primary-50 dark:bg-primary-500/10 rounded-lg p-4 border border-primary-100 dark:border-primary-500/20">
+              <h4 className="text-sm font-medium text-primary-800 dark:text-primary-400 mb-2">Quick Reference</h4>
+              <div className="grid grid-cols-2 gap-2 text-xs text-primary-700 dark:text-primary-300/80">
                 <div><code>===</code> equals</div>
                 <div><code>!==</code> not equals</div>
                 <div><code>&&</code> AND</div>
