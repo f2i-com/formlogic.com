@@ -500,6 +500,7 @@ export default function FormPreview() {
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showNigo, setShowNigo] = useState(false);
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+  const [loaded, setLoaded] = useState(false);
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -510,7 +511,7 @@ export default function FormPreview() {
 
   // Load full form data (with fields) from API when entering preview
   useEffect(() => {
-    if (formId) loadFullForm(formId);
+    if (formId) loadFullForm(formId).finally(() => setLoaded(true));
   }, [formId, loadFullForm]);
 
   // Reset per-form preview state when switching forms. This is a single route
@@ -521,6 +522,7 @@ export default function FormPreview() {
     setAnswers({});
     setCalculatedValues({});
     setCurrentStep(0);
+    setLoaded(false);
   }, [formId]);
 
   const form = formId ? getForm(formId) : undefined;
@@ -564,6 +566,14 @@ export default function FormPreview() {
       setCurrentStep(visibleFields.length - 1);
     }
   }, [visibleFields.length, currentStep]);
+
+  if (!form && !loaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" role="status" aria-label="Loading form" />
+      </div>
+    );
+  }
 
   if (!form) {
     return (

@@ -9,13 +9,14 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
 import type { AppUser, AppInvitation, AppRole } from '../../types/app';
 
 export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState(0);
+  const [loading, setLoading] = useState(true);
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, createGroup, deleteGroup } = useAppUserStore();
   const { fetchRoles } = useAppStore();
   const [roles, setRoles] = useState<AppRole[]>([]);
@@ -39,7 +40,7 @@ export function AppUserManager() {
       if (failed.length > 0) {
         toast.error('Load error', 'Some data could not be loaded. Please refresh the page.');
       }
-    });
+    }).finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
@@ -81,8 +82,6 @@ export function AppUserManager() {
     setNewGroupName('');
   };
 
-  const tabs = ['Users', 'Invitations', 'Groups'];
-
   return (
     <div className="min-h-screen">
       <Header
@@ -99,48 +98,47 @@ export function AppUserManager() {
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
       <div className="max-w-5xl mx-auto">
 
-      <div className="flex border-b border-gray-200 dark:border-slate-700 mb-6">
-        {tabs.map((tab, i) => (
-          <button key={tab} onClick={() => setActiveTab(i)}
-            className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer',
-              i === activeTab ? 'border-primary-600 text-primary-600 dark:text-primary-400' : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
-            )}>{tab} ({i === 0 ? appUsers.length : i === 1 ? appInvitations.length : appGroups.length})</button>
-        ))}
-      </div>
+      <Tabs defaultValue="users">
+        <TabsList variant="underline" aria-label="User management sections" className="mb-6">
+          <TabsTrigger value="users" variant="underline">Users ({appUsers.length})</TabsTrigger>
+          <TabsTrigger value="invitations" variant="underline">Invitations ({appInvitations.length})</TabsTrigger>
+          <TabsTrigger value="groups" variant="underline">Groups ({appGroups.length})</TabsTrigger>
+        </TabsList>
 
-      {activeTab === 0 && (
-        <DataTable
-          data={appUsers as unknown as Record<string, unknown>[]}
-          columns={userColumns as unknown as Column<Record<string, unknown>>[]}
-          searchable
-          searchPlaceholder="Search users..."
-          actions={(user) => (
-            <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
-              className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
-          )}
-        />
-      )}
+        <TabsContent value="users">
+          <DataTable
+            data={appUsers as unknown as Record<string, unknown>[]}
+            columns={userColumns as unknown as Column<Record<string, unknown>>[]}
+            searchable
+            isLoading={loading}
+            searchPlaceholder="Search users..."
+            actions={(user) => (
+              <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
+                className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+            )}
+          />
+        </TabsContent>
 
-      {activeTab === 1 && (
-        <DataTable
-          data={appInvitations as unknown as Record<string, unknown>[]}
-          columns={[
-            { key: 'email', label: 'Email', sortable: true },
-            { key: 'roleName', label: 'Role', sortable: true },
-            { key: 'status', label: 'Status', sortable: true },
-            { key: 'expiresAt', label: 'Expires', sortable: true, render: (inv) => new Date(String((inv as unknown as AppInvitation).expiresAt)).toLocaleDateString() },
-          ] as Column<Record<string, unknown>>[]}
-          searchable
-          actions={(inv) => (
-            (inv as unknown as AppInvitation).status === 'pending' ? (
-              <button onClick={() => revokeInvitation(appId!, String(inv.id))} className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
-            ) : null
-          )}
-        />
-      )}
+        <TabsContent value="invitations">
+          <DataTable
+            data={appInvitations as unknown as Record<string, unknown>[]}
+            columns={[
+              { key: 'email', label: 'Email', sortable: true },
+              { key: 'roleName', label: 'Role', sortable: true },
+              { key: 'status', label: 'Status', sortable: true },
+              { key: 'expiresAt', label: 'Expires', sortable: true, render: (inv) => new Date(String((inv as unknown as AppInvitation).expiresAt)).toLocaleDateString() },
+            ] as Column<Record<string, unknown>>[]}
+            searchable
+            isLoading={loading}
+            actions={(inv) => (
+              (inv as unknown as AppInvitation).status === 'pending' ? (
+                <button onClick={() => revokeInvitation(appId!, String(inv.id))} className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
+              ) : null
+            )}
+          />
+        </TabsContent>
 
-      {activeTab === 2 && (
-        <div>
+        <TabsContent value="groups">
           <div className="flex gap-2 mb-4">
             <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name"
               className="flex-1 max-w-xs px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
@@ -153,13 +151,14 @@ export function AppUserManager() {
               { key: 'description', label: 'Description' },
               { key: 'memberCount', label: 'Members', sortable: true },
             ] as Column<Record<string, unknown>>[]}
+            isLoading={loading}
             actions={(group) => (
               <button onClick={() => setConfirmAction({ type: 'deleteGroup', id: String(group.id), label: String((group as Record<string, unknown>).name || 'this group') })}
                 className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Delete group"><Trash2 className="h-4 w-4" /></button>
             )}
           />
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
 
     </div>
     </div>

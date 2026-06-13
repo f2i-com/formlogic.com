@@ -23,6 +23,8 @@ interface DataTableProps<T> {
   actions?: (item: T) => React.ReactNode;
   totalCount?: number;
   searchBarExtra?: React.ReactNode;
+  /** Render shimmer skeleton rows instead of the empty/data state while fetching. */
+  isLoading?: boolean;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -38,6 +40,7 @@ export function DataTable<T extends Record<string, unknown>>({
   actions,
   totalCount,
   searchBarExtra,
+  isLoading = false,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -135,7 +138,22 @@ export function DataTable<T extends Record<string, unknown>>({
             </tr>
           </thead>
           <tbody>
-            {paged.length === 0 ? (
+            {isLoading ? (
+              Array.from({ length: Math.min(pageSize, 5) }).map((_, i) => (
+                <tr key={`skeleton-${i}`} className="border-b border-gray-100 dark:border-slate-700/40">
+                  {columns.map((col) => (
+                    <td key={col.key} className="px-4 py-3">
+                      <div className="h-4 rounded bg-gray-100 dark:bg-slate-800 shimmer" />
+                    </td>
+                  ))}
+                  {actions && (
+                    <td className="px-4 py-3">
+                      <div className="h-4 w-16 ml-auto rounded bg-gray-100 dark:bg-slate-800 shimmer" />
+                    </td>
+                  )}
+                </tr>
+              ))
+            ) : paged.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center">
                   <Inbox className="h-8 w-8 mx-auto text-gray-300 dark:text-slate-600 mb-2" />
