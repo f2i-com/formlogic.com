@@ -92,10 +92,11 @@ export default function PackGalleryPage() {
   }, [searchQuery, sortBy, categoryFilter, page]);
 
   const renderStars = (rating: number) => (
-    <div className="flex items-center gap-0.5">
+    <div className="flex items-center gap-0.5" role="img" aria-label={`Rated ${rating.toFixed(1)} out of 5`}>
       {[1, 2, 3, 4, 5].map((s) => (
         <Star
           key={s}
+          aria-hidden="true"
           className={`h-3.5 w-3.5 ${s <= Math.round(rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300 dark:text-slate-600'}`}
         />
       ))}
@@ -109,7 +110,7 @@ export default function PackGalleryPage() {
         <div className="max-w-6xl mx-auto px-4 py-3">
           <button
             onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 cursor-pointer"
+            className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <ChevronLeft className="h-4 w-4" />
             Back
@@ -131,6 +132,7 @@ export default function PackGalleryPage() {
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
               placeholder="Search packs..."
+              aria-label="Search packs"
               className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
@@ -153,7 +155,7 @@ export default function PackGalleryPage() {
                   className="text-left p-4 rounded-xl border-2 border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/5 hover:shadow-md transition-all cursor-pointer"
                 >
                   <div className="flex items-start gap-3">
-                    <span className="text-3xl">{pack.icon || '📦'}</span>
+                    <span className="text-3xl" aria-hidden="true">{pack.icon || '📦'}</span>
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-gray-900 dark:text-white">{pack.name}</p>
                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 line-clamp-2">{pack.description}</p>
@@ -201,6 +203,7 @@ export default function PackGalleryPage() {
           <select
             value={sortBy}
             onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
+            aria-label="Sort packs"
             className="rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-1.5"
           >
             <option value="popular">Popular</option>
@@ -238,7 +241,7 @@ export default function PackGalleryPage() {
                   className="text-left p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all cursor-pointer"
                 >
                   <div className="flex items-start gap-3">
-                    <span className="text-3xl">{pack.icon || '📦'}</span>
+                    <span className="text-3xl" aria-hidden="true">{pack.icon || '📦'}</span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <p className="font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>
