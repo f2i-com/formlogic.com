@@ -245,12 +245,24 @@ export const useFormStore = create<FormState>()(
       },
 
       createForm: async (title, description) => {
+        // Apply the user's "Default Form Settings" preferences (Settings page) to
+        // new forms so those controls actually take effect.
+        const prefOverrides: Partial<Form['settings']> = {};
+        try {
+          const stored = localStorage.getItem('formlogic_user_preferences');
+          if (stored) {
+            const p = JSON.parse(stored) as Record<string, unknown>;
+            if (typeof p.showProgressBar === 'boolean') prefOverrides.showProgressBar = p.showProgressBar;
+            if (typeof p.allowBackNavigation === 'boolean') prefOverrides.allowBackNavigation = p.allowBackNavigation;
+          }
+        } catch { /* ignore malformed prefs */ }
+
         const form: Form = {
           id: uuidv4(),
           title,
           description,
           fields: [],
-          settings: { ...defaultSettings },
+          settings: { ...defaultSettings, ...prefOverrides },
           theme: { ...defaultTheme },
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
