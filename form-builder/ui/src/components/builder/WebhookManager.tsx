@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Copy, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Copy, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, Pencil } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { toast } from '../../stores/toastStore';
@@ -26,6 +26,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
   const [newDescription, setNewDescription] = useState('');
   const [newEvents, setNewEvents] = useState<string[]>(['response.created']);
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedWebhook, setExpandedWebhook] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Record<string, WebhookDelivery[]>>({});
   const [newSecret, setNewSecret] = useState<string | null>(null);
@@ -42,6 +43,30 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
 
   useEffect(() => { loadWebhooks(); }, [loadWebhooks]);
 
+  const resetForm = () => {
+    setNewUrl('');
+    setNewDescription('');
+    setNewEvents(['response.created']);
+    setShowCreate(false);
+    setEditingId(null);
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setNewUrl('');
+    setNewDescription('');
+    setNewEvents(['response.created']);
+    setShowCreate(true);
+  };
+
+  const openEdit = (webhook: Webhook) => {
+    setEditingId(webhook.id);
+    setNewUrl(webhook.url);
+    setNewDescription(webhook.description || '');
+    setNewEvents(webhook.events.length ? webhook.events : ['response.created']);
+    setShowCreate(true);
+  };
+
   const handleCreate = async () => {
     if (!newUrl.trim()) {
       toast.error('URL required', 'Please enter a webhook URL');
@@ -53,6 +78,25 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
     }
 
     setCreating(true);
+
+    // Edit mode: update the existing webhook (URL / events / description).
+    if (editingId) {
+      const result = await api.updateWebhook(formId, editingId, {
+        url: newUrl.trim(),
+        events: newEvents,
+        description: newDescription.trim() || undefined,
+      });
+      setCreating(false);
+      if (result.error) {
+        toast.error('Failed to update webhook', result.error);
+        return;
+      }
+      toast.success('Webhook updated');
+      resetForm();
+      loadWebhooks();
+      return;
+    }
+
     const result = await api.createWebhook(formId, {
       url: newUrl.trim(),
       events: newEvents,
@@ -68,10 +112,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
     if (result.data?.webhook) {
       setNewSecret(result.data.webhook.secret);
       toast.success('Webhook created', 'Copy the signing secret — it won\'t be shown again');
-      setNewUrl('');
-      setNewDescription('');
-      setNewEvents(['response.created']);
-      setShowCreate(false);
+      resetForm();
       loadWebhooks();
     }
   };
@@ -165,7 +206,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
             Get notified via HTTP when events occur
           </p>
         </div>
-        <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
+        <Button size="sm" onClick={() => (showCreate ? resetForm() : openCreate())}>
           <Plus className="h-4 w-4 mr-1" />
           Add Webhook
         </Button>
@@ -209,9 +250,9 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
             </div>
           </div>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button variant="outline" size="sm" onClick={resetForm}>Cancel</Button>
             <Button size="sm" onClick={handleCreate} disabled={creating}>
-              {creating ? 'Creating...' : 'Create Webhook'}
+              {editingId ? (creating ? 'Saving...' : 'Save Changes') : (creating ? 'Creating...' : 'Create Webhook')}
             </Button>
           </div>
         </div>
@@ -245,6 +286,9 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                 </div>
                 <button type="button" onClick={() => handleViewDeliveries(webhook.id)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded cursor-pointer" title="View deliveries" aria-label="View deliveries">
                   {expandedWebhook === webhook.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
+                <button type="button" onClick={() => openEdit(webhook)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-gray-500 cursor-pointer" title="Edit" aria-label="Edit webhook">
+                  <Pencil className="h-4 w-4" />
                 </button>
                 <button type="button" onClick={() => handleDelete(webhook.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 cursor-pointer" title="Delete" aria-label="Delete webhook">
                   <Trash2 className="h-4 w-4" />
