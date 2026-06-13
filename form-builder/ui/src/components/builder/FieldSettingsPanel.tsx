@@ -126,15 +126,22 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   variant="outline"
                   size="sm"
                   onClick={() => {
+                    const existing = field.properties.options || [];
+                    // Derive a value that isn't already taken — deriving purely
+                    // from length collides after a middle option is deleted, and
+                    // duplicate values make selections indistinguishable.
+                    const used = new Set(existing.map((o) => o.value));
+                    let n = existing.length + 1;
+                    while (used.has(`option_${n}`)) n++;
                     const newOption = {
                       id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
-                      label: `Option ${(field.properties.options?.length || 0) + 1}`,
-                      value: `option_${(field.properties.options?.length || 0) + 1}`,
+                      label: `Option ${n}`,
+                      value: `option_${n}`,
                     };
                     onUpdate({
                       properties: {
                         ...field.properties,
-                        options: [...(field.properties.options || []), newOption],
+                        options: [...existing, newOption],
                       },
                     });
                   }}
@@ -222,6 +229,80 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 }
                 placeholder="e.g., Very likely"
               />
+            </div>
+          )}
+
+          {/* Number settings */}
+          {field.type === 'number' && (
+            <div className="space-y-3">
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Number Settings</h4>
+              <div className="grid grid-cols-3 gap-2">
+                <Input
+                  label="Min"
+                  type="number"
+                  value={field.properties.min ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onUpdate({ properties: { ...field.properties, min: v === '' ? undefined : Number(v) } });
+                  }}
+                  placeholder="—"
+                />
+                <Input
+                  label="Max"
+                  type="number"
+                  value={field.properties.max ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onUpdate({ properties: { ...field.properties, max: v === '' ? undefined : Number(v) } });
+                  }}
+                  placeholder="—"
+                />
+                <Input
+                  label="Step"
+                  type="number"
+                  value={field.properties.step ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onUpdate({ properties: { ...field.properties, step: v === '' ? undefined : Number(v) } });
+                  }}
+                  placeholder="any"
+                />
+              </div>
+              <p className="text-xs text-gray-400 dark:text-slate-500">Applied as native min/max/step on the input. Leave blank for no constraint.</p>
+            </div>
+          )}
+
+          {/* Layout-screen media (statement / welcome / thank-you) */}
+          {['statement', 'welcome_screen', 'thank_you'].includes(field.type) && (
+            <div className="space-y-3">
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">Screen Media (optional)</h4>
+              <Input
+                label="Media URL"
+                value={field.properties.mediaUrl || ''}
+                onChange={(e) => onUpdate({ properties: { ...field.properties, mediaUrl: e.target.value } })}
+                placeholder="https://… image or video URL"
+              />
+              {field.properties.mediaUrl && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Media type</label>
+                  <select
+                    value={field.properties.mediaType || 'image'}
+                    onChange={(e) => onUpdate({ properties: { ...field.properties, mediaType: e.target.value as 'image' | 'video' } })}
+                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                  </select>
+                </div>
+              )}
+              {field.type === 'welcome_screen' && (
+                <Input
+                  label="Button text"
+                  value={field.properties.buttonText || ''}
+                  onChange={(e) => onUpdate({ properties: { ...field.properties, buttonText: e.target.value } })}
+                  placeholder="e.g. Get started"
+                />
+              )}
             </div>
           )}
 

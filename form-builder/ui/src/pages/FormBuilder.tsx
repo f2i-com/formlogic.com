@@ -163,6 +163,7 @@ export default function FormBuilder() {
       thank_you: 'Thank you!',
       calculated: 'Calculated value',
       linked_record: 'Linked record',
+      location: 'Your location',
     };
 
     const genId = () => typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);

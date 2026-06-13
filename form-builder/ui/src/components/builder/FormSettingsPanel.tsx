@@ -177,6 +177,16 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
                   placeholder="Submit"
                 />
               </div>
+
+              <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
+                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Review Dashboard</h3>
+                <Switch
+                  checked={editedSettings.showNigoDashboard === true}
+                  onChange={(checked) => updateSettings({ showNigoDashboard: checked })}
+                  label="Show NIGO Dashboard"
+                  description="Display a Not-In-Good-Order checklist summarizing missing required fields"
+                />
+              </div>
             </div>
           )}
 

@@ -410,8 +410,17 @@ function FieldInput({
   }
 
   if (field.type === 'statement' || field.type === 'welcome_screen') {
+    const mediaUrl = field.properties?.mediaUrl as string | undefined;
+    const mediaType = (field.properties?.mediaType as string | undefined) || 'image';
     return (
-      <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description || 'Statement content'}</p>
+      <div className="space-y-4">
+        {mediaUrl && (mediaType === 'video' ? (
+          <video src={mediaUrl} controls className="w-full rounded-xl max-h-80" />
+        ) : (
+          <img src={mediaUrl} alt="" className="w-full rounded-xl max-h-80 object-contain" />
+        ))}
+        <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description || 'Statement content'}</p>
+      </div>
     );
   }
 

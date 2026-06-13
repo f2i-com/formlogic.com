@@ -116,6 +116,9 @@ function FieldResponse({
             aria-label={field.label}
             aria-required={required}
             value={(value as number) ?? ''}
+            min={field.properties.min}
+            max={field.properties.max}
+            step={field.properties.step ?? 'any'}
             onChange={(e) => {
               const val = parseFloat(e.target.value);
               onChange(isNaN(val) ? undefined : val);
@@ -340,10 +343,23 @@ function FieldResponse({
       }
 
       case 'statement':
-      case 'welcome_screen':
-        return field.description ? (
-          <p className="text-lg opacity-70 whitespace-pre-line">{field.description}</p>
-        ) : null;
+      case 'welcome_screen': {
+        const mediaUrl = field.properties.mediaUrl;
+        if (!mediaUrl && !field.description) return null;
+        const mediaType = field.properties.mediaType || 'image';
+        return (
+          <div className="space-y-4">
+            {mediaUrl && (mediaType === 'video' ? (
+              <video src={mediaUrl} controls className="w-full rounded-xl max-h-80" />
+            ) : (
+              <img src={mediaUrl} alt="" className="w-full rounded-xl max-h-80 object-contain" />
+            ))}
+            {field.description && (
+              <p className="text-lg opacity-70 whitespace-pre-line">{field.description}</p>
+            )}
+          </div>
+        );
+      }
 
       case 'file_upload':
         return (
@@ -1152,7 +1168,9 @@ export default function FormResponse() {
                 style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
                 className="px-8"
               >
-                {isLastStep ? 'Submit' : 'OK'} <Check className="ml-2 h-4 w-4" />
+                {isLastStep
+                  ? 'Submit'
+                  : (currentField?.type === 'welcome_screen' && currentField.properties.buttonText) || 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
               <span className="hidden sm:inline text-sm opacity-50">
                 press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>

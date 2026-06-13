@@ -44,6 +44,25 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
       return;
     }
 
+    // Validate accepted types client-side. The native <input accept> only
+    // filters the picker — drag-and-dropped files bypass it entirely.
+    const accepted = field.properties.acceptedFileTypes || [];
+    if (accepted.length > 0) {
+      const matches = (file: File) => accepted.some((a) => {
+        const t = a.trim().toLowerCase();
+        if (!t) return false;
+        if (t.startsWith('.')) return file.name.toLowerCase().endsWith(t);
+        if (t.endsWith('/*')) return file.type.toLowerCase().startsWith(t.slice(0, -1));
+        return file.type.toLowerCase() === t;
+      });
+      const rejected = files.filter((f) => !matches(f));
+      if (rejected.length > 0) {
+        toast.error('File Type Not Allowed', `${rejected[0].name} is not an accepted file type.`);
+        files = files.filter(matches);
+        if (files.length === 0) return;
+      }
+    }
+
     const maxSize = field.properties.maxFileSize;
 
     // Validate file sizes client-side
