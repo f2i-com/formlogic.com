@@ -14,15 +14,30 @@ export function AppDeploySettings() {
   const [app, setApp] = useState<App | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [pwaShortName, setPwaShortName] = useState('');
+  const [pwaThemeColor, setPwaThemeColor] = useState('#6366f1');
+  const [savingPwa, setSavingPwa] = useState(false);
 
   useEffect(() => {
     fetchApps().then(() => {
       if (appId) {
-        const found = useAppStore.getState().getApp(appId);
-        if (found) setApp(found as App);
+        const found = useAppStore.getState().getApp(appId) as App | undefined;
+        if (found) {
+          setApp(found);
+          setPwaShortName(found.settings?.pwaShortName ?? found.name.slice(0, 12));
+          setPwaThemeColor(found.settings?.pwaThemeColor ?? found.theme?.primaryColor ?? '#6366f1');
+        }
       }
     }).finally(() => setLoaded(true));
   }, [appId, fetchApps]);
+
+  const handleSavePwa = async () => {
+    if (!appId || !app) return;
+    setSavingPwa(true);
+    const ok = await updateApp(appId, { settings: { ...app.settings, pwaShortName, pwaThemeColor } });
+    setSavingPwa(false);
+    if (ok) toast.success('PWA settings saved', 'Install name and theme color updated.');
+  };
 
   if (!app) {
     if (!loaded) {
@@ -129,6 +144,32 @@ export function AppDeploySettings() {
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
             Users can install this app on their mobile devices for a native-like experience.
           </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label htmlFor="pwa-short-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Install name</label>
+              <input
+                id="pwa-short-name"
+                type="text"
+                value={pwaShortName}
+                maxLength={12}
+                onChange={(e) => setPwaShortName(e.target.value)}
+                placeholder={app.name.slice(0, 12)}
+                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              />
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Short label shown under the home-screen icon (max 12 chars).</p>
+            </div>
+            <div>
+              <label htmlFor="pwa-theme-color" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Theme color</label>
+              <div className="flex gap-2 items-center">
+                <input id="pwa-theme-color" type="color" aria-label="PWA theme color picker" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} className="h-10 w-12 rounded-lg border border-gray-300 dark:border-slate-600 cursor-pointer" />
+                <input type="text" aria-label="PWA theme color hex value" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all" />
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Browser/status-bar color when the app is installed.</p>
+            </div>
+          </div>
+          <div className="flex justify-end mb-4">
+            <Button size="sm" onClick={handleSavePwa} isLoading={savingPwa} disabled={savingPwa}>Save PWA settings</Button>
+          </div>
           <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-400">
             <p className="font-medium mb-2">Install Instructions:</p>
             <ol className="list-decimal list-inside space-y-1">
