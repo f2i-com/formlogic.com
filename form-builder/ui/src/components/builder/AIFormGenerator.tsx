@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Sparkles, FileText, Image, Upload, AlertCircle, Wand2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
@@ -191,29 +192,21 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       )}
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 dark:border-slate-700 px-6">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
-                activeTab === tab.key
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabType)}>
+        <TabsList variant="underline" aria-label="Generation source" className="px-6">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <TabsTrigger key={tab.key} value={tab.key} variant="underline">
+                <span className="flex items-center gap-2"><Icon className="h-4 w-4" />{tab.label}</span>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
 
-      {/* Content */}
-      <div className="p-6 overflow-y-auto max-h-[60vh]">
-        {activeTab === 'prompt' && (
+        {/* Content */}
+        <div className="p-6 overflow-y-auto max-h-[60vh]">
+          <TabsContent value="prompt">{activeTab === 'prompt' && (
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
@@ -236,9 +229,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               </ul>
             </div>
           </div>
-        )}
+        )}</TabsContent>
 
-        {activeTab === 'document' && (
+          <TabsContent value="document">{activeTab === 'document' && (
           <div className="space-y-4">
             <div
               onDrop={(e) => handleDrop(e, 'document')}
@@ -301,9 +294,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               />
             </div>
           </div>
-        )}
+        )}</TabsContent>
 
-        {activeTab === 'image' && (
+          <TabsContent value="image">{activeTab === 'image' && (
           <div className="space-y-4">
             <div
               onDrop={(e) => handleDrop(e, 'image')}
@@ -368,8 +361,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
               </ul>
             </div>
           </div>
-        )}
-      </div>
+        )}</TabsContent>
+        </div>
+      </Tabs>
 
       {/* Footer */}
       <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-slate-700">
