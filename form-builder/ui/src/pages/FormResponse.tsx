@@ -7,6 +7,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
+import { readableForegroundColor } from '../lib/color';
 import { api } from '../lib/api';
 import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
@@ -211,11 +212,8 @@ function FieldResponse({
                 style={selectedValues.includes(option.value) ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
               >
                 <span
-                  className={cn(
-                    'w-8 h-8 rounded border-2 flex items-center justify-center',
-                    selectedValues.includes(option.value) ? 'text-white' : ''
-                  )}
-                  style={selectedValues.includes(option.value) ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
+                  className="w-8 h-8 rounded border-2 flex items-center justify-center"
+                  style={selectedValues.includes(option.value) ? { backgroundColor: primaryColor, borderColor: primaryColor, color: readableForegroundColor(primaryColor) } : {}}
                 >
                   {selectedValues.includes(option.value) && <Check className="h-4 w-4" />}
                 </span>
@@ -316,11 +314,9 @@ function FieldResponse({
                     }}
                     className={cn(
                       'py-4 min-h-[44px] rounded-lg border-2 font-bold text-lg transition-all cursor-pointer',
-                      scaleValue === num
-                        ? 'text-white'
-                        : 'border-current/20 hover:border-current/30'
+                      scaleValue === num ? '' : 'border-current/20 hover:border-current/30'
                     )}
-                    style={scaleValue === num ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
+                    style={scaleValue === num ? { backgroundColor: primaryColor, borderColor: primaryColor, color: readableForegroundColor(primaryColor) } : {}}
                   >
                     {num}
                   </button>
@@ -616,7 +612,7 @@ function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: 
         className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
         style={{ backgroundColor: form.theme.primaryColor }}
       >
-        <Check className="h-10 w-10 text-white" />
+        <Check className="h-10 w-10" style={{ color: readableForegroundColor(form.theme.primaryColor) }} />
       </div>
       <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>Thank you!</h1>
       <p className="text-xl" style={{ color: form.theme.textColor, opacity: 0.7 }}>Your response has been submitted successfully.</p>
@@ -1053,7 +1049,7 @@ export default function FormResponse() {
               'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
               effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
             )}
-            style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: '#fff' } : { color: form.theme.textColor }}
+            style={effectiveMode === 'focused' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
           >
             Focused
           </button>
@@ -1063,7 +1059,7 @@ export default function FormResponse() {
               'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
               effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
             )}
-            style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: '#fff' } : { color: form.theme.textColor }}
+            style={effectiveMode === 'classic' ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) } : { color: form.theme.textColor }}
           >
             Classic
           </button>
@@ -1118,8 +1114,8 @@ export default function FormResponse() {
                 onClick={handleNext}
                 disabled={isSubmitting}
                 isLoading={isLastStep && isSubmitting}
-                style={{ backgroundColor: form.theme.primaryColor }}
-                className="text-white px-8"
+                style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                className="px-8"
               >
                 {isLastStep ? 'Submit' : 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
@@ -1143,14 +1139,14 @@ export default function FormResponse() {
             onClick={prevStep}
             disabled={safeCurrentStep === 0}
             aria-label="Previous question"
-            className="p-3 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+            className="p-3 bg-current/10 backdrop-blur-sm rounded-control shadow-md opacity-60 hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-opacity cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/60"
           >
             <ChevronUp className="h-5 w-5" />
           </button>
           <button
             onClick={handleNext}
             aria-label="Next question"
-            className="p-3 bg-current/10 backdrop-blur-sm rounded-lg shadow-md opacity-60 hover:opacity-90 transition-opacity cursor-pointer"
+            className="p-3 bg-current/10 backdrop-blur-sm rounded-control shadow-md opacity-60 hover:opacity-90 transition-opacity cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/60"
           >
             <ChevronDown className="h-5 w-5" />
           </button>
@@ -1206,8 +1202,8 @@ export default function FormResponse() {
                 onClick={handleClassicSubmit}
                 disabled={isSubmitting}
                 isLoading={isSubmitting}
-                style={{ backgroundColor: form.theme.primaryColor }}
-                className="w-full text-white"
+                style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                className="w-full"
               >
                 {form.settings.submitButtonText || 'Submit'}
               </Button>

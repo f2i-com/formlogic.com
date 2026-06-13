@@ -389,9 +389,9 @@ function FieldInput({
                 }}
                 className={cn(
                   'aspect-square min-h-[44px] rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
-                  selected ? 'text-white shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
+                  selected ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
-                style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor } : {}}
+                style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor, color: 'var(--app-on-primary)' } : {}}
               >
                 {num}
               </button>
@@ -778,7 +778,7 @@ export function AppFormView() {
             className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
             style={{ backgroundColor: primaryColor }}
           >
-            <CheckCircle className="h-10 w-10 text-white" />
+            <CheckCircle className="h-10 w-10" style={{ color: 'var(--app-on-primary)' }} />
           </div>
           <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">Thank you!</h1>
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed">Your response has been submitted successfully.</p>
@@ -905,6 +905,7 @@ export function AppFormView() {
               {/* Error */}
               {error && (
                 <motion.p
+                  role="alert"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="mt-4 text-sm text-red-600 dark:text-red-400"
@@ -919,8 +920,8 @@ export function AppFormView() {
                   type="button"
                   onClick={handleNext}
                   disabled={submitting}
-                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-white text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer"
-                  style={{ backgroundColor: primaryColor }}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
+                  style={{ backgroundColor: primaryColor, color: 'var(--app-on-primary)' }}
                 >
                   {submitting ? 'Submitting...' : isLastStep ? 'Submit' : 'OK'}
                   {!submitting && <Check className="h-4 w-4" />}
@@ -1045,6 +1046,7 @@ export function AppFormView() {
 
             {error && (
               <motion.p
+                role="alert"
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="mt-4 text-sm text-red-600 dark:text-red-400 text-center"
@@ -1058,8 +1060,8 @@ export function AppFormView() {
                 type="button"
                 onClick={handleClassicSubmit}
                 disabled={submitting}
-                className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-white text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer"
-                style={{ backgroundColor: primaryColor }}
+                className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
+                style={{ backgroundColor: primaryColor, color: 'var(--app-on-primary)' }}
               >
                 {submitting ? 'Submitting...' : (formSettings?.submitButtonText as string) || 'Submit'}
                 {!submitting && <Check className="h-4 w-4" />}

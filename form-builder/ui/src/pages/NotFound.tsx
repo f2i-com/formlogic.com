@@ -18,7 +18,7 @@ export function NotFound() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4 relative overflow-hidden">
       {/* Background decoration */}
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-indigo-600/5 dark:bg-indigo-600/10 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] bg-primary-600/5 dark:bg-primary-600/10 rounded-full blur-[120px] pointer-events-none" />
 
       <div className="text-center max-w-md relative z-10">
         <div className="w-20 h-20 bg-primary-50 dark:bg-primary-500/10 rounded-2xl flex items-center justify-center mx-auto mb-8 shadow-lg shadow-primary-500/10 border border-primary-100 dark:border-primary-500/20">

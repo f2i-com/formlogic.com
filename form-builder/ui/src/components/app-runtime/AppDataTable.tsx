@@ -156,16 +156,23 @@ export function AppDataTable() {
     setVisibleColumns(initial);
   }, [formId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close dropdown on click outside
+  // Close dropdown on click outside or Escape (keyboard-dismissible)
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (colDropdownRef.current && !colDropdownRef.current.contains(e.target as Node)) {
         setColDropdownOpen(false);
       }
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setColDropdownOpen(false);
+    }
     if (colDropdownOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleKeyDown);
+      };
     }
   }, [colDropdownOpen]);
 
@@ -329,6 +336,8 @@ export function AppDataTable() {
         onClick={() => setColDropdownOpen((v) => !v)}
         className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
         aria-label="Toggle columns"
+        aria-haspopup="true"
+        aria-expanded={colDropdownOpen}
       >
         <Columns3 className="h-4 w-4" />
         <span className="hidden sm:inline">Columns</span>
@@ -385,7 +394,7 @@ export function AppDataTable() {
       </div>
 
       {error ? (
-        <div className="text-center py-12">
+        <div className="text-center py-12" role="alert">
           <p className="text-red-600 dark:text-red-400">{error}</p>
         </div>
       ) : loading ? (

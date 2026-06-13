@@ -547,7 +547,7 @@ export function Dashboard() {
         {/* Getting Started Section for New Users */}
         {showGettingStarted && (
           <div className="mb-8">
-            <Card className="bg-gradient-to-br from-indigo-600/90 to-purple-700/90 dark:from-indigo-900/50 dark:to-purple-900/50 border-indigo-500/20">
+            <Card className="bg-gradient-to-br from-primary-600/90 to-primary-800/90 dark:from-primary-900/50 dark:to-primary-950/50 border-primary-500/20">
               <CardContent className="p-6 sm:p-8">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
                   <div className="p-4 bg-white/20 rounded-2xl">
@@ -557,13 +557,13 @@ export function Dashboard() {
                     <h3 className="text-xl font-bold text-white mb-2">
                       Get started with FormLogic
                     </h3>
-                    <p className="text-indigo-100 mb-4">
+                    <p className="text-white/80 mb-4">
                       Create your first form in seconds. Choose from templates or start from scratch.
                     </p>
                     <div className="flex flex-wrap gap-3">
                       <Button
                         onClick={handleCreateForm}
-                        className="bg-white text-indigo-600 hover:bg-indigo-50"
+                        className="bg-white text-primary-600 hover:bg-white/90"
                       >
                         <Plus className="h-4 w-4 mr-2" />
                         Create Your First Form

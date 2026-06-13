@@ -320,9 +320,12 @@ export default function PackDetailPage() {
                   onClick={() => setRatingInput(s)}
                   onMouseEnter={() => setHoverRating(s)}
                   onMouseLeave={() => setHoverRating(0)}
-                  className="cursor-pointer"
+                  aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`}
+                  aria-pressed={s === ratingInput}
+                  className="cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                 >
                   <Star
+                    aria-hidden="true"
                     className={`h-6 w-6 transition-colors ${
                       s <= (hoverRating || ratingInput)
                         ? 'fill-amber-400 text-amber-400'

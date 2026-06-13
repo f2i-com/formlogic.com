@@ -149,11 +149,15 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     setSubmittingRating(true);
     try {
       const result = await api.ratePack(slug, ratingInput, reviewInput || undefined);
-      if (result.data?.success) {
-        toast.success('Rating submitted');
-        setUserRating({ rating: ratingInput, review: reviewInput || null });
-        await Promise.all([loadPackDetail(), loadRatings()]);
+      if (result.error || !result.data?.success) {
+        // api.request resolves (not throws) on non-2xx, so handle result.error here
+        // or the user gets no feedback that the rating failed.
+        toast.error('Failed to submit rating', typeof result.error === 'string' ? result.error : undefined);
+        return;
       }
+      toast.success('Rating submitted');
+      setUserRating({ rating: ratingInput, review: reviewInput || null });
+      await Promise.all([loadPackDetail(), loadRatings()]);
     } catch {
       toast.error('Failed to submit rating');
     } finally {
@@ -326,9 +330,12 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                 onClick={() => setRatingInput(s)}
                 onMouseEnter={() => setHoverRating(s)}
                 onMouseLeave={() => setHoverRating(0)}
-                className="cursor-pointer"
+                aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`}
+                aria-pressed={s === ratingInput}
+                className="cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
               >
                 <Star
+                  aria-hidden="true"
                   className={`h-5 w-5 transition-colors ${
                     s <= (hoverRating || ratingInput)
                       ? 'fill-amber-400 text-amber-400'

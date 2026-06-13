@@ -160,9 +160,9 @@ export function AppRelationsManager() {
                 >
                   {/* Relation label */}
                   <div className="flex items-center gap-2 mb-3">
-                    <Link2 className="h-4 w-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                    <Link2 className="h-4 w-4 text-primary-600 dark:text-primary-400 shrink-0" />
                     <span className="text-sm font-semibold text-gray-900 dark:text-white">{rel.field.label}</span>
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400">
                       {rel.field.properties.allowMultiple ? '1 : N' : '1 : 1'}
                     </span>
                   </div>

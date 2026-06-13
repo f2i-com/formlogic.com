@@ -402,13 +402,13 @@ export function Settings() {
                 </p>
                 <div className="grid grid-cols-3 sm:grid-cols-7 gap-3">
                   {[
-                    { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default' },
-                    { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo' },
-                    { id: 'lime', color: 'bg-lime-500', label: 'Lime' },
-                    { id: 'rose', color: 'bg-rose-500', label: 'Rose' },
-                    { id: 'orange', color: 'bg-orange-500', label: 'Orange' },
-                    { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan' },
-                    { id: 'violet', color: 'bg-violet-500', label: 'Violet' },
+                    { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default', check: 'text-gray-900' },
+                    { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo', check: 'text-white' },
+                    { id: 'lime', color: 'bg-lime-500', label: 'Lime', check: 'text-gray-900' },
+                    { id: 'rose', color: 'bg-rose-500', label: 'Rose', check: 'text-white' },
+                    { id: 'orange', color: 'bg-orange-500', label: 'Orange', check: 'text-gray-900' },
+                    { id: 'cyan', color: 'bg-cyan-500', label: 'Cyan', check: 'text-gray-900' },
+                    { id: 'violet', color: 'bg-violet-500', label: 'Violet', check: 'text-white' },
                   ].map((theme) => {
                     const isSelected = themeColor === theme.id;
                     return (
@@ -426,7 +426,7 @@ export function Settings() {
                           }`}
                       >
                         <div className={`w-8 h-8 rounded-full ${theme.color} shadow-sm flex items-center justify-center`}>
-                          {isSelected && <Check className="w-4 h-4 text-white" />}
+                          {isSelected && <Check className={`w-4 h-4 ${theme.check}`} />}
                         </div>
                         <span className={`text-xs font-medium ${isSelected ? 'text-primary-600 dark:text-primary-400' : 'text-gray-600 dark:text-slate-400'
                           }`}>
@@ -523,7 +523,7 @@ export function Settings() {
                 onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); }}
               />
               {passwordError && (
-                <p className="text-sm text-red-500">{passwordError}</p>
+                <p role="alert" className="text-sm text-red-500">{passwordError}</p>
               )}
               <div className="pt-2">
                 <Button
@@ -720,7 +720,7 @@ export function Settings() {
                 Verify Audit Integrity
               </Button>
               {auditResult && (
-                <div className={`flex items-start gap-3 p-4 rounded-lg border ${
+                <div role="status" className={`flex items-start gap-3 p-4 rounded-lg border ${
                   auditResult.intact
                     ? 'bg-green-50 dark:bg-green-500/10 border-green-200 dark:border-green-500/30'
                     : 'bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/30'
