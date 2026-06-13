@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { NotFound } from './pages/NotFound';
+import { LegalPage } from './pages/LegalPage';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
@@ -159,6 +160,9 @@ function AppRoutes() {
         {/* Pack marketplace (public) */}
         <Route path="/packs" element={<PackGalleryPage />} />
         <Route path="/packs/:slug" element={<PackDetailPage />} />
+        {/* Legal (public) */}
+        <Route path="/privacy" element={<LegalPage type="privacy" />} />
+        <Route path="/terms" element={<LegalPage type="terms" />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -201,6 +205,10 @@ function AppRoutes() {
       {/* Pack marketplace */}
       <Route path="/packs" element={<PackGalleryPage />} />
       <Route path="/packs/:slug" element={<PackDetailPage />} />
+
+      {/* Legal (full screen) */}
+      <Route path="/privacy" element={<LegalPage type="privacy" />} />
+      <Route path="/terms" element={<LegalPage type="terms" />} />
 
       {/* Public form response route */}
       <Route path="/form/:formId" element={<FormResponse />} />
