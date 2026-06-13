@@ -72,6 +72,18 @@ async function fetchAllApiResponses(
   return { responses: all, truncated };
 }
 
+const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
+
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case 'approved': return 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400';
+    case 'rejected': return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400';
+    case 'reviewed': return 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400';
+    case 'archived': return 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400';
+    default: return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'; // submitted
+  }
+}
+
 // Stats card component for consistency
 function StatCard({
   icon: Icon,
@@ -128,6 +140,7 @@ function FormResponses() {
   const [isSaving, setIsSaving] = useState(false);
   const [sortField, setSortField] = useState<'submittedAt' | 'completionTime'>('submittedAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
 
@@ -218,6 +231,11 @@ function FormResponses() {
       });
     }
 
+    // Status filter (review queue)
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter((r) => (r.status || 'submitted') === statusFilter);
+    }
+
     // Sort
     filtered = [...filtered].sort((a, b) => {
       let aVal: number;
@@ -235,7 +253,7 @@ function FormResponses() {
     });
 
     return filtered;
-  }, [responses, searchQuery, sortField, sortDirection]);
+  }, [responses, searchQuery, statusFilter, sortField, sortDirection]);
 
   // Pagination
   const totalPages = Math.ceil(filteredResponses.length / ITEMS_PER_PAGE);
@@ -326,6 +344,20 @@ function FormResponses() {
       setIsDeleteModalOpen(false);
     } catch {
       toast.error('Failed to delete', 'An error occurred');
+    }
+  };
+
+  // Change a response's review status (submitted/reviewed/approved/rejected/archived).
+  // Persisted server-side in API mode; in-memory only for local-storage forms.
+  const handleStatusChange = async (responseId: string, newStatus: string) => {
+    setResponses((prev) => prev.map((r) => (r.id === responseId ? { ...r, status: newStatus } : r)));
+    setSelectedResponse((prev) => (prev && prev.id === responseId ? { ...prev, status: newStatus } : prev));
+    if (storageMode === 'api' && formId) {
+      const result = await api.updateResponse(formId, responseId, { status: newStatus } as Parameters<typeof api.updateResponse>[2]);
+      if (result.error) {
+        toast.error('Failed to update status', result.error);
+        try { const { responses: all } = await fetchAllApiResponses(formId); setResponses(all); } catch { /* ignore */ }
+      }
     }
   };
 
@@ -539,6 +571,17 @@ function FormResponses() {
             </div>
           </div>
           <div className="flex gap-2">
+            <select
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+              aria-label="Filter by status"
+              className="px-3 py-2.5 text-sm rounded-lg border bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="all">All statuses</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+              ))}
+            </select>
             <button
               onClick={() => toggleSort('submittedAt')}
               className={cn(
@@ -635,6 +678,9 @@ function FormResponses() {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
                       Time
                     </th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+                      Status
+                    </th>
                     <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
                       Actions
                     </th>
@@ -657,6 +703,11 @@ function FormResponses() {
                       ))}
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
                         {formatDuration(response.completionTime || 0)}
+                      </td>
+                      <td className="px-4 py-4 whitespace-nowrap">
+                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(response.status || 'submitted'))}>
+                          {(response.status || 'submitted').charAt(0).toUpperCase() + (response.status || 'submitted').slice(1)}
+                        </span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-right">
                         <div className="flex justify-end gap-1">
@@ -767,6 +818,25 @@ function FormResponses() {
                     <p className="text-gray-900 dark:text-white mt-1">
                       {formatDuration(selectedResponse.completionTime || 0)}
                     </p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-gray-500 dark:text-slate-400 mb-1">Status</p>
+                    {storageMode === 'api' ? (
+                      <select
+                        value={selectedResponse.status || 'submitted'}
+                        onChange={(e) => handleStatusChange(selectedResponse.id, e.target.value)}
+                        aria-label="Response status"
+                        className="px-2.5 py-1 rounded-lg text-sm border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+                      >
+                        {STATUS_OPTIONS.map((s) => (
+                          <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className={cn('inline-block px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(selectedResponse.status || 'submitted'))}>
+                        {(selectedResponse.status || 'submitted').charAt(0).toUpperCase() + (selectedResponse.status || 'submitted').slice(1)}
+                      </span>
+                    )}
                   </div>
                   {selectedResponse.metadata?.userAgent && (
                     <div className="col-span-2">
