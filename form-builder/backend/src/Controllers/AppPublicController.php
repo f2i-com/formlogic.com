@@ -214,8 +214,18 @@ class AppPublicController
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
 
-        // Validate answers against form fields
         if ($form) {
+            // Only accept submissions to published forms (not draft/archived),
+            // matching the standalone and external-API submission paths.
+            if (($form['status'] ?? '') !== 'published') {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form is not accepting responses.'], 403);
+            }
+
+            // Drop answers for non-input/unknown fields (e.g. forged calculated
+            // values or arbitrary field IDs) before validating and persisting.
+            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+
+            // Validate answers against form fields
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
             if (!empty($validationErrors)) {
                 return $this->jsonResponse($response, [
@@ -407,6 +417,8 @@ class AppPublicController
         if (isset($data['answers'])) {
             $form = $this->formService->getForm($formId);
             if ($form) {
+                // Drop non-input/unknown field answers before validating/persisting
+                $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
                 $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
                 if (!empty($validationErrors)) {
                     return $this->jsonResponse($response, [
@@ -1054,6 +1066,36 @@ class AppPublicController
     }
 
     /**
+     * Drop answers that don't correspond to a real input field (calculated /
+     * statement / welcome / thank-you fields and unknown ids), so clients can't
+     * persist forged computed values or arbitrary keys. Mirrors ResponseController.
+     */
+    private function sanitizeAnswers(array $fields, array $answers): array
+    {
+        if (!is_array($answers)) {
+            return [];
+        }
+        $inputFieldIds = [];
+        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you'];
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            if (!in_array($field['type'] ?? 'short_text', $nonInputTypes, true)) {
+                $inputFieldIds[$id] = true;
+            }
+        }
+        $sanitized = [];
+        foreach ($answers as $fieldId => $value) {
+            if (isset($inputFieldIds[$fieldId])) {
+                $sanitized[$fieldId] = $value;
+            }
+        }
+        return $sanitized;
+    }
+
+    /**
      * Validate a field value against its type
      */
     private function validateFieldType(array $field, $value): ?string
@@ -1126,6 +1168,9 @@ class AppPublicController
                 $properties = $field['properties'] ?? [];
                 $options = $properties['options'] ?? [];
                 $allowedValues = array_column($options, 'value');
+                if (count($value) > max(count($allowedValues), 1)) {
+                    return 'Too many selections';
+                }
                 foreach ($value as $selected) {
                     if (!in_array($selected, $allowedValues, true)) {
                         return 'Invalid selection';

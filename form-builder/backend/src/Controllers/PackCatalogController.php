@@ -69,7 +69,9 @@ class PackCatalogController
         $slug = $args['slug'] ?? '';
 
         try {
-            $pack = $this->catalogService->getPackDetail($slug);
+            // Private packs are only visible to their publisher (viewer may be null
+            // on this auth-optional route). Public/unlisted are visible by slug.
+            $pack = $this->catalogService->getPackDetail($slug, $request->getAttribute('userId'));
             if (!$pack) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
             }
@@ -294,6 +296,14 @@ class PackCatalogController
         $slug = $args['slug'] ?? '';
         $catalog = $this->catalogService->getCatalogBySlug($slug);
         if (!$catalog) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
+        }
+
+        // Don't disclose a private pack's data to anyone but its publisher
+        // (this route is auth-optional, so viewer may be null). Public/unlisted
+        // packs remain downloadable by slug.
+        $viewerId = $request->getAttribute('userId');
+        if (($catalog['visibility'] ?? 'public') === 'private' && ($catalog['publisher_id'] ?? null) !== $viewerId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
         }
 

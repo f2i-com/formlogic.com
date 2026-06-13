@@ -32,6 +32,7 @@ class FormLogicRuntime
     private int $maxWallTimeMs;
     private int $maxCallDepth;
     private int $httpRequestCount = 0;
+    private float $httpDeadline = 0.0;
     private const MAX_HTTP_REQUESTS = 10;
     private const MAX_RESPONSE_SIZE = 1 * 1024 * 1024; // 1MB
 
@@ -53,6 +54,10 @@ class FormLogicRuntime
     {
         $startTime = microtime(true);
         $this->httpRequestCount = 0; // Reset per execution
+        // Shared wall-clock budget for native ctx.http calls this execution. cURL
+        // runs OUTSIDE the VM's time limit, so without this a script pointing at a
+        // tarpit could block a PHP worker for minutes (DoS). Clamp to [3s, 10s].
+        $this->httpDeadline = $startTime + min(max($this->maxWallTimeMs / 1000, 3.0), 10.0);
 
         // Create a fresh engine instance
         $engine = new FormLogicEngine();
@@ -794,6 +799,15 @@ class FormLogicRuntime
             $timeout = min($maxTimeout, max(1, (int)$options['timeout']));
         }
 
+        // Bound every cURL call by the REMAINING shared HTTP budget so connect +
+        // transfer time (across all requests AND redirects) can never exceed it.
+        $remainingMs = (int) (($this->httpDeadline - microtime(true)) * 1000);
+        if ($remainingMs <= 0) {
+            return $this->httpErrorResponse('HTTP time budget exceeded');
+        }
+        $callTimeoutMs = min($remainingMs, $timeout * 1000);
+        $connectTimeoutMs = min($remainingMs, 3000);
+
         // Execute request with cURL
         $ch = curl_init();
 
@@ -802,8 +816,8 @@ class FormLogicRuntime
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => false, // Disable auto-follow to validate redirects
             CURLOPT_MAXREDIRS => 0,
-            CURLOPT_TIMEOUT => $timeout,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT_MS => $callTimeoutMs,
+            CURLOPT_CONNECTTIMEOUT_MS => $connectTimeoutMs,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HEADER => true,
@@ -889,6 +903,15 @@ class FormLogicRuntime
             if ($redirectCheck['resolvedIp'] !== null) {
                 $redirectOptions[CURLOPT_RESOLVE] = ["{$redirectHost}:{$redirectPort}:{$redirectCheck['resolvedIp']}"];
             }
+            // Enforce the remaining shared HTTP budget on each redirect hop too,
+            // so a redirect chain can't extend total blocking time past the deadline.
+            $remainingMs = (int) (($this->httpDeadline - microtime(true)) * 1000);
+            if ($remainingMs <= 0) {
+                return $this->httpErrorResponse('HTTP time budget exceeded');
+            }
+            $redirectOptions[CURLOPT_TIMEOUT_MS] = $remainingMs;
+            $redirectOptions[CURLOPT_CONNECTTIMEOUT_MS] = min($remainingMs, 3000);
+
             curl_setopt_array($ch, $redirectOptions);
 
             $response = curl_exec($ch);

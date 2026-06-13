@@ -229,6 +229,13 @@ class DocumentConverter
 
         [$width, $height, $type] = $imageInfo;
 
+        // Reject decompression bombs BEFORE imagecreatefrom*() allocates the full
+        // uncompressed bitmap (a tiny file can declare huge dimensions).
+        $maxPixels = 40_000_000; // ~40 megapixels
+        if ($width < 1 || $height < 1 || $width > 20000 || $height > 20000 || ($width * $height) > $maxPixels) {
+            throw new \Exception('Image dimensions too large');
+        }
+
         // Load image
         $image = match ($type) {
             IMAGETYPE_JPEG => imagecreatefromjpeg($imagePath),

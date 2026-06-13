@@ -177,7 +177,8 @@ class AppUserController
         }
 
         try {
-            $this->appUserService->setRolePermissions($args['roleId'], $data['permissions']);
+            $actorIsOwner = $this->appUserService->isAppOwner($appId, $userId);
+            $this->appUserService->setRolePermissions($args['roleId'], $data['permissions'], $actorIsOwner);
             $this->audit($request, 'permission.update', 'role', $args['roleId'], ['appId' => $appId]);
             $permissions = $this->appUserService->getRolePermissions($args['roleId']);
             return $this->jsonResponse($response, ['permissions' => $permissions]);

@@ -4,14 +4,22 @@ declare(strict_types=1);
 
 use Monolog\Logger;
 
-// Determine if we're in production mode
-$isProduction = ($_ENV['APP_ENV'] ?? 'development') === 'production';
+// Determine if we're in production mode.
+// Safe-by-default: any value other than an explicit 'development' is treated as
+// production, so a missing/typo'd APP_ENV never silently exposes debug details.
+$isProduction = (($_ENV['APP_ENV'] ?? 'production') !== 'development');
 
-// Get JWT secret - fail hard in production if using default
+// Get JWT secret - fail hard in production if using a default/placeholder value.
 $jwtSecret = $_ENV['JWT_SECRET'] ?? 'formlogic-dev-jwt-secret-change!';
-if ($isProduction && ($jwtSecret === 'formlogic-dev-jwt-secret-change!' || strlen($jwtSecret) < 32)) {
+$jwtPlaceholders = [
+    'formlogic-dev-jwt-secret-change!',
+    'your-super-secret-jwt-key-change-in-production',
+    'change-me', 'changeme', 'secret', 'your-secret-key',
+];
+$isPlaceholderSecret = in_array(strtolower($jwtSecret), array_map('strtolower', $jwtPlaceholders), true);
+if ($isProduction && (strlen($jwtSecret) < 32 || $isPlaceholderSecret)) {
     throw new \RuntimeException(
-        'SECURITY ERROR: JWT_SECRET must be set to a secure value (minimum 32 characters) in production. ' .
+        'SECURITY ERROR: JWT_SECRET must be set to a secure, non-placeholder value (minimum 32 characters) in production. ' .
         'Generate one with: openssl rand -base64 32'
     );
 }

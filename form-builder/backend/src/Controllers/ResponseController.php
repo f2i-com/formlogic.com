@@ -506,6 +506,11 @@ class ResponseController
 
         $data = $request->getParsedBody();
 
+        // Drop calculated/unknown-field answers so they can't be tampered on update.
+        if (isset($data['answers']) && is_array($data['answers'])) {
+            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+        }
+
         try {
             $formResponse = $this->responseService->updateResponse($formId, $responseId, $data);
 

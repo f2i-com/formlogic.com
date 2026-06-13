@@ -52,6 +52,18 @@ class PackFileService
             throw new \RuntimeException('Failed to open zip file');
         }
 
+        // Reject zip bombs: check the manifest's UNCOMPRESSED size before reading
+        // it into memory (a tiny zip can declare a huge manifest entry).
+        $manifestStat = $zip->statName('manifest.json');
+        if ($manifestStat === false) {
+            $zip->close();
+            throw new \RuntimeException('Zip file must contain a manifest.json');
+        }
+        if (($manifestStat['size'] ?? 0) > 8 * 1024 * 1024) {
+            $zip->close();
+            throw new \RuntimeException('manifest.json is too large');
+        }
+
         // Look for manifest.json
         $manifestContent = $zip->getFromName('manifest.json');
         if ($manifestContent === false) {

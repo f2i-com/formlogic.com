@@ -531,8 +531,45 @@ PROMPT;
             }
         }
 
+        // Resolve the hostname and reject if ANY resolved address is private /
+        // reserved / loopback / link-local. Without this, a public hostname that
+        // resolves to an internal IP (or cloud metadata 169.254.169.254) bypasses
+        // the literal-IP checks above (SSRF).
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            $ips = $this->resolveAllIps($host);
+            if (empty($ips)) {
+                return null;
+            }
+            foreach ($ips as $ip) {
+                if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return null;
+                }
+            }
+        }
+
         // Return the validated URL
         return $url;
+    }
+
+    /**
+     * Resolve a hostname to all of its A (IPv4) and AAAA (IPv6) addresses.
+     */
+    private function resolveAllIps(string $host): array
+    {
+        $ips = [];
+        $v4 = @gethostbynamel($host);
+        if (is_array($v4)) {
+            $ips = array_merge($ips, $v4);
+        }
+        $v6 = @dns_get_record($host, DNS_AAAA);
+        if (is_array($v6)) {
+            foreach ($v6 as $rec) {
+                if (!empty($rec['ipv6'])) {
+                    $ips[] = $rec['ipv6'];
+                }
+            }
+        }
+        return array_values(array_unique($ips));
     }
 
     /**

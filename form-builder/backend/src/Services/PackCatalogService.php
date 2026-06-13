@@ -101,7 +101,7 @@ class PackCatalogService
     /**
      * Get full pack detail by slug, including versions and rating summary.
      */
-    public function getPackDetail(string $slug): ?array
+    public function getPackDetail(string $slug, ?string $viewerId = null): ?array
     {
         $stmt = $this->mysql->prepare("
             SELECT pc.*,
@@ -117,8 +117,9 @@ class PackCatalogService
                     SELECT MAX(pv2.created_at) FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
                 )
             WHERE pc.slug = :slug AND pc.status != 'archived'
+              AND (pc.visibility IS NULL OR pc.visibility <> 'private' OR pc.publisher_id = :viewer)
         ");
-        $stmt->execute(['slug' => $slug]);
+        $stmt->execute(['slug' => $slug, 'viewer' => $viewerId ?? '']);
         $pack = $stmt->fetch();
 
         if (!$pack) {

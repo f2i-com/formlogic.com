@@ -172,6 +172,8 @@ class FileController
             ->withHeader('Content-Type', $mimeType)
             ->withHeader('Content-Length', (string) $fileSize)
             ->withHeader('Content-Disposition', 'inline; filename="' . preg_replace('/[\x00-\x1f\x7f"\\\\]/', '_', $filename) . '"')
+            // Prevent MIME sniffing of user-uploaded content (stored-XSS hardening)
+            ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Cache-Control', 'public, max-age=31536000, immutable')
             ->withBody($body);
     }

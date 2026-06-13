@@ -294,6 +294,8 @@ class ExternalApiController
 
         // Validate answers if provided
         if (isset($data['answers']) && is_array($data['answers'])) {
+            // Drop calculated/unknown-field answers before validating/persisting.
+            $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
             if (!empty($validationErrors)) {
                 return $this->jsonResponse($response, [

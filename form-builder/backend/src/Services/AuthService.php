@@ -379,15 +379,35 @@ class AuthService
         }
 
         if (isset($data['email'])) {
-            // Check if email is taken by another user
-            $stmt = $this->mysql->prepare("SELECT id FROM users WHERE email = :email AND id != :check_id");
-            $stmt->execute(['email' => $data['email'], 'check_id' => $userId]);
-            if ($stmt->fetch()) {
-                throw new \RuntimeException('Unable to update email address');
+            // Look up the current email + hash so we only re-authenticate when the
+            // email is actually changing (profile saves often resend the same email).
+            $stmt = $this->mysql->prepare("SELECT email, password_hash FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            $cur = $stmt->fetch();
+            if (!$cur) {
+                throw new \RuntimeException('User not found');
             }
+            $newEmail = trim((string) $data['email']);
+            if (strtolower($newEmail) !== strtolower((string) $cur['email'])) {
+                // Validate format
+                if (!filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                    throw new \RuntimeException('Invalid email address');
+                }
+                // Require current-password verification before changing the email
+                // (a stolen session must not be able to silently take over the account).
+                if (!isset($data['currentPassword']) || !password_verify((string) $data['currentPassword'], $cur['password_hash'])) {
+                    throw new \RuntimeException('Current password is required to change your email');
+                }
+                // Check if the new email is taken by another user
+                $dup = $this->mysql->prepare("SELECT id FROM users WHERE email = :email AND id != :check_id");
+                $dup->execute(['email' => $newEmail, 'check_id' => $userId]);
+                if ($dup->fetch()) {
+                    throw new \RuntimeException('Unable to update email address');
+                }
 
-            $updates[] = "email = :email";
-            $params['email'] = $data['email'];
+                $updates[] = "email = :email";
+                $params['email'] = $newEmail;
+            }
         }
 
         if (isset($data['password'])) {

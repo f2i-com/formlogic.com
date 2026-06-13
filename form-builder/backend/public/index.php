@@ -405,16 +405,14 @@ $errorMiddleware->setDefaultErrorHandler(function (
             'file' => $exception->getFile() . ':' . $exception->getLine(),
             'uri' => (string) $request->getUri(),
             'method' => $request->getMethod(),
+            // Trace goes to the server log only — never to the HTTP response.
+            'trace' => $exception->getTraceAsString(),
         ]);
     }
     $payload = [
         'error' => true,
         'message' => $displayErrorDetails ? $exception->getMessage() : 'Internal Server Error',
     ];
-
-    if ($displayErrorDetails) {
-        $payload['trace'] = $exception->getTraceAsString();
-    }
 
     $response = $app->getResponseFactory()->createResponse();
     $response->getBody()->write(json_encode($payload));
@@ -451,8 +449,13 @@ $app->add(new CorsMiddleware(
 // Add security headers middleware
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
 
-// Add global body size limit (uses configured upload size as max, since that's the largest we accept)
-$maxBodySize = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1024);
+// Global body-size safety net. It must accommodate the largest legitimate body —
+// pack zip uploads (packs.maxZipSize) are larger than ordinary file uploads —
+// plus multipart/base64 envelope overhead. Stricter per-route/per-field limits
+// are still enforced in the upload/pack handlers.
+$uploadMax = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 1024);
+$packMax = $settings['settings']['packs']['maxZipSize'] ?? (50 * 1024 * 1024);
+$maxBodySize = max($uploadMax, $packMax) + (16 * 1024 * 1024);
 $app->add(new BodySizeLimitMiddleware($maxBodySize));
 
 // Create auth middleware instances

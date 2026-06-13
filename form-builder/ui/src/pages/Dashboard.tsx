@@ -56,6 +56,7 @@ function StatCard({
   value,
   label,
   subtext,
+  className,
 }: {
   icon: React.ElementType;
   iconBg: string;
@@ -63,9 +64,10 @@ function StatCard({
   value: string | number;
   label: string;
   subtext?: string;
+  className?: string;
 }) {
   return (
-    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5 group">
+    <Card className={`hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5 group ${className ?? ''}`}>
       <CardContent className="p-5">
         <div className="flex items-start justify-between">
           <div>
@@ -470,14 +472,16 @@ export function Dashboard() {
         {/* Stats Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
           <StatCard
+            className="fade-in-up stagger-1"
             icon={FileText}
-            iconBg="bg-indigo-50 dark:bg-indigo-500/10"
-            iconColor="text-indigo-600 dark:text-indigo-400"
+            iconBg="bg-primary-50 dark:bg-primary-500/10"
+            iconColor="text-primary-600 dark:text-primary-400"
             value={totalForms}
             label="Total Forms"
             subtext={totalForms === 1 ? '1 form created' : `${totalForms} forms created`}
           />
           <StatCard
+            className="fade-in-up stagger-2"
             icon={Globe}
             iconBg="bg-green-50 dark:bg-green-500/10"
             iconColor="text-green-600 dark:text-green-400"
@@ -486,6 +490,7 @@ export function Dashboard() {
             subtext={totalForms > 0 ? `${Math.round((publishedForms / totalForms) * 100)}% of forms` : 'No forms yet'}
           />
           <StatCard
+            className="fade-in-up stagger-3"
             icon={Inbox}
             iconBg="bg-blue-50 dark:bg-blue-500/10"
             iconColor="text-blue-600 dark:text-blue-400"
@@ -494,6 +499,7 @@ export function Dashboard() {
             subtext="Across all forms"
           />
           <StatCard
+            className="fade-in-up stagger-4"
             icon={TrendingUp}
             iconBg="bg-amber-50 dark:bg-amber-500/10"
             iconColor="text-amber-600 dark:text-amber-400"

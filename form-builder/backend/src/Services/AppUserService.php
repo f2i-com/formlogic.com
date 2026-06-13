@@ -50,6 +50,13 @@ class AppUserService
         return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
     }
 
+    public function isAppOwner(string $appId, string $userId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM apps WHERE id = :id AND owner_id = :uid LIMIT 1");
+        $stmt->execute(['id' => $appId, 'uid' => $userId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     // Roles
 
     public function getRoles(string $appId): array
@@ -179,7 +186,7 @@ class AppUserService
         return $permissions;
     }
 
-    public function setRolePermissions(string $roleId, array $permissions): void
+    public function setRolePermissions(string $roleId, array $permissions, bool $actorIsOwner = false): void
     {
         // Prevent modifying system role permissions (Owner, Admin)
         $role = $this->getRole($roleId);
@@ -217,6 +224,12 @@ class AppUserService
             foreach ($permissions as $perm) {
                 if (!in_array($perm['permission'], AppPermissions::ALL, true)) {
                     continue;
+                }
+                // Only the app owner may grant app-level permissions. Otherwise a
+                // delegated MANAGE_ROLES holder could grant itself MANAGE_APP /
+                // MANAGE_USERS / MANAGE_ROLES and escalate to full app admin.
+                if (!$actorIsOwner && in_array($perm['permission'], AppPermissions::APP_LEVEL, true)) {
+                    throw new \RuntimeException('Only the app owner can grant app-level permissions');
                 }
                 $formId = $perm['formId'] ?? null;
                 // Skip permissions referencing forms not in this app
