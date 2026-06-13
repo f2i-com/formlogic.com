@@ -15,6 +15,8 @@ import {
   Inbox,
   Globe,
   Archive,
+  ArchiveRestore,
+  EyeOff,
   Package,
   FileText,
 } from 'lucide-react';
@@ -51,6 +53,7 @@ const FormCard = memo(function FormCard({
   onDuplicate,
   onEmbed,
   onDelete,
+  onStatusChange,
 }: {
   form: Form;
   responseCount: number;
@@ -63,6 +66,7 @@ const FormCard = memo(function FormCard({
   onDuplicate: (id: string) => void;
   onEmbed: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
+  onStatusChange: (id: string, status: 'draft' | 'published' | 'archived') => void;
 }) {
   const isMenuOpen = activeMenuId === form.id;
 
@@ -171,6 +175,42 @@ const FormCard = memo(function FormCard({
                     <Share2 className="h-4 w-4" /> Share & Embed
                   </button>
                   <hr className="my-1 border-gray-100 dark:border-slate-800" />
+                  {form.status !== 'published' && form.status !== 'archived' && (
+                    <button
+                      onClick={() => { onStatusChange(form.id, 'published'); onMenuClose(); }}
+                      role="menuitem"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      <Globe className="h-4 w-4" /> Publish
+                    </button>
+                  )}
+                  {form.status === 'published' && (
+                    <button
+                      onClick={() => { onStatusChange(form.id, 'draft'); onMenuClose(); }}
+                      role="menuitem"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      <EyeOff className="h-4 w-4" /> Unpublish
+                    </button>
+                  )}
+                  {form.status === 'archived' ? (
+                    <button
+                      onClick={() => { onStatusChange(form.id, 'draft'); onMenuClose(); }}
+                      role="menuitem"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      <ArchiveRestore className="h-4 w-4" /> Restore to draft
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { onStatusChange(form.id, 'archived'); onMenuClose(); }}
+                      role="menuitem"
+                      className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      <Archive className="h-4 w-4" /> Archive
+                    </button>
+                  )}
+                  <hr className="my-1 border-gray-100 dark:border-slate-800" />
                   <button
                     onClick={() => { onDelete(form.id, form.title); onMenuClose(); }}
                     role="menuitem"
@@ -219,7 +259,7 @@ const FormCard = memo(function FormCard({
 
 export function FormsList() {
   const navigate = useNavigate();
-  const { forms, createForm, setActiveForm, deleteForm, duplicateForm } = useFormStore();
+  const { forms, createForm, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
@@ -336,6 +376,17 @@ export function FormsList() {
     setDeleteTarget({ id, title });
   }, []);
 
+  const handleStatusChange = useCallback(async (id: string, status: 'draft' | 'published' | 'archived') => {
+    try {
+      await updateForm(id, { status });
+      const label = status === 'published' ? 'published' : status === 'archived' ? 'archived' : 'moved to draft';
+      toast.success('Form updated', `Form ${label}.`);
+    } catch (error) {
+      logger.error('Failed to update form status:', error);
+      toast.error('Update failed', 'Could not change the form status.');
+    }
+  }, [updateForm]);
+
   const filteredForms = useMemo(() =>
     forms
       .filter((form) => {
@@ -376,6 +427,7 @@ export function FormsList() {
       onDuplicate={handleDuplicate}
       onEmbed={handleEmbed}
       onDelete={handleDelete}
+      onStatusChange={handleStatusChange}
     />
   );
 

@@ -10,6 +10,7 @@ import {
   Sparkles,
   Palette,
   Keyboard,
+  History,
   MoreVertical,
   Layers,
   Cloud,
@@ -39,6 +40,7 @@ import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
+import { FormVersionHistory } from '../components/builder/FormVersionHistory';
 import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
 import { useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
@@ -46,7 +48,7 @@ import { toast } from '../stores/toastStore';
 import { useUIStore } from '../stores/uiStore';
 import type { FormField, FieldType } from '../types/form';
 
-type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | null;
+type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | null;
 
 // Main Form Builder Component
 export default function FormBuilder() {
@@ -464,6 +466,18 @@ export default function FormBuilder() {
             <span className="hidden lg:inline ml-2">Share</span>
           </Button>
 
+          {/* Version history - hidden on smallest screens */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setActiveModal('versions')}
+            title="Version History"
+            aria-label="Version History"
+            className="hidden sm:flex"
+          >
+            <History className="h-4 w-4" />
+          </Button>
+
           {/* Keyboard shortcuts - hidden on mobile */}
           <Button
             variant="ghost"
@@ -691,6 +705,14 @@ export default function FormBuilder() {
         settings={form.settings}
         formId={form.id}
         onSave={(settings) => updateForm(form.id, { settings })}
+      />
+
+      {/* Version History */}
+      <FormVersionHistory
+        isOpen={activeModal === 'versions'}
+        onClose={closeModal}
+        formId={form.id}
+        onRestored={() => loadFullForm(form.id)}
       />
 
       {/* Keyboard Shortcuts Help */}

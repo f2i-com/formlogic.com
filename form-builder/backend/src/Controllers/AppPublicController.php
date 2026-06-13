@@ -428,9 +428,13 @@ class AppPublicController
 
         $data = $request->getParsedBody();
 
-        // Strip status from update data — status changes require MANAGE_RESPONSES,
-        // which is implicitly owner-only; EDIT_RESPONSES should not grant status control
-        unset($data['status']);
+        // Allow the review-workflow status (approve/reject/review/archive) for
+        // editors — it's the core purpose of the response lifecycle / NIGO
+        // dashboard. Validate against the allowed set; strip anything else.
+        // (ResponseService also validates as defense-in-depth.)
+        if (isset($data['status']) && !in_array($data['status'], ['submitted', 'reviewed', 'approved', 'rejected', 'archived'], true)) {
+            unset($data['status']);
+        }
 
         // Validate answers against form fields if answers are being updated
         if (isset($data['answers'])) {

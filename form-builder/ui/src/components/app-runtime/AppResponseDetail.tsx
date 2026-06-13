@@ -130,6 +130,21 @@ export function AppResponseDetail() {
 
   const answers = (editing ? editedAnswers : (response.answers as Record<string, unknown>)) ?? {};
   const status = String(response.status ?? 'submitted');
+  const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
+
+  const handleStatusChange = async (newStatus: string) => {
+    if (!formId || !responseId || newStatus === status) return;
+    setSaveError(null);
+    const prev = response;
+    setResponse({ ...response, status: newStatus }); // optimistic
+    try {
+      const updated = await updateResponse(formId, responseId, { status: newStatus });
+      if (updated) setResponse(updated as Record<string, unknown>);
+    } catch (err) {
+      setResponse(prev); // rollback
+      setSaveError(err instanceof Error ? err.message : 'Failed to update status');
+    }
+  };
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -199,13 +214,30 @@ export function AppResponseDetail() {
           {response.submittedAt ? new Date(String(response.submittedAt)).toLocaleString() : '-'}
         </div>
         <div className="flex items-center gap-2">
-          <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0', status === 'submitted' ? 'text-green-500' : 'text-gray-400 dark:text-slate-500')} />
-          <span className={cn(
-            'px-2.5 py-0.5 rounded-full text-xs font-medium',
-            status === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-          )}>
-            {status.charAt(0).toUpperCase() + status.slice(1)}
-          </span>
+          <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0',
+            status === 'approved' ? 'text-green-500' : status === 'rejected' ? 'text-red-500' : status === 'submitted' ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500')} />
+          {formId && canEdit(formId) ? (
+            <select
+              value={status}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              aria-label="Response status"
+              className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+            >
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+              ))}
+            </select>
+          ) : (
+            <span className={cn(
+              'px-2.5 py-0.5 rounded-full text-xs font-medium',
+              status === 'approved' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400'
+                : status === 'rejected' ? 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400'
+                : status === 'submitted' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
+                : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+            )}>
+              {status.charAt(0).toUpperCase() + status.slice(1)}
+            </span>
+          )}
         </div>
       </div>
 
