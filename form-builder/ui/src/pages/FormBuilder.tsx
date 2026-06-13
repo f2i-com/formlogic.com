@@ -184,8 +184,9 @@ export default function FormBuilder() {
         maxStars: type === 'rating' ? 5 : undefined,
         scaleStart: type === 'scale' ? 1 : undefined,
         scaleEnd: type === 'scale' ? 10 : undefined,
-        // File upload defaults
-        ...(type === 'file_upload' ? { maxFileSize: 10, allowedTypes: [] } : {}),
+        // File upload defaults (maxFileSize is in BYTES; acceptedFileTypes is the
+        // key the runtime reads — 'allowedTypes' was a dead key and `10` was 10 bytes)
+        ...(type === 'file_upload' ? { maxFileSize: 10 * 1024 * 1024, acceptedFileTypes: [], allowMultiple: false } : {}),
         // Linked record defaults
         ...(type === 'linked_record' ? { targetFormId: '', displayFieldIds: [], searchFieldIds: [], allowMultiple: false } : {}),
       },

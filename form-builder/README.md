@@ -408,7 +408,10 @@ The scripting engine supports:
 | `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
 | `COOKIE_DOMAIN` | | Cookie domain (empty = current domain) |
 | `UPLOAD_MAX_FILE_SIZE` | `10485760` | Max upload size in bytes (10MB) |
-| `ANTHROPIC_API_KEY` | | Anthropic API key for AI features (optional) |
+| `OPENAI_API_KEY` | | API key for AI form generation (OpenAI-compatible; optional) |
+| `OPENAI_API_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL (optional) |
+| `OPENAI_MODEL` | `gpt-4o` | Text model for AI generation (optional) |
+| `OPENAI_VISION_MODEL` | `gpt-4o` | Vision model for image/document generation (optional) |
 
 ### Frontend (`ui/.env`)
 

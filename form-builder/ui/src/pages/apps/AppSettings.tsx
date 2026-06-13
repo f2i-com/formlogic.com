@@ -21,6 +21,7 @@ export function AppSettings() {
   const navigate = useNavigate();
   const { updateApp, fetchApps } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -34,11 +35,20 @@ export function AppSettings() {
           setApp({ ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } });
         }
       }
-    });
+    }).finally(() => setLoaded(true));
   }, [appId, fetchApps]);
 
   if (!app) {
-    return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading app settings" /></div>;
+    if (!loaded) {
+      return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading app settings" /></div>;
+    }
+    return (
+      <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+        <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don’t have access.</p>
+        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to Apps</Button>
+      </div>
+    );
   }
 
   const handleSave = async () => {

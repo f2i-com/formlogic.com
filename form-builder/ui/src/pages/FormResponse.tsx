@@ -854,21 +854,35 @@ export default function FormResponse() {
     const startTime = useResponseStore.getState().startTime;
     const completionTime = startTime ? Math.max(0, Date.now() - startTime) : undefined;
 
-    // Best-effort server persistence so the form owner actually receives the
-    // submission and server-side onSubmit logic runs. This succeeds for
-    // published/cloud forms (and the service worker queues offline POSTs for
-    // retry); it fails harmlessly for local-only forms that don't exist on the
-    // server. It must never block the user, so failures are logged, not surfaced.
+    // Server persistence. For a PUBLISHED (server-backed) form while ONLINE, a
+    // server rejection means the response was NOT saved — surface it and keep the
+    // user on the form rather than showing a success screen that lies. For
+    // local-only/draft forms, or when offline (the service worker queues the POST
+    // for retry), keep the best-effort behavior and don't block the user.
+    const serverBacked = form.status === 'published';
+    let serverFailed = false;
     try {
       const result = await api.submitResponse(form.id, { answers: currentAnswers, completionTime });
       if (result.error) {
-        logger.warn('Response not persisted to server (kept locally):', result.error);
+        if (serverBacked && navigator.onLine) {
+          serverFailed = true;
+          setSubmitError(typeof result.error === 'string' ? result.error : 'Your response could not be submitted. Please try again.');
+        } else {
+          logger.warn('Response not persisted to server (kept locally):', result.error);
+        }
       }
     } catch (err) {
       logger.error('Failed to submit response to server', err);
+      if (serverBacked && navigator.onLine) {
+        serverFailed = true;
+        setSubmitError('Your response could not be submitted. Please try again.');
+      }
     } finally {
       setIsSubmitting(false);
     }
+
+    // Abort the success flow on a real server failure for a published form.
+    if (serverFailed) return;
 
     // Record locally (clears in-progress answers) and reflect in the local view.
     const response = submitResponse();

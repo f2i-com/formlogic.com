@@ -3,6 +3,8 @@ import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
+import { Spinner } from '../components/ui/Spinner';
+import { EmptyState } from '../components/ui/EmptyState';
 import { Switch } from '../components/ui/Switch';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
@@ -648,9 +650,16 @@ export function Settings() {
 
               {/* Key list */}
               {isLoadingKeys ? (
-                <p className="text-sm text-gray-500 dark:text-slate-400">Loading keys...</p>
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
+                  <Spinner size="sm" /> <span>Loading keys…</span>
+                </div>
               ) : apiKeys.length === 0 ? (
-                <p className="text-sm text-gray-500 dark:text-slate-500">No API keys yet. Create one to get started.</p>
+                <EmptyState
+                  icon={Key}
+                  title="No API keys yet"
+                  description="Create a key to integrate with the FormLogic API."
+                  className="py-8"
+                />
               ) : (
                 <div className="space-y-2">
                   {apiKeys.map((key) => (

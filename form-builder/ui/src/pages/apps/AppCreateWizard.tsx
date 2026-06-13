@@ -15,7 +15,7 @@ const steps = ['App Details', 'Select Forms', 'Review'];
 export function AppCreateWizard() {
   const navigate = useNavigate();
   const { createApp } = useAppStore();
-  const { forms } = useFormStore();
+  const { forms, createForm, setActiveForm } = useFormStore();
   const [step, setStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -132,7 +132,17 @@ export function AppCreateWizard() {
               <div className="text-center py-8">
                 <FileText className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
                 <p className="text-gray-400 dark:text-slate-500 mb-4">No forms available yet.</p>
-                <Button size="sm" variant="outline" onClick={() => navigate('/builder')} leftIcon={<Plus className="h-4 w-4" />}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    const form = await createForm('Untitled Form');
+                    if (!form) return;
+                    setActiveForm(form.id);
+                    navigate(`/builder/${form.id}`);
+                  }}
+                  leftIcon={<Plus className="h-4 w-4" />}
+                >
                   Create a Form
                 </Button>
               </div>
