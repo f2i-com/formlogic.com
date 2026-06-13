@@ -316,8 +316,8 @@ export function CsvImportWizard({
               </span>
             </div>
 
-            <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden">
-              <table className="w-full">
+            <div className="border border-gray-200 dark:border-slate-700 rounded-lg overflow-x-auto">
+              <table className="w-full min-w-[480px]">
                 <thead className="bg-gray-50 dark:bg-slate-800">
                   <tr>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase">
@@ -443,8 +443,8 @@ export function CsvImportWizard({
               </table>
             </div>
 
-            <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-lg">
-              <p className="text-sm text-blue-700 dark:text-blue-400">
+            <div role="status" className="mt-4 p-3 bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/30 rounded-lg">
+              <p className="text-sm text-primary-700 dark:text-primary-300">
                 <span className="font-medium">{parseResult.rowCount}</span> rows will be
                 imported with <span className="font-medium">{mappedFieldCount}</span> mapped
                 fields.

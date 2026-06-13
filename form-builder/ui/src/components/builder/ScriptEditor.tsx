@@ -392,7 +392,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-200 dark:border-slate-700 px-6">
+        <div role="tablist" aria-label="Script editor sections" className="flex border-b border-gray-200 dark:border-slate-700 px-6">
           {([
             { key: 'editor' as const, label: 'Editor', icon: Code2 },
             { key: 'ai' as const, label: 'AI Generate', icon: Sparkles },
@@ -401,8 +401,11 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
           ] as const).map((tab) => (
             <button
               key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer ${
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset ${
                 activeTab === tab.key
                   ? 'border-primary-600 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
