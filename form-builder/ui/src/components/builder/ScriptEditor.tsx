@@ -425,6 +425,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
                     setEditedScript(e.target.value);
                     setTestResult(null);
                   }}
+                  aria-label="FormLogic script editor"
                   className="w-full h-full font-mono text-sm bg-gray-900 text-gray-100 p-4 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 border border-gray-800"
                   placeholder="// Write your FormLogic script here..."
                   spellCheck={false}

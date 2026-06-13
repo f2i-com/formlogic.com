@@ -84,6 +84,8 @@ function FieldResponse({
         return (
           <input
             type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -96,6 +98,8 @@ function FieldResponse({
       case 'long_text':
         return (
           <textarea
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -109,6 +113,8 @@ function FieldResponse({
         return (
           <input
             type="number"
+            aria-label={field.label}
+            aria-required={required}
             value={(value as number) ?? ''}
             onChange={(e) => {
               const val = parseFloat(e.target.value);
@@ -124,6 +130,8 @@ function FieldResponse({
         return (
           <input
             type="date"
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
@@ -135,6 +143,8 @@ function FieldResponse({
         return (
           <input
             type="time"
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
@@ -145,6 +155,8 @@ function FieldResponse({
         return (
           <input
             type="datetime-local"
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
