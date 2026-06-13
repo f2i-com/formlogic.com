@@ -46,12 +46,18 @@ class PackService
         // not-yet-existing row, so a named lock (per user+pack) serializes concurrent
         // imports — the check-then-insert is otherwise a TOCTOU race (no UNIQUE key).
         $meta = $packData['packMeta'];
-        $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
-        $installLock = ($packId !== 'custom') ? $this->acquireInstallLock($packId, $userId) : null;
+        // Marketplace installs dedup on the trusted catalog_id (a community pack
+        // may have no packMeta.id, which would otherwise fall back to matching by
+        // name); direct JSON imports fall back to the embedded id/name.
+        $dedupeKey = $catalogId ?? ($meta['id'] ?? $meta['name'] ?? 'custom');
+        $installLock = ($dedupeKey !== 'custom') ? $this->acquireInstallLock($dedupeKey, $userId) : null;
 
         $this->mysql->beginTransaction();
 
-        if ($packId !== 'custom' && $this->isPackInstalled($packId, $userId)) {
+        $alreadyInstalled = $catalogId !== null
+            ? $this->isCatalogPackInstalled($catalogId, $userId)
+            : ($dedupeKey !== 'custom' ? $this->isPackInstalled($dedupeKey, $userId) : null);
+        if ($alreadyInstalled) {
             $this->mysql->rollBack();
             $this->releaseInstallLock($installLock);
             throw new \RuntimeException('This pack is already installed');
@@ -453,6 +459,22 @@ class PackService
         $row = $stmt->fetch();
 
         return $row ?: null;
+    }
+
+    /**
+     * Check if a marketplace pack (by catalog_id) is installed for a user.
+     */
+    public function isCatalogPackInstalled(string $catalogId, string $userId): ?array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT id, installed_at
+            FROM pack_installations
+            WHERE catalog_id = :catalog_id AND user_id = :user_id
+            ORDER BY installed_at DESC
+            LIMIT 1
+        ");
+        $stmt->execute(['catalog_id' => $catalogId, 'user_id' => $userId]);
+        return $stmt->fetch() ?: null;
     }
 
     /**

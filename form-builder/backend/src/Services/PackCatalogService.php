@@ -212,24 +212,46 @@ class PackCatalogService
         // Verify ownership
         $this->verifyOwnership($catalogId, $userId);
 
+        $version = trim($version);
+        if ($version === '') {
+            throw new \RuntimeException('Version is required');
+        }
+
+        // Pre-check uniqueness so a duplicate version (the publish dialog
+        // pre-fills the pack's existing version, so this is likely) surfaces as a
+        // clean 400 instead of an opaque 500 from the UNIQUE-key violation.
+        $dup = $this->mysql->prepare("SELECT id FROM pack_versions WHERE catalog_id = :catalog_id AND version = :version LIMIT 1");
+        $dup->execute(['catalog_id' => $catalogId, 'version' => $version]);
+        if ($dup->fetch()) {
+            throw new \RuntimeException("Version {$version} already exists for this pack");
+        }
+
         $packJson = $this->encodePackDataWithCap($packData);
         $versionId = $this->generateUuid();
         $formCount = count($packData['forms'] ?? []);
         $appCount = count($packData['apps'] ?? []);
 
-        $stmt = $this->mysql->prepare("
-            INSERT INTO pack_versions (id, catalog_id, version, changelog, pack_data, form_count, app_count)
-            VALUES (:id, :catalog_id, :version, :changelog, :pack_data, :form_count, :app_count)
-        ");
-        $stmt->execute([
-            'id' => $versionId,
-            'catalog_id' => $catalogId,
-            'version' => $version,
-            'changelog' => $changelog,
-            'pack_data' => $packJson,
-            'form_count' => $formCount,
-            'app_count' => $appCount,
-        ]);
+        try {
+            $stmt = $this->mysql->prepare("
+                INSERT INTO pack_versions (id, catalog_id, version, changelog, pack_data, form_count, app_count)
+                VALUES (:id, :catalog_id, :version, :changelog, :pack_data, :form_count, :app_count)
+            ");
+            $stmt->execute([
+                'id' => $versionId,
+                'catalog_id' => $catalogId,
+                'version' => $version,
+                'changelog' => $changelog,
+                'pack_data' => $packJson,
+                'form_count' => $formCount,
+                'app_count' => $appCount,
+            ]);
+        } catch (\PDOException $e) {
+            // Lost the race against a concurrent publish of the same version.
+            if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
+                throw new \RuntimeException("Version {$version} already exists for this pack");
+            }
+            throw $e;
+        }
 
         return ['versionId' => $versionId, 'version' => $version];
     }

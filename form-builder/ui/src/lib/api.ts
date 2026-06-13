@@ -716,11 +716,12 @@ class ApiClient {
     return this.request(`/forms/${formId}/webhooks/${webhookId}/deliveries`);
   }
 
-  // Pack management
-  async importPack(pack: PackData): Promise<ApiResponse<PackImportResult>> {
+  // Pack management. catalogId/versionId (from downloadPack) link the install to
+  // its marketplace entry so "Installed" state and update checks work.
+  async importPack(pack: PackData, opts?: { catalogId?: string; versionId?: string }): Promise<ApiResponse<PackImportResult>> {
     return this.request('/packs/import', {
       method: 'POST',
-      body: JSON.stringify({ pack }),
+      body: JSON.stringify({ pack, catalogId: opts?.catalogId, versionId: opts?.versionId }),
     });
   }
 

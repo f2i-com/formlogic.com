@@ -112,7 +112,10 @@ export default function PackDetailPage() {
         toast.error('Failed to download pack');
         return;
       }
-      const importResult = await api.importPack(dlResult.data.pack);
+      const importResult = await api.importPack(dlResult.data.pack, {
+        catalogId: dlResult.data.catalogId,
+        versionId: dlResult.data.versionId,
+      });
       if (importResult.data) {
         setInstalled(true);
         toast.success(

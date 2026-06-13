@@ -22,6 +22,9 @@ interface PublishPackDialogProps {
   onClose: () => void;
   onPublished?: () => void;
   initialPack?: PackData | null;
+  // When set, the dialog publishes a NEW VERSION of an existing pack (upload new
+  // content + version + changelog) instead of creating a brand-new catalog entry.
+  versionTarget?: { slug: string; name: string } | null;
 }
 
 type Step = 'upload' | 'metadata' | 'preview' | 'publish';
@@ -40,7 +43,8 @@ const CATEGORIES = [
   'Other',
 ];
 
-export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }: PublishPackDialogProps) {
+export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, versionTarget }: PublishPackDialogProps) {
+  const isVersionMode = !!versionTarget;
   const [step, setStep] = useState<Step>(initialPack ? 'metadata' : 'upload');
   const [packData, setPackData] = useState<PackData | null>(initialPack || null);
   const [uploadFileName, setUploadFileName] = useState('');
@@ -160,8 +164,28 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
   }, [parseFile]);
 
   const handlePublish = useCallback(async () => {
-    if (!packData || !name || publishing) return;
+    if (!packData || publishing) return;
+    if (!isVersionMode && !name) return;
     setPublishing(true);
+
+    // Version mode: add a new version to an existing pack.
+    if (isVersionMode && versionTarget) {
+      try {
+        const result = await api.publishPackVersion(versionTarget.slug, { pack: packData, version, changelog });
+        if (result.data?.success) {
+          toast.success('Update published!', `v${result.data.version} of ${versionTarget.name} is now live.`);
+          onPublished?.();
+          handleClose();
+        } else {
+          toast.error('Publish failed', result.error || 'Unknown error');
+        }
+      } catch (err) {
+        toast.error('Publish failed', err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setPublishing(false);
+      }
+      return;
+    }
 
     const tags = tagsInput.split(',').map((t) => t.trim()).filter(Boolean);
     const finalSlug = slug || generateSlug(name);
@@ -192,9 +216,11 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
     } finally {
       setPublishing(false);
     }
-  }, [packData, name, slug, description, icon, tagsInput, category, visibility, version, changelog, publishing, handleClose, onPublished]);
+  }, [packData, name, slug, description, icon, tagsInput, category, visibility, version, changelog, publishing, handleClose, onPublished, isVersionMode, versionTarget]);
 
-  const steps: Step[] = ['upload', 'metadata', 'preview', 'publish'];
+  // Version mode skips the metadata step (name/slug/category/visibility don't
+  // change when adding a version to an existing pack).
+  const steps: Step[] = isVersionMode ? ['upload', 'preview', 'publish'] : ['upload', 'metadata', 'preview', 'publish'];
   const stepIndex = steps.indexOf(step);
   const stepLabels: Record<Step, string> = {
     upload: 'Upload',
@@ -213,7 +239,7 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
   const appCount = packData?.apps?.length ?? 0;
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="Publish Pack" size="lg">
+    <Modal isOpen={isOpen} onClose={handleClose} title={isVersionMode ? 'Publish Update' : 'Publish Pack'} size="lg">
       <div className="p-4 sm:p-6 space-y-4">
         {/* Step indicator */}
         <div className="flex items-center gap-2 justify-center">
@@ -455,11 +481,27 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
               <>
                 <Package className="h-10 w-10 text-primary-600 mx-auto" />
                 <div>
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">Ready to publish</h3>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {isVersionMode ? 'Publish a new version' : 'Ready to publish'}
+                  </h3>
                   <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
-                    Your pack "{name}" will be {visibility === 'public' ? 'visible to everyone' : visibility === 'unlisted' ? 'accessible via direct link' : 'only visible to you'}.
+                    {isVersionMode
+                      ? `A new version of "${versionTarget?.name}" will be added to the marketplace.`
+                      : `Your pack "${name}" will be ${visibility === 'public' ? 'visible to everyone' : visibility === 'unlisted' ? 'accessible via direct link' : 'only visible to you'}.`}
                   </p>
                 </div>
+                {isVersionMode && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1 text-left">Version *</label>
+                    <input
+                      type="text"
+                      value={version}
+                      onChange={(e) => setVersion(e.target.value)}
+                      placeholder="1.1.0"
+                      className="w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1 text-left">Changelog</label>
                   <textarea

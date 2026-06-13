@@ -36,13 +36,18 @@ class PackController
 
         $body = $request->getParsedBody();
         $packData = $body['pack'] ?? null;
+        // catalogId/versionId come from the trusted download endpoint so the
+        // installation is linked to its marketplace entry (drives "Installed"
+        // state and update checks).
+        $catalogId = isset($body['catalogId']) && is_string($body['catalogId']) ? $body['catalogId'] : null;
+        $versionId = isset($body['versionId']) && is_string($body['versionId']) ? $body['versionId'] : null;
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
         }
 
         try {
-            $result = $this->packService->importPack($packData, $userId);
+            $result = $this->packService->importPack($packData, $userId, $catalogId, $versionId);
 
             // Audit the import
             if ($this->auditService) {

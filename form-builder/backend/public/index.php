@@ -746,16 +746,23 @@ $app->post('/api/packs/catalog/upload', function ($request, $response) use ($con
 })->add($authRequired);
 
 $app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
-    // Only the platform owner (first registered user) may seed the catalog
+    // Any authenticated user may trigger the one-time bootstrap so a brand-new
+    // tenant whose first user happens to be a non-owner doesn't get a
+    // permanently empty marketplace. The controller is idempotent (it only seeds
+    // when the catalog is empty), and the official packs are attributed to the
+    // platform owner (first registered user) regardless of who triggers it, so
+    // a non-owner can't end up owning/editing the seeded packs.
     $userId = $request->getAttribute('userId');
+    if (!$userId) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Authentication required']));
+        return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+    }
     $mysql = $container->get(MySQLConnection::class)->getConnection();
     $stmt = $mysql->prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1");
     $stmt->execute();
     $firstUser = $stmt->fetch();
-    if (!$firstUser || $firstUser['id'] !== $userId) {
-        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Admin access required']));
-        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
-    }
+    $ownerId = $firstUser['id'] ?? $userId;
+    $request = $request->withAttribute('userId', $ownerId);
     return $container->get(PackCatalogController::class)->seed($request, $response);
 })->add($authRequired);
 

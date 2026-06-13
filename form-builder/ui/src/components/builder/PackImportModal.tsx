@@ -78,6 +78,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
   // Publish dialog
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishInitialPack, setPublishInitialPack] = useState<PackData | null>(null);
+  const [versionTarget, setVersionTarget] = useState<{ slug: string; name: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -706,8 +707,12 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                             </div>
                           ) : (
                             <div className="flex items-center gap-1">
-                              <button onClick={() => openEditPack(pack)} aria-label={`Edit ${pack.name}`} title="Edit pack"
+                              <button onClick={() => openEditPack(pack)} aria-label={`Edit ${pack.name}`} title="Edit pack metadata"
                                 className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"><Pencil className="h-4 w-4" /></button>
+                              {pack.status !== 'archived' && (
+                                <button onClick={() => { setPublishInitialPack(null); setVersionTarget({ slug: pack.slug, name: pack.name }); setShowPublishDialog(true); }} aria-label={`Publish update to ${pack.name}`} title="Publish a new version"
+                                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"><Upload className="h-4 w-4" /></button>
+                              )}
                               {pack.status !== 'archived' && (
                                 <button onClick={() => setArchiveConfirmSlug(pack.slug)} aria-label={`Archive ${pack.name}`} title="Archive pack"
                                   className="p-1.5 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer"><Archive className="h-4 w-4" /></button>
@@ -938,9 +943,10 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
 
       <PublishPackDialog
         isOpen={showPublishDialog}
-        onClose={() => setShowPublishDialog(false)}
+        onClose={() => { setShowPublishDialog(false); setVersionTarget(null); }}
         onPublished={() => loadMyPacks()}
         initialPack={publishInitialPack}
+        versionTarget={versionTarget}
       />
 
       <Modal isOpen={editingPack !== null} onClose={() => setEditingPack(null)} title="Edit Pack" size="sm">
