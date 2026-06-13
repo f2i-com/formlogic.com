@@ -807,6 +807,7 @@ class FormLogicRuntime
         }
         $callTimeoutMs = min($remainingMs, $timeout * 1000);
         $connectTimeoutMs = min($remainingMs, 3000);
+        $maxResponseSize = self::MAX_RESPONSE_SIZE;
 
         // Execute request with cURL
         $ch = curl_init();
@@ -829,6 +830,13 @@ class FormLogicRuntime
             CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             // Limit response size to prevent memory exhaustion
             CURLOPT_MAXFILESIZE => self::MAX_RESPONSE_SIZE,
+            // MAXFILESIZE only catches a declared Content-Length; this aborts the
+            // transfer mid-stream once downloaded bytes exceed the cap, covering
+            // chunked / Content-Length-less responses (memory-exhaustion guard).
+            CURLOPT_NOPROGRESS => false,
+            CURLOPT_XFERINFOFUNCTION => static function ($ch, $dltotal, $dlnow) use ($maxResponseSize) {
+                return $dlnow > $maxResponseSize ? 1 : 0;
+            },
         ];
 
         // DNS pinning: Force cURL to use our pre-resolved IP to prevent DNS rebinding
