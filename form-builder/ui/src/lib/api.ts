@@ -177,6 +177,31 @@ class ApiClient {
     });
   }
 
+  async deleteAccount(password: string): Promise<ApiResponse<{ message: string }>> {
+    const result = await this.request<{ message: string }>('/auth/me', {
+      method: 'DELETE',
+      body: JSON.stringify({ password }),
+    });
+    if (!result.error) this.setAuthenticated(false);
+    return result;
+  }
+
+  // Download the user's account data (GDPR portability) as a JSON file.
+  async downloadMyData(): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/auth/me/export`, { credentials: 'include' });
+    if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
+      throw new Error('Failed to export your data');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'formlogic-my-data.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async logout(): Promise<ApiResponse<{ message: string }>> {
     const result = await this.request<{ message: string }>('/auth/logout', {
       method: 'POST',

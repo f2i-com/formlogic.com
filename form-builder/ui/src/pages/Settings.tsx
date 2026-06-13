@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
+import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
@@ -27,6 +28,7 @@ import {
   Trash2,
   Plus,
   AlertTriangle,
+  Download,
 } from 'lucide-react';
 import { useUIStore } from '../stores/uiStore';
 import { api } from '../lib/api';
@@ -210,6 +212,37 @@ export function Settings() {
     } else {
       setPasswordError(result.error || 'Failed to change password');
     }
+  };
+
+  const [isExportingData, setIsExportingData] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleExportData = async () => {
+    setIsExportingData(true);
+    try {
+      await api.downloadMyData();
+    } catch (e) {
+      toast.error('Export failed', e instanceof Error ? e.message : 'Could not export your data.');
+    } finally {
+      setIsExportingData(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) { setDeleteError('Enter your password to confirm.'); return; }
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+    const result = await api.deleteAccount(deletePassword);
+    if (result.error) {
+      setIsDeletingAccount(false);
+      setDeleteError(result.error);
+      return;
+    }
+    // Account gone — hard-redirect home to clear all client state.
+    window.location.href = '/';
   };
 
   const handleVerifyAudit = async () => {
@@ -781,7 +814,62 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Danger Zone */}
+        <Card className="overflow-hidden border-red-200/70 dark:border-red-500/30">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={AlertTriangle}
+              title="Danger Zone"
+              description="Export or permanently delete your account data"
+              iconBg="bg-red-500/10"
+              iconColor="text-red-500"
+            />
+            <div className="space-y-3 ml-0 sm:ml-14">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">Export your profile and forms as a JSON file.</p>
+                </div>
+                <Button variant="outline" onClick={handleExportData} isLoading={isExportingData} leftIcon={<Download className="h-4 w-4" />}>
+                  Export
+                </Button>
+              </div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-red-200/70 dark:border-red-500/30 bg-red-50/40 dark:bg-red-500/5">
+                <div>
+                  <p className="font-medium text-gray-900 dark:text-white">Delete account</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">Permanently deletes your account, forms, and responses. This can't be undone.</p>
+                </div>
+                <Button variant="danger" onClick={() => { setDeleteAccountOpen(true); setDeletePassword(''); setDeleteError(null); }} leftIcon={<Trash2 className="h-4 w-4" />}>
+                  Delete account
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      <Modal isOpen={deleteAccountOpen} onClose={() => setDeleteAccountOpen(false)} title="Delete account" size="sm">
+        <div className="p-6 space-y-4">
+          <div className="flex items-start gap-3 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <span>This permanently deletes your account and all forms, responses, and apps you own. This cannot be undone.</span>
+          </div>
+          <Input
+            label="Confirm your password"
+            type="password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+            placeholder="Your current password"
+            autoComplete="current-password"
+          />
+          {deleteError && <p className="text-sm text-red-600 dark:text-red-400">{deleteError}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setDeleteAccountOpen(false)} disabled={isDeletingAccount}>Cancel</Button>
+            <Button variant="danger" onClick={handleDeleteAccount} isLoading={isDeletingAccount} disabled={!deletePassword}>Delete my account</Button>
+          </div>
+        </div>
+      </Modal>
 
       <ConfirmDialog
         isOpen={revokeTarget !== null}

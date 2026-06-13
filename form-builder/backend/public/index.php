@@ -197,7 +197,9 @@ $container->set(AuthController::class, function (Container $c) {
         $settings['jwt']['expiry'] ?? 86400,
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
-        $csrfSecret
+        $csrfSecret,
+        $c->get(FormService::class),
+        $c->get(AppService::class)
     );
 });
 
@@ -223,7 +225,9 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(FormService::class),
         $c->get(SQLiteConnection::class),
         $c->get(LoggerInterface::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        null,
+        $c->get(\FormLogic\Services\EmailService::class)
     );
 });
 
@@ -367,7 +371,8 @@ $container->set(AppUserController::class, function (Container $c) {
     return new AppUserController(
         $c->get(AppUserService::class),
         $c->get(AppService::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\EmailService::class)
     );
 });
 
@@ -506,6 +511,8 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->get('/me', [AuthController::class, 'me']);
     $group->put('/me', [AuthController::class, 'updateProfile']);
+    $group->get('/me/export', [AuthController::class, 'exportData']);
+    $group->delete('/me', [AuthController::class, 'deleteAccount']);
     $group->post('/logout', [AuthController::class, 'logout']);
 })->add($authRequired);
 

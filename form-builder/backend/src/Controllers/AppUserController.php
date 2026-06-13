@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\EmailService;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -17,12 +18,14 @@ class AppUserController
     private AppUserService $appUserService;
     private AppService $appService;
     private ?AuditService $auditService;
+    private ?EmailService $emailService;
 
-    public function __construct(AppUserService $appUserService, AppService $appService, ?AuditService $auditService = null)
+    public function __construct(AppUserService $appUserService, AppService $appService, ?AuditService $auditService = null, ?EmailService $emailService = null)
     {
         $this->appUserService = $appUserService;
         $this->appService = $appService;
         $this->auditService = $auditService;
+        $this->emailService = $emailService;
     }
 
     private function requireAuth(Request $request): ?string
@@ -314,6 +317,29 @@ class AppUserController
         try {
             $invitation = $this->appUserService->createInvitation($appId, $data['email'], $data['roleId'], $userId);
             $this->audit($request, 'user.invite', 'app', $appId, ['email' => $data['email']]);
+
+            // Best-effort: email the accept link. The UI also surfaces a copyable
+            // link, so onboarding still works if email isn't configured.
+            if ($this->emailService !== null && !empty($invitation['token'])) {
+                try {
+                    $origin = $request->getHeaderLine('Origin');
+                    if ($origin === '') {
+                        $origin = rtrim((string) (getenv('APP_URL') ?: ''), '/');
+                    }
+                    if ($origin !== '') {
+                        $app = $this->appService->getApp($appId);
+                        $appName = htmlspecialchars((string) ($app['name'] ?? 'an app'), ENT_QUOTES);
+                        $link = htmlspecialchars(rtrim($origin, '/') . '/accept-invite?token=' . $invitation['token'], ENT_QUOTES);
+                        $html = "<p>You've been invited to join <strong>{$appName}</strong> on FormLogic.</p>"
+                            . "<p><a href=\"{$link}\">Accept your invitation</a></p>"
+                            . "<p>Sign in (or create an account) with this email address to join. This invitation expires in 7 days.</p>";
+                        $this->emailService->send((string) $data['email'], "You're invited to {$appName}", $html);
+                    }
+                } catch (\Throwable $e) {
+                    // Email failure must not fail invitation creation.
+                }
+            }
+
             return $this->jsonResponse($response, ['invitation' => $invitation], 201);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);

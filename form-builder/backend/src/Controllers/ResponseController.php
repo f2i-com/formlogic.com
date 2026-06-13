@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormLogicService;
+use FormLogic\Services\EmailService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\AuditService;
 use FormLogic\Database\SQLiteConnection;
@@ -25,8 +26,9 @@ class ResponseController
     private LoggerInterface $logger;
     private ?AuditService $auditService;
     private ?FormLogicService $formLogicService;
+    private ?EmailService $emailService;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?FormLogicService $formLogicService = null)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?FormLogicService $formLogicService = null, ?EmailService $emailService = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
@@ -35,6 +37,34 @@ class ResponseController
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
         $this->formLogicService = $formLogicService;
+        $this->emailService = $emailService;
+    }
+
+    /**
+     * Send a best-effort "new response" email to the form's configured
+     * notification address when the Notifications tab has it enabled. Never
+     * throws — a notification failure must not affect the submission.
+     */
+    private function maybeNotifyNewResponse(array $form): void
+    {
+        if ($this->emailService === null) {
+            return;
+        }
+        $notifications = $form['settings']['notifications'] ?? [];
+        if (empty($notifications['emailNotifications']) || empty($notifications['notificationEmail'])) {
+            return;
+        }
+        try {
+            $to = (string) $notifications['notificationEmail'];
+            $title = htmlspecialchars((string) ($form['title'] ?? 'your form'), ENT_QUOTES);
+            $formId = (string) ($form['id'] ?? '');
+            $html = "<p>You've received a new response on <strong>{$title}</strong>.</p>"
+                . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
+                . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
+            $this->emailService->send($to, "New response: {$title}", $html);
+        } catch (\Throwable $e) {
+            $this->logger->warning('New-response notification failed', ['error' => $e->getMessage()]);
+        }
     }
 
     /**
@@ -324,6 +354,9 @@ class ResponseController
             // Write inverse linked_record links so "related records" lookups work
             // for standalone public submissions (the app path syncs separately).
             $this->responseService->syncResponseLinks($formId, $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
+
+            // Best-effort new-response notification email (form Notifications tab).
+            $this->maybeNotifyNewResponse($form);
 
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId]);
             return $this->jsonResponse($response, ['response' => $result], 201);

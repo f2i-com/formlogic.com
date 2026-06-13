@@ -544,6 +544,27 @@ class AuthService
     }
 
     /**
+     * Verify a user's current password (for sensitive actions like account
+     * deletion that require re-authentication).
+     */
+    public function verifyPassword(string $userId, string $password): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT password_hash FROM users WHERE id = :id");
+        $stmt->execute(['id' => $userId]);
+        $row = $stmt->fetch();
+        return $row && password_verify($password, $row['password_hash']);
+    }
+
+    /**
+     * Delete the user row. Caller is responsible for deleting owned resources
+     * (forms, apps) first; FK cascades clean up memberships, reset tokens, etc.
+     */
+    public function deleteAccount(string $userId): void
+    {
+        $this->mysql->prepare("DELETE FROM users WHERE id = :id")->execute(['id' => $userId]);
+    }
+
+    /**
      * Mint a fresh JWT for a user. Used after a credential change to re-issue the
      * session cookie — the change bumps token_version (revoking old JWTs), so
      * without a fresh token the user would be silently logged out. Reads the

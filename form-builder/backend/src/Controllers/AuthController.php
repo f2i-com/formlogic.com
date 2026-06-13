@@ -6,6 +6,8 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\AuthService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\FormService;
+use FormLogic\Services\AppService;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Middleware\CsrfMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -22,14 +24,18 @@ class AuthController
     private LoggerInterface $logger;
     private ?AuditService $auditService;
     private string $csrfSecret;
+    private ?FormService $formService;
+    private ?AppService $appService;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '')
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null)
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
         $this->csrfSecret = $csrfSecret;
+        $this->formService = $formService;
+        $this->appService = $appService;
         $this->cookieConfig = array_merge([
             'name' => 'formlogic_auth',
             'httpOnly' => true,
@@ -314,6 +320,81 @@ class AuthController
         $port = $uri->getPort();
         $authority = $uri->getHost() . ($port && !in_array($port, [80, 443], true) ? ':' . $port : '');
         return $uri->getScheme() . '://' . $authority;
+    }
+
+    /**
+     * Export the authenticated user's account data (GDPR portability).
+     * GET /api/auth/me/export
+     */
+    public function exportData(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        $user = $request->getAttribute('user');
+        if (!$userId || !$user) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not authenticated'], 401);
+        }
+
+        $forms = $this->formService ? $this->formService->getAllForms($userId) : [];
+        $payload = [
+            'exportedAt' => date('c'),
+            'user' => $user->toArray(),
+            'forms' => $forms,
+            'note' => "Per-form responses can be exported individually from each form's analytics page (CSV / JSON / SQLite).",
+        ];
+
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}';
+        $response->getBody()->write($json);
+        return $response
+            ->withHeader('Content-Type', 'application/json')
+            ->withHeader('Content-Disposition', 'attachment; filename="formlogic-my-data.json"');
+    }
+
+    /**
+     * Delete the authenticated user's account and owned resources (GDPR erasure).
+     * DELETE /api/auth/me
+     */
+    public function deleteAccount(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not authenticated'], 401);
+        }
+
+        $data = $request->getParsedBody();
+        $password = (string) ($data['password'] ?? '');
+        if ($password === '' || !$this->authService->verifyPassword($userId, $password)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Your current password is required to delete your account'], 400);
+        }
+
+        try {
+            // Delete apps the user owns (membership of other people's apps is
+            // removed via the user FK cascade on the users delete).
+            if ($this->appService) {
+                foreach ($this->appService->getAllApps($userId) as $app) {
+                    $owner = $app['ownerId'] ?? $app['owner_id'] ?? null;
+                    if ($owner === $userId && !empty($app['id'])) {
+                        try { $this->appService->deleteApp((string) $app['id']); } catch (\Throwable $e) { /* best-effort */ }
+                    }
+                }
+            }
+            // Delete the user's forms (incl. their per-form response DB + files).
+            if ($this->formService) {
+                foreach ($this->formService->getAllForms($userId) as $form) {
+                    if (!empty($form['id'])) {
+                        try { $this->formService->deleteForm((string) $form['id']); } catch (\Throwable $e) { /* best-effort */ }
+                    }
+                }
+            }
+
+            $this->authService->deleteAccount($userId);
+            $this->audit($request, 'auth.account_delete', 'user', $userId);
+
+            $response = $this->clearAuthCookie($response);
+            return $this->jsonResponse($response, ['message' => 'Your account has been deleted.']);
+        } catch (\Exception $e) {
+            $this->logger->error('Account deletion error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to delete account'], 500);
+        }
     }
 
     /**
