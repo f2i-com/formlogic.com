@@ -580,6 +580,11 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                               {inst.packName}
                             </p>
                             <Badge variant="default" size="sm">v{inst.packVersion}</Badge>
+                            {inst.updateAvailable && (
+                              <Badge variant="info" size="sm" title={inst.updateAvailable.changelog || undefined}>
+                                Update available · v{inst.updateAvailable.version}
+                              </Badge>
+                            )}
                           </div>
                           {inst.packDescription && (
                             <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">

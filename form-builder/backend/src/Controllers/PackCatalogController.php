@@ -308,7 +308,10 @@ class PackCatalogController
         }
 
         try {
-            $version = $this->catalogService->getPackVersion($catalog['id']);
+            // Optional ?version=<versionId> to install a specific historical
+            // version; defaults to the latest.
+            $versionId = $request->getQueryParams()['version'] ?? null;
+            $version = $this->catalogService->getPackVersion($catalog['id'], is_string($versionId) && $versionId !== '' ? $versionId : null);
             if (!$version) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'No version available'], 404);
             }

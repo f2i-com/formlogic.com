@@ -103,11 +103,11 @@ export default function PackDetailPage() {
     if (pack) checkInstalled();
   }, [pack, checkInstalled]);
 
-  const handleInstall = useCallback(async () => {
+  const handleInstall = useCallback(async (versionId?: string) => {
     if (!slug || installing) return;
     setInstalling(true);
     try {
-      const dlResult = await api.downloadPack(slug);
+      const dlResult = await api.downloadPack(slug, versionId);
       if (!dlResult.data?.pack) {
         toast.error('Failed to download pack');
         return;
@@ -251,7 +251,7 @@ export default function PackDetailPage() {
               Installed
             </Button>
           ) : (
-            <Button variant="primary" onClick={handleInstall} isLoading={installing}>
+            <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
               {!installing && <Package className="h-4 w-4 mr-1.5" />}
               {installing ? 'Installing...' : 'Install Pack'}
             </Button>
@@ -288,17 +288,26 @@ export default function PackDetailPage() {
             </button>
             {versionsExpanded && (
               <div className="mt-3 space-y-3">
-                {pack.versions.map((v) => (
+                {pack.versions.map((v, i) => (
                   <div key={v.id} className="flex items-start gap-3 text-sm border-l-2 border-gray-200 dark:border-slate-700 pl-3">
-                    <Badge variant="default" size="sm">v{v.version}</Badge>
+                    <Badge variant={i === 0 ? 'success' : 'default'} size="sm">v{v.version}</Badge>
                     <div className="flex-1">
                       <span className="text-gray-500 dark:text-slate-400 text-xs">
-                        {new Date(v.created_at).toLocaleDateString()} &middot; {v.form_count} forms, {v.app_count} apps
+                        {new Date(v.created_at).toLocaleDateString()} &middot; {v.form_count} forms, {v.app_count} apps{i === 0 ? ' · latest' : ''}
                       </span>
                       {v.changelog && (
                         <p className="text-gray-600 dark:text-slate-400 text-xs mt-0.5">{v.changelog}</p>
                       )}
                     </div>
+                    {!installed && (
+                      <button
+                        onClick={() => handleInstall(v.id)}
+                        disabled={installing}
+                        className="flex-shrink-0 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 cursor-pointer"
+                      >
+                        Install this version
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

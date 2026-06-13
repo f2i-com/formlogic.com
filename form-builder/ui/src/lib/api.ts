@@ -825,8 +825,9 @@ class ApiClient {
     return this.request('/packs/catalog/mine');
   }
 
-  async downloadPack(slug: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string; versionId: string }>> {
-    return this.request(`/packs/catalog/${slug}/download`);
+  async downloadPack(slug: string, versionId?: string): Promise<ApiResponse<{ pack: PackData; version: string; catalogId: string; versionId: string }>> {
+    const qs = versionId ? `?version=${encodeURIComponent(versionId)}` : '';
+    return this.request(`/packs/catalog/${slug}/download${qs}`);
   }
 
   async uploadPackZip(file: File): Promise<ApiResponse<{ success: boolean; pack: PackData; formCount: number; appCount: number }>> {
@@ -1199,6 +1200,7 @@ interface PackInstallation {
   formIds: string[];
   appIds: string[];
   installedAt: string;
+  updateAvailable?: { version: string; changelog: string | null } | null;
 }
 
 interface CatalogPack {

@@ -231,6 +231,21 @@ class PackService
             $existingForms = $this->countExistingForms($formIds);
             $existingApps = $this->countExistingApps($appIds);
 
+            // Surface a catalog update when a newer version has been published
+            // than the one installed (staleness indicator).
+            $updateAvailable = null;
+            if (!empty($row['catalog_id'])) {
+                $vStmt = $this->mysql->prepare("
+                    SELECT version, changelog FROM pack_versions
+                    WHERE catalog_id = :cid ORDER BY created_at DESC LIMIT 1
+                ");
+                $vStmt->execute(['cid' => $row['catalog_id']]);
+                $latest = $vStmt->fetch();
+                if ($latest && (string) $latest['version'] !== (string) $row['pack_version']) {
+                    $updateAvailable = ['version' => $latest['version'], 'changelog' => $latest['changelog']];
+                }
+            }
+
             $installations[] = [
                 'id' => $row['id'],
                 'packId' => $row['pack_id'],
@@ -246,6 +261,7 @@ class PackService
                 'formIds' => $formIds,
                 'appIds' => $appIds,
                 'installedAt' => $row['installed_at'],
+                'updateAvailable' => $updateAvailable,
             ];
         }
 
