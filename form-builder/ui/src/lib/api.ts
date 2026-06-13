@@ -118,7 +118,15 @@ class ApiClient {
         if (response.status === 401) {
           this.handleUnauthorized();
         }
-        return { error: (data as Record<string, unknown>)?.message as string || 'An error occurred' };
+        const d = data as Record<string, unknown>;
+        let message = (d?.message as string) || 'An error occurred';
+        // Surface per-field validation errors so failures are actionable rather
+        // than a generic "Validation failed".
+        if (d?.errors && typeof d.errors === 'object') {
+          const fieldMsgs = Object.values(d.errors as Record<string, unknown>).filter((v): v is string => typeof v === 'string');
+          if (fieldMsgs.length > 0) message = `${message}: ${fieldMsgs.join('; ')}`;
+        }
+        return { error: message };
       }
 
       return { data };

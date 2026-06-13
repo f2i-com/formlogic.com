@@ -12,6 +12,7 @@ import { DynamicIcon } from '../ui/DynamicIcon';
 import { FileUploadField } from '../ui/FileUploadField';
 import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
+import { useConditionalLogic } from '../../hooks/useFormLogic';
 import type { FormField as FormFieldType } from '../../types/form';
 
 interface FormField {
@@ -593,9 +594,27 @@ export function AppFormView() {
     return () => { cancelled = true; };
   }, [appSlug, formId]);
 
+  // Merge user answers with computed calculated field values. Drives both the
+  // calculated expressions and conditional logic, so it must be defined before
+  // `fields` (whose visibility depends on it).
+  const allFormData = useMemo(
+    () => ({ ...answers, ...calculatedValues }),
+    [answers, calculatedValues]
+  );
+
+  // Evaluate conditional logic (show/hide/skip/require) exactly like the public
+  // runtime — otherwise deployed apps would ignore field conditions entirely:
+  // hidden fields stay shown and conditionally-required rules are lost.
+  const { isFieldVisible, isFieldRequired } = useConditionalLogic(
+    (form?.fields ?? []) as FormFieldType[],
+    allFormData
+  );
+
   const fields = useMemo(
-    () => ((form?.fields ?? []) as FormField[]).filter(f => f.type !== 'thank_you'),
-    [form]
+    () => ((form?.fields ?? []) as FormField[]).filter(
+      (f) => f.type !== 'thank_you' && isFieldVisible(f.id)
+    ),
+    [form, isFieldVisible]
   );
   const thankYouField = useMemo(
     () => ((form?.fields ?? []) as FormField[]).find(f => f.type === 'thank_you'),
@@ -611,12 +630,6 @@ export function AppFormView() {
   const effectiveMode = presentationMode === 'both' ? viewMode : presentationMode;
   const showModeToggle = presentationMode === 'both';
 
-  // Merge user answers with computed calculated field values
-  const allFormData = useMemo(
-    () => ({ ...answers, ...calculatedValues }),
-    [answers, calculatedValues]
-  );
-
   // Set initial view mode from form settings
   useEffect(() => {
     const dflt = formSettings?.defaultPresentationMode as string;
@@ -629,9 +642,15 @@ export function AppFormView() {
   const visibleFieldIds = useMemo(() => new Set(fields.map((f) => f.id)), [fields]);
   const requiredFieldIds = useMemo(() => {
     const s = new Set<string>();
-    fields.forEach((f) => { if (f.required) s.add(f.id); });
+    fields.forEach((f) => { if (isFieldRequired(f.id)) s.add(f.id); });
     return s;
-  }, [fields]);
+  }, [fields, isFieldRequired]);
+
+  // Clamp the step when conditional logic shrinks the visible set so the user
+  // isn't stranded past the last remaining field.
+  useEffect(() => {
+    setCurrentStep((s) => Math.min(s, Math.max(0, fields.length - 1)));
+  }, [fields.length]);
 
   const safeStep = Math.min(currentStep, Math.max(0, fields.length - 1));
   const currentField = fields[safeStep];
@@ -669,7 +688,7 @@ export function AppFormView() {
   }, [formId, createResponse]);
 
   const handleNext = useCallback(() => {
-    if (currentField?.required && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
+    if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
       if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');
@@ -691,7 +710,7 @@ export function AppFormView() {
     } else {
       setCurrentStep((s) => Math.min(s + 1, fields.length - 1));
     }
-  }, [currentField, isLastStep, fields.length, handleSubmit]);
+  }, [currentField, isLastStep, fields.length, handleSubmit, isFieldRequired]);
 
   const handlePrev = useCallback(() => {
     setError(null);
@@ -712,7 +731,7 @@ export function AppFormView() {
   const handleClassicSubmit = useCallback(() => {
     setError(null);
     const missingFields = fields.filter(f => {
-      if (!f.required) return false;
+      if (!isFieldRequired(f.id)) return false;
       if (['statement', 'calculated', 'welcome_screen'].includes(f.type)) return false;
       const answer = answersRef.current[f.id];
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
@@ -731,7 +750,7 @@ export function AppFormView() {
       }
     }
     handleSubmit();
-  }, [fields, handleSubmit]);
+  }, [fields, handleSubmit, isFieldRequired]);
 
   if (!formId || !config) return null;
 
@@ -884,7 +903,7 @@ export function AppFormView() {
               <div className="mb-8">
                 <h2 className="text-2xl md:text-3xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
                   {currentField.label}
-                  {currentField.required && <span className="text-red-500 ml-1">*</span>}
+                  {isFieldRequired(currentField.id) && <span className="text-red-500 ml-1">*</span>}
                 </h2>
                 {currentField.description && (
                   <p className="text-base md:text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
@@ -1025,7 +1044,7 @@ export function AppFormView() {
                   <div className="mb-6">
                     <h2 className="text-xl md:text-2xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
                       {field.label}
-                      {field.required && <span className="text-red-500 ml-1">*</span>}
+                      {isFieldRequired(field.id) && <span className="text-red-500 ml-1">*</span>}
                     </h2>
                     {field.description && (
                       <p className="text-sm md:text-base text-gray-500 dark:text-slate-400 leading-relaxed">

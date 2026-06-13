@@ -920,7 +920,10 @@ export default function FormResponse() {
     // Don't advance/submit while a submission is in flight (prevents a double Enter).
     if (isSubmitting) return;
 
-    if (currentField) {
+    // Skip the required/validation gate for non-input field types — a calculated
+    // or layout step has nothing for the user to fill in, so requiring it would
+    // be an unrecoverable dead-end. Matches the classic-mode exclusion.
+    if (currentField && !['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(currentField.type)) {
       const answer = currentAnswers[currentField.id];
 
       // Check required

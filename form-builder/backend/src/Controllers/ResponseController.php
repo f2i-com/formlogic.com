@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\FormLogicService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\AuditService;
 use FormLogic\Database\SQLiteConnection;
@@ -23,8 +24,9 @@ class ResponseController
     private IpResolver $ipResolver;
     private LoggerInterface $logger;
     private ?AuditService $auditService;
+    private ?FormLogicService $formLogicService;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?FormLogicService $formLogicService = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
@@ -32,6 +34,103 @@ class ResponseController
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
+        $this->formLogicService = $formLogicService;
+    }
+
+    /**
+     * Lazily resolve the FormLogic engine used for conditional-visibility and
+     * calculated-field evaluation (no-arg service; created on first use).
+     */
+    private function getFormLogic(): FormLogicService
+    {
+        return $this->formLogicService ??= new FormLogicService();
+    }
+
+    /**
+     * Compute per-field visibility & effective-required, mirroring the client's
+     * useConditionalLogic hook. Without this, the server enforces `required` on
+     * fields the user can't see, creating an unrecoverable submit dead-end.
+     *
+     * @return array<string, array{visible: bool, required: bool}>
+     */
+    private function computeFieldVisibility(array $fields, array $answers): array
+    {
+        $vis = [];
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            $baseRequired = (bool)($field['required'] ?? false);
+            $cond = $field['conditionalLogic'] ?? null;
+            $expr = (is_array($cond) ? ($cond['expression'] ?? '') : '');
+
+            if (!is_string($expr) || trim($expr) === '') {
+                $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                continue;
+            }
+
+            $action = is_array($cond) ? ($cond['action'] ?? null) : null;
+
+            try {
+                $result = $this->getFormLogic()->evaluateCondition($expr, $answers);
+            } catch (\Throwable $e) {
+                // Fail OPEN to visible (matches the client's catch) so a malformed
+                // expression can't itself create an unrecoverable dead-end.
+                $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                continue;
+            }
+
+            switch ($action) {
+                case 'hide':
+                case 'skip':
+                    $visible = !$result;
+                    $vis[$id] = ['visible' => $visible, 'required' => $baseRequired && $visible];
+                    break;
+                case 'require':
+                    $vis[$id] = ['visible' => true, 'required' => $result || $baseRequired];
+                    break;
+                case 'show':
+                    $visible = (bool)$result;
+                    $vis[$id] = ['visible' => $visible, 'required' => $baseRequired && $visible];
+                    break;
+                default:
+                    // Unknown/absent action → always visible (matches client).
+                    $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                    break;
+            }
+        }
+        return $vis;
+    }
+
+    /**
+     * Recompute calculated fields server-side from their calculationExpression
+     * and merge the results into the answers so they round-trip into storage,
+     * export, and analytics. Recomputing (rather than trusting client-submitted
+     * values, which sanitizeAnswers strips) prevents tampering. Best-effort —
+     * a broken expression is skipped, never blocking submission.
+     */
+    private function applyCalculatedFields(array $fields, array $answers): array
+    {
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') !== 'calculated') {
+                continue;
+            }
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            $expr = $field['properties']['calculationExpression'] ?? null;
+            if (!is_string($expr) || trim($expr) === '') {
+                continue;
+            }
+            try {
+                $answers[$id] = $this->getFormLogic()->calculateField($expr, $answers);
+            } catch (\Throwable $e) {
+                // Skip — a broken calculated expression shouldn't block submission.
+            }
+        }
+        return $answers;
     }
 
     /**
@@ -168,7 +267,12 @@ class ResponseController
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
 
-        // Validate answers against form fields
+        // Recompute calculated fields server-side and merge them in so they
+        // round-trip into storage/export/analytics and are available to
+        // conditional-logic evaluation during validation.
+        $data['answers'] = $this->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+
+        // Validate answers against form fields (honors conditional visibility)
         $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
         if (!empty($validationErrors)) {
             return $this->jsonResponse($response, [
@@ -280,13 +384,9 @@ class ResponseController
     {
         $errors = [];
 
-        // Create a map of field IDs to field definitions
-        $fieldMap = [];
-        foreach ($fields as $field) {
-            if (isset($field['id'])) {
-                $fieldMap[$field['id']] = $field;
-            }
-        }
+        // Resolve conditional visibility from the submitted answers so we don't
+        // enforce required (or type validation) on fields the user couldn't see.
+        $visibility = $this->computeFieldVisibility($fields, $answers);
 
         // Check required fields
         foreach ($fields as $field) {
@@ -295,13 +395,20 @@ class ResponseController
                 continue;
             }
 
-            $isRequired = $field['required'] ?? false;
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
             if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
                 continue;
             }
+
+            // Skip fields hidden by conditional logic — they can't be filled in,
+            // so requiring them would be an unrecoverable dead-end.
+            $fieldVis = $visibility[$fieldId] ?? ['visible' => true, 'required' => (bool)($field['required'] ?? false)];
+            if (!$fieldVis['visible']) {
+                continue;
+            }
+            $isRequired = $fieldVis['required'];
 
             $value = $answers[$fieldId] ?? null;
 

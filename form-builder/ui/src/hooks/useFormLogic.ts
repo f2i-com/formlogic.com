@@ -21,6 +21,21 @@ export function useConditionalLogic(
   const [isEvaluating, setIsEvaluating] = useState(false);
   const evaluationIdRef = useRef(0);
 
+  // Re-seed visibility whenever the SET of fields changes (e.g. the form finishes
+  // loading asynchronously after this hook mounted). The useState initializer
+  // only captures the fields present at mount, so a consumer that mounts before
+  // its form is fetched would otherwise keep an empty set until the async
+  // evaluation lands — flashing an empty form. Seeding all-visible matches the
+  // mount-time "avoid flash of invisible content" behavior.
+  const fieldIdsKey = useMemo(() => fields.map((f) => f.id).join('|'), [fields]);
+  const seededKeyRef = useRef(fieldIdsKey);
+  useEffect(() => {
+    if (seededKeyRef.current === fieldIdsKey) return;
+    seededKeyRef.current = fieldIdsKey;
+    setVisibleFields(new Set(fields.map((f) => f.id)));
+    setRequiredFields(new Set(fields.filter((f) => f.required).map((f) => f.id)));
+  }, [fieldIdsKey, fields]);
+
   const evaluateAllConditions = useCallback(async () => {
     const thisEvalId = ++evaluationIdRef.current;
     setIsEvaluating(true);
