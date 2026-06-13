@@ -408,9 +408,9 @@ function FieldInput({
     );
   }
 
-  if (field.type === 'statement') {
+  if (field.type === 'statement' || field.type === 'welcome_screen') {
     return (
-      <p className="text-lg text-gray-600 dark:text-slate-400">{field.description || 'Statement content'}</p>
+      <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description || 'Statement content'}</p>
     );
   }
 
@@ -594,7 +594,11 @@ export function AppFormView() {
   }, [appSlug, formId]);
 
   const fields = useMemo(
-    () => ((form?.fields ?? []) as FormField[]).filter(f => !['welcome_screen', 'thank_you'].includes(f.type)),
+    () => ((form?.fields ?? []) as FormField[]).filter(f => f.type !== 'thank_you'),
+    [form]
+  );
+  const thankYouField = useMemo(
+    () => ((form?.fields ?? []) as FormField[]).find(f => f.type === 'thank_you'),
     [form]
   );
   const formTheme = form?.theme as FormTheme | undefined;
@@ -665,7 +669,7 @@ export function AppFormView() {
   }, [formId, createResponse]);
 
   const handleNext = useCallback(() => {
-    if (currentField?.required && !['statement', 'calculated'].includes(currentField.type)) {
+    if (currentField?.required && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
       if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');
@@ -709,7 +713,7 @@ export function AppFormView() {
     setError(null);
     const missingFields = fields.filter(f => {
       if (!f.required) return false;
-      if (['statement', 'calculated'].includes(f.type)) return false;
+      if (['statement', 'calculated', 'welcome_screen'].includes(f.type)) return false;
       const answer = answersRef.current[f.id];
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
     });
@@ -780,8 +784,8 @@ export function AppFormView() {
           >
             <CheckCircle className="h-10 w-10" style={{ color: 'var(--app-on-primary)' }} />
           </div>
-          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">Thank you!</h1>
-          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed">Your response has been submitted successfully.</p>
+          <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
+          <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); }}

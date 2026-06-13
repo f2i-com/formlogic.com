@@ -340,8 +340,9 @@ function FieldResponse({
       }
 
       case 'statement':
+      case 'welcome_screen':
         return field.description ? (
-          <p className="text-lg opacity-70">{field.description}</p>
+          <p className="text-lg opacity-70 whitespace-pre-line">{field.description}</p>
         ) : null;
 
       case 'file_upload':
@@ -613,7 +614,10 @@ function FieldResponse({
 }
 
 // Success Screen
-function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean }) {
+function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string } }) {
+  // Use a thank_you field's content as the completion message when the form defines one.
+  const heading = thankYou?.label?.trim() || 'Thank you!';
+  const subtext = thankYou?.description?.trim() || 'Your response has been submitted successfully.';
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -626,8 +630,8 @@ function SuccessScreen({ form, isRedirecting }: { form: { title: string; theme: 
       >
         <Check className="h-10 w-10" style={{ color: readableForegroundColor(form.theme.primaryColor) }} />
       </div>
-      <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>Thank you!</h1>
-      <p className="text-xl" style={{ color: form.theme.textColor, opacity: 0.7 }}>Your response has been submitted successfully.</p>
+      <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>{heading}</h1>
+      <p className="text-xl whitespace-pre-line" style={{ color: form.theme.textColor, opacity: 0.7 }}>{subtext}</p>
       {isRedirecting && (
         <p className="text-lg mt-4 animate-pulse" style={{ color: form.theme.textColor, opacity: 0.5 }}>Redirecting...</p>
       )}
@@ -765,7 +769,9 @@ export default function FormResponse() {
   const visibleFields = useMemo(() => {
     if (!form) return [];
     return form.fields.filter((f) => {
-      if (['welcome_screen', 'thank_you'].includes(f.type)) return false;
+      // thank_you is rendered as the post-submit success screen, not an in-form step.
+      // welcome_screen IS shown (as a leading content step).
+      if (f.type === 'thank_you') return false;
       return isFieldVisible(f.id);
     });
   }, [form, isFieldVisible]);
@@ -1040,7 +1046,7 @@ export default function FormResponse() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
-        <SuccessScreen form={form} isRedirecting={isRedirecting} />
+        <SuccessScreen form={form} isRedirecting={isRedirecting} thankYou={form.fields.find((f) => f.type === 'thank_you')} />
       </div>
     );
   }
