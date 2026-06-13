@@ -18,6 +18,8 @@ import {
   Download,
   User,
   Plus,
+  Pencil,
+  Archive,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -64,6 +66,13 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
 
   // My packs state
   const [myPacks, setMyPacks] = useState<CatalogPack[]>([]);
+  const [archiveConfirmSlug, setArchiveConfirmSlug] = useState<string | null>(null);
+  const [archivingSlug, setArchivingSlug] = useState<string | null>(null);
+  const [editingPack, setEditingPack] = useState<CatalogPack | null>(null);
+  const [editPackName, setEditPackName] = useState('');
+  const [editPackDesc, setEditPackDesc] = useState('');
+  const [editPackVisibility, setEditPackVisibility] = useState('public');
+  const [savingPackMeta, setSavingPackMeta] = useState(false);
   const [loadingMyPacks, setLoadingMyPacks] = useState(false);
 
   // Publish dialog
@@ -177,6 +186,44 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
       setLoadingMyPacks(false);
     }
   }, []);
+
+  const handleArchivePack = async (slug: string) => {
+    setArchivingSlug(slug);
+    const result = await api.archivePack(slug);
+    setArchivingSlug(null);
+    setArchiveConfirmSlug(null);
+    if (result.error) {
+      toast.error('Archive failed', typeof result.error === 'string' ? result.error : 'Please try again.');
+    } else {
+      toast.success('Pack archived', 'It is no longer listed in the marketplace.');
+      loadMyPacks();
+    }
+  };
+
+  const openEditPack = (pack: CatalogPack) => {
+    setEditingPack(pack);
+    setEditPackName(pack.name);
+    setEditPackDesc(pack.description || '');
+    setEditPackVisibility(pack.visibility || 'public');
+  };
+
+  const handleSavePackMeta = async () => {
+    if (!editingPack) return;
+    setSavingPackMeta(true);
+    const result = await api.updatePackMeta(editingPack.slug, {
+      name: editPackName.trim(),
+      description: editPackDesc.trim(),
+      visibility: editPackVisibility,
+    });
+    setSavingPackMeta(false);
+    if (result.error) {
+      toast.error('Update failed', typeof result.error === 'string' ? result.error : 'Please try again.');
+    } else {
+      toast.success('Pack updated', 'Your changes have been saved.');
+      setEditingPack(null);
+      loadMyPacks();
+    }
+  };
 
   const installedCatalogIds = new Set(
     installations.filter((i) => i.catalogId).map((i) => i.catalogId!)
@@ -651,6 +698,23 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                             <span>{pack.formCount} forms, {pack.appCount} apps</span>
                           </div>
                         </div>
+                        <div className="flex-shrink-0">
+                          {archiveConfirmSlug === pack.slug ? (
+                            <div className="flex items-center gap-1.5">
+                              <Button variant="outline" size="sm" onClick={() => setArchiveConfirmSlug(null)} disabled={archivingSlug === pack.slug}>Cancel</Button>
+                              <Button variant="danger" size="sm" onClick={() => handleArchivePack(pack.slug)} isLoading={archivingSlug === pack.slug}>Archive</Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => openEditPack(pack)} aria-label={`Edit ${pack.name}`} title="Edit pack"
+                                className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"><Pencil className="h-4 w-4" /></button>
+                              {pack.status !== 'archived' && (
+                                <button onClick={() => setArchiveConfirmSlug(pack.slug)} aria-label={`Archive ${pack.name}`} title="Archive pack"
+                                  className="p-1.5 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-500/10 transition-colors cursor-pointer"><Archive className="h-4 w-4" /></button>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -878,6 +942,34 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
         onPublished={() => loadMyPacks()}
         initialPack={publishInitialPack}
       />
+
+      <Modal isOpen={editingPack !== null} onClose={() => setEditingPack(null)} title="Edit Pack" size="sm">
+        <div className="p-6 space-y-4">
+          <div>
+            <label htmlFor="edit-pack-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Name</label>
+            <input id="edit-pack-name" type="text" value={editPackName} onChange={(e) => setEditPackName(e.target.value)}
+              className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+          </div>
+          <div>
+            <label htmlFor="edit-pack-desc" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
+            <textarea id="edit-pack-desc" rows={3} value={editPackDesc} onChange={(e) => setEditPackDesc(e.target.value)}
+              className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white text-sm resize-none focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
+          </div>
+          <div>
+            <label htmlFor="edit-pack-visibility" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Visibility</label>
+            <select id="edit-pack-visibility" value={editPackVisibility} onChange={(e) => setEditPackVisibility(e.target.value)}
+              className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent">
+              <option value="public">Public — listed in the marketplace</option>
+              <option value="unlisted">Unlisted — accessible by link</option>
+              <option value="private">Private — only you</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setEditingPack(null)}>Cancel</Button>
+            <Button onClick={handleSavePackMeta} disabled={!editPackName.trim() || savingPackMeta} isLoading={savingPackMeta}>Save</Button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }
