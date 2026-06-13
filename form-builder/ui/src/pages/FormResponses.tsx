@@ -531,7 +531,43 @@ function FormResponses() {
           </Card>
         ) : (
           <Card className="overflow-hidden bg-white dark:bg-slate-900/50 border-gray-200 dark:border-slate-800">
-            <div className="overflow-x-auto">
+            {/* Mobile card list (below sm) — the table hides field columns on phones,
+                so render a stacked card showing the date, first answers, and actions. */}
+            <ul className="sm:hidden divide-y divide-gray-200 dark:divide-slate-800">
+              {paginatedResponses.map((response) => (
+                <li key={response.id} className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleView(response)}
+                      className="min-w-0 flex-1 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                    >
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(response.submittedAt)}</p>
+                      {displayFields.slice(0, 2).map((field) => (
+                        <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
+                          <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                          {formatValue(response.answers[field.id], field.type)}
+                        </p>
+                      ))}
+                      <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
+                    </button>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button onClick={() => handleView(response)} className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer" aria-label="View response details">
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => handleEdit(response)} className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer" aria-label="Edit response">
+                        <Edit2 className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => handleDeleteConfirm(response)} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer" aria-label="Delete response">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="overflow-x-auto hidden sm:block">
               <table className="w-full">
                 <thead className="bg-gray-50/50 dark:bg-slate-900/50 border-b border-gray-200 dark:border-slate-800">
                   <tr>

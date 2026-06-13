@@ -6,6 +6,8 @@ import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { Input } from '../../components/ui/Input';
+import { Textarea } from '../../components/ui/Textarea';
 import { cn } from '../../lib/utils';
 
 const steps = ['App Details', 'Select Forms', 'Review'];
@@ -103,32 +105,23 @@ export function AppCreateWizard() {
       <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
         {step === 0 && (
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name *</label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => { setName(e.target.value); if (nameError) setNameError(null); }}
-                onBlur={validateName}
-                placeholder="My Application"
-                className={cn(
-                  'w-full px-3.5 py-2.5 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200',
-                  nameError ? 'border-red-500' : 'border-gray-300 dark:border-slate-600'
-                )}
-                autoFocus
-              />
-              {nameError && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{nameError}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What does this app do?"
-                rows={3}
-                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none transition-all duration-200"
-              />
-            </div>
+            <Input
+              label="App Name *"
+              type="text"
+              value={name}
+              onChange={(e) => { setName(e.target.value); if (nameError) setNameError(null); }}
+              onBlur={validateName}
+              placeholder="My Application"
+              error={nameError ?? undefined}
+              autoFocus
+            />
+            <Textarea
+              label="Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What does this app do?"
+              rows={3}
+            />
           </div>
         )}
 
