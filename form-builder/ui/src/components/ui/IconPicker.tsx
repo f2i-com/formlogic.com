@@ -63,12 +63,14 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-slate-700"
+        className="flex items-center justify-center min-h-[40px] min-w-[40px] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
         title={value ? `Icon: ${value}` : 'Choose icon'}
         aria-label="Choose form icon"
+        aria-haspopup="true"
+        aria-expanded={open}
       >
         {value ? (
-          <DynamicIcon name={value} className="h-5 w-5 text-indigo-600 dark:text-primary-400" />
+          <DynamicIcon name={value} className="h-5 w-5 text-primary-600 dark:text-primary-400" />
         ) : (
           <Image className="h-5 w-5 text-gray-400 dark:text-slate-500" />
         )}

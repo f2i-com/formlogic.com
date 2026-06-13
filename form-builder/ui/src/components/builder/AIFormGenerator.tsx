@@ -179,7 +179,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
     <Modal isOpen={isOpen} onClose={resetAndClose} title="Create with AI" size="lg">
       {/* Availability warning */}
       {isAvailable === false && (
-        <div className="mx-6 mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg flex items-start gap-3">
+        <div role="alert" className="mx-6 mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-amber-800 dark:text-amber-300">AI Service Unavailable</p>

@@ -434,7 +434,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* Test Result */}
               {testResult && (
-                <div className={`mx-4 mb-2 p-3 rounded-lg flex items-center gap-2 ${testResult.success
+                <div role="status" aria-live="polite" className={`mx-4 mb-2 p-3 rounded-lg flex items-center gap-2 ${testResult.success
                     ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
                     : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
                   }`}>
@@ -449,7 +449,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* AI Explanation */}
               {aiExplanation && (
-                <div className="mx-4 mb-2 p-3 rounded-lg bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/20">
+                <div role="status" aria-live="polite" className="mx-4 mb-2 p-3 rounded-lg bg-primary-50 dark:bg-primary-500/10 border border-primary-200 dark:border-primary-500/20">
                   <div className="flex items-start gap-2">
                     <Sparkles className="h-4 w-4 text-primary-600 dark:text-primary-400 mt-0.5 shrink-0" />
                     <div className="flex-1">

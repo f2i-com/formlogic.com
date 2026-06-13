@@ -65,6 +65,9 @@ function ToastItem({ toast }: { toast: ToastType }) {
     };
   }, [handleClose, toast.duration]);
 
+  // Errors/warnings interrupt (assertive alert); success/info wait politely so
+  // they don't talk over the user.
+  const urgent = toast.type === 'error' || toast.type === 'warning';
   return (
     <div
       className={cn(
@@ -73,7 +76,8 @@ function ToastItem({ toast }: { toast: ToastType }) {
         style.container,
         isExiting ? 'animate-slide-out' : 'animate-slide-in'
       )}
-      role="alert"
+      role={urgent ? 'alert' : 'status'}
+      aria-live={urgent ? 'assertive' : 'polite'}
     >
       <div className={cn('p-1.5 rounded-lg flex-shrink-0', style.iconBg)}>
         <Icon className={cn('h-4 w-4', style.icon)} />
@@ -87,7 +91,7 @@ function ToastItem({ toast }: { toast: ToastType }) {
       <button
         onClick={handleClose}
         aria-label="Dismiss notification"
-        className="flex-shrink-0 p-1.5 -m-1 rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
+        className="flex-shrink-0 p-1.5 -m-1 rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
       >
         <X className="h-4 w-4" />
       </button>
@@ -101,7 +105,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 md:bottom-4 z-[100] flex flex-col gap-3">
+    <div className="fixed bottom-20 right-4 md:bottom-4 z-[100] flex flex-col gap-3 max-h-[calc(100vh-6rem)] overflow-y-auto">
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} />
       ))}
