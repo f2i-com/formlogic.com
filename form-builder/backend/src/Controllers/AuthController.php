@@ -240,7 +240,14 @@ class AuthController
      */
     public function logout(Request $request, Response $response): Response
     {
-        $this->audit($request, 'auth.logout', 'user', $request->getAttribute('userId'));
+        $userId = $request->getAttribute('userId');
+        $this->audit($request, 'auth.logout', 'user', $userId);
+
+        // Invalidate the user's outstanding JWTs (sign out everywhere), so a token
+        // that was captured before logout can no longer be used.
+        if ($userId) {
+            $this->authService->revokeTokens($userId);
+        }
 
         // Clear the auth cookie by setting it to expire in the past
         $response = $this->clearAuthCookie($response);

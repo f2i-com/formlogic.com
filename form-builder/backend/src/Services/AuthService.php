@@ -416,6 +416,20 @@ class AuthService
     }
 
     /**
+     * Invalidate all of a user's outstanding JWTs by bumping token_version
+     * (e.g. on logout = sign out everywhere). Fails open if not yet migrated.
+     */
+    public function revokeTokens(string $userId): void
+    {
+        try {
+            $stmt = $this->mysql->prepare("UPDATE users SET token_version = token_version + 1 WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+        } catch (\Exception $e) {
+            // Column not migrated — nothing to bump.
+        }
+    }
+
+    /**
      * Generate a JWT token for a user
      */
     private function generateToken(User $user): string
