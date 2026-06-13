@@ -574,9 +574,11 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                               variant="outline"
                               size="sm"
                               onClick={() => setConfirmUninstall(inst.id)}
+                              aria-label={`Uninstall ${inst.packName}`}
+                              title={`Uninstall ${inst.packName}`}
                               className="text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                             </Button>
                           )}
                         </div>
@@ -806,7 +808,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                         className="flex items-center gap-2 w-full px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
                       >
                         {expandedApps ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        <Globe className="h-4 w-4 text-indigo-500" />
+                        <Globe className="h-4 w-4 text-primary-500" />
                         Apps ({appCount})
                       </button>
                       {expandedApps && (
@@ -815,7 +817,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                             const aName = (app as Record<string, unknown>).name as string || `App ${i + 1}`;
                             return (
                               <li key={i} className="flex items-center gap-2 py-1.5 px-3 rounded-md bg-gray-50 dark:bg-slate-800/50 text-xs">
-                                <Globe className="h-3.5 w-3.5 flex-shrink-0 text-indigo-400 dark:text-indigo-500" />
+                                <Globe className="h-3.5 w-3.5 flex-shrink-0 text-primary-400 dark:text-primary-500" />
                                 <span className="truncate text-gray-700 dark:text-slate-300 font-medium">{aName}</span>
                               </li>
                             );

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { Search, X, Loader2, ChevronDown } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { LinkedRecord } from '../../lib/api';
@@ -26,6 +26,7 @@ export function LinkedRecordInput({
   primaryColor,
 }: LinkedRecordInputProps) {
   const { lookupRecords } = useAppRuntimeStore();
+  const listId = useId();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<LinkedRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -223,6 +224,11 @@ export function LinkedRecordInput({
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-expanded={isOpen}
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={isOpen && highlightIndex >= 0 ? `${listId}-opt-${highlightIndex}` : undefined}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -250,7 +256,7 @@ export function LinkedRecordInput({
 
       {/* Dropdown results */}
       {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 max-h-64 overflow-y-auto">
+        <div id={listId} role="listbox" className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 max-h-64 overflow-y-auto">
           {loading && results.length === 0 ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
@@ -264,6 +270,9 @@ export function LinkedRecordInput({
               <button
                 key={record.id}
                 type="button"
+                id={`${listId}-opt-${index}`}
+                role="option"
+                aria-selected={index === highlightIndex}
                 onClick={() => handleSelect(record)}
                 onMouseEnter={() => setHighlightIndex(index)}
                 className={cn(

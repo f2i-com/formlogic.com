@@ -252,7 +252,7 @@ export function PhoneInput({
                   }
                 }}
                 placeholder="Search countries..."
-                className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-md outline-none focus:border-blue-400 dark:focus:border-blue-500 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-md outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
             </div>
 
@@ -268,7 +268,7 @@ export function PhoneInput({
                     data-selected={country.iso === selectedCountry.iso || undefined}
                     onClick={() => handleCountrySelect(country)}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left transition-colors cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700 ${
-                      country.iso === selectedCountry.iso ? 'bg-blue-50 dark:bg-slate-700' : ''
+                      country.iso === selectedCountry.iso ? 'bg-primary-50 dark:bg-primary-500/10' : ''
                     }`}
                     style={{ minHeight: '44px' }}
                   >
