@@ -184,12 +184,15 @@ $container->set(ResponseService::class, function (Container $c) {
 // Register controllers
 $container->set(AuthController::class, function (Container $c) {
     $settings = $c->get('settings');
+    // Same derivation as the CsrfMiddleware wiring, so issued + validated tokens match.
+    $csrfSecret = hash('sha256', 'formlogic-csrf:' . ($settings['jwt']['secret'] ?? ''));
     return new AuthController(
         $c->get(AuthService::class),
         $settings['cookie'] ?? [],
         $settings['jwt']['expiry'] ?? 86400,
         $c->get(LoggerInterface::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        $csrfSecret
     );
 });
 
@@ -436,8 +439,13 @@ $errorMiddleware->setDefaultErrorHandler(function (
 // Auth cookie name used by CSRF and Auth middleware
 $cookieName = $settings['settings']['cookie']['name'] ?? 'formlogic_auth';
 
+// Secret used to bind CSRF tokens to the auth session (HMAC). Derived from the
+// JWT secret so it's stable and needs no extra config. Must match the value the
+// AuthController uses when issuing the CSRF cookie.
+$csrfSecret = hash('sha256', 'formlogic-csrf:' . ($settings['settings']['jwt']['secret'] ?? ''));
+
 // Add CSRF middleware (validates tokens on state-changing requests)
-$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName));
+$app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret));
 
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];

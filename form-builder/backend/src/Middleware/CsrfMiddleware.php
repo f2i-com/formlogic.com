@@ -26,15 +26,18 @@ class CsrfMiddleware implements MiddlewareInterface
     private string $cookieName;
     private string $headerName;
     private string $authCookieName;
+    private string $secret;
 
     public function __construct(
         string $cookieName = 'formlogic_csrf',
         string $headerName = 'X-CSRF-Token',
-        string $authCookieName = 'formlogic_auth'
+        string $authCookieName = 'formlogic_auth',
+        string $secret = ''
     ) {
         $this->cookieName = $cookieName;
         $this->headerName = $headerName;
         $this->authCookieName = $authCookieName;
+        $this->secret = $secret;
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -62,10 +65,18 @@ class CsrfMiddleware implements MiddlewareInterface
 
         $csrfCookie = $cookies[$this->cookieName] ?? '';
         $csrfHeader = $request->getHeaderLine($this->headerName);
+        $authToken = (string) ($cookies[$this->authCookieName] ?? '');
 
-        // Always use hash_equals to prevent timing attacks (avoid early empty() checks
-        // that leak whether the token is missing vs. invalid)
-        if (!hash_equals($csrfCookie ?: "\0", $csrfHeader ?: '')) {
+        // Primary check: the CSRF token must be the HMAC of THIS session's auth
+        // token, so a token minted for another session/user cannot be replayed.
+        $boundOk = $authToken !== '' && $this->secret !== ''
+            && hash_equals(self::tokenForAuth($authToken, $this->secret), $csrfHeader ?: '');
+        // Transitional fallback: plain double-submit (cookie == header) for sessions
+        // issued before this change. Safe to remove once old sessions have expired.
+        $doubleSubmitOk = hash_equals($csrfCookie ?: "\0", $csrfHeader ?: '');
+
+        // Both branches use hash_equals to avoid leaking timing about which failed.
+        if (!$boundOk && !$doubleSubmitOk) {
             return $this->forbidden('CSRF token validation failed');
         }
 
@@ -97,11 +108,21 @@ class CsrfMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Generate a cryptographically secure CSRF token.
+     * Generate a cryptographically secure random CSRF token.
      */
     public static function generateToken(): string
     {
         return bin2hex(random_bytes(32));
+    }
+
+    /**
+     * Derive a CSRF token bound to a specific auth token (HMAC). The issuing side
+     * (AuthController::setCsrfCookie) and this validating side compute it the same
+     * way, so the token is only valid for the session it was minted for.
+     */
+    public static function tokenForAuth(string $authToken, string $secret): string
+    {
+        return hash_hmac('sha256', $authToken, $secret);
     }
 
     private function forbidden(string $message): Response

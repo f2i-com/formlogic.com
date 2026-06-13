@@ -21,13 +21,15 @@ class AuthController
     private int $jwtExpiry;
     private LoggerInterface $logger;
     private ?AuditService $auditService;
+    private string $csrfSecret;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '')
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
+        $this->csrfSecret = $csrfSecret;
         $this->cookieConfig = array_merge([
             'name' => 'formlogic_auth',
             'httpOnly' => true,
@@ -280,8 +282,8 @@ class AuthController
 
         $response = $response->withAddedHeader('Set-Cookie', implode('; ', $cookieParts));
 
-        // Set CSRF token as a non-HttpOnly cookie so JS can read it
-        $response = $this->setCsrfCookie($response);
+        // Set CSRF token (bound to this auth token) as a non-HttpOnly cookie so JS can read it
+        $response = $this->setCsrfCookie($response, $token);
 
         return $response;
     }
@@ -319,9 +321,11 @@ class AuthController
     /**
      * Set CSRF token cookie (non-HttpOnly so frontend JS can read it)
      */
-    private function setCsrfCookie(Response $response): Response
+    private function setCsrfCookie(Response $response, string $authToken): Response
     {
-        $csrfToken = CsrfMiddleware::generateToken();
+        // Bind the CSRF token to this session's auth token (HMAC) so it can't be
+        // replayed against a different session. The middleware recomputes + verifies.
+        $csrfToken = CsrfMiddleware::tokenForAuth($authToken, $this->csrfSecret);
 
         $cookieParts = [
             'formlogic_csrf=' . $csrfToken,
