@@ -50,6 +50,7 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
   // Metadata
   const [name, setName] = useState(initialPack?.packMeta?.name || '');
   const [slug, setSlug] = useState('');
+  const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState(initialPack?.packMeta?.description || '');
   const [icon, setIcon] = useState('');
   const [category, setCategory] = useState('');
@@ -72,7 +73,8 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
     setUploadError('');
     setIsDragging(false);
     setName(initialPack?.packMeta?.name || '');
-    setSlug('');
+    setSlug(initialPack?.packMeta?.name ? generateSlug(initialPack.packMeta.name) : '');
+    setSlugEdited(false);
     setDescription(initialPack?.packMeta?.description || '');
     setIcon('');
     setCategory('');
@@ -303,7 +305,7 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
               <input
                 type="text"
                 value={name}
-                onChange={(e) => { setName(e.target.value); if (!slug) setSlug(generateSlug(e.target.value)); }}
+                onChange={(e) => { setName(e.target.value); if (!slugEdited) setSlug(generateSlug(e.target.value)); }}
                 placeholder="My Awesome Pack"
                 className="w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500"
               />
@@ -312,8 +314,8 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
               <label className="block text-xs font-medium text-gray-700 dark:text-slate-300 mb-1">Slug</label>
               <input
                 type="text"
-                value={slug || generateSlug(name)}
-                onChange={(e) => setSlug(e.target.value)}
+                value={slug}
+                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
                 className="w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500"
               />
             </div>
