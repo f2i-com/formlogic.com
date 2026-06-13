@@ -23,6 +23,37 @@ export function AppRuntimeRoot() {
     };
   }, [appSlug, initialize, reset]);
 
+  // Point the browser at THIS app's dynamic manifest + theme-color so an
+  // installed PWA uses the owner-configured install name/theme instead of the
+  // generic platform identity. Same-origin '/api' keeps start_url/scope valid.
+  // Restores the platform manifest/theme-color when leaving the runtime.
+  useEffect(() => {
+    if (!appSlug) return;
+    const apiBase = import.meta.env.VITE_API_URL || '/api';
+    const manifestHref = `${apiBase}/app/${appSlug}/manifest.json`;
+
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const prevManifest = link?.getAttribute('href') ?? null;
+    if (link) link.setAttribute('href', manifestHref);
+
+    const themeColor = config?.app?.settings?.pwaThemeColor || config?.app?.theme?.primaryColor;
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const prevTheme = meta?.getAttribute('content') ?? null;
+    if (themeColor) {
+      if (!meta) {
+        meta = document.createElement('meta');
+        meta.setAttribute('name', 'theme-color');
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute('content', themeColor);
+    }
+
+    return () => {
+      if (link && prevManifest) link.setAttribute('href', prevManifest);
+      if (meta && prevTheme !== null) meta.setAttribute('content', prevTheme);
+    };
+  }, [appSlug, config]);
+
   return (
     <AppRuntimeThemeProvider theme={config?.app?.theme}>
       <AppRuntimeAuthGuard>

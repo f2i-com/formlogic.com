@@ -186,9 +186,27 @@ export function AppDataTable() {
       setLoading(true);
       setError(null);
       let cancelled = false;
-      fetchResponses(formId, { resolve: hasLinkedFields }).then((data) => {
+      // Fetch ALL pages — the API caps each page (default 100), which would
+      // otherwise silently hide records beyond the first page and misreport the
+      // total count. Loop until a short page is returned.
+      const loadAll = async () => {
+        const PAGE = 1000;
+        const MAX_PAGES = 100; // 100k safety cap
+        const all: Record<string, unknown>[] = [];
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const batch = (await fetchResponses(formId, {
+            resolve: hasLinkedFields,
+            limit: PAGE,
+            offset: page * PAGE,
+          })) as Record<string, unknown>[];
+          all.push(...batch);
+          if (batch.length < PAGE) break;
+        }
+        return all;
+      };
+      loadAll().then((data) => {
         if (cancelled) return;
-        const flattenedData = (data as Record<string, unknown>[]).map((r: Record<string, unknown>) => {
+        const flattenedData = data.map((r: Record<string, unknown>) => {
           const flat: Record<string, unknown> = { ...r };
           const answers = r.answers as Record<string, unknown> | undefined;
           if (answers) {

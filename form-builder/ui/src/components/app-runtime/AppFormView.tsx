@@ -550,7 +550,7 @@ function validateField(field: FormField, value: unknown): string | null {
 export function AppFormView() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
-  const { config, createResponse, canSubmit } = useAppRuntimeStore();
+  const { config, createResponse, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [currentStep, setCurrentStep] = useState(0);
@@ -821,12 +821,14 @@ export function AppFormView() {
             >
               Submit Another
             </button>
-            <button
-              onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
-              className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary"
-            >
-              View Responses
-            </button>
+            {(canViewOwn(formId) || canViewAll(formId)) && (
+              <button
+                onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
+                className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary"
+              >
+                View Responses
+              </button>
+            )}
           </div>
         </motion.div>
       </div>

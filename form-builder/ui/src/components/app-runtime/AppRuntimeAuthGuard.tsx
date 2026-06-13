@@ -27,7 +27,13 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   // If there's an error and user isn't logged in, show login form
   const isAuthError = error && (!user || error.toLowerCase().includes('authentication') || error.toLowerCase().includes('token'));
 
-  if (isAuthError) {
+  // Also treat "logged out with no app loaded" as an auth state — a session that
+  // expires mid-use clears both user and config (and error), which would
+  // otherwise fall through to a dead-end "Unable to Load" screen instead of an
+  // inline re-login form.
+  const showLogin = !user && (!config || isAuthError);
+
+  if (showLogin) {
     const handleLogin = async (e: React.FormEvent) => {
       e.preventDefault();
       setLoginError(null);
