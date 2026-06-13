@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Trash2, Pencil } from 'lucide-react';
+import { ArrowLeft, UserPlus, Trash2, Pencil, Users } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
+import { api } from '../../lib/api';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -11,13 +12,13 @@ import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
-import type { AppUser, AppInvitation, AppRole } from '../../types/app';
+import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
 
 export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup } = useAppUserStore();
+  const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles } = useAppStore();
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -46,6 +47,50 @@ export function AppUserManager() {
     if (ok) {
       toast.success('Member updated', 'Role and status saved.');
       setEditingUser(null);
+    }
+  };
+
+  // Group membership management
+  const [managingGroup, setManagingGroup] = useState<AppUserGroup | null>(null);
+  const [groupMemberIds, setGroupMemberIds] = useState<Set<string>>(new Set());
+  const [membersLoading, setMembersLoading] = useState(false);
+
+  const openManageMembers = async (group: AppUserGroup) => {
+    setManagingGroup(group);
+    setMembersLoading(true);
+    setGroupMemberIds(new Set());
+    if (appId) {
+      const result = await api.getAppGroupMembers(appId, group.id);
+      if (result.data?.members) {
+        setGroupMemberIds(new Set(result.data.members.map((m) => m.appUserId)));
+      } else if (result.error) {
+        toast.error('Failed to load members', typeof result.error === 'string' ? result.error : 'Please try again.');
+      }
+    }
+    setMembersLoading(false);
+  };
+
+  const toggleMember = async (appUserId: string, inGroup: boolean) => {
+    if (!appId || !managingGroup) return;
+    // Optimistic update
+    setGroupMemberIds((prev) => {
+      const next = new Set(prev);
+      if (inGroup) next.delete(appUserId); else next.add(appUserId);
+      return next;
+    });
+    const ok = inGroup
+      ? await removeGroupMember(appId, managingGroup.id, appUserId)
+      : await addGroupMember(appId, managingGroup.id, appUserId);
+    if (!ok) {
+      // Roll back on failure
+      setGroupMemberIds((prev) => {
+        const next = new Set(prev);
+        if (inGroup) next.add(appUserId); else next.delete(appUserId);
+        return next;
+      });
+      toast.error('Update failed', 'Could not update group membership. Please try again.');
+    } else {
+      fetchGroups(appId).catch(() => {});
     }
   };
 
@@ -178,8 +223,12 @@ export function AppUserManager() {
             ] as Column<Record<string, unknown>>[]}
             isLoading={loading}
             actions={(group) => (
-              <button onClick={() => setConfirmAction({ type: 'deleteGroup', id: String(group.id), label: String((group as Record<string, unknown>).name || 'this group') })}
-                className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Delete group"><Trash2 className="h-4 w-4" /></button>
+              <div className="flex items-center justify-end gap-1">
+                <button onClick={() => openManageMembers(group as unknown as AppUserGroup)}
+                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Manage group members"><Users className="h-4 w-4" /></button>
+                <button onClick={() => setConfirmAction({ type: 'deleteGroup', id: String(group.id), label: String((group as Record<string, unknown>).name || 'this group') })}
+                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Delete group"><Trash2 className="h-4 w-4" /></button>
+              </div>
             )}
           />
         </TabsContent>
@@ -211,6 +260,43 @@ export function AppUserManager() {
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
             <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={managingGroup !== null} onClose={() => setManagingGroup(null)} title={managingGroup ? `Members of "${managingGroup.name}"` : 'Members'} size="sm">
+        <div className="p-6">
+          {membersLoading ? (
+            <p className="text-sm text-gray-500 dark:text-slate-400 py-4">Loading members…</p>
+          ) : appUsers.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-slate-400 py-4">No members in this app yet. Invite users first.</p>
+          ) : (
+            <ul className="max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-slate-800">
+              {appUsers.map((u) => {
+                const inGroup = groupMemberIds.has(u.id);
+                return (
+                  <li key={u.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{u.name || u.email}</p>
+                      {u.name && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{u.email}</p>}
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                      <span className="text-xs text-gray-500 dark:text-slate-400">{inGroup ? 'Member' : 'Add'}</span>
+                      <input
+                        type="checkbox"
+                        checked={inGroup}
+                        onChange={() => toggleMember(u.id, inGroup)}
+                        aria-label={`${inGroup ? 'Remove' : 'Add'} ${u.name || u.email} ${inGroup ? 'from' : 'to'} group`}
+                        className="h-4 w-4 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:ring-primary-500 cursor-pointer"
+                      />
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="flex justify-end pt-4">
+            <Button variant="ghost" onClick={() => setManagingGroup(null)}>Done</Button>
           </div>
         </div>
       </Modal>

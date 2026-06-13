@@ -667,6 +667,32 @@ class AppUserService
         return $stmt->rowCount() > 0;
     }
 
+    /**
+     * List the app_user IDs that are members of a group (with name/email for display).
+     */
+    public function getGroupMembers(string $groupId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT m.app_user_id, u.name AS user_name, u.email
+            FROM app_user_group_members m
+            JOIN app_users au ON au.id = m.app_user_id
+            JOIN users u ON u.id = au.user_id
+            WHERE m.group_id = :group_id
+            ORDER BY u.name ASC
+        ");
+        $stmt->execute(['group_id' => $groupId]);
+
+        $members = [];
+        while ($row = $stmt->fetch()) {
+            $members[] = [
+                'appUserId' => $row['app_user_id'],
+                'name' => $row['user_name'],
+                'email' => $row['email'],
+            ];
+        }
+        return $members;
+    }
+
     public function addGroupMember(string $groupId, string $appUserId): bool
     {
         $id = $this->generateUuid();

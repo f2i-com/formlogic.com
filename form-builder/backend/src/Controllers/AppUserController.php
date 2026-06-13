@@ -444,6 +444,26 @@ class AppUserController
         return $this->jsonResponse($response, ['success' => true, 'message' => 'Group deleted']);
     }
 
+    public function listGroupMembers(Request $request, Response $response, array $args): Response
+    {
+        $userId = $this->requireAuth($request);
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $appId = $args['appId'];
+        if (!$this->requirePermission($appId, $userId, AppPermissions::MANAGE_USERS)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        if (!$this->appUserService->groupBelongsToApp($args['id'], $appId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
+        }
+
+        $members = $this->appUserService->getGroupMembers($args['id']);
+        return $this->jsonResponse($response, ['members' => $members]);
+    }
+
     public function addGroupMember(Request $request, Response $response, array $args): Response
     {
         $userId = $this->requireAuth($request);

@@ -1004,6 +1004,9 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->delete('/{appId}/groups/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppUserController::class)->deleteGroup($request, $response, $getArgs($request));
     });
+    $group->get('/{appId}/groups/{id}/members', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppUserController::class)->listGroupMembers($request, $response, $getArgs($request));
+    });
     $group->post('/{appId}/groups/{id}/members/{memberId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppUserController::class)->addGroupMember($request, $response, $getArgs($request));
     });

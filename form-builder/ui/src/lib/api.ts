@@ -571,6 +571,10 @@ class ApiClient {
     });
   }
 
+  async getAppGroupMembers(appId: string, groupId: string): Promise<ApiResponse<{ members: Array<{ appUserId: string; name: string; email: string }> }>> {
+    return this.request(`/apps/${appId}/groups/${groupId}/members`);
+  }
+
   async addAppGroupMember(appId: string, groupId: string, appUserId: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/apps/${appId}/groups/${groupId}/members/${appUserId}`, {
       method: 'POST',
