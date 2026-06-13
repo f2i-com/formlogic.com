@@ -23,14 +23,21 @@ class FileStorageService
         }
     }
 
+    // Per-form storage backstop: cap total bytes in a single form's upload dir
+    // so an abusive uploader can't exhaust disk for the whole platform.
+    private const MAX_FORM_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+
     /**
      * Store an uploaded file for a form.
      *
      * @param string $formId
      * @param array $uploadedFile $_FILES entry
+     * @param array $constraints Per-form field constraints, intersected with the
+     *   global limits as a ceiling: ['maxFileSize' => ?int (bytes),
+     *   'acceptedTypes' => string[] (extensions/MIME; empty = no field restriction)]
      * @return array File metadata: id, originalFilename, storedFilename, size, mimeType, url
      */
-    public function storeFile(string $formId, array $uploadedFile): array
+    public function storeFile(string $formId, array $uploadedFile, array $constraints = []): array
     {
         // Validate upload
         if (empty($uploadedFile['tmp_name']) || $uploadedFile['error'] !== UPLOAD_ERR_OK) {
@@ -41,11 +48,18 @@ class FileStorageService
             throw new \RuntimeException('Invalid file upload');
         }
 
+        // Effective size limit: the field's configured max, capped by the global
+        // ceiling (global always wins so a field can't raise the platform limit).
+        $effectiveMax = $this->maxFileSize;
+        if (!empty($constraints['maxFileSize']) && (int) $constraints['maxFileSize'] > 0) {
+            $effectiveMax = min($this->maxFileSize, (int) $constraints['maxFileSize']);
+        }
+
         // Validate file size (always use actual file size, not client-reported)
         $size = filesize($uploadedFile['tmp_name']);
-        if ($size === false || $size > $this->maxFileSize) {
+        if ($size === false || $size > $effectiveMax) {
             throw new \RuntimeException(
-                'File too large. Maximum size is ' . $this->formatFileSize($this->maxFileSize)
+                'File too large. Maximum size is ' . $this->formatFileSize($effectiveMax)
             );
         }
 
@@ -58,10 +72,22 @@ class FileStorageService
             throw new \RuntimeException('File type not allowed: ' . $mimeType);
         }
 
+        // Enforce the form's per-field accepted types (extensions/MIME) on top of
+        // the global allowlist, so a field restricted to "images only" is honored.
+        $acceptedTypes = $constraints['acceptedTypes'] ?? [];
+        if (!empty($acceptedTypes) && !$this->matchesAcceptedType($mimeType, (string) ($uploadedFile['name'] ?? ''), $acceptedTypes)) {
+            throw new \RuntimeException('File type not allowed for this field');
+        }
+
         // Create form directory
         $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
         if (!is_dir($formDir)) {
             mkdir($formDir, 0700, true);
+        }
+
+        // Per-form storage budget backstop (disk-exhaustion protection).
+        if ($this->formDirBytes($formDir) + $size > self::MAX_FORM_BYTES) {
+            throw new \RuntimeException('This form has reached its file storage limit');
         }
 
         // Generate unique file ID and safe stored filename
@@ -190,6 +216,51 @@ class FileStorageService
     private function sanitizeId(string $id): string
     {
         return preg_replace('/[^a-zA-Z0-9\-]/', '', $id);
+    }
+
+    /**
+     * Does the file match at least one of the field's accepted types? Accepts
+     * extensions ('.pdf'), wildcard MIME ('image/*'), or exact MIME.
+     */
+    private function matchesAcceptedType(string $mimeType, string $originalName, array $accepted): bool
+    {
+        $mime = strtolower($mimeType);
+        $name = strtolower($originalName);
+        foreach ($accepted as $raw) {
+            $t = strtolower(trim((string) $raw));
+            if ($t === '') {
+                continue;
+            }
+            if ($t[0] === '.') {
+                if (str_ends_with($name, $t)) {
+                    return true;
+                }
+            } elseif (str_ends_with($t, '/*')) {
+                if (str_starts_with($mime, substr($t, 0, -1))) { // e.g. "image/"
+                    return true;
+                }
+            } elseif ($mime === $t) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Total bytes currently stored in a form's upload directory.
+     */
+    private function formDirBytes(string $formDir): int
+    {
+        $total = 0;
+        foreach (glob($formDir . '/*') ?: [] as $f) {
+            if (is_file($f)) {
+                $s = filesize($f);
+                if ($s !== false) {
+                    $total += $s;
+                }
+            }
+        }
+        return $total;
     }
 
     private function formatFileSize(int $bytes): string

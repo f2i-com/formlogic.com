@@ -1226,6 +1226,10 @@ class AppPublicController
                 if (!is_array($value)) {
                     return 'Invalid file upload format';
                 }
+                // Honor the field's allowMultiple setting server-side.
+                if (empty($field['properties']['allowMultiple']) && count($value) > 1) {
+                    return 'Only one file is allowed for this field';
+                }
                 // Validate each file metadata entry
                 foreach ($value as $item) {
                     if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {

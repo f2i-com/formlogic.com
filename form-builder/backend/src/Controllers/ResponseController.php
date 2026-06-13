@@ -585,6 +585,10 @@ class ResponseController
                 if (!is_array($value)) {
                     return 'Invalid file upload format';
                 }
+                // Honor the field's allowMultiple setting server-side.
+                if (empty($field['properties']['allowMultiple']) && count($value) > 1) {
+                    return 'Only one file is allowed for this field';
+                }
                 // Limit file count to prevent payload bloat
                 $maxFiles = $field['properties']['maxFiles'] ?? 20;
                 if (count($value) > $maxFiles) {

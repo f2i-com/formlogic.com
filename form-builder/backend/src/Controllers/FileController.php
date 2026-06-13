@@ -8,6 +8,7 @@ use FormLogic\Services\FileStorageService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
+use FormLogic\Constants\AppPermissions;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -24,6 +25,49 @@ class FileController
         $this->formService = $formService;
         $this->appService = $appService;
         $this->appUserService = $appUserService;
+    }
+
+    /**
+     * Derive upload constraints from a form's file_upload fields. Returns null if
+     * the form has NO file_upload field (uploads must be rejected outright).
+     * The constraints are the union across all upload fields (we can't know which
+     * field a given upload targets), capped server-side against the global limits.
+     *
+     * @return array{maxFileSize: ?int, acceptedTypes: string[]}|null
+     */
+    private function fileUploadConstraints(array $form): ?array
+    {
+        $uploadFields = array_filter(
+            $form['fields'] ?? [],
+            fn ($f) => ($f['type'] ?? '') === 'file_upload'
+        );
+        if (empty($uploadFields)) {
+            return null;
+        }
+
+        $maxFileSize = 0;
+        $acceptedTypes = [];
+        $anyUnrestricted = false;
+        foreach ($uploadFields as $f) {
+            $props = $f['properties'] ?? [];
+            $fs = (int) ($props['maxFileSize'] ?? 0);
+            if ($fs > $maxFileSize) {
+                $maxFileSize = $fs;
+            }
+            $types = $props['acceptedFileTypes'] ?? [];
+            if (empty($types) || !is_array($types)) {
+                $anyUnrestricted = true; // a field that accepts anything relaxes the union
+            } else {
+                foreach ($types as $t) {
+                    $acceptedTypes[] = (string) $t;
+                }
+            }
+        }
+
+        return [
+            'maxFileSize' => $maxFileSize > 0 ? $maxFileSize : null,
+            'acceptedTypes' => $anyUnrestricted ? [] : array_values(array_unique($acceptedTypes)),
+        ];
     }
 
     /**
@@ -50,6 +94,13 @@ class FileController
             }
         }
 
+        // Reject uploads to forms with no file_upload field — otherwise any
+        // published form is an anonymous file-storage endpoint.
+        $constraints = $this->fileUploadConstraints($form);
+        if ($constraints === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
+        }
+
         // Get uploaded file from $_FILES
         $uploadedFiles = $request->getUploadedFiles();
         $file = $uploadedFiles['file'] ?? null;
@@ -71,7 +122,7 @@ class FileController
         }
 
         try {
-            $metadata = $this->fileStorage->storeFile($formId, $rawFile);
+            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -118,6 +169,20 @@ class FileController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found in this app'], 404);
         }
 
+        // Require submit permission on this form — a read-only member must not be
+        // able to push files into a form they can't submit to.
+        if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::SUBMIT_RESPONSES, $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to upload to this form'], 403);
+        }
+
+        // Reject uploads to forms with no file_upload field, and derive the
+        // per-field type/size constraints to enforce server-side.
+        $form = $this->formService->getForm($formId);
+        $constraints = $form ? $this->fileUploadConstraints($form) : null;
+        if ($constraints === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
+        }
+
         $uploadedFiles = $request->getUploadedFiles();
         $file = $uploadedFiles['file'] ?? null;
 
@@ -136,7 +201,7 @@ class FileController
         }
 
         try {
-            $metadata = $this->fileStorage->storeFile($formId, $rawFile);
+            $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
