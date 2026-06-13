@@ -225,6 +225,44 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             </div>
           )}
 
+          {/* File upload settings */}
+          {field.type === 'file_upload' && (
+            <div className="space-y-3">
+              <h4 className="font-medium text-gray-900 dark:text-white mb-2">File Upload Settings</h4>
+              <Input
+                label="Max File Size (MB)"
+                type="number"
+                min={1}
+                max={500}
+                value={Math.max(1, Math.round((field.properties.maxFileSize ?? 10 * 1024 * 1024) / (1024 * 1024)))}
+                onChange={(e) => {
+                  const mb = parseInt(e.target.value);
+                  const safeMb = isNaN(mb) ? 10 : Math.min(500, Math.max(1, mb));
+                  onUpdate({ properties: { ...field.properties, maxFileSize: safeMb * 1024 * 1024 } });
+                }}
+                hint="Per-file limit. The server may enforce a lower cap."
+              />
+              <Input
+                label="Accepted File Types"
+                value={(field.properties.acceptedFileTypes || []).join(', ')}
+                onChange={(e) => {
+                  const types = e.target.value
+                    .split(',')
+                    .map((t) => t.trim())
+                    .filter(Boolean);
+                  onUpdate({ properties: { ...field.properties, acceptedFileTypes: types } });
+                }}
+                placeholder="e.g. .pdf, .jpg, image/*"
+                hint="Comma-separated extensions or MIME types. Leave blank to allow any."
+              />
+              <Switch
+                label="Allow multiple files"
+                checked={!!field.properties.allowMultiple}
+                onChange={(checked) => onUpdate({ properties: { ...field.properties, allowMultiple: checked } })}
+              />
+            </div>
+          )}
+
           {/* Calculated field expression */}
           {field.type === 'calculated' && (
             <CalculatedFieldEditor

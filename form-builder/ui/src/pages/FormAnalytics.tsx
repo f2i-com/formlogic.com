@@ -28,6 +28,8 @@ export default function FormAnalytics() {
   const user = useAuthStore((state) => state.user);
 
   const [analytics, setAnalytics] = useState<FormAnalyticsType | null>(null);
+  // Real response rows for API/cloud mode (the local store is empty there).
+  const [apiResponses, setApiResponses] = useState<ReturnType<typeof getResponsesByFormId>>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // Load full form data (with fields) from API
@@ -37,6 +39,9 @@ export default function FormAnalytics() {
 
   const form = formId ? getForm(formId) : undefined;
   const localResponses = formId ? getResponsesByFormId(formId) : [];
+  // Use server-fetched responses in API mode (local store is empty in cloud mode),
+  // so the field breakdown and Recent Responses table reflect real data.
+  const responses = storageMode === 'api' ? apiResponses : localResponses;
 
   // Calculate local analytics
   const localAnalytics = useMemo(() => {
@@ -104,6 +109,13 @@ export default function FormAnalytics() {
           if (result.data?.analytics) {
             setAnalytics(result.data.analytics);
           }
+          // Also pull real response rows so the field breakdown + Recent Responses
+          // table aren't empty in cloud mode.
+          const respResult = await api.getResponses(formId, { limit: 200 });
+          if (cancelled) return;
+          if (respResult.data?.responses) {
+            setApiResponses(respResult.data.responses as unknown as ReturnType<typeof getResponsesByFormId>);
+          }
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch analytics:', error);
@@ -158,7 +170,7 @@ export default function FormAnalytics() {
       const counts: Record<string, number> = {};
       let totalAnswers = 0;
 
-      localResponses.forEach((response) => {
+      responses.forEach((response) => {
         const answer = response.answers[field.id];
         if (answer === undefined || answer === null || answer === '') return;
         // Skip empty checkbox arrays (no selections made)
@@ -228,7 +240,7 @@ export default function FormAnalytics() {
     });
 
     return breakdown;
-  }, [formFields, localResponses]);
+  }, [formFields, responses]);
 
   if (!form) {
     return (
@@ -551,7 +563,7 @@ export default function FormAnalytics() {
               <div className="flex items-center justify-center py-8">
                 <Spinner />
               </div>
-            ) : localResponses.length === 0 ? (
+            ) : responses.length === 0 ? (
               <EmptyState
                 icon={Inbox}
                 title="No responses yet"
@@ -574,7 +586,7 @@ export default function FormAnalytics() {
                     </tr>
                   </thead>
                   <tbody>
-                    {localResponses.slice(0, 10).map((response) => (
+                    {responses.slice(0, 10).map((response) => (
                       <tr key={response.id} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
                         <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">
                           #{response.id.slice(0, 8)}
