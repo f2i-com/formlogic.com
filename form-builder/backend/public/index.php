@@ -477,7 +477,11 @@ $app->get('/api/health', function ($request, $response) {
 });
 
 // Auth routes (public, rate limited)
-$authRateLimiter = new RateLimitMiddleware(10, 60, 'auth');
+// Shared persistent rate-limit store so every limit below holds across requests
+// and worker processes (not just within a single PHP process).
+$rateLimiter = new \FormLogic\Services\RateLimiter($container->get(MySQLConnection::class)->getConnection());
+
+$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth');
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
@@ -530,7 +534,7 @@ $getArgs = function ($request) {
 };
 
 // Rate limiter for form creation/duplication (20 per minute per IP)
-$formMutationRateLimiter = new RateLimitMiddleware(20, 60, 'form_mutation');
+$formMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'form_mutation');
 
 // Form routes (protected for management)
 $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container, $getArgs, $formMutationRateLimiter) {
@@ -587,7 +591,7 @@ $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) us
 })->add($authRequired);
 
 // Create rate limiter for public endpoints (30 submissions per minute per IP)
-$submissionRateLimiter = new RateLimitMiddleware(30, 60, 'submission');
+$submissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'submission');
 
 // Response routes (protected - require authentication)
 $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired) {
@@ -653,7 +657,7 @@ $app->get('/api/forms/{formId}/export/json', function ($request, $response) use 
 })->add($authRequired);
 
 // Create rate limiter for public form viewing (60 requests per minute per IP)
-$publicFormRateLimiter = new RateLimitMiddleware(60, 60, 'public_form');
+$publicFormRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'public_form');
 
 // Public form view (for embedding/sharing) - rate limited to prevent enumeration
 $app->get('/api/public/forms/{id}', function ($request, $response) use ($container, $getArgs) {
@@ -767,7 +771,7 @@ $app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response)
 })->add($authRequired);
 
 // API Key management routes (cookie auth, protected, rate limited)
-$apiKeyMgmtRateLimiter = new RateLimitMiddleware(10, 60, 'api_key_mgmt');
+$apiKeyMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'api_key_mgmt');
 $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(ApiKeyController::class)->index($request, $response);
@@ -781,7 +785,7 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
 })->add($authRequired)->add($apiKeyMgmtRateLimiter);
 
 // External API v1 routes (API key auth)
-$apiRateLimiter = new RateLimitMiddleware(120, 60, 'api_v1');
+$apiRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'api_v1');
 $apiKeyService = $container->get(ApiKeyService::class);
 
 $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService) {
@@ -992,7 +996,7 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
 })->add($authRequired);
 
 // Rate limiter for app runtime submissions (30 per minute per IP, same as public submission)
-$appSubmissionRateLimiter = new RateLimitMiddleware(30, 60, 'app_submission');
+$appSubmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'app_submission');
 
 // App Runtime routes (public-facing, auth required for most)
 $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter) {

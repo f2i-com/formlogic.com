@@ -15,13 +15,8 @@ class AuthService
     private PDO $mysql;
     private array $jwtConfig;
     private array $rateLimitConfig;
-
-    // In-memory rate limit tracking (for single-server deployments)
-    // For production with multiple servers, use Redis or database
-    private static array $loginAttempts = [];
-
-    // Separate tracking for email-only rate limiting (protects against distributed attacks)
-    private static array $emailAttempts = [];
+    // Shared, persistent rate-limit store (works across requests/processes).
+    private RateLimiter $rateLimiter;
 
     public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [])
     {
@@ -32,6 +27,13 @@ class AuthService
             'maxEmailAttempts' => 10,     // Max attempts per email (across all IPs)
             'decayMinutes' => 15,
         ], $rateLimitConfig);
+        $this->rateLimiter = new RateLimiter($this->mysql);
+    }
+
+    /** Rate-limit decay window in seconds. */
+    private function decaySeconds(): int
+    {
+        return (int) $this->rateLimitConfig['decayMinutes'] * 60;
     }
 
     /**
@@ -168,10 +170,7 @@ class AuthService
      */
     private function isRateLimited(string $key): bool
     {
-        $this->cleanupExpiredAttempts($key);
-
-        $attempts = self::$loginAttempts[$key] ?? [];
-        return count($attempts) >= $this->rateLimitConfig['maxAttempts'];
+        return $this->rateLimiter->count($key, $this->decaySeconds()) >= $this->rateLimitConfig['maxAttempts'];
     }
 
     /**
@@ -179,10 +178,7 @@ class AuthService
      */
     private function isEmailRateLimited(string $emailKey): bool
     {
-        $this->cleanupExpiredEmailAttempts($emailKey);
-
-        $attempts = self::$emailAttempts[$emailKey] ?? [];
-        return count($attempts) >= $this->rateLimitConfig['maxEmailAttempts'];
+        return $this->rateLimiter->count($emailKey, $this->decaySeconds()) >= $this->rateLimitConfig['maxEmailAttempts'];
     }
 
     /**
@@ -190,14 +186,7 @@ class AuthService
      */
     private function getRateLimitRemainingSeconds(string $key): int
     {
-        $attempts = self::$loginAttempts[$key] ?? [];
-        if (empty($attempts)) {
-            return 0;
-        }
-
-        $oldestAttempt = min($attempts);
-        $expiresAt = $oldestAttempt + ($this->rateLimitConfig['decayMinutes'] * 60);
-        return max(0, $expiresAt - time());
+        return $this->rateLimiter->secondsUntilReset($this->decaySeconds());
     }
 
     /**
@@ -205,14 +194,7 @@ class AuthService
      */
     private function getEmailRateLimitRemainingSeconds(string $emailKey): int
     {
-        $attempts = self::$emailAttempts[$emailKey] ?? [];
-        if (empty($attempts)) {
-            return 0;
-        }
-
-        $oldestAttempt = min($attempts);
-        $expiresAt = $oldestAttempt + ($this->rateLimitConfig['decayMinutes'] * 60);
-        return max(0, $expiresAt - time());
+        return $this->rateLimiter->secondsUntilReset($this->decaySeconds());
     }
 
     /**
@@ -220,19 +202,9 @@ class AuthService
      */
     private function recordFailedLogin(string $key, string $emailKey): void
     {
-        $now = time();
-
-        // Record IP+email attempt
-        if (!isset(self::$loginAttempts[$key])) {
-            self::$loginAttempts[$key] = [];
-        }
-        self::$loginAttempts[$key][] = $now;
-
-        // Record email-only attempt
-        if (!isset(self::$emailAttempts[$emailKey])) {
-            self::$emailAttempts[$emailKey] = [];
-        }
-        self::$emailAttempts[$emailKey][] = $now;
+        $window = $this->decaySeconds();
+        $this->rateLimiter->hit($key, $window);
+        $this->rateLimiter->hit($emailKey, $window);
     }
 
     /**
@@ -240,7 +212,7 @@ class AuthService
      */
     private function clearRateLimit(string $key): void
     {
-        unset(self::$loginAttempts[$key]);
+        $this->rateLimiter->clear($key);
     }
 
     /**
@@ -248,47 +220,7 @@ class AuthService
      */
     private function clearEmailRateLimit(string $emailKey): void
     {
-        unset(self::$emailAttempts[$emailKey]);
-    }
-
-    /**
-     * Clean up expired login attempts (IP+email combo)
-     */
-    private function cleanupExpiredAttempts(string $key): void
-    {
-        if (!isset(self::$loginAttempts[$key])) {
-            return;
-        }
-
-        $cutoff = time() - ($this->rateLimitConfig['decayMinutes'] * 60);
-        self::$loginAttempts[$key] = array_filter(
-            self::$loginAttempts[$key],
-            fn($timestamp) => $timestamp > $cutoff
-        );
-
-        if (empty(self::$loginAttempts[$key])) {
-            unset(self::$loginAttempts[$key]);
-        }
-    }
-
-    /**
-     * Clean up expired email attempts
-     */
-    private function cleanupExpiredEmailAttempts(string $emailKey): void
-    {
-        if (!isset(self::$emailAttempts[$emailKey])) {
-            return;
-        }
-
-        $cutoff = time() - ($this->rateLimitConfig['decayMinutes'] * 60);
-        self::$emailAttempts[$emailKey] = array_filter(
-            self::$emailAttempts[$emailKey],
-            fn($timestamp) => $timestamp > $cutoff
-        );
-
-        if (empty(self::$emailAttempts[$emailKey])) {
-            unset(self::$emailAttempts[$emailKey]);
-        }
+        $this->rateLimiter->clear($emailKey);
     }
 
     /**

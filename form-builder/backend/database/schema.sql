@@ -471,6 +471,20 @@ CREATE TABLE `webhooks` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
+--
+-- Table structure for table `rate_limits`
+-- Shared store for rate limiting / login throttling. Persists across PHP requests
+-- and worker processes (unlike per-process in-memory counters, which reset every
+-- request under mod_php/php-fpm and made throttling a no-op in production).
+--
+CREATE TABLE IF NOT EXISTS `rate_limits` (
+  `bucket` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `window_start` bigint NOT NULL,
+  `hits` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`bucket`,`window_start`),
+  KEY `idx_window_start` (`window_start`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
