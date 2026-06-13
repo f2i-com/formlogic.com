@@ -23,6 +23,7 @@ class RateLimitMiddleware implements MiddlewareInterface
     private int $maxRequests;
     private int $windowSeconds;
     private string $keyPrefix;
+    private bool $keyByUser;
     private IpResolver $ipResolver;
     private RateLimiter $limiter;
 
@@ -31,17 +32,24 @@ class RateLimitMiddleware implements MiddlewareInterface
      * @param int $maxRequests          Max requests allowed in the window
      * @param int $windowSeconds        Window length in seconds
      * @param string $keyPrefix         Separates limits for different endpoints
+     * @param bool $keyByUser           Key on the authenticated userId when present
+     *                                  (falls back to IP). Use for expensive
+     *                                  authenticated endpoints so IP rotation
+     *                                  cannot bypass the limit. Requires an auth
+     *                                  middleware to run first so userId is set.
      */
     public function __construct(
         RateLimiter $limiter,
         int $maxRequests = 60,
         int $windowSeconds = 60,
-        string $keyPrefix = 'default'
+        string $keyPrefix = 'default',
+        bool $keyByUser = false
     ) {
         $this->limiter = $limiter;
         $this->maxRequests = $maxRequests;
         $this->windowSeconds = $windowSeconds;
         $this->keyPrefix = $keyPrefix;
+        $this->keyByUser = $keyByUser;
         $this->ipResolver = IpResolver::fromEnvironment();
     }
 
@@ -82,12 +90,20 @@ class RateLimitMiddleware implements MiddlewareInterface
     }
 
     /**
-     * Per-client key from the trusted client IP. IpResolver only honors
+     * Per-client key. When keyByUser is on and an authenticated userId is present,
+     * the limit is per-account (so changing source IP cannot bypass it); otherwise
+     * it falls back to the trusted client IP. IpResolver only honors
      * X-Forwarded-For from configured proxies, preventing spoofing that could
      * bypass the limit.
      */
     private function getClientKey(Request $request): string
     {
+        if ($this->keyByUser) {
+            $userId = $request->getAttribute('userId');
+            if (is_string($userId) && $userId !== '') {
+                return $this->keyPrefix . ':u:' . hash('sha256', $userId);
+            }
+        }
         $ip = $this->ipResolver->getClientIp($request);
         return $this->keyPrefix . ':' . hash('sha256', $ip);
     }

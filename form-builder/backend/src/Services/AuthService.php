@@ -12,6 +12,16 @@ use PDO;
 
 class AuthService
 {
+    /**
+     * Fixed bcrypt hash used only to spend constant bcrypt time on the
+     * unknown-email login path (anti-user-enumeration). Never matches any real
+     * password.
+     */
+    private const DUMMY_PASSWORD_HASH = '$2y$12$PVgkryUdCivISlgtkNpUYeyFZnCn/OYkvLd4bY5OjSkXQO0okymu2';
+
+    /** Maximum length for a user-supplied display name (users.name is VARCHAR(255)). */
+    private const MAX_NAME_LENGTH = 255;
+
     private PDO $mysql;
     private array $jwtConfig;
     private array $rateLimitConfig;
@@ -45,6 +55,10 @@ class AuthService
      */
     public function register(string $email, string $password, ?string $name = null): array
     {
+        if ($name !== null && mb_strlen($name) > self::MAX_NAME_LENGTH) {
+            throw new \InvalidArgumentException('Name must be ' . self::MAX_NAME_LENGTH . ' characters or fewer.');
+        }
+
         $userId = $this->generateUuid();
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
         $now = date('Y-m-d H:i:s');
@@ -119,6 +133,11 @@ class AuthService
         $row = $stmt->fetch();
 
         if (!$row) {
+            // Constant-time guard: run a bcrypt comparison against a fixed dummy
+            // hash so the unknown-email path costs the same as the wrong-password
+            // path. Without this, response latency leaks whether an email is
+            // registered (user enumeration), defeating the generic error message.
+            password_verify($password, self::DUMMY_PASSWORD_HASH);
             $this->recordFailedLogin($rateLimitKey, $emailKey);
             throw new \RuntimeException('Invalid email or password');
         }
@@ -314,6 +333,9 @@ class AuthService
         $params = ['id' => $userId];
 
         if (isset($data['name'])) {
+            if (mb_strlen((string) $data['name']) > self::MAX_NAME_LENGTH) {
+                throw new \InvalidArgumentException('Name must be ' . self::MAX_NAME_LENGTH . ' characters or fewer.');
+            }
             $updates[] = "name = :name";
             $params['name'] = $data['name'];
         }

@@ -131,7 +131,22 @@ class ExternalApiController
         $script = $form['logicScript'] ?? null;
 
         try {
-            $result = $this->responseService->createResponse($args['formId'], $data, $script);
+            // Atomic quota enforcement: re-check the count under a per-form lock so
+            // concurrent submissions cannot both pass the earlier check and overshoot
+            // the cap (the lock fails open under contention).
+            $quotaLock = null;
+            if (!empty($settings['quotaLimit'])) {
+                $quotaLock = $this->responseService->acquireFormLock($args['formId']);
+                if ($this->responseService->getResponseCount($args['formId']) >= (int)$settings['quotaLimit']) {
+                    $this->responseService->releaseFormLock($quotaLock);
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'This form has reached its maximum number of responses.'], 403);
+                }
+            }
+            try {
+                $result = $this->responseService->createResponse($args['formId'], $data, $script);
+            } finally {
+                $this->responseService->releaseFormLock($quotaLock);
+            }
 
             if ($result instanceof ScriptRejection) {
                 return $this->jsonResponse($response, [
@@ -194,6 +209,15 @@ class ExternalApiController
         $results = [];
         $createdCount = 0;
 
+        // Hold a per-form lock across the whole batch so the count stays
+        // authoritative: no other process can insert while we enforce the quota,
+        // so the snapshot + createdCount can't go stale and overshoot the cap.
+        // (GET_LOCK auto-releases when the request connection closes.)
+        $quotaLock = ($quotaLimit > 0) ? $this->responseService->acquireFormLock($args['formId']) : null;
+        if ($quotaLimit > 0) {
+            $responseCount = $this->responseService->getResponseCount($args['formId']);
+        }
+
         foreach ($items as $index => $item) {
             // Enforce quota per-item to prevent batch from exceeding limit
             if ($quotaLimit > 0 && ($responseCount + $createdCount) >= $quotaLimit) {
@@ -228,6 +252,8 @@ class ExternalApiController
                 $results[] = ['index' => $index, 'success' => false, 'message' => 'Internal error processing response'];
             }
         }
+
+        $this->responseService->releaseFormLock($quotaLock);
 
         $succeeded = count(array_filter($results, fn($r) => $r['success']));
         return $this->jsonResponse($response, [
@@ -600,6 +626,15 @@ class ExternalApiController
             }
 
             if ($isEmpty) continue;
+
+            // Scalar-typed fields must receive a scalar value; a submitted
+            // array/object would otherwise reach preg_match() and throw an
+            // uncaught TypeError. Reject cleanly as a validation error.
+            $scalarTypes = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'datetime', 'time'];
+            if (in_array($fieldType, $scalarTypes, true) && !is_scalar($value)) {
+                $errors[$fieldId] = 'Invalid value';
+                continue;
+            }
 
             // Type-specific validation (mirrors ResponseController::validateFieldType)
             switch ($fieldType) {

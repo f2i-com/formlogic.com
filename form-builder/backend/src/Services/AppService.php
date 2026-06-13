@@ -51,13 +51,43 @@ class AppService
     }
 
     /**
-     * Check if a user is a member of an app (via app_users table)
+     * Check if a user is an ACTIVE member of an app (via app_users table).
+     * Suspended/pending members are not treated as members — admin-side reads
+     * must match the runtime gates (AppPublicController/FileController) which
+     * require status === 'active'.
      */
     public function isAppMember(string $appId, string $userId): bool
     {
-        $stmt = $this->mysql->prepare("SELECT 1 FROM app_users WHERE app_id = :app_id AND user_id = :user_id LIMIT 1");
+        $stmt = $this->mysql->prepare("SELECT 1 FROM app_users WHERE app_id = :app_id AND user_id = :user_id AND status = 'active' LIMIT 1");
         $stmt->execute(['app_id' => $appId, 'user_id' => $userId]);
         return (bool) $stmt->fetch();
+    }
+
+    /**
+     * Does this form belong to at least one app? Used to decide whether a stored
+     * file should be access-controlled (app-scoped) or served publicly (standalone).
+     */
+    public function isFormInAnyApp(string $formId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM app_forms WHERE form_id = :fid LIMIT 1");
+        $stmt->execute(['fid' => $formId]);
+        return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * Is the user an active member of ANY app that contains this form? Grants
+     * access to that form's app-scoped uploaded files.
+     */
+    public function userSharesActiveAppWithForm(string $formId, string $userId): bool
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT 1 FROM app_forms af
+             JOIN app_users au ON au.app_id = af.app_id
+             WHERE af.form_id = :fid AND au.user_id = :uid AND au.status = 'active'
+             LIMIT 1"
+        );
+        $stmt->execute(['fid' => $formId, 'uid' => $userId]);
+        return $stmt->fetchColumn() !== false;
     }
 
     public function getAppBySlug(string $slug): ?array
@@ -79,36 +109,55 @@ class AppService
         $now = date('Y-m-d H:i:s');
         $slug = $this->generateSlug($data['name'] ?? 'untitled');
 
-        $stmt = $this->mysql->prepare("
-            INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, created_at, updated_at)
-            VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :created_at, :updated_at)
-        ");
+        // Atomic setup: the app row, its three system roles, the owner membership
+        // and the owner permission grants must all succeed together. A partial
+        // failure used to leave an unmanageable app (no owner app_user / no perms).
+        // Guard against an outer transaction (PackService::installPack wraps this).
+        $ownTransaction = !$this->mysql->inTransaction();
+        if ($ownTransaction) {
+            $this->mysql->beginTransaction();
+        }
+        try {
+            $stmt = $this->mysql->prepare("
+                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, created_at, updated_at)
+                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :created_at, :updated_at)
+            ");
 
-        $stmt->execute([
-            'id' => $id,
-            'owner_id' => $ownerId,
-            'name' => $data['name'] ?? 'Untitled App',
-            'slug' => $slug,
-            'description' => $data['description'] ?? null,
-            'logo_url' => $data['logoUrl'] ?? null,
-            'status' => $data['status'] ?? 'draft',
-            'settings' => json_encode($data['settings'] ?? []),
-            'theme' => json_encode($data['theme'] ?? []),
-            'nav_config' => json_encode($data['navConfig'] ?? []),
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            $stmt->execute([
+                'id' => $id,
+                'owner_id' => $ownerId,
+                'name' => $data['name'] ?? 'Untitled App',
+                'slug' => $slug,
+                'description' => $data['description'] ?? null,
+                'logo_url' => $data['logoUrl'] ?? null,
+                'status' => $data['status'] ?? 'draft',
+                'settings' => json_encode($data['settings'] ?? []),
+                'theme' => json_encode($data['theme'] ?? []),
+                'nav_config' => json_encode($data['navConfig'] ?? []),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        // Create default system roles
-        $ownerRoleId = $this->createSystemRole($id, 'Owner', 'Full access to the app', 0);
-        $this->createSystemRole($id, 'Admin', 'Administrative access', 1);
-        $memberRoleId = $this->createSystemRole($id, 'Member', 'Standard member access', 2);
+            // Create default system roles
+            $ownerRoleId = $this->createSystemRole($id, 'Owner', 'Full access to the app', 0);
+            $this->createSystemRole($id, 'Admin', 'Administrative access', 1);
+            $this->createSystemRole($id, 'Member', 'Standard member access', 2);
 
-        // Add creator as Owner
-        $this->addAppUser($id, $ownerId, $ownerRoleId, 'active');
+            // Add creator as Owner
+            $this->addAppUser($id, $ownerId, $ownerRoleId, 'active');
 
-        // Grant all permissions to Owner role
-        $this->grantAllPermissions($ownerRoleId);
+            // Grant all permissions to Owner role
+            $this->grantAllPermissions($ownerRoleId);
+
+            if ($ownTransaction) {
+                $this->mysql->commit();
+            }
+        } catch (\Exception $e) {
+            if ($ownTransaction && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
 
         return $this->getApp($id);
     }
@@ -261,11 +310,18 @@ class AppService
         $removed = $stmt->rowCount() > 0;
 
         if ($removed) {
-            // Clean up orphaned response_links involving the removed form
-            $cleanup = $this->mysql->prepare(
-                "DELETE FROM response_links WHERE source_form_id = :fid OR target_form_id = :fid2"
-            );
-            $cleanup->execute(['fid' => $formId, 'fid2' => $formId]);
+            // Only purge response_links if the form no longer belongs to ANY app.
+            // response_links are global (no app_id column) and the same form can be
+            // shared across apps, so an unconditional delete would wipe the inverse
+            // relation lookups still needed by other apps that contain this form.
+            $stillUsed = $this->mysql->prepare("SELECT 1 FROM app_forms WHERE form_id = :fid LIMIT 1");
+            $stillUsed->execute(['fid' => $formId]);
+            if ($stillUsed->fetchColumn() === false) {
+                $cleanup = $this->mysql->prepare(
+                    "DELETE FROM response_links WHERE source_form_id = :fid OR target_form_id = :fid2"
+                );
+                $cleanup->execute(['fid' => $formId, 'fid2' => $formId]);
+            }
         }
 
         return $removed;

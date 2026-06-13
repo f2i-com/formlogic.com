@@ -190,7 +190,23 @@ class ResponseController
         $script = $form['logicScript'] ?? null;
 
         try {
-            $result = $this->responseService->createResponse($formId, $data, $script);
+            // Atomic quota enforcement: re-check the count under a per-form lock so
+            // concurrent submissions cannot both pass the earlier check and push the
+            // stored count past quotaLimit (the lock fails open under contention).
+            $quotaLock = null;
+            if (!empty($settings['quotaLimit'])) {
+                $quotaLock = $this->responseService->acquireFormLock($formId);
+                if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
+                    $this->responseService->releaseFormLock($quotaLock);
+                    $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
+                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                }
+            }
+            try {
+                $result = $this->responseService->createResponse($formId, $data, $script);
+            } finally {
+                $this->responseService->releaseFormLock($quotaLock);
+            }
 
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
@@ -330,6 +346,14 @@ class ResponseController
     private function validateFieldType(array $field, $value): ?string
     {
         $type = $field['type'] ?? 'short_text';
+
+        // Scalar-typed fields must receive a scalar value. A client submitting an
+        // array/object for e.g. a phone field would otherwise reach preg_match()
+        // and throw an uncaught TypeError (HTTP 500). Reject it cleanly as a 400.
+        $scalarTypes = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'datetime', 'time'];
+        if (in_array($type, $scalarTypes, true) && !is_scalar($value)) {
+            return 'Invalid value';
+        }
 
         switch ($type) {
             case 'email':
@@ -1026,6 +1050,10 @@ class ResponseController
         $offset = 0;
         $totalWritten = 0;
         $isFirst = true;
+        // Hard cap (mirrors the CSV export) so one request cannot stream an
+        // unbounded table and monopolize a PHP worker.
+        $maxExportRows = 100000;
+        $truncated = false;
 
         do {
             $batch = $this->responseService->getFormResponses($formId, [
@@ -1034,6 +1062,10 @@ class ResponseController
             ]);
 
             foreach ($batch as $resp) {
+                if ($totalWritten >= $maxExportRows) {
+                    $truncated = true;
+                    break;
+                }
                 if (!$isFirst) {
                     $body->write(',');
                 }
@@ -1043,10 +1075,12 @@ class ResponseController
             }
 
             $offset += $batchSize;
-        } while (count($batch) === $batchSize);
+        } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
 
         $body->write('],"meta":' . json_encode([
             'totalResponses' => $totalWritten,
+            'truncated' => $truncated,
+            'maxRows' => $maxExportRows,
             'version' => '1.0',
         ]) . '}');
 

@@ -255,7 +255,23 @@ class AppPublicController
         }
 
         try {
-            $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
+            // Atomic quota enforcement: re-check the count under a per-form lock so
+            // concurrent submissions cannot both pass the earlier check and overshoot
+            // quotaLimit (the lock fails open under contention).
+            $quotaLock = null;
+            if ($form && !empty($settings['quotaLimit'])) {
+                $quotaLock = $this->responseService->acquireFormLock($formId);
+                if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
+                    $this->responseService->releaseFormLock($quotaLock);
+                    $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
+                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                }
+            }
+            try {
+                $result = $this->appResponseService->createResponse($app['id'], $formId, $data, $userId, $script);
+            } finally {
+                $this->responseService->releaseFormLock($quotaLock);
+            }
 
             if ($result instanceof \FormLogic\Services\ScriptRejection) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => $result->message, 'rejected' => true], 422);

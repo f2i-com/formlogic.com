@@ -445,10 +445,38 @@ class FormService
      */
     private function saveFormFields(string $formId, array $fields): void
     {
-        // Validate field ID uniqueness
-        $fieldIds = array_filter(array_column($fields, 'id'));
-        if (count($fieldIds) !== count(array_unique($fieldIds))) {
+        // Explicit field IDs supplied by the client must be unique among themselves.
+        $explicitIds = array_values(array_filter(
+            array_column($fields, 'id'),
+            static fn($id) => $id !== null && $id !== ''
+        ));
+        if (count($explicitIds) !== count(array_unique($explicitIds))) {
             throw new \InvalidArgumentException('Field IDs must be unique within a form');
+        }
+
+        // Resolve a final, unique id for EVERY field before insert. Fields without
+        // an id get one generated from their label; because that generator is
+        // label-derived and truncated, two id-less fields with the same label
+        // would otherwise produce the same id and the second INSERT would violate
+        // the PRIMARY KEY and roll back the whole save. De-duplicate generated ids
+        // (numeric suffix) against all ids already in use.
+        $usedIds = array_fill_keys($explicitIds, true);
+        foreach ($fields as $i => $field) {
+            $id = $field['id'] ?? '';
+            if ($id === null || $id === '') {
+                $base = $this->generateHumanFieldId($field['label'] ?? '');
+                if ($base === '') {
+                    $base = 'field';
+                }
+                $finalId = $base;
+                $counter = 1;
+                while (isset($usedIds[$finalId])) {
+                    $finalId = $base . '_' . $counter;
+                    $counter++;
+                }
+                $usedIds[$finalId] = true;
+                $fields[$i]['id'] = $finalId;
+            }
         }
 
         $db = $this->sqlite->getFormDatabase($formId);
@@ -467,7 +495,7 @@ class FormService
 
             foreach ($fields as $index => $field) {
                 $stmt->execute([
-                    'id' => $field['id'] ?? $this->generateHumanFieldId($field['label'] ?? ''),
+                    'id' => $field['id'],
                     'type' => $field['type'],
                     'label' => $field['label'] ?? null,
                     'description' => $field['description'] ?? null,

@@ -147,12 +147,22 @@ class FileController
      * Serve a stored file.
      * GET /api/files/{formId}/{fileId}/{filename}
      *
-     * Public endpoint - files are keyed by UUID so not guessable.
+     * Files for standalone published forms are public (the form itself is public).
+     * Files for app-scoped forms (or unpublished forms) are access-controlled:
+     * only the form owner or an active member of an app containing the form may
+     * fetch them — UUID secrecy alone is not relied upon, and access is revoked
+     * when membership is revoked.
      */
     public function serve(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
         $fileId = $args['fileId'];
+
+        if (!$this->authorizeFileAccess($request, $formId)) {
+            // Indistinguishable from a missing file so the endpoint does not
+            // confirm the existence of a private form's files to outsiders.
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'File not found'], 404);
+        }
 
         $filePath = $this->fileStorage->getFilePath($formId, $fileId);
         if (!$filePath || !file_exists($filePath)) {
@@ -176,6 +186,45 @@ class FileController
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Cache-Control', 'public, max-age=31536000, immutable')
             ->withBody($body);
+    }
+
+    /**
+     * Decide whether the caller may fetch files for $formId.
+     * - Standalone published form  -> public (anyone).
+     * - App-scoped or unpublished  -> form owner, or an active member of an app
+     *   that contains the form.
+     */
+    private function authorizeFileAccess(Request $request, string $formId): bool
+    {
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return false;
+        }
+
+        $appScoped = $this->appService ? $this->appService->isFormInAnyApp($formId) : false;
+
+        // Publicly fillable standalone form: its uploaded files are public too.
+        if (!$appScoped && ($form['status'] ?? null) === 'published') {
+            return true;
+        }
+
+        // Otherwise authentication is required.
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return false;
+        }
+
+        // The form owner can always access.
+        if (($form['userId'] ?? null) === $userId) {
+            return true;
+        }
+
+        // An active member of an app containing the form can access its files.
+        if ($appScoped && $this->appService && $this->appService->userSharesActiveAppWithForm($formId, $userId)) {
+            return true;
+        }
+
+        return false;
     }
 
     private function jsonResponse(Response $response, array $data, int $status = 200): Response

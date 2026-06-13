@@ -572,6 +572,40 @@ class ResponseService
     }
 
     /**
+     * Per-form advisory lock (MySQL GET_LOCK), used as a cross-process mutex so a
+     * quota check + insert can be made atomic and concurrent submissions cannot
+     * both pass the check and overshoot the cap. Responses live in SQLite but the
+     * mutex is shared via MySQL. Fails open (returns null) so a lock hiccup never
+     * blocks submissions; release with releaseFormLock().
+     */
+    public function acquireFormLock(string $formId, int $timeoutSeconds = 5): ?string
+    {
+        $name = 'fl_form_submit_' . substr(hash('sha256', $formId), 0, 40);
+        try {
+            $stmt = $this->mysql->prepare("SELECT GET_LOCK(:n, :t)");
+            $stmt->bindValue(':n', $name);
+            $stmt->bindValue(':t', $timeoutSeconds, PDO::PARAM_INT);
+            $stmt->execute();
+            return ((int) $stmt->fetchColumn() === 1) ? $name : null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    public function releaseFormLock(?string $name): void
+    {
+        if ($name === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare("SELECT RELEASE_LOCK(:n)");
+            $stmt->execute(['n' => $name]);
+        } catch (\Exception $e) {
+            // best-effort; the lock also releases on connection close
+        }
+    }
+
+    /**
      * Get form analytics
      */
     public function getFormAnalytics(string $formId, array $options = []): array

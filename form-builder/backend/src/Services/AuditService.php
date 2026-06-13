@@ -140,53 +140,64 @@ class AuditService
      * Verify the integrity of the audit chain.
      * Recomputes each hash and compares to the stored value.
      * Skips pre-migration entries (hash=NULL).
-     * Uses cursor-based iteration to avoid loading entire log into memory.
+     * Iterates in bounded keyset-paginated batches so memory stays flat even for
+     * a very large append-only log (the previous query buffered the entire table).
      *
      * @return array{intact: bool, verified: int, total: int, brokenAt: array|null}
      */
     public function verifyChain(): array
     {
-        // Use unbuffered query to iterate row-by-row for large audit logs
-        $stmt = $this->mysql->prepare("
-            SELECT id, user_id, action, resource_type, resource_id, details, ip_address, integrity_hash, sequence_number, created_at
-            FROM audit_log
-            WHERE integrity_hash IS NOT NULL
-            ORDER BY sequence_number ASC
-        ");
-        $stmt->execute();
-
-        // Count only verifiable (post-migration) entries
+        // Count verifiable (post-migration) entries up front (before opening the
+        // paginated cursor, so no result set is left open on the shared connection).
         $countStmt = $this->mysql->query("SELECT COUNT(*) FROM audit_log WHERE integrity_hash IS NOT NULL");
         $total = (int) $countStmt->fetchColumn();
 
         $verified = 0;
         $previousHash = self::GENESIS_HASH;
+        $lastSeq = -1;            // sequence_number is monotonic; paginate by it
+        $batchSize = 1000;
 
-        while ($entry = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $detailsJson = $entry['details'] ?? '';
-            $ipForHash = $entry['ip_address'] ?? '';
-            $hashInput = $previousHash . '|' . $entry['action'] . '|' . $entry['resource_type'] . '|'
-                . ($entry['resource_id'] ?? '') . '|' . ($entry['user_id'] ?? '') . '|'
-                . $detailsJson . '|' . $ipForHash . '|' . $entry['created_at'];
-            $expectedHash = hash_hmac('sha256', $hashInput, $this->hmacKey);
+        $stmt = $this->mysql->prepare("
+            SELECT id, user_id, action, resource_type, resource_id, details, ip_address, integrity_hash, sequence_number, created_at
+            FROM audit_log
+            WHERE integrity_hash IS NOT NULL AND sequence_number > :last
+            ORDER BY sequence_number ASC
+            LIMIT :batch
+        ");
 
-            if ($expectedHash !== $entry['integrity_hash']) {
-                return [
-                    'intact' => false,
-                    'verified' => $verified,
-                    'total' => $total,
-                    'brokenAt' => [
-                        'id' => $entry['id'],
-                        'sequenceNumber' => (int) $entry['sequence_number'],
-                        'action' => $entry['action'],
-                        'createdAt' => $entry['created_at'],
-                    ],
-                ];
+        do {
+            $stmt->bindValue(':last', $lastSeq, PDO::PARAM_INT);
+            $stmt->bindValue(':batch', $batchSize, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($rows as $entry) {
+                $detailsJson = $entry['details'] ?? '';
+                $ipForHash = $entry['ip_address'] ?? '';
+                $hashInput = $previousHash . '|' . $entry['action'] . '|' . $entry['resource_type'] . '|'
+                    . ($entry['resource_id'] ?? '') . '|' . ($entry['user_id'] ?? '') . '|'
+                    . $detailsJson . '|' . $ipForHash . '|' . $entry['created_at'];
+                $expectedHash = hash_hmac('sha256', $hashInput, $this->hmacKey);
+
+                if ($expectedHash !== $entry['integrity_hash']) {
+                    return [
+                        'intact' => false,
+                        'verified' => $verified,
+                        'total' => $total,
+                        'brokenAt' => [
+                            'id' => $entry['id'],
+                            'sequenceNumber' => (int) $entry['sequence_number'],
+                            'action' => $entry['action'],
+                            'createdAt' => $entry['created_at'],
+                        ],
+                    ];
+                }
+
+                $previousHash = $entry['integrity_hash'];
+                $lastSeq = (int) $entry['sequence_number'];
+                $verified++;
             }
-
-            $previousHash = $entry['integrity_hash'];
-            $verified++;
-        }
+        } while (count($rows) === $batchSize);
 
         return [
             'intact' => true,

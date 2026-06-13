@@ -25,8 +25,24 @@ class DocumentConverter
         $this->commandTimeoutSeconds = 60; // Maximum time for any command
 
         if (!is_dir($this->tempDir)) {
-            mkdir($this->tempDir, 0700, true);
+            if (!@mkdir($this->tempDir, 0700, true) && !is_dir($this->tempDir)) {
+                throw new \RuntimeException('Unable to create document temp directory');
+            }
+        } elseif (function_exists('posix_geteuid') && @fileowner($this->tempDir) !== posix_geteuid()) {
+            // A pre-existing temp dir we do not own (e.g. on a shared host with a
+            // world-writable /tmp) could be an attacker-staged symlink farm. Refuse it.
+            throw new \RuntimeException('Document temp directory has unexpected ownership');
         }
+    }
+
+    /**
+     * Unpredictable temp path base inside our private temp dir. Uses CSPRNG bytes
+     * (not time-based uniqid) so an attacker on a shared host cannot pre-stage
+     * symlinks at the expected output names.
+     */
+    private function randomTempBase(string $prefix): string
+    {
+        return $this->tempDir . '/' . $prefix . bin2hex(random_bytes(16));
     }
 
     /**
@@ -98,7 +114,7 @@ class DocumentConverter
     private function convertPdfToImages(string $pdfPath): array
     {
         $images = [];
-        $outputPattern = $this->tempDir . '/' . uniqid('pdf_') . '_%d.png';
+        $outputPattern = $this->randomTempBase('pdf_') . '_%d.png';
 
         // Check if ImageMagick is available
         $hasImageMagick = $this->commandExists('convert');
@@ -107,7 +123,7 @@ class DocumentConverter
 
         if ($hasPdftoppm) {
             // Use pdftoppm (from poppler-utils) - most reliable
-            $outputBase = $this->tempDir . '/' . uniqid('pdf_');
+            $outputBase = $this->randomTempBase('pdf_');
             $command = sprintf(
                 'pdftoppm -png -r %d -l %d %s %s 2>&1',
                 $this->imageDpi,
@@ -123,6 +139,9 @@ class DocumentConverter
             sort($files);
 
             foreach ($files as $file) {
+                if (is_link($file)) {
+                    continue; // never follow a symlink we didn't create
+                }
                 $images[] = $this->processImage($file);
                 unlink($file);
             }
@@ -141,14 +160,14 @@ class DocumentConverter
             // Find generated files
             for ($i = 0; $i < $this->maxPages; $i++) {
                 $file = sprintf(str_replace('%d', '%03d', $outputPattern), $i);
-                if (file_exists($file)) {
+                if (file_exists($file) && !is_link($file)) {
                     $images[] = $this->processImage($file);
                     unlink($file);
                 }
             }
         } elseif ($hasGhostscript) {
             // Use Ghostscript directly
-            $outputPattern = $this->tempDir . '/' . uniqid('pdf_') . '_%03d.png';
+            $outputPattern = $this->randomTempBase('pdf_') . '_%03d.png';
             $command = sprintf(
                 'gs -dNOPAUSE -dBATCH -sDEVICE=png16m -r%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
                 $this->imageDpi,
@@ -162,7 +181,7 @@ class DocumentConverter
             // Find generated files
             for ($i = 1; $i <= $this->maxPages; $i++) {
                 $file = sprintf($outputPattern, $i);
-                if (file_exists($file)) {
+                if (file_exists($file) && !is_link($file)) {
                     $images[] = $this->processImage($file);
                     unlink($file);
                 }
@@ -211,7 +230,9 @@ class DocumentConverter
         try {
             $images = $this->convertPdfToImages($pdfPath);
         } finally {
-            unlink($pdfPath);
+            if (file_exists($pdfPath) && !is_link($pdfPath)) {
+                unlink($pdfPath);
+            }
         }
 
         return $images;

@@ -344,6 +344,7 @@ class PackCatalogController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'No file uploaded or upload error'], 400);
         }
 
+        $tmpPath = null;
         try {
             // Move to temp location for processing
             $tmpPath = tempnam(sys_get_temp_dir(), 'pack_');
@@ -355,11 +356,6 @@ class PackCatalogController
                 'type' => $file->getClientMediaType(),
             ]);
 
-            // Clean up temp file
-            if (file_exists($tmpPath)) {
-                unlink($tmpPath);
-            }
-
             return $this->jsonResponse($response, [
                 'success' => true,
                 'pack' => $packData,
@@ -370,6 +366,13 @@ class PackCatalogController
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to process upload'], 500);
+        } finally {
+            // Always remove the temp upload — processZipUpload throws on many
+            // attacker-controllable conditions (bad MIME, oversized, bad manifest),
+            // and leaking a ~50MB temp file per failed upload is a disk-exhaustion DoS.
+            if ($tmpPath !== null && file_exists($tmpPath)) {
+                unlink($tmpPath);
+            }
         }
     }
 

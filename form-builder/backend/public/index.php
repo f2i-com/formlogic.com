@@ -507,17 +507,24 @@ $app->get('/api/ai/status', function ($request, $response) use ($container) {
     return $container->get(AIController::class)->status($request, $response);
 });
 
+// AI endpoints are expensive (paid OpenAI calls + document-conversion subprocesses),
+// so they get a strict PER-USER rate limit on top of auth. The file-conversion
+// route shells out to libreoffice/gs/pdftoppm and is throttled harder.
+// keyByUser is safe here because $authRequired runs first and sets userId.
+$aiRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'ai', true);
+$aiFileRateLimiter = new RateLimitMiddleware($rateLimiter, 5, 60, 'ai_file', true);
+
 // Protected AI routes (require authentication to prevent abuse)
-$app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
+$app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $aiFileRateLimiter) {
     // Form generation from text prompt
     $group->post('/generate-form', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateForm($request, $response);
     });
 
-    // Form generation from file upload (PDF, Word, image)
+    // Form generation from file upload (PDF, Word, image) — extra-throttled (subprocesses)
     $group->post('/generate-form-from-file', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateFormFromFile($request, $response);
-    });
+    })->add($aiFileRateLimiter);
 
     // Form generation from base64 images
     $group->post('/generate-form-from-images', function ($request, $response) use ($container) {
@@ -533,7 +540,7 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container) {
     $group->post('/improve-script', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->improveScript($request, $response);
     });
-})->add($authRequired);
+})->add($aiRateLimiter)->add($authRequired);
 
 // Helper function to get route args
 $getArgs = function ($request) {
@@ -645,10 +652,12 @@ $app->post('/api/forms/{formId}/upload', function ($request, $response) use ($co
     return $container->get(FileController::class)->upload($request, $response, $getArgs($request));
 })->add($submissionRateLimiter);
 
-// File serving (public - files keyed by UUID)
+// File serving. Public for standalone published forms; app-scoped/unpublished
+// forms are access-controlled inside serve(). authOptional populates userId when
+// a valid token is present without rejecting anonymous requests for public files.
 $app->get('/api/files/{formId}/{fileId}/{filename}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(FileController::class)->serve($request, $response, $getArgs($request));
-});
+})->add($authOptional);
 
 // Analytics routes (protected)
 $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {

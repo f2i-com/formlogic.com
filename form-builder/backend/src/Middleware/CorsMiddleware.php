@@ -110,10 +110,18 @@ class CorsMiddleware implements MiddlewareInterface
                 $host = $parsed['host'];
                 // Check if host ends with .domain or is exactly domain
                 if ($host === $domain || str_ends_with($host, '.' . $domain)) {
-                    // Reconstruct origin without host to compare scheme/port
                     $patternScheme = parse_url($pattern, PHP_URL_SCHEME) ?? 'https';
                     $originScheme = $parsed['scheme'] ?? 'https';
-                    return $originScheme === $patternScheme;
+                    if ($originScheme !== $patternScheme) {
+                        return false;
+                    }
+                    // The browser treats a non-default port as a distinct origin, so
+                    // a wildcard match must NOT silently accept arbitrary ports on an
+                    // allowed subdomain (e.g. https://app.example.com:1337). Only the
+                    // scheme's default port qualifies for credentialed access.
+                    $defaultPort = $originScheme === 'https' ? 443 : ($originScheme === 'http' ? 80 : null);
+                    $originPort = $parsed['port'] ?? $defaultPort;
+                    return $originPort === $defaultPort;
                 }
             }
         }

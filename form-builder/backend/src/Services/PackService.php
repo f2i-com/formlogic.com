@@ -42,13 +42,18 @@ class PackService
         $createdFormIds = [];
         $createdAppIds = [];
 
-        $this->mysql->beginTransaction();
-
-        // Prevent duplicate imports of the same pack (inside transaction to avoid TOCTOU race)
+        // Prevent duplicate imports of the same pack. A plain SELECT does not lock a
+        // not-yet-existing row, so a named lock (per user+pack) serializes concurrent
+        // imports — the check-then-insert is otherwise a TOCTOU race (no UNIQUE key).
         $meta = $packData['packMeta'];
         $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
+        $installLock = ($packId !== 'custom') ? $this->acquireInstallLock($packId, $userId) : null;
+
+        $this->mysql->beginTransaction();
+
         if ($packId !== 'custom' && $this->isPackInstalled($packId, $userId)) {
             $this->mysql->rollBack();
+            $this->releaseInstallLock($installLock);
             throw new \RuntimeException('This pack is already installed');
         }
 
@@ -136,7 +141,12 @@ class PackService
                     }
 
                     if (!empty($permissions)) {
-                        $this->appUserService->setRolePermissions($role['id'], $permissions);
+                        // The importer is the owner of the freshly created app, so they
+                        // are allowed to grant app-level permissions the pack defines.
+                        // Without this flag, any pack containing an admin-style role
+                        // (e.g. one with view_analytics/manage_users) would be
+                        // uninstallable for everyone.
+                        $this->appUserService->setRolePermissions($role['id'], $permissions, true);
                     }
                 }
 
@@ -164,6 +174,7 @@ class PackService
             ]);
 
             $this->mysql->commit();
+            $this->releaseInstallLock($installLock);
 
             return [
                 'installationId' => $installationId,
@@ -173,6 +184,7 @@ class PackService
 
         } catch (\Exception $e) {
             $this->mysql->rollBack();
+            $this->releaseInstallLock($installLock);
 
             // Clean up any created forms (SQLite databases)
             foreach ($createdFormIds as $fid) {
@@ -314,11 +326,22 @@ class PackService
         $meta = $packData['packMeta'];
         $packId = $meta['id'] ?? $meta['name'] ?? 'custom';
 
-        // Don't adopt if already tracked
-        if ($this->isPackInstalled($packId, $userId)) {
-            throw new \RuntimeException('Pack is already tracked');
-        }
+        // Serialize against concurrent adopt/import of the same pack by this user.
+        $installLock = $this->acquireInstallLock($packId, $userId);
+        try {
+            // Don't adopt if already tracked
+            if ($this->isPackInstalled($packId, $userId)) {
+                throw new \RuntimeException('Pack is already tracked');
+            }
 
+            return $this->adoptExistingPackLocked($packData, $userId, $packId, $meta);
+        } finally {
+            $this->releaseInstallLock($installLock);
+        }
+    }
+
+    private function adoptExistingPackLocked(array $packData, string $userId, string $packId, array $meta): array
+    {
         // Match forms by title
         $formIds = [];
         foreach ($packData['forms'] as $packForm) {
@@ -378,6 +401,40 @@ class PackService
             'formsMatched' => count($formIds),
             'appsMatched' => count($appIds),
         ];
+    }
+
+    /**
+     * Serialize concurrent install/adopt of the same pack by the same user so the
+     * isPackInstalled() check-then-insert cannot race into duplicate installations
+     * (there is no UNIQUE constraint on pack_installations). Mirrors the audit-chain
+     * GET_LOCK pattern. Fails open (returns null) so a lock-server hiccup never
+     * blocks legitimate installs.
+     */
+    private function acquireInstallLock(string $packId, string $userId): ?string
+    {
+        // GET_LOCK names are capped at 64 chars; hash to stay well within that.
+        $name = 'fl_pack_install_' . hash('sha256', $packId . '|' . $userId);
+        $name = substr($name, 0, 60);
+        try {
+            $stmt = $this->mysql->prepare("SELECT GET_LOCK(:n, 5)");
+            $stmt->execute(['n' => $name]);
+            return ((int) $stmt->fetchColumn() === 1) ? $name : null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+
+    private function releaseInstallLock(?string $name): void
+    {
+        if ($name === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare("SELECT RELEASE_LOCK(:n)");
+            $stmt->execute(['n' => $name]);
+        } catch (\Exception $e) {
+            // best-effort; the lock also releases on connection close
+        }
     }
 
     /**
