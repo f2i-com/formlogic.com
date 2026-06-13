@@ -4,22 +4,22 @@ import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, R
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
 import type { App } from '../../types/app';
 import { DEFAULT_APP_THEME } from '../../types/app';
 
 const tabs = [
-  { label: 'General', icon: Settings },
-  { label: 'Theme', icon: Palette },
-  { label: 'Manage', icon: LayoutGrid },
+  { label: 'General', value: 'general', icon: Settings },
+  { label: 'Theme', value: 'theme', icon: Palette },
+  { label: 'Manage', value: 'manage', icon: LayoutGrid },
 ];
 
 export function AppSettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const { updateApp, fetchApps } = useAppStore();
-  const [activeTab, setActiveTab] = useState(0);
   const [app, setApp] = useState<App | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -74,29 +74,20 @@ export function AppSettings() {
       <div className="max-w-4xl mx-auto">
 
       {/* Tab navigation */}
-      <div className="flex border-b border-gray-200 dark:border-slate-700 mb-6">
-        {tabs.map((tab, i) => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.label}
-              onClick={() => setActiveTab(i)}
-              className={cn(
-                'flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors cursor-pointer',
-                i === activeTab
-                  ? 'border-primary-600 text-primary-600 dark:text-primary-400'
-                  : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <Tabs defaultValue="general">
+        <TabsList variant="underline" aria-label="App settings sections" className="mb-6">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <TabsTrigger key={tab.value} value={tab.value} variant="underline">
+                <span className="flex items-center gap-2"><Icon className="h-4 w-4" />{tab.label}</span>
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
 
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
-        {activeTab === 0 && (
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
+          <TabsContent value="general">
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name</label>
@@ -124,9 +115,9 @@ export function AppSettings() {
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
             </div>
           </div>
-        )}
+          </TabsContent>
 
-        {activeTab === 1 && (
+          <TabsContent value="theme">
           <div className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -203,9 +194,9 @@ export function AppSettings() {
               </div>
             </div>
           </div>
-        )}
+          </TabsContent>
 
-        {activeTab === 2 && (
+          <TabsContent value="manage">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
               { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
@@ -229,8 +220,9 @@ export function AppSettings() {
               </button>
             ))}
           </div>
-        )}
-      </div>
+          </TabsContent>
+        </div>
+      </Tabs>
     </div>
     </div>
     </div>
