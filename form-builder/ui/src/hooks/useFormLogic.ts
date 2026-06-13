@@ -4,6 +4,7 @@ import {
   validateWithExpression,
   calculateValue,
   validateExpression,
+  testExpression as runTest,
 } from '../lib/formlogic';
 import type { FormField } from '../types/form';
 
@@ -311,16 +312,10 @@ export function useExpressionTester() {
         }
       }
 
-      // Evaluate with context
-      try {
-        const output = await evaluateCondition(expression, context);
-        setResult({ valid: true, output });
-      } catch (err) {
-        setResult({
-          valid: false,
-          error: err instanceof Error ? err.message : 'Evaluation error',
-        });
-      }
+      // Evaluate with context using the raw tester so calculated-field and
+      // validation panels see the real value/message, not a boolean coercion.
+      const r = await runTest(expression, context);
+      setResult(r);
 
       setIsTesting(false);
     },

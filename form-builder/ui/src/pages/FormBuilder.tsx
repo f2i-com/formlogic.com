@@ -632,6 +632,7 @@ export default function FormBuilder() {
           <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 overflow-y-auto flex-shrink-0">
             {selectedField ? (
               <FieldSettingsPanel
+                key={selectedField.id}
                 field={selectedField}
                 allFields={form.fields}
                 onUpdate={handleUpdateField}

@@ -122,10 +122,16 @@ export function LogicEditor({
       // Convert field IDs to variable names for display
       const displayExpr = replaceIdsWithVariables(field.conditionalLogic.expression, idToVar);
       setExpression(displayExpr);
+      // Simple Mode can't represent an arbitrary saved expression, so it would
+      // render empty (looks like "no logic") and then overwrite the saved value
+      // the moment a condition is added. Open in Expression mode to show the
+      // real saved logic.
+      setMode('expression');
     } else {
       setAction('show');
       setExpression('');
       setConditions([]);
+      setMode('simple');
     }
   }, [field, idToVar]);
 

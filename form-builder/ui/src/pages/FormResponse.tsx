@@ -818,18 +818,17 @@ export default function FormResponse() {
     const startTime = useResponseStore.getState().startTime;
     const completionTime = startTime ? Math.max(0, Date.now() - startTime) : undefined;
 
-    // Persist to the server so the form owner actually receives the submission and
-    // server-side onSubmit logic runs. POST first (answers still intact) so a
-    // server-side rejection can be surfaced without losing the user's input;
-    // network failures are queued by the service worker's background sync.
+    // Best-effort server persistence so the form owner actually receives the
+    // submission and server-side onSubmit logic runs. This succeeds for
+    // published/cloud forms (and the service worker queues offline POSTs for
+    // retry); it fails harmlessly for local-only forms that don't exist on the
+    // server. It must never block the user, so failures are logged, not surfaced.
     try {
       const result = await api.submitResponse(form.id, { answers: currentAnswers, completionTime });
       if (result.error) {
-        setSubmitError(result.error);
-        return;
+        logger.warn('Response not persisted to server (kept locally):', result.error);
       }
     } catch (err) {
-      // Offline / unreachable: the queued POST will retry; continue optimistically.
       logger.error('Failed to submit response to server', err);
     }
 

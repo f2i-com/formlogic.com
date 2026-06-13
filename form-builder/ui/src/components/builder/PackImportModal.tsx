@@ -91,13 +91,13 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     }
   }, [isOpen, storageMode]);
 
-  // Debounced search
+  // Debounced search (API-only, mirroring the load effect above)
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => {
-      if (isOpen) loadCatalog();
+      if (isOpen && storageMode === 'api') loadCatalog();
     }, 300);
-  }, [searchQuery, sortBy]);
+  }, [searchQuery, sortBy, isOpen, storageMode]);
 
   const [seeding, setSeeding] = useState(false);
   const seedAttemptedRef = useRef(false);

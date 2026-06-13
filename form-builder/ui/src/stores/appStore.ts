@@ -74,7 +74,11 @@ export const useAppStore = create<AppState>()(
             set({ error: result.error });
             return null;
           }
-          const app = result.data?.app as App;
+          const app = result.data?.app as App | undefined;
+          if (!app) {
+            set({ error: 'Create failed: no app returned' });
+            return null;
+          }
           set((s) => ({ apps: [...s.apps, app] }));
           return app;
         } catch (e) {

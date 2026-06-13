@@ -26,6 +26,9 @@ export function Tooltip({
   }, []);
 
   const showTooltip = useCallback(() => {
+    // Clear any pending timer so there is at most one in-flight; otherwise a
+    // rapid leave/enter leaks timers and can flash a tooltip after the pointer left.
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => setIsVisible(true), delay);
   }, [delay]);
 

@@ -53,8 +53,16 @@ function getValidationOptions(fieldType: FieldType) {
 
 export function ValidationEditor({ rules, fieldType, onChange }: ValidationEditorProps) {
   const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
-  const { result, isTesting, testExpression } = useExpressionTester();
+  const { result, isTesting, testExpression, reset } = useExpressionTester();
   const [testValue, setTestValue] = useState('');
+
+  // Switch which rule's editor is expanded, clearing the shared tester result and
+  // test input so one rule's result never shows under another.
+  const toggleRule = (ruleId: string) => {
+    setExpandedRuleId((prev) => (prev === ruleId ? null : ruleId));
+    reset();
+    setTestValue('');
+  };
 
   const options = getValidationOptions(fieldType);
 
@@ -74,6 +82,8 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
 
     onChange([...rules, newRule]);
     setExpandedRuleId(ruleId);
+    reset();
+    setTestValue('');
   };
 
   const updateRule = (ruleId: string, updates: Partial<ValidationRule>) => {
@@ -152,8 +162,8 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                   'flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800/50 cursor-pointer',
                   expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-800'
                 )}
-                onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id); } }}
+                onClick={() => toggleRule(rule.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRule(rule.id); } }}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-700 dark:text-slate-200">

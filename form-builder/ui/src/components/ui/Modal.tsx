@@ -76,36 +76,38 @@ export function Modal({
   );
 
   useEffect(() => {
-    if (isOpen) {
-      // Store the currently focused element (only on initial open)
-      if (!hasInitialFocusRef.current) {
-        previousFocusRef.current = document.activeElement as HTMLElement;
-      }
-
-      document.addEventListener('keydown', handleKeyDown);
-      openModalCount++;
-      document.body.style.overflow = 'hidden';
-
-      // Focus the first focusable element in the modal (only on initial open)
-      if (!hasInitialFocusRef.current) {
-        hasInitialFocusRef.current = true;
-        requestAnimationFrame(() => {
-          if (modalRef.current) {
-            const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
-            focusableElements[0]?.focus();
-          }
-        });
-      }
-    } else {
-      // Reset the flag when modal closes
+    // Closed runs must have NO side effects (and no cleanup that touches the
+    // shared count) — otherwise an always-mounted/stacked modal decrements the
+    // counter it never incremented, unlocking body scroll behind an open modal.
+    if (!isOpen) {
       hasInitialFocusRef.current = false;
+      return;
+    }
+
+    // Store the currently focused element (only on initial open)
+    if (!hasInitialFocusRef.current) {
+      previousFocusRef.current = document.activeElement as HTMLElement;
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+    openModalCount++;
+    document.body.style.overflow = 'hidden';
+
+    // Focus the first focusable element in the modal (only on initial open)
+    if (!hasInitialFocusRef.current) {
+      hasInitialFocusRef.current = true;
+      requestAnimationFrame(() => {
+        if (modalRef.current) {
+          const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS);
+          focusableElements[0]?.focus();
+        }
+      });
     }
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      openModalCount--;
-      if (openModalCount <= 0) {
-        openModalCount = 0;
+      openModalCount = Math.max(0, openModalCount - 1);
+      if (openModalCount === 0) {
         document.body.style.overflow = '';
       }
 

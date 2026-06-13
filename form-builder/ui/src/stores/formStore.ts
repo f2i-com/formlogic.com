@@ -43,7 +43,8 @@ interface FormState {
   error: string | null;
   storageMode: StorageMode;
   isInitialized: boolean;
-  savingFormIds: Record<string, boolean>;
+  // Per-form count of in-flight saves (field/settings/theme/meta can overlap)
+  savingFormIds: Record<string, number>;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -124,8 +125,13 @@ export const useFormStore = create<FormState>()(
     // Helper to sync a form field to the API with debouncing
     const markSaving = (formId: string, saving: boolean) => {
       set((s) => {
+        const current = s.savingFormIds[formId] ?? 0;
         if (saving) {
-          return { savingFormIds: { ...s.savingFormIds, [formId]: true } };
+          return { savingFormIds: { ...s.savingFormIds, [formId]: current + 1 } };
+        }
+        const next = current - 1;
+        if (next > 0) {
+          return { savingFormIds: { ...s.savingFormIds, [formId]: next } };
         }
         const { [formId]: _, ...rest } = s.savingFormIds;
         return { savingFormIds: rest };
@@ -171,7 +177,7 @@ export const useFormStore = create<FormState>()(
       error: null,
       storageMode: 'local' as StorageMode,
       isInitialized: false,
-      savingFormIds: {} as Record<string, boolean>,
+      savingFormIds: {} as Record<string, number>,
 
       initialize: async () => {
         const state = get();

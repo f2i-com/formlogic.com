@@ -520,7 +520,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
               {editedTheme.backgroundImage && (
                 <div
                   className="absolute inset-0 bg-black/20"
-                  style={{ backgroundColor: `${editedTheme.backgroundColor}cc` }}
+                  style={{ backgroundColor: `color-mix(in srgb, ${editedTheme.backgroundColor} 80%, transparent)` }}
                 />
               )}
               <div className="relative">

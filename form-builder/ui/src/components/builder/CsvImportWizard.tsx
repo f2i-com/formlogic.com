@@ -372,7 +372,7 @@ export function CsvImportWizard({
                 {mappedFieldCount} of {parseResult.headers.length} columns mapped
               </p>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={resetState}>
+                <Button variant="outline" onClick={() => setStep('upload')}>
                   <ArrowLeft className="h-4 w-4 mr-1" />
                   Back
                 </Button>

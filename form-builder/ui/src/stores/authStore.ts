@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { useFormStore, clearAllDebounceTimers } from './formStore';
 import { useAppStore } from './appStore';
+import { useAppUserStore } from './appUserStore';
 import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
 
@@ -146,8 +147,9 @@ export const useAuthStore = create<AuthState>()(
 
         // Clear in-memory state of all user-specific stores immediately
         // so stale data never leaks between sessions
-        useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null });
-        useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, error: null });
+        useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
+        useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
+        useAppUserStore.getState().reset();
         useAppRuntimeStore.getState().reset();
         useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
 

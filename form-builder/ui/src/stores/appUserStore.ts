@@ -24,6 +24,9 @@ interface AppUserState {
   deleteGroup: (appId: string, groupId: string) => Promise<boolean>;
   addGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<boolean>;
   removeGroupMember: (appId: string, groupId: string, appUserId: string) => Promise<boolean>;
+
+  /** Clear all in-memory tenant data (members/invitations/groups). Call on logout. */
+  reset: () => void;
 }
 
 export const useAppUserStore = create<AppUserState>()((set, get) => {
@@ -36,6 +39,11 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
   groups: {},
   invitations: {},
   isLoading: false,
+
+  reset: () => {
+    _loadingCount = 0;
+    set({ users: {}, groups: {}, invitations: {}, isLoading: false });
+  },
 
   fetchUsers: async (appId) => {
     startLoading();
