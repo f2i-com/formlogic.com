@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon } from 'lucide-react';
+import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
@@ -21,11 +21,13 @@ interface RelationBadge {
 export function AppFormManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { fetchAppForms, addFormToApp, removeFormFromApp, updateAppForm } = useAppStore();
+  const { fetchAppForms, addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms } = useAppStore();
   const { forms: allForms, refreshForms } = useFormStore();
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyFormId, setBusyFormId] = useState<string | null>(null);
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState('');
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
   const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }> } | null>(null);
   // Cache loaded form definitions so we can check for linked_record references
@@ -151,6 +153,35 @@ export function AppFormManager() {
     setBusyFormId(null);
   };
 
+  // Reorder the runtime nav order (sort_order). Optimistic, rolls back on failure.
+  const handleMove = async (index: number, dir: -1 | 1) => {
+    if (!appId) return;
+    const target = index + dir;
+    if (target < 0 || target >= appForms.length) return;
+    const reordered = [...appForms];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    setAppForms(reordered);
+    try {
+      await reorderAppForms(appId, reordered.map((f) => f.formId));
+    } catch {
+      await loadForms(); // rollback to server order
+    }
+  };
+
+  const startRename = (af: AppForm) => {
+    setEditingNameId(af.formId);
+    setEditNameValue(af.displayName);
+  };
+
+  const saveRename = async (formId: string) => {
+    if (!appId) return;
+    const name = editNameValue.trim();
+    setEditingNameId(null);
+    if (!name) return;
+    await updateAppForm(appId, formId, { displayName: name });
+    await loadForms();
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading forms" /></div>;
   }
@@ -200,11 +231,40 @@ export function AppFormManager() {
             <p className="text-sm text-gray-400 dark:text-slate-500 py-4 text-center">No forms included yet</p>
           ) : (
             <div className="space-y-2">
-              {appForms.map((af) => (
+              {appForms.map((af, index) => (
                 <div key={af.formId} className="p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/50">
                   <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
-                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
+                  <div className="flex flex-col -my-1">
+                    <button onClick={() => handleMove(index, -1)} disabled={index === 0} aria-label="Move up" className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-30 disabled:cursor-default cursor-pointer">
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button onClick={() => handleMove(index, 1)} disabled={index === appForms.length - 1} aria-label="Move down" className="p-0.5 rounded text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 disabled:opacity-30 disabled:cursor-default cursor-pointer">
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {editingNameId === af.formId ? (
+                    <input
+                      autoFocus
+                      value={editNameValue}
+                      onChange={(e) => setEditNameValue(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') saveRename(af.formId); if (e.key === 'Escape') setEditingNameId(null); }}
+                      onBlur={() => saveRename(af.formId)}
+                      aria-label="Display name"
+                      className="flex-1 text-sm px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none"
+                    />
+                  ) : (
+                    <span className="text-sm font-medium text-gray-900 dark:text-white flex-1">{af.displayName}</span>
+                  )}
+                  {editingNameId === af.formId ? (
+                    <button onMouseDown={(e) => { e.preventDefault(); saveRename(af.formId); }} aria-label="Save name" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-green-600 transition-colors cursor-pointer">
+                      <Check className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    <button onClick={() => startRename(af)} aria-label={`Rename ${af.displayName}`} title="Rename display label" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
+                      <Tag className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button onClick={() => navigate(`/builder/${af.formId}?appId=${appId}`)} aria-label={`Edit ${af.displayName}`} title="Edit form" className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 transition-colors cursor-pointer">
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button onClick={() => handleToggleVisibility(af.formId, af.isVisible)} disabled={busyFormId === af.formId} aria-label={af.isVisible ? 'Hide form' : 'Show form'} className={cn('p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-50 transition-colors cursor-pointer', af.isVisible ? 'text-green-600' : 'text-gray-400')}>

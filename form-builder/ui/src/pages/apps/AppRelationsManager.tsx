@@ -121,7 +121,7 @@ export function AppRelationsManager() {
             <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
-            <Button size="sm" onClick={handleAdd} leftIcon={<Plus className="h-4 w-4" />}>
+            <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>
               Add Relation
             </Button>
           </>
@@ -145,9 +145,11 @@ export function AppRelationsManager() {
               </div>
               <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 tracking-tight">No relations yet</h3>
               <p className="text-sm text-gray-500 dark:text-slate-400 mb-6 max-w-sm mx-auto">
-                Relations link records between forms. Create one to connect your data.
+                {appForms.length < 2
+                  ? 'A relation links records between two forms. Add at least two forms to this app first.'
+                  : 'Relations link records between forms. Create one to connect your data.'}
               </p>
-              <Button size="sm" onClick={handleAdd} leftIcon={<Plus className="h-4 w-4" />}>
+              <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
                 Add Relation
               </Button>
             </div>

@@ -230,6 +230,20 @@ class AppService
             $stmt = $this->mysql->prepare("DELETE FROM app_users WHERE app_id = :app_id");
             $stmt->execute(['app_id' => $appId]);
 
+            // Purge inverse linked_record links for this app's forms before the
+            // cascade removes app_forms — response_links is keyed by form_id (not
+            // app_id), so it would otherwise leave stale inverse-lookup rows.
+            $formStmt = $this->mysql->prepare("SELECT form_id FROM app_forms WHERE app_id = :app_id");
+            $formStmt->execute(['app_id' => $appId]);
+            $formIds = $formStmt->fetchAll(\PDO::FETCH_COLUMN);
+            if (!empty($formIds)) {
+                $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+                $linkStmt = $this->mysql->prepare(
+                    "DELETE FROM response_links WHERE source_form_id IN ($placeholders) OR target_form_id IN ($placeholders)"
+                );
+                $linkStmt->execute([...$formIds, ...$formIds]);
+            }
+
             // Now delete the app (cascades to app_roles, app_forms, etc.)
             $stmt = $this->mysql->prepare("DELETE FROM apps WHERE id = :id");
             $stmt->execute(['id' => $appId]);

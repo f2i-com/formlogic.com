@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
@@ -15,8 +15,15 @@ const steps = ['App Details', 'Select Forms', 'Review'];
 export function AppCreateWizard() {
   const navigate = useNavigate();
   const { createApp } = useAppStore();
-  const { forms, createForm, setActiveForm } = useFormStore();
+  const { forms, createForm, setActiveForm, refreshForms } = useFormStore();
   const [step, setStep] = useState(0);
+
+  // Refresh from the server so the selectable forms reflect reality (the
+  // persisted store can be stale — missing forms made on another device, or
+  // listing deleted ones).
+  useEffect(() => {
+    refreshForms();
+  }, [refreshForms]);
   const [isCreating, setIsCreating] = useState(false);
 
   const [name, setName] = useState('');

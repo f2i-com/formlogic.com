@@ -105,6 +105,12 @@ export function AppSettings() {
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Public URL slug</label>
+              <input type="text" value={app.slug} readOnly aria-readonly="true"
+                className="w-full px-3.5 py-2.5 border border-gray-200/80 dark:border-slate-700/60 rounded-xl bg-gray-50 dark:bg-slate-800/60 text-gray-500 dark:text-slate-400 font-mono text-sm cursor-default focus:outline-none" />
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Permanent — set when the app was created. Your app is served at <span className="font-mono">/app/{app.slug}</span>.</p>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
               <textarea value={app.description || ''} onChange={(e) => setApp({ ...app, description: e.target.value })}
                 rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none" />
