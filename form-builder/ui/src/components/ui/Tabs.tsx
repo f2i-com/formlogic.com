@@ -177,7 +177,7 @@ export function TabsContent({ value, children, className }: TabsContentProps) {
       id={panelId(context.baseId, value)}
       aria-labelledby={tabId(context.baseId, value)}
       tabIndex={0}
-      className={cn('focus:outline-none animate-in fade-in-0 duration-200', className)}
+      className={cn('focus:outline-none fade-in-up', className)}
     >
       {children}
     </div>
