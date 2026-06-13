@@ -265,6 +265,14 @@ class AuthService
                 return null;
             }
 
+            // Token revocation: reject tokens issued before the user's credentials
+            // changed (token_version bumped). Missing claim is treated as 0 so
+            // pre-upgrade tokens remain valid until the next credential change.
+            $tokenTv = isset($decoded->tv) ? (int) $decoded->tv : 0;
+            if ($tokenTv !== $this->getTokenVersion($decoded->sub)) {
+                return null;
+            }
+
             return $this->getUserById($decoded->sub);
         } catch (\Firebase\JWT\ExpiredException $e) {
             // Token has expired
@@ -339,6 +347,7 @@ class AuthService
 
                 $updates[] = "email = :email";
                 $params['email'] = $newEmail;
+                $bumpTokenVersion = true; // revoke existing sessions on email change
             }
         }
 
@@ -359,10 +368,17 @@ class AuthService
             }
             $updates[] = "password_hash = :password_hash";
             $params['password_hash'] = password_hash($data['password'], PASSWORD_DEFAULT);
+            $bumpTokenVersion = true; // revoke existing sessions on password change
         }
 
         if (empty($updates)) {
             return $this->getUserById($userId);
+        }
+
+        // Revoke all outstanding JWTs when credentials change: token_version is a
+        // JWT claim that validateToken() checks against this column.
+        if ($bumpTokenVersion ?? false) {
+            $updates[] = "token_version = token_version + 1";
         }
 
         $updates[] = "updated_at = :updated_at";
@@ -384,6 +400,22 @@ class AuthService
     }
 
     /**
+     * Read a user's current token_version. Fails open to 0 if the column hasn't
+     * been migrated yet, so un-migrated databases keep authenticating normally.
+     */
+    private function getTokenVersion(string $userId): int
+    {
+        try {
+            $stmt = $this->mysql->prepare("SELECT token_version FROM users WHERE id = :id");
+            $stmt->execute(['id' => $userId]);
+            $v = $stmt->fetchColumn();
+            return $v === false ? 0 : (int) $v;
+        } catch (\Exception $e) {
+            return 0; // column not migrated — treat as version 0
+        }
+    }
+
+    /**
      * Generate a JWT token for a user
      */
     private function generateToken(User $user): string
@@ -397,6 +429,7 @@ class AuthService
             'iat' => $now,
             'nbf' => $now, // Not valid before now
             'exp' => $now + $this->jwtConfig['expiry'],
+            'tv' => $this->getTokenVersion($user->id), // for revocation on credential change
         ];
 
         return JWT::encode($payload, $this->jwtConfig['secret'], $this->jwtConfig['algorithm']);
