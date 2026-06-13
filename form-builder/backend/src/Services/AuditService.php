@@ -44,10 +44,20 @@ class AuditService
         ?string $ipAddress,
         array $details = []
     ): void {
+        $gotLock = false;
         try {
             $alreadyInTransaction = $this->mysql->inTransaction();
             if (!$alreadyInTransaction) {
                 $this->mysql->beginTransaction();
+            }
+
+            // Serialize chain extension across connections so concurrent writers
+            // (especially on an empty/genesis table, where there's no prior row for
+            // FOR UPDATE to lock) can't both chain from genesis and fork the chain.
+            try {
+                $gotLock = ((int) $this->mysql->query("SELECT GET_LOCK('formlogic_audit_chain', 5)")->fetchColumn()) === 1;
+            } catch (\Exception $lockErr) {
+                $gotLock = false; // best-effort; never block auditing on lock errors
             }
 
             // Get next sequence number via auto-increment table
@@ -102,9 +112,21 @@ class AuditService
             if (!$alreadyInTransaction) {
                 $this->mysql->commit();
             }
+
+            if ($gotLock) {
+                $this->mysql->query("SELECT RELEASE_LOCK('formlogic_audit_chain')");
+                $gotLock = false;
+            }
         } catch (\Exception $e) {
             if (!$alreadyInTransaction && $this->mysql->inTransaction()) {
                 $this->mysql->rollBack();
+            }
+            if ($gotLock) {
+                try {
+                    $this->mysql->query("SELECT RELEASE_LOCK('formlogic_audit_chain')");
+                } catch (\Exception $relErr) {
+                    // ignore — the lock auto-releases when the connection closes
+                }
             }
             // Never let audit failures break the main operation
             $this->logger->warning('Audit log failed', [

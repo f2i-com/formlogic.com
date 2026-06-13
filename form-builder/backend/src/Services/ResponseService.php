@@ -705,6 +705,15 @@ class ResponseService
             }
         }
 
+        // Restrict linked-record resolution to forms owned by THIS form's owner,
+        // so a crafted cross-tenant targetFormId can't leak another user's data.
+        $exportOwnerId = null;
+        if (!empty($linkedFields)) {
+            $ownerStmt = $this->mysql->prepare("SELECT user_id FROM forms WHERE id = :id");
+            $ownerStmt->execute(['id' => $formId]);
+            $exportOwnerId = $ownerStmt->fetchColumn() ?: null;
+        }
+
         // Write UTF-8 BOM so Excel correctly interprets Unicode characters
         fwrite($outputStream, "\xEF\xBB\xBF");
 
@@ -733,7 +742,7 @@ class ResponseService
             // Resolve linked record display values for this batch
             $linkedDisplayCache = [];
             if (!empty($linkedFields)) {
-                $linkedDisplayCache = $this->resolveLinkedRecordDisplayValues($batch, $linkedFields);
+                $linkedDisplayCache = $this->resolveLinkedRecordDisplayValues($batch, $linkedFields, $exportOwnerId);
             }
 
             foreach ($batch as $response) {
@@ -792,7 +801,7 @@ class ResponseService
      * Resolve linked record IDs to display text for a batch of responses.
      * Returns: [targetFormId => [responseId => displayText]]
      */
-    private function resolveLinkedRecordDisplayValues(array $responses, array $linkedFields): array
+    private function resolveLinkedRecordDisplayValues(array $responses, array $linkedFields, ?string $ownerId = null): array
     {
         // Collect all referenced IDs grouped by target form
         $refsByForm = []; // targetFormId => [id => true]
@@ -817,6 +826,18 @@ class ResponseService
                     $refsByForm[$targetFormId][$val] = true;
                 }
             }
+        }
+
+        // Cross-tenant guard: only resolve target forms owned by the exporting
+        // user. A linked_record pointing at another tenant's form is skipped
+        // (its column shows the raw id rather than leaking that form's data).
+        if ($ownerId !== null && !empty($refsByForm)) {
+            $targetIds = array_keys($refsByForm);
+            $placeholders = implode(',', array_fill(0, count($targetIds), '?'));
+            $ownStmt = $this->mysql->prepare("SELECT id FROM forms WHERE id IN ($placeholders) AND user_id = ?");
+            $ownStmt->execute(array_merge($targetIds, [$ownerId]));
+            $allowed = array_flip($ownStmt->fetchAll(\PDO::FETCH_COLUMN));
+            $refsByForm = array_intersect_key($refsByForm, $allowed);
         }
 
         // Batch-fetch and build display text

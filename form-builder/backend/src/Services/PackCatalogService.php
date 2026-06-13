@@ -152,6 +152,7 @@ class PackCatalogService
         $slug = $metadata['slug'] ?? $this->generateSlug($metadata['name'] ?? 'pack');
         $slug = $this->ensureUniqueSlug($slug);
         $version = $metadata['version'] ?? '1.0.0';
+        $packJson = $this->encodePackDataWithCap($packData);
 
         $this->mysql->beginTransaction();
         try {
@@ -185,7 +186,7 @@ class PackCatalogService
                 'catalog_id' => $catalogId,
                 'version' => $version,
                 'changelog' => $metadata['changelog'] ?? 'Initial release',
-                'pack_data' => json_encode($packData),
+                'pack_data' => $packJson,
                 'form_count' => $formCount,
                 'app_count' => $appCount,
             ]);
@@ -211,6 +212,7 @@ class PackCatalogService
         // Verify ownership
         $this->verifyOwnership($catalogId, $userId);
 
+        $packJson = $this->encodePackDataWithCap($packData);
         $versionId = $this->generateUuid();
         $formCount = count($packData['forms'] ?? []);
         $appCount = count($packData['apps'] ?? []);
@@ -224,12 +226,28 @@ class PackCatalogService
             'catalog_id' => $catalogId,
             'version' => $version,
             'changelog' => $changelog,
-            'pack_data' => json_encode($packData),
+            'pack_data' => $packJson,
             'form_count' => $formCount,
             'app_count' => $appCount,
         ]);
 
         return ['versionId' => $versionId, 'version' => $version];
+    }
+
+    /**
+     * JSON-encode pack data and reject it if it exceeds the maximum stored size,
+     * so a single publish/version can't persist an unbounded blob (DoS / storage).
+     */
+    private function encodePackDataWithCap(array $packData): string
+    {
+        $json = json_encode($packData);
+        if ($json === false) {
+            throw new \RuntimeException('Invalid pack data');
+        }
+        if (strlen($json) > 5 * 1024 * 1024) {
+            throw new \RuntimeException('Pack data exceeds the maximum allowed size (5MB)');
+        }
+        return $json;
     }
 
     /**
