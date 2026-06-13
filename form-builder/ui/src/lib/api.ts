@@ -271,6 +271,13 @@ class ApiClient {
     });
   }
 
+  // Re-run the form's logic script against a stored response
+  async recomputeResponse(formId: string, responseId: string): Promise<ApiResponse<{ success: boolean; computed?: Record<string, unknown>; status?: string; tags?: string[]; error?: string }>> {
+    return this.request(`/forms/${formId}/responses/${responseId}/recompute`, {
+      method: 'POST',
+    });
+  }
+
   // Analytics
   async getFormAnalytics(formId: string): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
     return this.request(`/forms/${formId}/analytics`);

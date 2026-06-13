@@ -329,6 +329,22 @@ function FormResponses() {
     }
   };
 
+  // Re-run the form's logic script against a stored response (owner/API mode).
+  const handleRecompute = async (responseId: string) => {
+    if (!formId) return;
+    const result = await api.recomputeResponse(formId, responseId);
+    if (result.error) {
+      toast.error('Re-run failed', result.error);
+      return;
+    }
+    toast.success('Logic re-run', 'The response was recomputed with the latest script.');
+    try {
+      const { responses: all } = await fetchAllApiResponses(formId);
+      setResponses(all);
+    } catch { /* will refresh on next load */ }
+    setIsViewModalOpen(false);
+  };
+
   // Handle export
   const handleExportCsv = () => {
     if (!form || responses.length === 0) return;
@@ -767,6 +783,11 @@ function FormResponses() {
               <Button variant="outline" onClick={() => setIsViewModalOpen(false)}>
                 Close
               </Button>
+              {storageMode === 'api' && form.logicScript && (
+                <Button variant="outline" onClick={() => handleRecompute(selectedResponse.id)}>
+                  Re-run logic
+                </Button>
+              )}
               <Button
                 onClick={() => {
                   setIsViewModalOpen(false);

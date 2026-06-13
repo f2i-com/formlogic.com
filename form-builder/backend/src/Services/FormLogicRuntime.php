@@ -1207,7 +1207,12 @@ class FormLogicRuntime
             }
         }
 
-        // Also check for dangerous patterns
+        // Also check for dangerous patterns. NOTE: this is BEST-EFFORT
+        // defense-in-depth only — these literal regexes are trivially bypassed
+        // (e.g. `while (1)`, `while (!false)`, recursion). The AUTHORITATIVE
+        // guard against runaway/abusive scripts is the engine's instruction /
+        // wall-time / call-depth limits (setLimits in the constructor); this
+        // denylist just catches the obvious cases early and must not be relied on.
         $dangerousPatterns = [
             '/\beval\s*\(/' => 'eval() is not allowed',
             '/\bFunction\s*\(/' => 'Function constructor is not allowed',

@@ -341,6 +341,77 @@ class ResponseService
     }
 
     /**
+     * Sync response_links rows for a response's linked_record fields so inverse
+     * "related records" lookups work for submissions made via the standalone
+     * public endpoint and the External API. (The app-runtime path syncs these
+     * separately in AppResponseService; deleteResponse already purges them.)
+     * Best-effort: a link-sync failure must not fail an already-persisted
+     * response.
+     *
+     * @param array $fields The form's field definitions (the caller already has the form)
+     */
+    public function syncResponseLinks(string $formId, string $responseId, array $fields, array $answers): void
+    {
+        if ($responseId === '') {
+            return;
+        }
+        $linkedFields = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'linked_record' && !empty($field['properties']['targetFormId'])) {
+                $linkedFields[] = $field;
+            }
+        }
+        if (empty($linkedFields)) {
+            return;
+        }
+
+        try {
+            $this->mysql->beginTransaction();
+
+            $del = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id");
+            $del->execute(['id' => $responseId]);
+
+            $ins = $this->mysql->prepare("
+                INSERT INTO response_links (id, source_form_id, source_response_id, target_form_id, target_response_id, field_id)
+                VALUES (:id, :source_form_id, :source_response_id, :target_form_id, :target_response_id, :field_id)
+            ");
+
+            foreach ($linkedFields as $field) {
+                $targetFormId = $field['properties']['targetFormId'];
+                $val = $answers[$field['id']] ?? null;
+                if ($val === null) {
+                    continue;
+                }
+                $ids = is_array($val) ? $val : [$val];
+                foreach ($ids as $targetResponseId) {
+                    if (!is_string($targetResponseId) || $targetResponseId === '') {
+                        continue;
+                    }
+                    $ins->execute([
+                        'id' => $this->generateUuid(),
+                        'source_form_id' => $formId,
+                        'source_response_id' => $responseId,
+                        'target_form_id' => $targetFormId,
+                        'target_response_id' => $targetResponseId,
+                        'field_id' => $field['id'],
+                    ]);
+                }
+            }
+
+            $this->mysql->commit();
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            $this->logger->error('Failed to sync response_links', [
+                'formId' => $formId,
+                'responseId' => $responseId,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
      * Re-run script on an existing response
      */
     public function recomputeResponse(string $formId, string $responseId, string $script): ScriptResult

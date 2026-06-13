@@ -8,17 +8,20 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      scope: '/app/',
+      scope: '/',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
         name: 'FormLogic App',
         short_name: 'FormLogic',
         description: 'Build and deploy form-based applications',
-        theme_color: '#4f46e5',
+        theme_color: '#6366f1',
         background_color: '#ffffff',
         display: 'standalone',
-        scope: '/app/',
-        start_url: '/app/',
+        // Platform shell lives at '/', not '/app/' (which only matches
+        // '/app/:slug'); '/app/' resolved to the 404 page on launch. Per-app
+        // installs use the dynamic /api/app/{slug}/manifest.json instead.
+        scope: '/',
+        start_url: '/',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -41,7 +44,10 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MiB for WASM
         navigateFallback: '/index.html',
-        navigateFallbackAllowlist: [/^\/app\//],
+        // SPA fallback for all client routes (the whole app is one SPA), except
+        // the API. Was limited to '/app/', which broke offline routing for the
+        // platform shell now that scope is '/'.
+        navigateFallbackAllowlist: [/^\/(?!api\/)/],
         runtimeCaching: [
           // Cache app config with stale-while-revalidate
           {

@@ -156,6 +156,9 @@ class ExternalApiController
                 ], 422);
             }
 
+            // Write inverse linked_record links (External API submissions skipped this).
+            $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
+
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -243,6 +246,7 @@ class ExternalApiController
                 if ($result instanceof ScriptRejection) {
                     $results[] = ['index' => $index, 'success' => false, 'message' => $result->message, 'rejected' => true];
                 } else {
+                    $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $item['answers'] ?? []);
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null];
                     $createdCount++;
                 }
@@ -336,6 +340,9 @@ class ExternalApiController
             $formResponse = $this->responseService->updateResponse($args['formId'], $args['id'], $data);
             if (!$formResponse) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
+            }
+            if (isset($data['answers']) && is_array($data['answers'])) {
+                $this->responseService->syncResponseLinks($args['formId'], $args['id'], $form['fields'] ?? [], $data['answers']);
             }
             return $this->jsonResponse($response, ['response' => $this->sanitizeResponseData($formResponse)]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {

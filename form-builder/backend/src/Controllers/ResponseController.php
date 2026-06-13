@@ -321,6 +321,10 @@ class ResponseController
                 ], 422);
             }
 
+            // Write inverse linked_record links so "related records" lookups work
+            // for standalone public submissions (the app path syncs separately).
+            $this->responseService->syncResponseLinks($formId, $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
+
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId]);
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
@@ -654,6 +658,11 @@ class ResponseController
                     'error' => true,
                     'message' => 'Response not found',
                 ], 404);
+            }
+
+            // Re-sync inverse linked_record links if answers changed.
+            if (isset($data['answers']) && is_array($data['answers'])) {
+                $this->responseService->syncResponseLinks($formId, $responseId, $form['fields'] ?? [], $data['answers']);
             }
 
             return $this->jsonResponse($response, ['response' => $formResponse]);
