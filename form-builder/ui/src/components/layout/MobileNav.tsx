@@ -40,7 +40,7 @@ export function MobileNav() {
                 className="flex flex-col items-center justify-center gap-1 px-3 py-2 -mt-6 group cursor-pointer"
               >
                 <div className="w-14 h-14 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 dark:shadow-primary-500/40 transition-transform duration-200 group-hover:scale-105 group-active:scale-95 border-4 border-white dark:border-slate-950">
-                  <item.icon className="h-6 w-6 text-white" />
+                  <item.icon className="h-6 w-6 text-primary-foreground" />
                 </div>
               </button>
             );

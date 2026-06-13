@@ -24,7 +24,7 @@ const navItems = [
   { path: '/settings', icon: Settings, label: 'Settings' },
 ];
 
-export function Sidebar() {
+export function Sidebar({ offline = false }: { offline?: boolean }) {
   const navigate = useNavigate();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const { createForm, setActiveForm, storageMode } = useFormStore();
@@ -43,8 +43,10 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        'fixed left-0 top-0 h-full bg-white dark:bg-slate-900/50 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 z-40',
+        'fixed left-0 bg-white dark:bg-slate-900/50 backdrop-blur-xl border-r border-gray-200 dark:border-white/10 z-40',
         'flex flex-col transition-all duration-300 shadow-xl',
+        // Sit below the offline banner (h-8) when offline so it isn't covered
+        offline ? 'top-8 h-[calc(100%-2rem)]' : 'top-0 h-full',
         sidebarCollapsed ? 'w-16' : 'w-64'
       )}
     >
@@ -72,6 +74,8 @@ export function Sidebar() {
             key={item.path}
             to={item.path}
             end={item.path === '/'}
+            aria-label={item.label}
+            title={sidebarCollapsed ? item.label : undefined}
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200',

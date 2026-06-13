@@ -87,7 +87,7 @@ export function AppCreateWizard() {
             <div className="flex items-center gap-2">
               <div className={cn(
                 'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all',
-                i < step ? 'bg-primary-600 text-white shadow-sm' :
+                i < step ? 'bg-primary-600 text-primary-foreground shadow-sm' :
                 i === step ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400 ring-2 ring-primary-600' :
                 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
               )}>

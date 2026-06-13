@@ -15,7 +15,6 @@ export type FieldType =
   | 'scale'
   | 'file_upload'
   | 'signature'
-  | 'payment'
   | 'statement'
   | 'welcome_screen'
   | 'thank_you'
@@ -55,7 +54,6 @@ export interface FieldProperties {
   allowMultiple?: boolean;
   maxFileSize?: number;
   acceptedFileTypes?: string[];
-  currency?: string;
   calculationExpression?: string;
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
@@ -182,7 +180,6 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   scale: { label: 'Scale', icon: 'Sliders', category: 'rating' },
   file_upload: { label: 'File Upload', icon: 'Paperclip', category: 'advanced' },
   signature: { label: 'Signature', icon: 'PenTool', category: 'advanced' },
-  payment: { label: 'Payment', icon: 'CreditCard', category: 'advanced' },
   calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced' },
   linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced' },
   statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout' },

@@ -1,198 +1,545 @@
-# FormLogic - Smart Form Builder
+# FormLogic
 
-A modern form builder with powerful conditional logic, real-time validation, and analytics. Build dynamic forms with an intuitive drag-and-drop interface.
+A full-stack form builder and internal apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
 
-## Features
+## Overview
 
-- **Drag & Drop Builder** - Create forms visually with an intuitive interface
-- **Conditional Logic** - Show/hide fields based on user responses using FormLogic expressions
-- **Real-time Validation** - Built-in and custom validation rules
-- **Analytics Dashboard** - Track responses, completion rates, and form performance
-- **Multi-storage Support** - Works offline with localStorage, syncs to cloud when connected
-- **Responsive Design** - Forms work beautifully on all devices
+FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed scripting engine. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
 
-## Project Structure
+### Key Capabilities
 
-```
-form-builder/
-├── ui/                 # Frontend React application
-│   ├── src/            # Source code
-│   ├── public/         # Static assets
-│   ├── dist/           # Production build
-│   └── package.json    # Node dependencies
-├── backend/            # PHP Slim API
-│   ├── src/            # PHP source code
-│   ├── public/         # Web root (index.php)
-│   ├── config/         # Configuration files
-│   ├── storage/        # SQLite databases for forms
-│   └── composer.json   # PHP dependencies
-└── README.md
-```
+- **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
+- **Scripting Engine** -- Custom language (FormLogic) for conditional logic, validation expressions, calculated fields, and post-submission scripts
+- **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
+- **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
+- **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
+- **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
+- **Analytics** -- Per-form response charts, completion rates, average times, field breakdowns
+- **Webhooks** -- Trigger HTTP callbacks on form submissions with delivery tracking
+- **Versioning** -- Form version history with restore capability
+- **Audit Trail** -- Immutable, hash-chained audit log with integrity verification
+- **AI Generation** -- Generate forms from text prompts, documents, or images (requires AI provider config)
+- **PWA Support** -- Offline-capable progressive web app with service worker
 
-## Tech Stack
+---
 
-### Frontend
-- React 18 with TypeScript
-- Zustand for state management
-- Tailwind CSS for styling
-- React Router for navigation
-- Vite for build tooling
-- FormLogic expression engine for conditional logic
-
-### Backend
-- PHP 8.1+ with Slim 4 Framework
-- MySQL for global data (users, form metadata, analytics)
-- SQLite for per-form data (fields, responses)
-- JWT authentication
-- RESTful API
-
-## Getting Started
+## Quick Start
 
 ### Prerequisites
 
-- Node.js 18+
-- PHP 8.1+
-- MySQL 8.0+
-- Composer
+| Requirement | Version | Check |
+|-------------|---------|-------|
+| PHP | 8.1+ | `php -v` |
+| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl | `php -m` |
+| Composer | any | `composer --version` |
+| MySQL | 8.0+ | `mysql --version` |
+| Node.js | 18+ | `node -v` |
+| npm | any | `npm -v` |
+| Git | any | `git --version` |
 
-### Frontend Setup
+### Option 1: Web Install Wizard (Windows / WAMP / XAMPP)
 
-```bash
-cd ui
+If you're using WAMP, XAMPP, or any PHP web server, open the install wizard in your browser:
 
-# Install dependencies
-npm install
-
-# Copy environment file
-cp .env.example .env
-
-# Start development server
-npm run dev
+```
+http://localhost/formlogic/install.php
 ```
 
-The frontend will be available at `http://localhost:5173`
+The wizard will guide you through:
+1. Checking system requirements (PHP version, extensions, Node.js)
+2. Configuring your MySQL database connection
+3. Setting application options (CORS, etc.)
+4. Creating config files, database, and security keys
 
-### Backend Setup
+After the wizard completes, follow the on-screen instructions to install dependencies and start the servers. **Delete `install.php` when done.**
+
+### Option 2: Automated Install (Linux / macOS / Git Bash)
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+The install script will:
+1. Verify all prerequisites are installed
+2. Install PHP dependencies via Composer (pulls [formlogic-php](https://github.com/f2i-com/formlogic-php) from GitHub)
+3. Create `backend/.env` with auto-generated JWT secret and audit HMAC key
+4. Create the MySQL database and import the schema (if DB_PASSWORD is set)
+5. Install frontend npm dependencies
+6. Create `ui/.env` with the API URL
+7. Download the [formlogic-rust](https://github.com/f2i-com/formlogic-rust) WASM engine (if not already present)
+8. Build the frontend for production
+
+After the script completes, update `backend/.env` with your database password, then start the servers.
+
+### Option 3: Manual Setup
+
+#### 1. Clone the repository
+
+```bash
+git clone git@github.com:f2i-com/formlogic.com.git formlogic
+cd formlogic
+```
+
+#### 2. Set up the backend
 
 ```bash
 cd backend
 
-# Install dependencies
+# Install PHP dependencies
 composer install
 
-# Copy environment file
+# Create environment config
 cp .env.example .env
-
-# Edit .env with your database credentials
-# DB_HOST=localhost
-# DB_DATABASE=formlogic
-# DB_USERNAME=formlogic
-# DB_PASSWORD=your_password
-
-# Start PHP development server
-php -S localhost:8080 -t public
 ```
 
-The API will be available at `http://localhost:8080`
+Edit `backend/.env` and set at minimum:
 
-### Database Setup
+```ini
+# Your MySQL password
+DB_PASSWORD=your_password_here
 
-Create a MySQL database and user:
-
-```sql
-CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'formlogic'@'localhost' IDENTIFIED BY 'your_password';
-GRANT ALL PRIVILEGES ON formlogic.* TO 'formlogic'@'localhost';
-FLUSH PRIVILEGES;
+# These are auto-generated by install.sh, but for manual setup generate them:
+#   php -r "echo bin2hex(random_bytes(32));"
+JWT_SECRET=your_generated_secret_here
 ```
 
-The schema is automatically created on first API request.
+Create the required storage directories:
 
-## API Endpoints
+```bash
+mkdir -p storage/forms storage/packs storage/uploads logs
+```
+
+#### 3. Set up the database
+
+**Option A: Auto-create** -- The app automatically creates all tables on the first request. Just create an empty database:
+
+```bash
+mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+**Option B: Import schema** -- Import the full schema directly:
+
+```bash
+mysql -u root -p formlogic < database/schema.sql
+```
+
+#### 4. Set up the frontend
+
+```bash
+cd ../ui
+
+# Install dependencies
+npm install
+
+# Create environment config
+cp .env.example .env
+```
+
+The default `ui/.env` points to `http://localhost:8080/api` for development. For production (same-domain), change it to `/api`.
+
+#### 5. Download the WASM engine
+
+The FormLogic scripting engine runs in the browser via WebAssembly. Download the pre-built files:
+
+```bash
+mkdir -p src/lib/formlogic/wasm
+cd src/lib/formlogic/wasm
+
+# Clone and copy WASM files
+git clone --depth 1 https://github.com/f2i-com/formlogic-rust.git /tmp/formlogic-rust
+cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm.js .
+cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm.d.ts .
+cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm_bg.wasm .
+cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm_bg.wasm.d.ts .
+rm -rf /tmp/formlogic-rust
+
+cd ../../../..
+```
+
+### Running the App
+
+#### Development (two terminals)
+
+```bash
+# Terminal 1: Backend API server
+cd backend
+composer start
+# API available at http://localhost:8080/api
+
+# Terminal 2: Frontend dev server (hot reload)
+cd ui
+npm run dev
+# App available at http://localhost:5173
+```
+
+Open http://localhost:5173 in your browser. Create an account to get started.
+
+#### Production
+
+Build the frontend and serve both from your web server:
+
+```bash
+cd ui
+npm run build
+# Output: ui/dist/ (static files)
+```
+
+Configure your web server (Apache/Nginx) to:
+- Serve `ui/dist/` as the document root
+- Proxy `/api/*` requests to `backend/public/index.php`
+- Or serve `backend/public/` at a subdomain (e.g., `api.example.com`)
+
+<details>
+<summary><strong>Example Apache VirtualHost</strong></summary>
+
+```apache
+<VirtualHost *:80>
+    ServerName formlogic.example.com
+    DocumentRoot /var/www/formlogic/ui/dist
+
+    # Frontend (SPA fallback)
+    <Directory /var/www/formlogic/ui/dist>
+        AllowOverride None
+        FallbackResource /index.html
+    </Directory>
+
+    # Backend API proxy
+    Alias /api /var/www/formlogic/backend/public
+    <Directory /var/www/formlogic/backend/public>
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    # Rewrite /api/* to backend
+    RewriteEngine On
+    RewriteRule ^/api/(.*)$ /api/index.php [QSA,L]
+</VirtualHost>
+```
+
+</details>
+
+<details>
+<summary><strong>Example Nginx config</strong></summary>
+
+```nginx
+server {
+    listen 80;
+    server_name formlogic.example.com;
+    root /var/www/formlogic/ui/dist;
+    index index.html;
+
+    # Frontend (SPA fallback)
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Backend API
+    location /api/ {
+        alias /var/www/formlogic/backend/public/;
+        try_files $uri /api/index.php$is_args$args;
+
+        location ~ \.php$ {
+            fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            include fastcgi_params;
+        }
+    }
+}
+```
+
+</details>
+
+For production, also update `backend/.env`:
+
+```ini
+APP_ENV=production
+APP_DEBUG=false
+CORS_ORIGIN=https://formlogic.example.com
+COOKIE_DOMAIN=.example.com
+```
+
+And `ui/.env`:
+
+```ini
+VITE_API_URL=/api
+```
+
+Then rebuild the frontend: `cd ui && npm run build`
+
+---
+
+## Tech Stack
+
+### Frontend
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | React 19 + TypeScript |
+| Build | Vite 7 |
+| Styling | Tailwind CSS 4 |
+| State | Zustand 5 (persisted stores) |
+| Routing | React Router 7 |
+| Drag & Drop | @dnd-kit |
+| Animation | Framer Motion |
+| Icons | Lucide React |
+| PWA | vite-plugin-pwa |
+| Scripting (browser) | [FormLogic Rust WASM](https://github.com/f2i-com/formlogic-rust) |
+
+### Backend
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | PHP 8.1+ / Slim 4 |
+| Auth | HttpOnly cookie sessions (JWT-signed) |
+| Database | MySQL (global metadata) + SQLite (per-form responses) |
+| Logging | Monolog |
+| DI | PHP-DI |
+| Scripting (server) | [FormLogic PHP](https://github.com/f2i-com/formlogic-php) |
+
+### Scripting Engine
+
+FormLogic includes a custom scripting language with two implementations:
+
+- **[formlogic-rust](https://github.com/f2i-com/formlogic-rust)** -- Rust implementation compiled to WebAssembly, used in the browser for real-time validation, conditional logic, and calculated fields.
+- **[formlogic-php](https://github.com/f2i-com/formlogic-php)** -- PHP implementation used on the server for post-submission scripts. Runs in a sandboxed bytecode VM with execution limits.
+
+Both engines share the same JavaScript-like syntax with built-in modules for compliance, finance, safety, and formatting.
+
+---
+
+## Project Structure
+
+```
+formlogic/
+├── backend/
+│   ├── public/index.php          # Routes, DI container, middleware
+│   ├── config/settings.php       # Environment config
+│   ├── database/schema.sql       # MySQL schema export
+│   ├── .env.example              # Backend environment template
+│   └── src/
+│       ├── Controllers/           # Auth, Form, Response, App, AI, Pack, Webhook, File, ApiKey
+│       ├── Services/              # FormLogicRuntime, AuditService, PackService, WebhookService...
+│       ├── Middleware/            # Auth, CORS, CSRF, RateLimit, Security, BodySize, ApiKey
+│       ├── Models/                # User, Form, App, Webhook...
+│       ├── Database/              # MySQLConnection + SQLiteConnection
+│       ├── Constants/             # AppPermissions
+│       └── Helpers/               # IpResolver
+│
+├── ui/
+│   ├── .env.example               # Frontend environment template
+│   └── src/
+│       ├── pages/                 # 11 pages + 9 app admin pages
+│       ├── components/
+│       │   ├── app-runtime/       # Internal app runtime (data tables, form views, auth guards)
+│       │   ├── builder/           # Form builder (field palette, script editor, AI generator...)
+│       │   ├── layout/            # App shell, sidebar, header, mobile nav
+│       │   └── ui/                # Shared UI components (buttons, modals, toasts...)
+│       ├── stores/                # 6 Zustand stores (auth, form, app, response, runtime, ui)
+│       ├── hooks/                 # Custom hooks (keyboard shortcuts, NIGO, online status)
+│       ├── lib/
+│       │   └── formlogic/         # WASM engine wrapper + module prelude
+│       ├── types/                 # TypeScript interfaces (form, app)
+│       └── data/
+│           ├── formTemplates.ts   # Built-in form templates
+│           └── packs/             # Pre-built pack bundles
+│
+├── install.sh                     # Automated install script
+└── README.md
+```
+
+---
+
+## Architecture
+
+### Dual Database Strategy
+
+- **MySQL** -- Users, forms (metadata + field definitions), apps, roles, permissions, audit log, webhooks, response metadata, analytics aggregates
+- **SQLite** (one file per form) -- Response data, computed fields, tags, script logs. Provides data isolation between forms and enables easy per-form export.
 
 ### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - Login
-- `GET /api/auth/me` - Get current user
-- `PUT /api/auth/me` - Update profile
 
-### Forms
-- `GET /api/forms` - List all forms
-- `POST /api/forms` - Create form
-- `GET /api/forms/:id` - Get form
-- `PUT /api/forms/:id` - Update form
-- `DELETE /api/forms/:id` - Delete form
-- `POST /api/forms/:id/duplicate` - Duplicate form
+Session-based auth using HttpOnly cookies with JWT-signed tokens. The CSRF token is set as a readable cookie and validated on state-changing requests.
 
-### Responses
-- `GET /api/forms/:id/responses` - List responses
-- `POST /api/forms/:id/responses` - Submit response (public)
-- `GET /api/forms/:id/responses/export` - Export as CSV
+### Storage Modes
 
-### Analytics
-- `GET /api/forms/:id/analytics` - Get form analytics
+Forms can be stored in two modes:
+- **Local** -- Forms persist in browser localStorage (no account required)
+- **Cloud** -- Forms sync to the backend API (requires authentication)
 
-## FormLogic Expression Language
+### Internal Apps Platform
 
-FormLogic uses a custom expression language for conditional logic:
+Forms can be composed into deployable internal applications:
 
-```javascript
-// Simple comparisons
-age >= 18
-country === "USA"
+1. **Create an app** -- Name, description, theme, slug
+2. **Add forms** -- Select which forms appear in the app's navigation
+3. **Define roles** -- Create roles with granular per-form permissions (submit, view own, view all, edit, delete, export)
+4. **Invite users** -- Users accept invitations and are assigned roles
+5. **Deploy** -- Apps are accessible at `/app/{slug}` with their own auth guard, theme, and navigation
 
-// Logical operators
-age >= 18 && hasLicense === true
-status === "active" || status === "pending"
+Linked record fields allow cross-form references within an app.
 
-// String operations
-email.contains("@gmail.com")
-name.startsWith("Dr.")
+### FormLogic Scripting
 
-// Numeric operations
-total > 100 && discount < 50
-```
+The scripting engine supports:
+- **Conditional visibility** -- Show/hide fields based on expressions (`age >= 18 && country === "US"`)
+- **Custom validation** -- Validate fields with expressions that return error messages
+- **Calculated fields** -- Compute values from other fields (`price * quantity * (1 + tax_rate)`)
+- **Post-submission scripts** -- Run logic after form submission (compute derived fields, set tags, reject submissions)
 
-## Development
-
-### Frontend Commands
-
-```bash
-npm run dev      # Start dev server
-npm run build    # Production build
-npm run lint     # Run ESLint
-npm run preview  # Preview production build
-```
-
-### Backend Commands
-
-```bash
-composer install        # Install dependencies
-composer dump-autoload  # Regenerate autoloader
-php -S localhost:8080 -t public  # Start dev server
-```
+---
 
 ## Environment Variables
 
-### Frontend (ui/.env)
-```
-VITE_API_URL=http://localhost:8080/api
+### Backend (`backend/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_ENV` | `development` | `development` or `production` |
+| `APP_DEBUG` | `true` | Show detailed errors (disable in production) |
+| `DB_HOST` | `localhost` | MySQL host |
+| `DB_PORT` | `3306` | MySQL port |
+| `DB_DATABASE` | `formlogic` | MySQL database name |
+| `DB_USERNAME` | `formlogic` | MySQL user |
+| `DB_PASSWORD` | | MySQL password (**required in production**) |
+| `JWT_SECRET` | | JWT signing secret, min 32 chars (**required in production**) |
+| `JWT_EXPIRY` | `86400` | Token lifetime in seconds (24h) |
+| `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
+| `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
+| `COOKIE_DOMAIN` | | Cookie domain (empty = current domain) |
+| `UPLOAD_MAX_FILE_SIZE` | `10485760` | Max upload size in bytes (10MB) |
+| `ANTHROPIC_API_KEY` | | Anthropic API key for AI features (optional) |
+
+### Frontend (`ui/.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_URL` | `/api` | Backend API URL |
+
+---
+
+## API Reference
+
+### Auth
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/register` | No | Create account |
+| POST | `/api/auth/login` | No | Login |
+| POST | `/api/auth/logout` | No | Logout |
+| GET | `/api/auth/me` | Yes | Current user |
+| PUT | `/api/auth/me` | Yes | Update profile |
+
+### Forms
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/forms` | Yes | List forms |
+| POST | `/api/forms` | Yes | Create form |
+| GET | `/api/forms/{id}` | Yes | Get form |
+| PUT | `/api/forms/{id}` | Yes | Update form |
+| DELETE | `/api/forms/{id}` | Yes | Delete form |
+| POST | `/api/forms/{id}/duplicate` | Yes | Duplicate form |
+
+### Responses
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/forms/{id}/responses` | No | Submit response (public) |
+| GET | `/api/forms/{id}/responses` | Yes | List responses |
+| POST | `/api/forms/{id}/responses/import` | Yes | CSV bulk import |
+| GET | `/api/forms/{id}/responses/export` | Yes | Export CSV |
+| GET | `/api/forms/{id}/analytics` | Yes | Form analytics |
+
+### Apps
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/apps` | Yes | List apps |
+| POST | `/api/apps` | Yes | Create app |
+| PUT | `/api/apps/{id}` | Yes | Update app |
+| DELETE | `/api/apps/{id}` | Yes | Delete app |
+| POST | `/api/packs/import` | Yes | Import pack bundle |
+
+### App Runtime
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/app/{slug}` | Yes | App config + forms + permissions |
+| POST | `/api/app/{slug}/forms/{id}/responses` | Yes | Submit within app |
+| GET | `/api/app/{slug}/forms/{id}/responses` | Yes | List within app |
+
+---
+
+## Field Types
+
+| Type | Description |
+|------|-------------|
+| `short_text` | Single-line text input |
+| `long_text` | Multi-line textarea |
+| `email` | Email with validation |
+| `phone` | Phone number |
+| `number` | Numeric input |
+| `url` | URL input |
+| `date` | Date picker |
+| `time` | Time picker |
+| `datetime` | Date + time picker |
+| `dropdown` | Select dropdown |
+| `multiple_choice` | Radio buttons |
+| `checkboxes` | Multiple selection |
+| `rating` | Star rating |
+| `scale` | Linear scale (1-10) |
+| `file_upload` | File attachment |
+| `signature` | Signature pad |
+| `calculated` | Computed from expression |
+| `linked_record` | Reference to another form's response |
+| `statement` | Display-only text/media |
+| `welcome_screen` | Form intro screen |
+| `thank_you` | Form completion screen |
+
+---
+
+## Security
+
+- **HttpOnly cookies** for session tokens (not accessible to JavaScript)
+- **CSRF protection** with double-submit cookie pattern
+- **Rate limiting** on auth endpoints (10/min), form mutations (20/min), and submissions (30/min)
+- **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
+- **Input validation** with type checking and constraint enforcement
+- **SSRF protection** on webhooks with DNS resolution checks and private IP blocking
+- **Sandboxed scripting** -- FormLogic VM runs in isolated bytecode with execution limits
+- **Hash-chained audit log** with HMAC-SHA256 integrity verification
+- **Body size limits** on uploads
+- **User-Agent sanitization** to prevent stored XSS
+
+---
+
+## Troubleshooting
+
+### "SECURITY ERROR: JWT_SECRET must be set" on first request
+Your `APP_ENV` is set to `production` but `JWT_SECRET` is empty. Either:
+- Set `APP_ENV=development` in `backend/.env` for local development, or
+- Generate a secret: `php -r "echo bin2hex(random_bytes(32));"` and set `JWT_SECRET` in `.env`
+
+### CORS errors in browser console
+Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g., `http://localhost:5173` for dev).
+
+### WASM engine not loading
+Ensure the WASM files exist in `ui/src/lib/formlogic/wasm/`. Run the WASM download step from the install instructions above, or run `./install.sh` which handles it automatically.
+
+### MySQL connection refused
+- Verify MySQL is running: `mysql -u root -p -e "SELECT 1"`
+- Check `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD` in `backend/.env`
+- Ensure the database exists: `mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"`
+
+### PHP extensions missing
+Check with `php -m` and install missing extensions. On Ubuntu/Debian:
+```bash
+sudo apt install php8.1-mysql php8.1-sqlite3 php8.1-mbstring php8.1-xml
 ```
 
-### Backend (backend/.env)
-```
-APP_ENV=development
-APP_DEBUG=true
-DB_HOST=localhost
-DB_PORT=3306
-DB_DATABASE=formlogic
-DB_USERNAME=formlogic
-DB_PASSWORD=password
-JWT_SECRET=your-secret-key
-JWT_EXPIRY=86400
-CORS_ORIGIN=http://localhost:5173
-```
+---
+
+## Related Repositories
+
+- **[formlogic-rust](https://github.com/f2i-com/formlogic-rust)** -- Rust/WASM scripting engine (browser)
+- **[formlogic-php](https://github.com/f2i-com/formlogic-php)** -- PHP scripting engine (server)
 
 ## License
 
-MIT License
+Proprietary. All rights reserved.

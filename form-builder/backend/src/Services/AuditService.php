@@ -21,8 +21,15 @@ class AuditService
     {
         $this->mysql = $mysql->getConnection();
         $this->logger = $logger ?? new NullLogger();
-        // Derive audit HMAC key from provided secret; fall back to a static key for dev
-        $this->hmacKey = $hmacKey ?? 'formlogic-audit-dev-key';
+        if ($hmacKey === null || $hmacKey === '') {
+            $appEnv = getenv('APP_ENV') ?: ($_ENV['APP_ENV'] ?? 'development');
+            if ($appEnv === 'production') {
+                throw new \RuntimeException('AUDIT_HMAC_KEY must be configured in production');
+            }
+            $this->hmacKey = 'formlogic-audit-dev-key';
+        } else {
+            $this->hmacKey = $hmacKey;
+        }
     }
 
     /**

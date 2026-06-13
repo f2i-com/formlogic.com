@@ -147,7 +147,9 @@ export const DEFAULT_APP_THEME: AppTheme = {
   primaryColor: '#6366f1',
   backgroundColor: '#ffffff',
   textColor: '#1f2937',
-  fontFamily: 'Inter',
+  // DM Sans is loaded app-wide (index.html); 'Inter' was never loaded and fell
+  // back to system-ui, so published apps rendered in the wrong font.
+  fontFamily: 'DM Sans',
   borderRadius: 'medium',
 };
 

@@ -151,7 +151,7 @@ export function AppResponseDetail() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-white rounded-lg app-btn-primary disabled:opacity-50 transition-all duration-200 cursor-pointer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg app-btn-primary disabled:opacity-50 transition-all duration-200 cursor-pointer"
               >
                 <Save className="h-3.5 w-3.5" /> {saving ? 'Saving...' : 'Save'}
               </button>
@@ -276,6 +276,30 @@ export function AppResponseDetail() {
                           </label>
                         ))}
                       </div>
+                    );
+                  }
+                  if (field.type === 'rating' || field.type === 'scale') {
+                    return (
+                      <input
+                        type="number"
+                        step="1"
+                        value={editVal != null ? String(editVal) : ''}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
+                        }}
+                        className={editInputClass}
+                      />
+                    );
+                  }
+                  // Structured (object/array/data-URL) values can't be safely edited
+                  // as text — feeding them into a text input stringifies and corrupts
+                  // them. Keep them read-only; the original (seeded) value is preserved.
+                  if (field.type === 'location' || field.type === 'file_upload' || field.type === 'signature') {
+                    return (
+                      <p className="text-sm text-gray-400 dark:text-slate-500 italic px-3.5 py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-700">
+                        This field can't be edited here — its existing value is preserved on save.
+                      </p>
                     );
                   }
                   // Default: text input for short_text, email, phone, url, etc.

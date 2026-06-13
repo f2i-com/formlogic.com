@@ -1,12 +1,16 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useId, useState } from 'react';
 import { cn } from '../../lib/utils';
 
 interface TabsContextValue {
   activeTab: string;
   setActiveTab: (value: string) => void;
+  baseId: string;
 }
 
 const TabsContext = createContext<TabsContextValue | null>(null);
+
+const tabId = (baseId: string, value: string) => `${baseId}-tab-${value}`;
+const panelId = (baseId: string, value: string) => `${baseId}-panel-${value}`;
 
 interface TabsProps {
   defaultValue?: string;
@@ -24,6 +28,7 @@ export function Tabs({
   className,
 }: TabsProps) {
   const [internalValue, setInternalValue] = useState(value ?? defaultValue);
+  const baseId = useId();
   const activeTab = value ?? internalValue;
 
   const setActiveTab = (newValue: string) => {
@@ -34,7 +39,7 @@ export function Tabs({
   };
 
   return (
-    <TabsContext.Provider value={{ activeTab, setActiveTab }}>
+    <TabsContext.Provider value={{ activeTab, setActiveTab, baseId }}>
       <div className={className}>{children}</div>
     </TabsContext.Provider>
   );
@@ -44,10 +49,43 @@ interface TabsListProps {
   children: React.ReactNode;
   className?: string;
   variant?: 'pills' | 'underline';
+  'aria-label'?: string;
 }
 
 
-export function TabsList({ children, className, variant = 'pills' }: TabsListProps) {
+export function TabsList({ children, className, variant = 'pills', 'aria-label': ariaLabel }: TabsListProps) {
+  // Roving focus: Arrow/Home/End move between tabs (automatic activation).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const keys = ['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    const tabs = Array.from(
+      e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not([disabled])')
+    );
+    if (tabs.length === 0) return;
+    const current = tabs.indexOf(document.activeElement as HTMLButtonElement);
+    let next = current;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        next = current < 0 ? 0 : (current + 1) % tabs.length;
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        next = current < 0 ? tabs.length - 1 : (current - 1 + tabs.length) % tabs.length;
+        break;
+      case 'Home':
+        next = 0;
+        break;
+      case 'End':
+        next = tabs.length - 1;
+        break;
+    }
+    e.preventDefault();
+    const target = tabs[next];
+    target.focus();
+    target.click();
+  };
+
   return (
     <div
       className={cn(
@@ -57,6 +95,9 @@ export function TabsList({ children, className, variant = 'pills' }: TabsListPro
         className
       )}
       role="tablist"
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+      onKeyDown={handleKeyDown}
     >
       {children}
     </div>
@@ -81,14 +122,16 @@ export function TabsTrigger({
   const context = useContext(TabsContext);
   if (!context) throw new Error('TabsTrigger must be used within Tabs');
 
-  const { activeTab, setActiveTab } = context;
+  const { activeTab, setActiveTab, baseId } = context;
   const isActive = activeTab === value;
 
   return (
     <button
       type="button"
       role="tab"
+      id={tabId(baseId, value)}
       aria-selected={isActive}
+      aria-controls={panelId(baseId, value)}
       onClick={() => !disabled && setActiveTab(value)}
       disabled={disabled}
       tabIndex={isActive ? 0 : -1}
@@ -129,7 +172,13 @@ export function TabsContent({ value, children, className }: TabsContentProps) {
   if (context.activeTab !== value) return null;
 
   return (
-    <div role="tabpanel" className={cn('animate-in fade-in-0 duration-200', className)}>
+    <div
+      role="tabpanel"
+      id={panelId(context.baseId, value)}
+      aria-labelledby={tabId(context.baseId, value)}
+      tabIndex={0}
+      className={cn('focus:outline-none animate-in fade-in-0 duration-200', className)}
+    >
       {children}
     </div>
   );

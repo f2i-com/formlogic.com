@@ -59,7 +59,7 @@ class AuthMiddleware implements MiddlewareInterface
     {
         // First, check Authorization header (for API clients and backwards compatibility)
         $authHeader = $request->getHeaderLine('Authorization');
-        if (!empty($authHeader) && preg_match('/^Bearer\s+(.+)$/i', $authHeader, $matches)) {
+        if (!empty($authHeader) && preg_match('/^Bearer\s+([a-zA-Z0-9._\-]+)$/i', $authHeader, $matches)) {
             return $matches[1];
         }
 

@@ -189,6 +189,16 @@ export function AppDataTable() {
               flat[`answer_${key}`] = value;
             }
           }
+          // Make linked_record columns searchable/sortable by their resolved
+          // display text (the column renders from _resolved, not answer_*).
+          const resolved = r._resolved as Record<string, unknown> | undefined;
+          if (resolved) {
+            for (const [fieldId, rv] of Object.entries(resolved)) {
+              flat[`answer_${fieldId}`] = Array.isArray(rv)
+                ? (rv as Array<{ display?: string }>).map((v) => v.display || '').join(', ')
+                : ((rv as { display?: string })?.display || '');
+            }
+          }
           return flat;
         });
         setResponses(flattenedData);

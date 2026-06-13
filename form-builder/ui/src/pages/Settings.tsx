@@ -4,6 +4,7 @@ import { Card, CardContent } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { Switch } from '../components/ui/Switch';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import {
@@ -125,6 +126,8 @@ export function Settings() {
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isRevoking, setIsRevoking] = useState(false);
 
   // Update form when user changes
   useEffect(() => {
@@ -246,15 +249,20 @@ export function Settings() {
     }
   };
 
-  const handleRevokeApiKey = async (id: string, name: string) => {
-    if (!confirm(`Revoke API key "${name}"? This action cannot be undone.`)) return;
-
-    const result = await api.revokeApiKey(id);
-    if (result.data) {
-      toast.success('API Key Revoked', `"${name}" has been revoked.`);
-      loadApiKeys();
-    } else {
-      toast.error('Failed to revoke key', result.error || 'Unknown error');
+  const confirmRevokeApiKey = async () => {
+    if (!revokeTarget) return;
+    setIsRevoking(true);
+    try {
+      const result = await api.revokeApiKey(revokeTarget.id);
+      if (result.data) {
+        toast.success('API Key Revoked', `"${revokeTarget.name}" has been revoked.`);
+        loadApiKeys();
+        setRevokeTarget(null);
+      } else {
+        toast.error('Failed to revoke key', result.error || 'Unknown error');
+      }
+    } finally {
+      setIsRevoking(false);
     }
   };
 
@@ -381,8 +389,12 @@ export function Settings() {
                 <label className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2 block">
                   Accent Color
                 </label>
-                <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+                <p className="text-xs text-gray-500 dark:text-slate-400 -mt-1 mb-3">
+                  Default adapts automatically — Indigo in light mode, Lime in dark mode.
+                </p>
+                <div className="grid grid-cols-3 sm:grid-cols-7 gap-3">
                   {[
+                    { id: 'default', color: 'bg-gradient-to-br from-indigo-500 to-lime-400', label: 'Default' },
                     { id: 'indigo', color: 'bg-indigo-500', label: 'Indigo' },
                     { id: 'lime', color: 'bg-lime-500', label: 'Lime' },
                     { id: 'rose', color: 'bg-rose-500', label: 'Rose' },
@@ -663,7 +675,7 @@ export function Settings() {
                         </p>
                       </div>
                       <button
-                        onClick={() => handleRevokeApiKey(key.id, key.name)}
+                        onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                         className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
                         title="Revoke key"
                       >
@@ -732,6 +744,17 @@ export function Settings() {
           </CardContent>
         </Card>
       </div>
+
+      <ConfirmDialog
+        isOpen={revokeTarget !== null}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={confirmRevokeApiKey}
+        variant="danger"
+        title="Revoke API key"
+        message={`Revoke API key "${revokeTarget?.name ?? ''}"? Applications using it will stop working immediately. This cannot be undone.`}
+        confirmLabel="Revoke key"
+        isLoading={isRevoking}
+      />
     </div>
   );
 }

@@ -30,11 +30,15 @@ export function AppFormManager() {
   const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }> } | null>(null);
   // Cache loaded form definitions so we can check for linked_record references
   const loadedFormsRef = useRef<Record<string, Form>>({});
+  // Guards against out-of-order loadForms resolving (e.g. rapid appId changes)
+  const loadTokenRef = useRef(0);
 
   const loadForms = async () => {
     if (!appId) return;
+    const token = ++loadTokenRef.current;
     setLoading(true);
     const forms = await fetchAppForms(appId);
+    if (loadTokenRef.current !== token) return;
     setAppForms(forms);
 
     // Build relation badges from linked_record fields
@@ -61,21 +65,24 @@ export function AppFormManager() {
           if (!badges[formId]) badges[formId] = [];
           badges[formId].push({
             type: 'outgoing',
-            formName: nameMap[targetId] || targetId,
+            formName: nameMap[targetId] || allForms.find((af2) => af2.id === targetId)?.title || 'Removed form',
             fieldLabel: field.label,
             allowMultiple: multi,
           });
-          // Incoming badge on target form
-          if (!badges[targetId]) badges[targetId] = [];
-          badges[targetId].push({
-            type: 'incoming',
-            formName: nameMap[formId] || form.title,
-            fieldLabel: field.label,
-            allowMultiple: multi,
-          });
+          // Incoming badge only when the target form is actually in this app
+          if (nameMap[targetId]) {
+            if (!badges[targetId]) badges[targetId] = [];
+            badges[targetId].push({
+              type: 'incoming',
+              formName: nameMap[formId] || form.title,
+              fieldLabel: field.label,
+              allowMultiple: multi,
+            });
+          }
         });
     });
 
+    if (loadTokenRef.current !== token) return;
     setRelationBadges(badges);
     loadedFormsRef.current = formDefsCache;
     setLoading(false);

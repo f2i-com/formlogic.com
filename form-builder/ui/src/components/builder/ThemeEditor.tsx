@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { X, Palette, RotateCcw, Upload, Image, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
@@ -31,7 +32,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#6366f1',
       backgroundColor: '#ffffff',
       textColor: '#1f2937',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'medium',
     },
     preview: {
@@ -47,7 +48,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#8b5cf6',
       backgroundColor: '#1f2937',
       textColor: '#f9fafb',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'medium',
     },
     preview: {
@@ -63,7 +64,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#0ea5e9',
       backgroundColor: '#f0f9ff',
       textColor: '#0c4a6e',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'large',
     },
     preview: {
@@ -79,7 +80,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#f97316',
       backgroundColor: '#fffbeb',
       textColor: '#78350f',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'medium',
     },
     preview: {
@@ -95,7 +96,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#22c55e',
       backgroundColor: '#f0fdf4',
       textColor: '#14532d',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'medium',
     },
     preview: {
@@ -111,7 +112,7 @@ const THEME_PRESETS: ThemePreset[] = [
       primaryColor: '#f43f5e',
       backgroundColor: '#fff1f2',
       textColor: '#881337',
-      fontFamily: 'Inter',
+      fontFamily: 'DM Sans',
       borderRadius: 'large',
     },
     preview: {
@@ -122,16 +123,14 @@ const THEME_PRESETS: ThemePreset[] = [
   },
 ];
 
+// Only fonts that are actually loaded (DM Sans / Plus Jakarta Sans via
+// index.html) or universally web-safe — anything else silently falls back.
 const FONT_OPTIONS = [
-  { value: 'Inter', label: 'Inter' },
-  { value: 'Roboto', label: 'Roboto' },
-  { value: 'Open Sans', label: 'Open Sans' },
-  { value: 'Lato', label: 'Lato' },
-  { value: 'Montserrat', label: 'Montserrat' },
-  { value: 'Poppins', label: 'Poppins' },
-  { value: 'Playfair Display', label: 'Playfair Display' },
-  { value: 'Source Sans Pro', label: 'Source Sans Pro' },
+  { value: 'DM Sans', label: 'DM Sans' },
+  { value: 'Plus Jakarta Sans', label: 'Plus Jakarta Sans' },
   { value: 'system-ui', label: 'System Default' },
+  { value: 'Georgia', label: 'Georgia (Serif)' },
+  { value: 'monospace', label: 'Monospace' },
 ];
 
 const BORDER_RADIUS_OPTIONS = [
@@ -155,6 +154,9 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, isOpen);
 
   if (!isOpen) return null;
 
@@ -235,12 +237,12 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div role="dialog" aria-modal="true" aria-labelledby="theme-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="theme-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
-              <Palette className="h-5 w-5 text-white" />
+              <Palette className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
               <h2 id="theme-editor-title" className="text-lg font-semibold text-gray-900 dark:text-white">Theme Customization</h2>

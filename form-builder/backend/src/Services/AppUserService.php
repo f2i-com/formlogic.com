@@ -494,10 +494,19 @@ class AppUserService
 
         $this->mysql->beginTransaction();
         try {
+            // Atomically mark invitation as accepted (prevents race condition with concurrent accepts)
+            $stmt = $this->mysql->prepare("UPDATE app_invitations SET status = 'accepted' WHERE id = :id AND status = 'pending'");
+            $stmt->execute(['id' => $invitation['id']]);
+            if ($stmt->rowCount() === 0) {
+                $this->mysql->rollBack();
+                throw new \RuntimeException('Invitation has already been used');
+            }
+
             // Check if user is already a member
             $stmt = $this->mysql->prepare("SELECT id FROM app_users WHERE app_id = :app_id AND user_id = :user_id");
             $stmt->execute(['app_id' => $invitation['app_id'], 'user_id' => $userId]);
             if ($stmt->fetch()) {
+                $this->mysql->rollBack();
                 throw new \RuntimeException('User is already a member of this app');
             }
 
@@ -517,10 +526,6 @@ class AppUserService
                 'invited_at' => $invitation['created_at'],
                 'joined_at' => $now,
             ]);
-
-            // Mark invitation as accepted
-            $stmt = $this->mysql->prepare("UPDATE app_invitations SET status = 'accepted' WHERE id = :id");
-            $stmt->execute(['id' => $invitation['id']]);
 
             $this->mysql->commit();
 

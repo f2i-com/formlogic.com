@@ -85,7 +85,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
     >
       <form onSubmit={handleSubmit} className="p-6 space-y-5">
         {displayError && (
-          <div className="flex items-center gap-2.5 p-3.5 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl animate-shake">
+          <div role="alert" aria-live="assertive" className="flex items-center gap-2.5 p-3.5 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl animate-shake">
             <div className="p-1 bg-red-100 dark:bg-red-500/20 rounded-lg">
               <AlertCircle className="h-4 w-4 flex-shrink-0" />
             </div>

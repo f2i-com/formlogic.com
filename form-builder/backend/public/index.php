@@ -131,9 +131,12 @@ $container->set(WebhookService::class, function (Container $c) {
 
 // Register audit service
 $container->set(AuditService::class, function (Container $c) use ($settings) {
-    // Derive audit HMAC key from JWT secret to prevent audit chain forgery
-    $jwtSecret = $settings['jwt']['secret'] ?? '';
-    $auditHmacKey = hash('sha256', 'formlogic-audit:' . $jwtSecret);
+    // Use explicit AUDIT_HMAC_KEY if set, otherwise derive from JWT secret
+    $auditHmacKey = $_ENV['AUDIT_HMAC_KEY'] ?? null;
+    if (empty($auditHmacKey)) {
+        $jwtSecret = $settings['jwt']['secret'] ?? '';
+        $auditHmacKey = hash('sha256', 'formlogic-audit:' . $jwtSecret);
+    }
     return new AuditService(
         $c->get(MySQLConnection::class),
         $c->get(LoggerInterface::class),
@@ -475,13 +478,13 @@ $authRateLimiter = new RateLimitMiddleware(10, 60, 'auth');
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
-    $group->post('/logout', [AuthController::class, 'logout']);
 })->add($authRateLimiter);
 
 // Auth routes (protected)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->get('/me', [AuthController::class, 'me']);
     $group->put('/me', [AuthController::class, 'updateProfile']);
+    $group->post('/logout', [AuthController::class, 'logout']);
 })->add($authRequired);
 
 // AI routes - status is public, everything else requires auth

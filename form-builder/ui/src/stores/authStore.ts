@@ -159,6 +159,7 @@ export const useAuthStore = create<AuthState>()(
           localStorage.removeItem('formlogic-apps');
           localStorage.removeItem('formlogic-responses');
           localStorage.removeItem('formlogic-app-runtime');
+          localStorage.removeItem('formlogic_storage_mode');
         } catch {
           // localStorage may be unavailable (e.g. private browsing)
         }

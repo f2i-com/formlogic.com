@@ -115,7 +115,7 @@ class AIController
         // Validate file size before processing
         $maxFileSize = $this->uploadSettings['maxFileSize'];
         $fileSize = $file->getSize();
-        if ($fileSize > $maxFileSize) {
+        if ($fileSize === false || $fileSize === null || $fileSize > $maxFileSize) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'File too large. Maximum size is ' . round($maxFileSize / 1024 / 1024, 1) . 'MB',

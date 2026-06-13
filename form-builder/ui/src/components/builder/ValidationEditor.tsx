@@ -91,10 +91,9 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
   };
 
   const handleTestExpression = async (expression: string) => {
-    // Wrap expression to return error message or null
+    // value is passed safely via the context object (not interpolated into code)
     const testExpr = `
       (() => {
-        let value = "${testValue}";
         ${expression}
       })()
     `;
@@ -147,12 +146,14 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
               {/* Rule Header */}
               <div
                 role="button"
+                tabIndex={0}
                 aria-expanded={expandedRuleId === rule.id}
                 className={cn(
                   'flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800/50 cursor-pointer',
                   expandedRuleId === rule.id && 'border-b border-gray-200 dark:border-slate-800'
                 )}
                 onClick={() => setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedRuleId(expandedRuleId === rule.id ? null : rule.id); } }}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-gray-700 dark:text-slate-200">

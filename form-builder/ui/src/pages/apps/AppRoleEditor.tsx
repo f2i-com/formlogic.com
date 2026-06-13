@@ -31,7 +31,10 @@ export function AppRoleEditor() {
       const [r, f] = await Promise.all([fetchRoles(appId), fetchAppForms(appId)]);
       setRoles(r);
       setAppForms(f);
-      if (r.length > 0 && !selectedRoleId) setSelectedRoleId(r[0].id);
+      // The [appId] effect resets selectedRoleId to null before this runs, but
+      // that reset isn't visible in this closure — always select the first role
+      // on (re)load so switching apps doesn't leave nothing selected.
+      if (r.length > 0) setSelectedRoleId(r[0].id);
     } catch {
       toast.error('Load failed', 'Could not load roles. Please refresh the page.');
     }
@@ -98,16 +101,18 @@ export function AppRoleEditor() {
   const handleDeleteRole = async (roleId: string) => {
     if (!appId) return;
     setRoleError(null);
-    try {
-      await deleteRole(appId, roleId);
-      setRoles((prev) => {
-        const updated = prev.filter((r) => r.id !== roleId);
-        if (selectedRoleId === roleId) setSelectedRoleId(updated[0]?.id ?? null);
-        return updated;
-      });
-    } catch {
+    // deleteRole resolves (never throws) and returns false on backend rejection,
+    // so only remove the role from the UI when the delete actually succeeded.
+    const ok = await deleteRole(appId, roleId);
+    if (!ok) {
       setRoleError('Cannot delete this role. It may still have users assigned.');
+      return;
     }
+    setRoles((prev) => {
+      const updated = prev.filter((r) => r.id !== roleId);
+      if (selectedRoleId === roleId) setSelectedRoleId(updated[0]?.id ?? null);
+      return updated;
+    });
   };
 
   return (

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { X, Settings, Layout, Bell, Shield, Link2, Zap } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -31,6 +32,9 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, isOpen);
+
   if (!isOpen) return null;
 
   const updateSettings = (updates: Partial<FormSettings>) => {
@@ -54,12 +58,12 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800" onMouseDown={(e) => e.stopPropagation()}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="form-settings-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none" onMouseDown={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
-              <Settings className="h-5 w-5 text-white" />
+              <Settings className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
               <h2 id="form-settings-title" className="text-lg font-semibold text-gray-900 dark:text-white">Form Settings</h2>

@@ -53,7 +53,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-gray-600 dark:text-slate-400 mb-6">
               An unexpected error occurred. Please try again or refresh the page.
             </p>
-            {this.state.error && (
+            {this.state.error && import.meta.env.DEV && (
               <details className="mb-6 text-left">
                 <summary className="text-sm text-gray-500 dark:text-slate-400 cursor-pointer hover:text-gray-700 dark:hover:text-slate-300">
                   Error details

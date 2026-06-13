@@ -55,7 +55,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
-          className="mt-1 p-1 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing touch-none"
+          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none transition-colors"
           aria-label="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
@@ -79,7 +79,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           onClick={handleDelete}
           aria-label={`Delete ${field.label || 'field'}`}
           className={cn(
-            'p-1.5 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer',
+            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer',
             isSelected
               ? 'text-gray-400 dark:text-slate-500 opacity-100'
               : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 sm:opacity-0 max-sm:opacity-60'

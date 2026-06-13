@@ -17,7 +17,9 @@ class FileStorageService
         $this->allowedTypes = $config['allowedTypes'] ?? [];
 
         if (!is_dir($this->storagePath)) {
-            mkdir($this->storagePath, 0700, true);
+            if (!mkdir($this->storagePath, 0700, true) && !is_dir($this->storagePath)) {
+                throw new \RuntimeException('Failed to create storage directory: ' . $this->storagePath);
+            }
         }
     }
 

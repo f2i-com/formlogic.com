@@ -1156,7 +1156,7 @@ class FormLogicRuntime
     {
         // Reserved module/builtin names that scripts cannot override
         $reservedNames = [
-            '__db', '__utils', '__http', '__meta', '__answers',
+            '__db', '__utils', '__http', '__meta', '__answers', '__metaObj',
             'ctx', // The context object itself
         ];
 
@@ -1217,9 +1217,13 @@ class FormLogicRuntime
         // to avoid issues with method call context being prepended to arguments
         return <<<FORMLOGIC
 // Create the context object
+let __answers = {$answersCode};
+let __metaObj = {$metaCode};
+Object.freeze(__answers);
+Object.freeze(__metaObj);
 let ctx = {
-    answers: {$answersCode},
-    meta: {$metaCode},
+    answers: __answers,
+    meta: __metaObj,
     db: __db,
     utils: __utils,
     http: __http,

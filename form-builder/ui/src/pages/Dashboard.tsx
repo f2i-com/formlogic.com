@@ -100,12 +100,12 @@ function QuickActionButton({
     <button
       onClick={onClick}
       className={`flex flex-col items-center justify-center gap-2.5 p-4 rounded-xl border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer group ${primary
-        ? 'bg-primary-600 border-primary-500 text-white hover:bg-primary-500 shadow-md shadow-primary-600/15'
+        ? 'bg-primary-600 border-primary-500 text-primary-foreground hover:bg-primary-500 shadow-md shadow-primary-600/15'
         : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/10 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
         }`}
     >
-      <Icon className={`h-5 w-5 ${primary ? 'text-white' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} transition-colors`} />
-      <span className={`text-[13px] font-medium ${primary ? 'text-white' : 'text-gray-600 dark:text-slate-300'}`}>
+      <Icon className={`h-5 w-5 ${primary ? 'text-primary-foreground' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} transition-colors`} />
+      <span className={`text-[13px] font-medium ${primary ? 'text-primary-foreground' : 'text-gray-600 dark:text-slate-300'}`}>
         {label}
       </span>
     </button>
@@ -380,6 +380,7 @@ export function Dashboard() {
 
   // Fetch stats from API when in API mode
   useEffect(() => {
+    let cancelled = false;
     async function fetchStats() {
       if (storageMode === 'api' && user && forms.length > 0) {
         try {
@@ -390,6 +391,7 @@ export function Dashboard() {
           const analyticsResults = await Promise.all(
             forms.map((form) => api.getFormAnalytics(form.id))
           );
+          if (cancelled) return;
           for (const result of analyticsResults) {
             if (result.data?.analytics) {
               totalResponses += result.data.analytics.totalResponses;
@@ -405,6 +407,7 @@ export function Dashboard() {
             avgCompletionRate: formsWithAnalytics > 0 ? Math.round(totalCompletionRate / formsWithAnalytics) : 0,
           });
         } catch (error) {
+          if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
           toast.warning('Connection Issue', 'Using local data. Some stats may not be up to date.');
           setStats(localStats);
@@ -415,6 +418,7 @@ export function Dashboard() {
     }
 
     fetchStats();
+    return () => { cancelled = true; };
   }, [forms, storageMode, user, localStats]);
 
   const totalResponses = stats.totalResponses;

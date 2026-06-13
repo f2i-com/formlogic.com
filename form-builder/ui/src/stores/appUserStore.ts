@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { toast } from './toastStore';
 import type { AppUser, AppUserGroup, AppInvitation } from '../types/app';
 
 interface AppUserState {
@@ -52,14 +53,14 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
 
   updateUser: async (appId, appUserId, data) => {
     const result = await api.updateAppUser(appId, appUserId, data);
-    if (result.error) return false;
+    if (result.error) { toast.error('Update failed', result.error); return false; }
     await get().fetchUsers(appId);
     return true;
   },
 
   removeUser: async (appId, appUserId) => {
     const result = await api.removeAppUser(appId, appUserId);
-    if (result.error) return false;
+    if (result.error) { toast.error('Remove failed', result.error); return false; }
     await get().fetchUsers(appId);
     return true;
   },
@@ -75,14 +76,14 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
 
   inviteUser: async (appId, email, roleId) => {
     const result = await api.createAppInvitation(appId, email, roleId);
-    if (result.error) return null;
+    if (result.error) { toast.error('Invite failed', result.error); return null; }
     await get().fetchInvitations(appId);
     return (result.data?.invitation as AppInvitation) ?? null;
   },
 
   revokeInvitation: async (appId, invitationId) => {
     const result = await api.revokeAppInvitation(appId, invitationId);
-    if (result.error) return false;
+    if (result.error) { toast.error('Revoke failed', result.error); return false; }
     await get().fetchInvitations(appId);
     return true;
   },
@@ -103,35 +104,35 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
 
   createGroup: async (appId, data) => {
     const result = await api.createAppGroup(appId, data);
-    if (result.error) return null;
+    if (result.error) { toast.error('Create failed', result.error); return null; }
     await get().fetchGroups(appId);
     return (result.data?.group as AppUserGroup) ?? null;
   },
 
   updateGroup: async (appId, groupId, data) => {
     const result = await api.updateAppGroup(appId, groupId, data);
-    if (result.error) return false;
+    if (result.error) { toast.error('Update failed', result.error); return false; }
     await get().fetchGroups(appId);
     return true;
   },
 
   deleteGroup: async (appId, groupId) => {
     const result = await api.deleteAppGroup(appId, groupId);
-    if (result.error) return false;
+    if (result.error) { toast.error('Delete failed', result.error); return false; }
     await get().fetchGroups(appId);
     return true;
   },
 
   addGroupMember: async (appId, groupId, appUserId) => {
     const result = await api.addAppGroupMember(appId, groupId, appUserId);
-    if (result.error) return false;
+    if (result.error) { toast.error('Add member failed', result.error); return false; }
     await get().fetchGroups(appId);
     return true;
   },
 
   removeGroupMember: async (appId, groupId, appUserId) => {
     const result = await api.removeAppGroupMember(appId, groupId, appUserId);
-    if (result.error) return false;
+    if (result.error) { toast.error('Remove member failed', result.error); return false; }
     await get().fetchGroups(appId);
     return true;
   },

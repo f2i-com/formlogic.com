@@ -125,7 +125,7 @@ class ExternalApiController
         }
 
         $data['ipAddress'] = $this->ipResolver->getClientIp($request);
-        $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500);
+        $data['userAgent'] = htmlspecialchars(substr($request->getHeaderLine('User-Agent'), 0, 500), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         // Strip client-supplied fields that must be server-controlled
         unset($data['submittedByUserId'], $data['status']);
         $script = $form['logicScript'] ?? null;
@@ -723,8 +723,25 @@ class ExternalApiController
         if (in_array($host, $blockedHosts, true)) {
             return true;
         }
+        // Block IP addresses in private/reserved ranges (covers both IPv4 and IPv6)
         if (filter_var($host, FILTER_VALIDATE_IP) && !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
             return true;
+        }
+        // Resolve hostname and check if it points to a private/reserved IP
+        if (!filter_var($host, FILTER_VALIDATE_IP)) {
+            $resolved = gethostbyname($host);
+            if ($resolved !== $host && filter_var($resolved, FILTER_VALIDATE_IP) && !filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return true;
+            }
+            $ipv6Records = dns_get_record($host, DNS_AAAA);
+            if (is_array($ipv6Records)) {
+                foreach ($ipv6Records as $record) {
+                    $ip = $record['ipv6'] ?? '';
+                    if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                        return true;
+                    }
+                }
+            }
         }
         return false;
     }

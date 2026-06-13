@@ -215,7 +215,7 @@ export const useFormStore = create<FormState>()(
       setStorageMode: (mode: StorageMode) => {
         clearAllDebounceTimers();
         set({ storageMode: mode, isInitialized: false });
-        localStorage.setItem('formlogic_storage_mode', mode);
+        try { localStorage.setItem('formlogic_storage_mode', mode); } catch { /* private browsing */ }
         get().initialize();
       },
 

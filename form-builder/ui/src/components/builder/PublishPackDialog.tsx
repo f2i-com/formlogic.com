@@ -207,7 +207,7 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack }:
               <div
                 className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
                   i <= stepIndex
-                    ? 'bg-primary-600 text-white'
+                    ? 'bg-primary-600 text-primary-foreground'
                     : 'bg-gray-200 dark:bg-slate-700 text-gray-500 dark:text-slate-400'
                 }`}
               >

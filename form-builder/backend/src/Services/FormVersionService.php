@@ -40,35 +40,32 @@ class FormVersionService
             'logicPrompt' => $form['logicPrompt'] ?? null,
         ];
 
-        // Retry loop to handle concurrent version creation race condition
-        $maxRetries = 3;
-        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+        // Use FOR UPDATE lock to prevent concurrent version number collisions
+        $this->mysql->beginTransaction();
+        try {
             $id = $this->generateUuid();
-            $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id");
+            $stmt = $this->mysql->prepare("SELECT COALESCE(MAX(version), 0) + 1 as next_version FROM form_versions WHERE form_id = :form_id FOR UPDATE");
             $stmt->execute(['form_id' => $formId]);
             $row = $stmt->fetch();
             $nextVersion = $row ? (int)$row['next_version'] : 1;
 
-            try {
-                $stmt = $this->mysql->prepare("
-                    INSERT INTO form_versions (id, form_id, version, data, created_by, changelog)
-                    VALUES (:id, :form_id, :version, :data, :created_by, :changelog)
-                ");
-                $stmt->execute([
-                    'id' => $id,
-                    'form_id' => $formId,
-                    'version' => $nextVersion,
-                    'data' => json_encode($data),
-                    'created_by' => $userId,
-                    'changelog' => $changelog,
-                ]);
-                break; // Success
-            } catch (\PDOException $e) {
-                if ($attempt >= $maxRetries - 1 || strpos($e->getMessage(), 'Duplicate') === false) {
-                    throw $e;
-                }
-                // Duplicate key — retry with new version number
-            }
+            $stmt = $this->mysql->prepare("
+                INSERT INTO form_versions (id, form_id, version, data, created_by, changelog)
+                VALUES (:id, :form_id, :version, :data, :created_by, :changelog)
+            ");
+            $stmt->execute([
+                'id' => $id,
+                'form_id' => $formId,
+                'version' => $nextVersion,
+                'data' => json_encode($data),
+                'created_by' => $userId,
+                'changelog' => $changelog,
+            ]);
+
+            $this->mysql->commit();
+        } catch (\Exception $e) {
+            $this->mysql->rollBack();
+            throw $e;
         }
 
         return [

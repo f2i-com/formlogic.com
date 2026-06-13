@@ -63,7 +63,7 @@ export function AppDashboard() {
                   {showSubmit && (
                     <button
                       onClick={() => navigate(`/app/${appSlug}/form/${form.formId}`)}
-                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white app-btn-primary transition-all duration-200 hover:shadow-md cursor-pointer"
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium app-btn-primary transition-all duration-200 hover:shadow-md cursor-pointer"
                     >
                       <Send className="h-3.5 w-3.5" /> Submit
                     </button>

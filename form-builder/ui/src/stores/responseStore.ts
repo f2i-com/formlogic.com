@@ -135,18 +135,21 @@ export const useResponseStore = create<ResponseState>()(
     }),
     {
       name: 'formlogic-responses',
-      partialize: (state) => ({
-        // In API mode, responses are server-backed — don't waste localStorage
-        // In local mode, keep the most recent 500
-        responses: useFormStore.getState().storageMode === 'api'
-          ? []
-          : state.responses.slice(-500),
-        // Don't persist in-progress answers (File objects can't survive JSON serialization)
-        currentFormId: null,
-        currentAnswers: {},
-        currentStep: 0,
-        startTime: null,
-      }),
+      partialize: (state) => {
+        // Read storageMode safely — default to 'local' if formStore isn't hydrated yet
+        let storageMode = 'local';
+        try { storageMode = useFormStore.getState().storageMode ?? 'local'; } catch { /* noop */ }
+        return {
+          // In API mode, responses are server-backed — don't waste localStorage
+          // In local mode, keep the most recent 500
+          responses: storageMode === 'api' ? [] : state.responses.slice(-500),
+          // Don't persist in-progress answers (File objects can't survive JSON serialization)
+          currentFormId: null,
+          currentAnswers: {},
+          currentStep: 0,
+          startTime: null,
+        };
+      },
     }
   )
 );

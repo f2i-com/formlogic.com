@@ -5,6 +5,7 @@ import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { cn } from '../../lib/utils';
+import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
 import type { App } from '../../types/app';
 import { DEFAULT_APP_THEME } from '../../types/app';
 
@@ -44,10 +45,14 @@ export function AppSettings() {
     if (!appId) return;
     setSaving(true);
     setSaveSuccess(false);
-    await updateApp(appId, app);
+    const ok = await updateApp(appId, app);
     setSaving(false);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2000);
+    // Only show the success state when the update actually persisted; updateApp
+    // already surfaces an error toast on failure.
+    if (ok) {
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+    }
   };
 
   return (
@@ -141,11 +146,39 @@ export function AppSettings() {
                 </div>
               </div>
             </div>
+            {(() => {
+              const primary = app.theme?.primaryColor || '#6366f1';
+              const bg = app.theme?.backgroundColor || '#ffffff';
+              const ratio = hexContrast(primary, bg);
+              if (ratio === null) return null;
+              const level = contrastLevel(ratio);
+              const ok = level !== 'fail';
+              return (
+                <div
+                  role="status"
+                  className={cn(
+                    'flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm',
+                    ok
+                      ? 'border-emerald-200 dark:border-emerald-500/20 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                      : 'border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                  )}
+                >
+                  <Shield className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span>
+                    Accent vs background contrast: <strong className="font-semibold tabular-nums">{ratio.toFixed(1)}:1</strong>
+                    {ok
+                      ? ` — meets WCAG ${level === 'aa-large' ? 'AA (large text)' : level.toUpperCase()}.`
+                      : ' — too low; accent text and links may be hard to read. Buttons stay legible (text auto-adjusts).'}
+                  </span>
+                </div>
+              );
+            })()}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Font Family</label>
-              <select value={app.theme?.fontFamily || 'Inter'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, fontFamily: e.target.value } })}
+              <select value={app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily} onChange={(e) => setApp({ ...app, theme: { ...app.theme, fontFamily: e.target.value } })}
                 className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
-                <option value="Inter">Inter</option>
+                <option value="DM Sans">DM Sans</option>
+                <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
                 <option value="system-ui">System</option>
                 <option value="Georgia">Georgia</option>
                 <option value="monospace">Monospace</option>
@@ -156,7 +189,7 @@ export function AppSettings() {
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Preview</label>
               <div
                 className="rounded-xl border border-gray-200 dark:border-slate-700 p-5 transition-all"
-                style={{ backgroundColor: app.theme?.backgroundColor || '#ffffff', fontFamily: app.theme?.fontFamily || 'Inter' }}
+                style={{ backgroundColor: app.theme?.backgroundColor || '#ffffff', fontFamily: app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily }}
               >
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${app.theme?.primaryColor || '#6366f1'}20` }}>
@@ -164,7 +197,7 @@ export function AppSettings() {
                   </div>
                   <span className="font-semibold text-sm" style={{ color: app.theme?.primaryColor || '#6366f1' }}>{app.name}</span>
                 </div>
-                <div className="rounded-lg px-4 py-2 text-white text-sm font-medium inline-block" style={{ backgroundColor: app.theme?.primaryColor || '#6366f1' }}>
+                <div className="rounded-lg px-4 py-2 text-sm font-medium inline-block" style={{ backgroundColor: app.theme?.primaryColor || '#6366f1', color: readableForegroundColor(app.theme?.primaryColor || '#6366f1') }}>
                   Sample Button
                 </div>
               </div>

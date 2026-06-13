@@ -92,7 +92,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     return (
       <button
         onClick={onOpenAuth}
-        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98] cursor-pointer"
+        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-foreground bg-primary-600 rounded-lg hover:bg-primary-700 shadow-sm hover:shadow transition-all duration-150 active:scale-[0.98] cursor-pointer"
       >
         <User className="h-4 w-4" />
         Sign In
@@ -112,7 +112,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           isOpen && 'bg-gray-100 dark:bg-slate-800'
         )}
       >
-        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white text-sm font-medium shadow-sm">
+        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-primary-foreground text-sm font-medium shadow-sm">
           {user.name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
         </div>
         <span className="max-w-[120px] truncate hidden sm:block font-medium text-gray-700 dark:text-slate-300">

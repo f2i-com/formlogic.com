@@ -242,7 +242,7 @@ export function CsvImportWizard({
               <div
                 className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium ${
                   step === s
-                    ? 'bg-primary-600 text-white'
+                    ? 'bg-primary-600 text-primary-foreground'
                     : (['upload', 'map', 'preview', 'results'] as Step[]).indexOf(step) > i
                       ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400'
                       : 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'

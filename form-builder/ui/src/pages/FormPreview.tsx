@@ -166,7 +166,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
                 <span className={cn(
                   'w-6 h-6 rounded border-2 flex items-center justify-center',
                   selectedValues.includes(option.value)
-                    ? 'bg-primary-500 border-primary-500 text-white'
+                    ? 'bg-primary-500 border-primary-500 text-primary-foreground'
                     : 'border-current/40'
                 )}>
                   {selectedValues.includes(option.value) && '✓'}
@@ -269,7 +269,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
                     className={cn(
                       'py-3 min-h-[44px] rounded-lg border-2 font-medium transition-all cursor-pointer',
                       scaleValue === num
-                        ? 'border-primary-500 bg-primary-500 text-white'
+                        ? 'border-primary-500 bg-primary-500 text-primary-foreground'
                         : 'border-current/20 hover:border-current/40'
                     )}
                   >
@@ -423,58 +423,6 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
                 Clear signature
               </button>
             )}
-          </div>
-        );
-      }
-
-      case 'payment': {
-        const amount = field.properties.min || 0;
-        const currency = field.properties.currency || 'USD';
-        return (
-          <div className="p-5 border-2 border-current/20 rounded-xl bg-current/5">
-            <div className="flex items-center justify-between mb-5">
-              <span className="opacity-70">Amount:</span>
-              <span className="text-2xl font-bold">
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)}
-              </span>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium opacity-60 mb-1">Card number</label>
-                <input
-                  type="text"
-                  placeholder="1234 5678 9012 3456"
-                  className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
-                  disabled
-                />
-              </div>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-xs font-medium opacity-60 mb-1">Expiry</label>
-                  <input
-                    type="text"
-                    placeholder="MM / YY"
-                    className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
-                    disabled
-                  />
-                </div>
-                <div className="w-24">
-                  <label className="block text-xs font-medium opacity-60 mb-1">CVC</label>
-                  <input
-                    type="text"
-                    placeholder="123"
-                    className="w-full p-3 border border-current/20 rounded-lg bg-transparent opacity-50"
-                    disabled
-                  />
-                </div>
-              </div>
-            </div>
-            <p className="text-xs opacity-50 mt-4 text-center flex items-center justify-center gap-1">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-              </svg>
-              Secure payment (preview only)
-            </p>
           </div>
         );
       }

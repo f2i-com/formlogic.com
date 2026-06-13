@@ -158,7 +158,6 @@ export default function FormBuilder() {
       scale: 'Rate on a scale',
       file_upload: 'Upload a file',
       signature: 'Your signature',
-      payment: 'Payment',
       statement: 'Information',
       welcome_screen: 'Welcome',
       thank_you: 'Thank you!',
@@ -187,8 +186,6 @@ export default function FormBuilder() {
         scaleEnd: type === 'scale' ? 10 : undefined,
         // File upload defaults
         ...(type === 'file_upload' ? { maxFileSize: 10, allowedTypes: [] } : {}),
-        // Payment defaults
-        ...(type === 'payment' ? { currency: 'USD', amount: 0 } : {}),
         // Linked record defaults
         ...(type === 'linked_record' ? { targetFormId: '', displayFieldIds: [], searchFieldIds: [], allowMultiple: false } : {}),
       },
@@ -294,6 +291,18 @@ export default function FormBuilder() {
     }
   }, [form, formId, navigate]);
 
+  // These must stay above the early return below so hook order is stable when
+  // `form` transitions null -> loaded (or back, e.g. on delete). (Rules of Hooks)
+  const handleUpdateField = useCallback((updates: Partial<FormField>) => {
+    if (!form || !selectedFieldId) return;
+    updateField(form.id, selectedFieldId, updates);
+  }, [form, selectedFieldId, updateField]);
+
+  const handleDeleteFieldById = useCallback((fieldId: string) => {
+    if (!form) return;
+    deleteField(form.id, fieldId);
+  }, [form, deleteField]);
+
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -317,16 +326,6 @@ export default function FormBuilder() {
       reorderFields(form.id, newOrder);
     }
   };
-
-  const handleUpdateField = useCallback((updates: Partial<FormField>) => {
-    if (selectedFieldId) {
-      updateField(form.id, selectedFieldId, updates);
-    }
-  }, [form.id, selectedFieldId, updateField]);
-
-  const handleDeleteFieldById = useCallback((fieldId: string) => {
-    deleteField(form.id, fieldId);
-  }, [form.id, deleteField]);
 
   const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string) => {
     // Update form title and description

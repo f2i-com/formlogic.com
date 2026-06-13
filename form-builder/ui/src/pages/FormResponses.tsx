@@ -105,6 +105,8 @@ function FormResponses() {
   // Load form and responses
   useEffect(() => {
     if (!formId) return;
+    // Guard against out-of-order responses when formId/storageMode changes mid-load.
+    let cancelled = false;
 
     const loadData = async () => {
       setIsLoading(true);
@@ -112,6 +114,7 @@ function FormResponses() {
       // Load form — prefer API to get full form with fields
       if (storageMode === 'api') {
         const result = await api.getForm(formId);
+        if (cancelled) return;
         if (result.data?.form) {
           setForm(result.data.form);
         } else {
@@ -126,6 +129,7 @@ function FormResponses() {
       // Load responses
       if (storageMode === 'api') {
         const result = await api.getResponses(formId);
+        if (cancelled) return;
         if (result.data?.responses) {
           setResponses(result.data.responses as ResponseWithStatus[]);
         } else {
@@ -136,10 +140,12 @@ function FormResponses() {
         setResponses(localResps as ResponseWithStatus[]);
       }
 
+      if (cancelled) return;
       setIsLoading(false);
     };
 
     loadData();
+    return () => { cancelled = true; };
   }, [formId, storageMode, getForm, localResponses]);
 
   // Get display fields (first few meaningful fields)
@@ -377,7 +383,7 @@ function FormResponses() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
+      <div className="min-h-screen flex items-center justify-center transition-colors">
         <Spinner size="lg" />
       </div>
     );
@@ -385,7 +391,7 @@ function FormResponses() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
+      <div className="min-h-screen flex items-center justify-center transition-colors">
         <EmptyState
           icon={Inbox}
           title="Form not found"
@@ -397,7 +403,7 @@ function FormResponses() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 transition-colors">
+    <div className="min-h-screen transition-colors">
       <Header
         title={`${form.title} - Responses`}
         actions={

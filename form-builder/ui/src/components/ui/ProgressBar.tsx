@@ -30,7 +30,7 @@ export function ProgressBar({
   const colors = {
     primary: {
       bar: 'bg-gradient-to-r from-primary-500 to-primary-600',
-      glow: 'shadow-[0_0_8px_rgba(99,102,241,0.4)]',
+      glow: 'shadow-[0_0_8px_rgb(var(--primary-500)/0.4)]',
     },
     success: {
       bar: 'bg-gradient-to-r from-green-400 to-green-500',

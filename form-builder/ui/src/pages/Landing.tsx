@@ -135,9 +135,9 @@ export function Landing() {
   ];
 
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-indigo-500/20 dark:selection:bg-indigo-400/20">
+    <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-primary-500/20">
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 bg-white/90 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-indigo-500/10 z-50 transition-all duration-300">
+      <nav className="fixed top-0 left-0 right-0 bg-white/90 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-primary-500/10 z-50 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <Logo size="md" />
@@ -157,7 +157,7 @@ export function Landing() {
                 Sign In
               </Link>
               <Link to="/signup">
-                <Button className="bg-indigo-600 hover:bg-indigo-500 text-white border-0 shadow-md shadow-indigo-600/20">
+                <Button className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0 shadow-md shadow-primary-600/20">
                   Get Started Free
                 </Button>
               </Link>
@@ -178,21 +178,21 @@ export function Landing() {
             <a
               href="#features"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white font-medium"
+              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
             >
               Features
             </a>
             <a
               href="#solutions"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white font-medium"
+              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
             >
               Solutions
             </a>
             <a
               href="#pricing"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white font-medium"
+              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
             >
               Pricing
             </a>
@@ -200,12 +200,12 @@ export function Landing() {
               <Link
                 to="/login"
                 onClick={() => setMobileMenuOpen(false)}
-                className="py-2 text-gray-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-white font-medium"
+                className="py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
               >
                 Sign In
               </Link>
               <Link to="/signup" onClick={() => setMobileMenuOpen(false)}>
-                <Button className="w-full bg-indigo-600">Get Started Free</Button>
+                <Button className="w-full bg-primary-600 text-primary-foreground">Get Started Free</Button>
               </Link>
             </div>
           </div>
@@ -215,12 +215,12 @@ export function Landing() {
       {/* Hero Section */}
       <section className="relative pt-32 sm:pt-40 pb-20 sm:pb-32 px-4 sm:px-6 lg:px-8 overflow-hidden">
         {/* Background Gradients */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[600px] bg-indigo-600/12 blur-[120px] rounded-full opacity-50 pointer-events-none" />
-        <div className="absolute top-20 right-0 w-[500px] h-[500px] bg-purple-600/8 blur-[100px] rounded-full opacity-30 pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-blue-600/5 blur-[100px] rounded-full opacity-20 pointer-events-none" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1200px] h-[600px] bg-primary-600/12 blur-[120px] rounded-full opacity-50 pointer-events-none" />
+        <div className="absolute top-20 right-0 w-[500px] h-[500px] bg-primary-500/8 blur-[100px] rounded-full opacity-30 pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-primary-400/5 blur-[100px] rounded-full opacity-20 pointer-events-none" />
 
         <div className="relative max-w-5xl mx-auto text-center z-10">
-          <div className="inline-flex items-center gap-2 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm border border-indigo-200/50 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-300 px-4 py-1.5 rounded-full text-sm font-medium mb-8 shadow-sm shadow-indigo-500/5">
+          <div className="inline-flex items-center gap-2 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm border border-primary-200/50 dark:border-primary-500/20 text-primary-600 dark:text-primary-300 px-4 py-1.5 rounded-full text-sm font-medium mb-8 shadow-sm shadow-primary-500/5">
             <Building2 className="h-3.5 w-3.5" />
             <span>Built for enterprise teams</span>
           </div>
@@ -228,7 +228,7 @@ export function Landing() {
           <h1 className="text-5xl sm:text-7xl font-extrabold tracking-[-0.03em] text-gray-900 dark:text-white mb-8 leading-[1.08]">
             The Form Platform for
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-500 to-indigo-600 dark:from-indigo-400 dark:via-purple-400 dark:to-indigo-400">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary-600 via-primary-500 to-primary-600 dark:from-primary-400 dark:via-primary-300 dark:to-primary-400">
               Serious Applications
             </span>
           </h1>
@@ -240,7 +240,7 @@ export function Landing() {
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5 mb-20">
             <Link to="/signup" className="w-full sm:w-auto">
-              <Button size="lg" className="w-full sm:w-auto text-base h-13 px-8 bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/25 border-0 font-semibold">
+              <Button size="lg" className="w-full sm:w-auto text-base px-8 bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/25 border-0 font-semibold">
                 Start Free Trial
                 <ArrowRight className="h-5 w-5 ml-2 group-hover:translate-x-0.5 transition-transform" />
               </Button>
@@ -258,7 +258,7 @@ export function Landing() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 sm:gap-12 max-w-4xl mx-auto pt-10 border-t border-gray-200/80 dark:border-slate-800">
             {stats.map((stat) => (
               <div key={stat.label} className="text-center group hover:-translate-y-0.5 transition-transform duration-300">
-                <div className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors tracking-tight tabular-nums">{stat.value}</div>
+                <div className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors tracking-tight tabular-nums">{stat.value}</div>
                 <div className="text-sm text-gray-500 dark:text-slate-500 mt-1.5 font-medium">{stat.label}</div>
               </div>
             ))}
@@ -295,7 +295,7 @@ export function Landing() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-20">
             <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-6 tracking-tight">
-              Enterprise Features, <span className="text-indigo-600 dark:text-indigo-400">Developer Experience</span>
+              Enterprise Features, <span className="text-primary-600 dark:text-primary-400">Developer Experience</span>
             </h2>
             <p className="text-lg sm:text-xl text-gray-500 dark:text-slate-400 max-w-2xl mx-auto">
               Everything you need to build sophisticated form-driven applications.
@@ -305,10 +305,10 @@ export function Landing() {
             {features.map((feature) => (
               <div
                 key={feature.title}
-                className="group bg-white dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-7 sm:p-8 border border-gray-200/80 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-500/25 hover:bg-white dark:hover:bg-slate-800/60 transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/[0.04] hover:-translate-y-0.5"
+                className="group bg-white dark:bg-slate-900/40 backdrop-blur-md rounded-2xl p-7 sm:p-8 border border-gray-200/80 dark:border-slate-800 hover:border-primary-200 dark:hover:border-primary-500/25 hover:bg-white dark:hover:bg-slate-800/60 transition-all duration-300 hover:shadow-xl hover:shadow-primary-500/[0.04] hover:-translate-y-0.5"
               >
-                <div className="w-11 h-11 bg-indigo-50 dark:bg-indigo-500/10 rounded-xl flex items-center justify-center mb-5 group-hover:scale-105 transition-transform duration-300">
-                  <feature.icon className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                <div className="w-11 h-11 bg-primary-50 dark:bg-primary-500/10 rounded-xl flex items-center justify-center mb-5 group-hover:scale-105 transition-transform duration-300">
+                  <feature.icon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
                 </div>
                 <h3 className="text-[17px] font-semibold text-gray-900 dark:text-white mb-2.5 tracking-tight">{feature.title}</h3>
                 <p className="text-gray-500 dark:text-slate-400 leading-relaxed text-[15px]">{feature.description}</p>
@@ -321,7 +321,7 @@ export function Landing() {
       {/* Code Demo Section */}
       <section className="py-24 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/20 overflow-hidden relative border-y border-gray-100 dark:border-slate-800/50">
         <div className="absolute inset-0 bg-white/50 dark:bg-slate-950/80" />
-        <div className="absolute top-1/2 left-0 w-[600px] h-[600px] bg-indigo-600/5 dark:bg-indigo-600/10 blur-[120px] rounded-full -translate-y-1/2 -translate-x-1/2" />
+        <div className="absolute top-1/2 left-0 w-[600px] h-[600px] bg-primary-600/5 dark:bg-primary-600/10 blur-[120px] rounded-full -translate-y-1/2 -translate-x-1/2" />
 
         <div className="max-w-6xl mx-auto relative z-10">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
@@ -329,7 +329,7 @@ export function Landing() {
               <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8 leading-tight tracking-tight">
                 Real Backend Logic,
                 <br />
-                <span className="text-indigo-600 dark:text-indigo-400">Not Just Webhooks</span>
+                <span className="text-primary-600 dark:text-primary-400">Not Just Webhooks</span>
               </h2>
               <p className="text-lg text-gray-500 dark:text-slate-400 mb-10 leading-relaxed">
                 Write server-side scripts that run on every submission. Score leads, validate data,
@@ -359,7 +359,7 @@ export function Landing() {
 
             {/* Terminal Window */}
             <div className="relative group">
-              <div className="absolute -inset-1.5 bg-gradient-to-r from-indigo-500/40 to-purple-600/40 rounded-2xl opacity-20 group-hover:opacity-35 blur-xl transition duration-500" />
+              <div className="absolute -inset-1.5 bg-gradient-to-r from-primary-500/40 to-primary-600/40 rounded-2xl opacity-20 group-hover:opacity-35 blur-xl transition duration-500" />
               <div className="relative bg-[#0D1017] rounded-2xl shadow-2xl shadow-black/40 border border-slate-700/50 overflow-hidden">
                 <div className="h-11 bg-[#161B22] flex items-center gap-2 px-4 border-b border-slate-700/40">
                   <div className="flex items-center gap-1.5">
@@ -413,37 +413,37 @@ export function Landing() {
       </section>
 
       {/* SQLite Section */}
-      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-indigo-50/60 dark:bg-indigo-950/20 relative overflow-hidden">
+      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-primary-50/60 dark:bg-primary-950/20 relative overflow-hidden">
         <div className="max-w-6xl mx-auto relative z-10">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div className="order-2 lg:order-1">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-xl shadow-gray-900/[0.03] dark:shadow-none border border-gray-200/80 dark:border-indigo-500/20 relative group">
-                <div className="absolute -inset-px bg-gradient-to-br from-indigo-500/30 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition duration-500 pointer-events-none" />
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 shadow-xl shadow-gray-900/[0.03] dark:shadow-none border border-gray-200/80 dark:border-primary-500/20 relative group">
+                <div className="absolute -inset-px bg-gradient-to-br from-primary-500/30 to-transparent rounded-2xl opacity-0 group-hover:opacity-100 transition duration-500 pointer-events-none" />
                 <div className="flex items-center gap-4 mb-6 relative">
-                  <div className="p-3 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
-                    <Download className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+                  <div className="p-3 bg-primary-100 dark:bg-primary-500/10 rounded-xl">
+                    <Download className="h-6 w-6 text-primary-600 dark:text-primary-400" />
                   </div>
                   <span className="font-mono text-sm text-gray-500 dark:text-slate-400">contact-form.sqlite</span>
                 </div>
                 <div className="font-mono text-sm bg-gray-950 dark:bg-slate-950 rounded-xl p-6 text-slate-300 space-y-4 shadow-inner border border-gray-800 dark:border-slate-800 relative">
                   <div className="flex items-center gap-3">
                     <Database className="h-4 w-4 text-slate-600" />
-                    <span className="text-indigo-400">responses</span>
+                    <span className="text-primary-400">responses</span>
                     <span className="text-slate-600">(id, answers, submitted_at, status)</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <Database className="h-4 w-4 text-slate-600" />
-                    <span className="text-indigo-400">computed</span>
+                    <span className="text-primary-400">computed</span>
                     <span className="text-slate-600">(response_id, field_name, value)</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <Database className="h-4 w-4 text-slate-600" />
-                    <span className="text-indigo-400">tags</span>
+                    <span className="text-primary-400">tags</span>
                     <span className="text-slate-600">(response_id, tag, created_at)</span>
                   </div>
                   <div className="flex items-center gap-3">
                     <Database className="h-4 w-4 text-slate-600" />
-                    <span className="text-indigo-400">script_logs</span>
+                    <span className="text-primary-400">script_logs</span>
                     <span className="text-slate-600">(response_id, success, duration_ms)</span>
                   </div>
                 </div>
@@ -455,7 +455,7 @@ export function Landing() {
               <h2 className="text-3xl sm:text-5xl font-bold text-gray-900 dark:text-white mb-8 tracking-tight">
                 Your Data.
                 <br />
-                <span className="text-indigo-600 dark:text-indigo-400">Actually Yours.</span>
+                <span className="text-primary-600 dark:text-primary-400">Actually Yours.</span>
               </h2>
               <p className="text-gray-500 dark:text-slate-400 text-lg mb-10 leading-relaxed">
                 Each form gets its own SQLite database. Responses, computed fields, tags, audit logs &mdash;
@@ -463,20 +463,20 @@ export function Landing() {
               </p>
               <ul className="space-y-5">
                 <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
-                  <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                  <div className="p-1 bg-primary-100 dark:bg-primary-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-primary-600 dark:text-primary-400 flex-shrink-0" />
                   </div>
                   Download the entire database anytime
                 </li>
                 <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
-                  <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                  <div className="p-1 bg-primary-100 dark:bg-primary-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-primary-600 dark:text-primary-400 flex-shrink-0" />
                   </div>
                   Query with any SQLite-compatible tool
                 </li>
                 <li className="flex items-center gap-4 text-gray-600 dark:text-slate-300">
-                  <div className="p-1 bg-indigo-100 dark:bg-indigo-500/10 rounded-full">
-                    <Check className="h-4 w-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                  <div className="p-1 bg-primary-100 dark:bg-primary-500/10 rounded-full">
+                    <Check className="h-4 w-4 text-primary-600 dark:text-primary-400 flex-shrink-0" />
                   </div>
                   No vendor lock-in, ever
                 </li>
@@ -499,10 +499,10 @@ export function Landing() {
             {useCases.map((useCase) => (
               <div
                 key={useCase.title}
-                className="bg-white dark:bg-slate-950/80 rounded-2xl p-10 border border-gray-200/80 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-500/30 hover:shadow-xl hover:shadow-gray-900/[0.04] transition-all duration-300 group"
+                className="bg-white dark:bg-slate-950/80 rounded-2xl p-10 border border-gray-200/80 dark:border-slate-800 hover:border-primary-300 dark:hover:border-primary-500/30 hover:shadow-xl hover:shadow-gray-900/[0.04] transition-all duration-300 group"
               >
-                <div className="w-12 h-12 bg-indigo-50 dark:bg-slate-900 rounded-xl flex items-center justify-center mb-6 border border-indigo-100/80 dark:border-slate-800 group-hover:border-indigo-300 dark:group-hover:border-indigo-500/30 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-500/5 transition-all duration-300">
-                  <useCase.icon className="h-6 w-6 text-indigo-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors" />
+                <div className="w-12 h-12 bg-primary-50 dark:bg-slate-900 rounded-xl flex items-center justify-center mb-6 border border-primary-100/80 dark:border-slate-800 group-hover:border-primary-300 dark:group-hover:border-primary-500/30 group-hover:bg-primary-50 dark:group-hover:bg-primary-500/5 transition-all duration-300">
+                  <useCase.icon className="h-6 w-6 text-primary-600 dark:text-slate-400 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors" />
                 </div>
                 <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-3 tracking-tight">{useCase.title}</h3>
                 <p className="text-gray-500 dark:text-slate-400 leading-relaxed group-hover:text-gray-600 dark:group-hover:text-slate-300 transition-colors">{useCase.description}</p>
@@ -528,13 +528,13 @@ export function Landing() {
               <div
                 key={plan.name}
                 className={`rounded-2xl p-8 transition-all duration-300 relative ${plan.highlighted
-                  ? 'bg-white dark:bg-slate-900/80 ring-2 ring-indigo-500 shadow-2xl shadow-indigo-500/10 z-10'
+                  ? 'bg-white dark:bg-slate-900/80 ring-2 ring-primary-500 shadow-2xl shadow-primary-500/10 z-10'
                   : 'bg-white dark:bg-slate-950/80 border border-gray-200/80 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-lg hover:shadow-gray-900/[0.04]'
                   }`}
               >
                 {plan.highlighted && (
                   <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                    <span className="bg-indigo-600 text-white text-xs font-semibold px-4 py-1.5 rounded-full shadow-lg shadow-indigo-600/30 whitespace-nowrap">
+                    <span className="bg-primary-600 text-primary-foreground text-xs font-semibold px-4 py-1.5 rounded-full shadow-lg shadow-primary-600/30 whitespace-nowrap">
                       Most Popular
                     </span>
                   </div>
@@ -550,15 +550,15 @@ export function Landing() {
                 <ul className="space-y-3.5 mb-10">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-3">
-                      <div className="p-0.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 mt-0.5">
-                        <Check className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400 flex-shrink-0" />
+                      <div className="p-0.5 rounded-full bg-primary-50 dark:bg-primary-500/10 mt-0.5">
+                        <Check className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400 flex-shrink-0" />
                       </div>
                       <span className="text-gray-600 dark:text-slate-300 text-sm">{feature}</span>
                     </li>
                   ))}
                 </ul>
                 <Link to="/signup" className="block">
-                  <Button className={`w-full ${plan.highlighted ? 'bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
+                  <Button className={`w-full ${plan.highlighted ? 'bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
                     {plan.cta}
                   </Button>
                 </Link>
@@ -570,20 +570,20 @@ export function Landing() {
 
       {/* CTA Section */}
       <section className="py-24 sm:py-28 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-800" />
+        <div className="absolute inset-0 bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900" />
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:48px_48px]" />
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-purple-500/20 blur-[120px] rounded-full pointer-events-none" />
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-primary-400/20 blur-[120px] rounded-full pointer-events-none" />
 
         <div className="max-w-4xl mx-auto text-center relative z-10">
           <h2 className="text-4xl sm:text-5xl font-bold text-white mb-6 tracking-[-0.02em]">
             Ready to build smarter forms?
           </h2>
-          <p className="text-lg sm:text-xl text-indigo-100/80 mb-10 max-w-2xl mx-auto leading-relaxed">
+          <p className="text-lg sm:text-xl text-primary-100/80 mb-10 max-w-2xl mx-auto leading-relaxed">
             Start your free trial today. No credit card required.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link to="/signup">
-              <Button size="lg" className="bg-white text-indigo-600 hover:bg-indigo-50 h-14 px-8 text-lg font-semibold shadow-2xl shadow-black/20 border-0">
+              <Button size="lg" className="bg-white text-primary-700 hover:bg-primary-50 h-14 px-8 text-lg font-semibold shadow-2xl shadow-black/20 border-0">
                 Get Started Free
                 <ArrowRight className="h-5 w-5 ml-2" />
               </Button>

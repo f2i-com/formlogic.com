@@ -122,7 +122,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!slug) throw new Error('App not initialized');
         const result = await api.createAppResponse(slug, formId, { answers });
         if (result.error) throw new Error(result.error);
-        return result.data?.response;
+        if (!result.data?.response) throw new Error('Submission failed: no response was returned.');
+        return result.data.response;
       },
 
       updateResponse: async (formId, responseId, data) => {
@@ -130,7 +131,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!slug) throw new Error('App not initialized');
         const result = await api.updateAppResponse(slug, formId, responseId, data);
         if (result.error) throw new Error(result.error);
-        return result.data?.response;
+        if (!result.data?.response) throw new Error('Update failed: no response was returned.');
+        return result.data.response;
       },
 
       deleteResponse: async (formId, responseId) => {

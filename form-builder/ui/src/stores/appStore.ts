@@ -15,7 +15,7 @@ interface AppState {
   // App CRUD
   fetchApps: () => Promise<void>;
   createApp: (data: Partial<App>) => Promise<App | null>;
-  updateApp: (id: string, data: Partial<App>) => Promise<void>;
+  updateApp: (id: string, data: Partial<App>) => Promise<boolean>;
   deleteApp: (id: string) => Promise<void>;
   getApp: (id: string) => App | undefined;
   setActiveApp: (id: string | null) => void;
@@ -31,7 +31,7 @@ interface AppState {
   fetchRoles: (appId: string) => Promise<AppRole[]>;
   createRole: (appId: string, data: { name: string; description?: string }) => Promise<AppRole | null>;
   updateRole: (appId: string, roleId: string, data: Partial<AppRole>) => Promise<void>;
-  deleteRole: (appId: string, roleId: string) => Promise<void>;
+  deleteRole: (appId: string, roleId: string) => Promise<boolean>;
 }
 
 export const useAppStore = create<AppState>()(
@@ -91,15 +91,17 @@ export const useAppStore = create<AppState>()(
           const result = await api.updateApp(id, data);
           if (result.error) {
             toast.error('Update failed', result.error);
-            return;
+            return false;
           }
           if (result.data) {
             set((s) => ({
               apps: s.apps.map((a) => (a.id === id ? (result.data!.app as App) : a)),
             }));
           }
+          return true;
         } catch {
           toast.error('Update failed', 'Could not update the app. Please try again.');
+          return false;
         } finally {
           stopLoading();
         }
@@ -130,6 +132,9 @@ export const useAppStore = create<AppState>()(
 
       fetchAppForms: async (appId) => {
         const result = await api.getAppForms(appId);
+        if (result.error) {
+          toast.error('Load failed', 'Could not load app forms.');
+        }
         return (result.data?.forms ?? []) as AppForm[];
       },
 
@@ -186,23 +191,35 @@ export const useAppStore = create<AppState>()(
 
       fetchRoles: async (appId) => {
         const result = await api.getAppRoles(appId);
+        if (result.error) {
+          toast.error('Load failed', 'Could not load roles.');
+        }
         return (result.data?.roles ?? []) as AppRole[];
       },
 
       createRole: async (appId, data) => {
         const result = await api.createAppRole(appId, data);
-        if (result.error) return null;
+        if (result.error) {
+          toast.error('Create failed', result.error);
+          return null;
+        }
         return (result.data?.role as AppRole) ?? null;
       },
 
       updateRole: async (appId, roleId, data) => {
         const result = await api.updateAppRole(appId, roleId, data);
-        if (result.error) return;
+        if (result.error) {
+          toast.error('Update failed', result.error);
+        }
       },
 
       deleteRole: async (appId, roleId) => {
         const result = await api.deleteAppRole(appId, roleId);
-        if (result.error) throw new Error(result.error);
+        if (result.error) {
+          toast.error('Delete failed', result.error);
+          return false;
+        }
+        return true;
       },
     })},
     {

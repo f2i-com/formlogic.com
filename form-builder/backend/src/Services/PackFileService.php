@@ -132,7 +132,9 @@ class PackFileService
                 continue;
             }
             $path = $dir . '/' . $item;
-            if (is_dir($path)) {
+            if (is_link($path)) {
+                unlink($path);
+            } elseif (is_dir($path)) {
                 $this->removeDirectory($path);
             } else {
                 unlink($path);

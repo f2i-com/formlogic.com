@@ -6,8 +6,8 @@
     "prefer-stable": true,
     "repositories": [
         {
-            "type": "path",
-            "url": "../../formlogic-php"
+            "type": "vcs",
+            "url": "https://github.com/f2i-com/formlogic-php.git"
         }
     ],
     "require": {

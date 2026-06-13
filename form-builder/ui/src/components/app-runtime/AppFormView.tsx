@@ -32,6 +32,107 @@ interface FormTheme {
   fontFamily?: string;
 }
 
+// Signature pad as its own component so it can legally run a hook that restores
+// a previously-saved signature (data URL) onto the canvas when it mounts or the
+// value changes — otherwise a saved signature shows up blank after re-mount.
+function SignatureField({
+  value,
+  onChange,
+  primaryColor,
+}: {
+  value: unknown;
+  onChange: (value: unknown) => void;
+  primaryColor: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const getStrokeColor = () =>
+    document.documentElement.classList.contains('dark') ? '#e2e8f0' : '#1f2937';
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (typeof value === 'string' && value.startsWith('data:image')) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = value;
+    }
+  }, [value]);
+
+  return (
+    <div className="space-y-2">
+      <div
+        className={cn(
+          'w-full h-36 border-2 rounded-lg cursor-crosshair relative overflow-hidden transition-colors',
+          value ? 'border-gray-400 dark:border-slate-500' : 'border-gray-300 dark:border-slate-600'
+        )}
+        style={{ borderColor: value ? primaryColor : undefined }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.strokeStyle = getStrokeColor();
+          ctx.lineWidth = 2;
+          ctx.lineCap = 'round';
+          const rect = canvas.getBoundingClientRect();
+          const sx = canvas.width / rect.width;
+          const sy = canvas.height / rect.height;
+          ctx.beginPath();
+          ctx.moveTo((e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy);
+          const onMove = (me: MouseEvent) => { ctx.lineTo((me.clientX - rect.left) * sx, (me.clientY - rect.top) * sy); ctx.stroke(); };
+          const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); onChange(canvas.toDataURL()); };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }}
+        onTouchStart={(e) => {
+          e.preventDefault();
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.strokeStyle = getStrokeColor();
+          ctx.lineWidth = 2;
+          ctx.lineCap = 'round';
+          const rect = canvas.getBoundingClientRect();
+          const sx = canvas.width / rect.width;
+          const sy = canvas.height / rect.height;
+          const t = e.touches[0];
+          ctx.beginPath();
+          ctx.moveTo((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
+          const onMove = (te: TouchEvent) => { te.preventDefault(); const mt = te.touches[0]; ctx.lineTo((mt.clientX - rect.left) * sx, (mt.clientY - rect.top) * sy); ctx.stroke(); };
+          const onEnd = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); onChange(canvas.toDataURL()); };
+          document.addEventListener('touchmove', onMove, { passive: false });
+          document.addEventListener('touchend', onEnd);
+        }}
+      >
+        <canvas ref={canvasRef} width={500} height={180} className="w-full h-full" style={{ touchAction: 'none' }} />
+        {!value && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <p className="text-gray-400 dark:text-slate-500">Sign here</p>
+          </div>
+        )}
+      </div>
+      {Boolean(value) && (
+        <button
+          type="button"
+          onClick={() => {
+            const c = canvasRef.current;
+            if (c) c.getContext('2d')?.clearRect(0, 0, c.width, c.height);
+            onChange(null);
+          }}
+          className="text-sm text-red-500 hover:text-red-700 cursor-pointer"
+        >
+          Clear signature
+        </button>
+      )}
+    </div>
+  );
+}
+
 function FieldInput({
   field,
   value,
@@ -358,90 +459,7 @@ function FieldInput({
   }
 
   if (field.type === 'signature') {
-    const sigId = `sig-${field.id}`;
-    const getStrokeColor = () => document.documentElement.classList.contains('dark') ? '#e2e8f0' : '#1f2937';
-    return (
-      <div className="space-y-2">
-        <div
-          className={cn(
-            'w-full h-36 border-2 rounded-lg cursor-crosshair relative overflow-hidden transition-colors',
-            value ? 'border-gray-400 dark:border-slate-500' : 'border-gray-300 dark:border-slate-600'
-          )}
-          style={{ borderColor: value ? primaryColor : undefined }}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            const canvas = e.currentTarget.querySelector('canvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-            ctx.strokeStyle = getStrokeColor();
-            ctx.lineWidth = 2;
-            ctx.lineCap = 'round';
-            const rect = canvas.getBoundingClientRect();
-            const sx = canvas.width / rect.width;
-            const sy = canvas.height / rect.height;
-            ctx.beginPath();
-            ctx.moveTo((e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy);
-            const onMove = (me: MouseEvent) => { ctx.lineTo((me.clientX - rect.left) * sx, (me.clientY - rect.top) * sy); ctx.stroke(); };
-            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); onChange(canvas.toDataURL()); };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-          }}
-          onTouchStart={(e) => {
-            e.preventDefault();
-            const canvas = e.currentTarget.querySelector('canvas');
-            if (!canvas) return;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-            ctx.strokeStyle = getStrokeColor();
-            ctx.lineWidth = 2;
-            ctx.lineCap = 'round';
-            const rect = canvas.getBoundingClientRect();
-            const sx = canvas.width / rect.width;
-            const sy = canvas.height / rect.height;
-            const t = e.touches[0];
-            ctx.beginPath();
-            ctx.moveTo((t.clientX - rect.left) * sx, (t.clientY - rect.top) * sy);
-            const onMove = (te: TouchEvent) => { te.preventDefault(); const mt = te.touches[0]; ctx.lineTo((mt.clientX - rect.left) * sx, (mt.clientY - rect.top) * sy); ctx.stroke(); };
-            const onEnd = () => { document.removeEventListener('touchmove', onMove); document.removeEventListener('touchend', onEnd); onChange(canvas.toDataURL()); };
-            document.addEventListener('touchmove', onMove, { passive: false });
-            document.addEventListener('touchend', onEnd);
-          }}
-        >
-          <canvas id={sigId} width={500} height={180} className="w-full h-full" style={{ touchAction: 'none' }} />
-          {!value && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <p className="text-gray-400 dark:text-slate-500">Sign here</p>
-            </div>
-          )}
-        </div>
-        {Boolean(value) && (
-          <button
-            type="button"
-            onClick={(e) => { const c = (e.currentTarget.parentElement?.querySelector('canvas')) as HTMLCanvasElement | null; if (c) { c.getContext('2d')?.clearRect(0, 0, c.width, c.height); } onChange(null); }}
-            className="text-sm text-red-500 hover:text-red-700 cursor-pointer"
-          >
-            Clear signature
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  if (field.type === 'payment') {
-    const amount = (field.properties?.amount as number) ?? (field.properties?.min as number) ?? 0;
-    const currency = (field.properties?.currency as string) || 'USD';
-    return (
-      <div className="p-4 border-2 border-gray-200 dark:border-slate-600 rounded-xl bg-gray-50 dark:bg-slate-800">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-gray-500 dark:text-slate-400">Amount:</span>
-          <span className="text-2xl font-bold text-gray-900 dark:text-white">
-            {new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)}
-          </span>
-        </div>
-        <p className="text-xs text-gray-400 dark:text-slate-500 text-center">Payment processing (preview only)</p>
-      </div>
-    );
+    return <SignatureField value={value} onChange={onChange} primaryColor={primaryColor} />;
   }
 
   if (field.type === 'linked_record' && formId) {
@@ -758,7 +776,7 @@ export function AppFormView() {
             </button>
             <button
               onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
-              className="px-5 py-2.5 rounded-lg text-sm font-medium text-white transition-colors app-btn-primary"
+              className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary"
             >
               View Responses
             </button>
@@ -917,7 +935,7 @@ export function AppFormView() {
             className={cn(
               'absolute bottom-14 left-4 p-2 rounded-lg shadow-md border transition-colors z-10',
               showNigo
-                ? 'bg-primary-600 text-white border-primary-500'
+                ? 'bg-primary-600 text-primary-foreground border-primary-500'
                 : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white border-gray-100 dark:border-slate-700'
             )}
             aria-label="Toggle NIGO Dashboard"

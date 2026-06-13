@@ -181,7 +181,7 @@ class ResponseController
         // Add request metadata
         $serverParams = $request->getServerParams();
         $data['ipAddress'] = $this->getClientIp($request);
-        $data['userAgent'] = substr($request->getHeaderLine('User-Agent'), 0, 500); // Limit length
+        $data['userAgent'] = htmlspecialchars(substr($request->getHeaderLine('User-Agent'), 0, 500), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $data['referrer'] = substr($request->getHeaderLine('Referer'), 0, 2000); // Limit length
         // Strip client-supplied fields that must be server-controlled
         unset($data['submittedByUserId'], $data['status']);
@@ -703,12 +703,20 @@ class ResponseController
 
         $file = $_FILES['file'];
 
-        // Validate file extension
+        // Validate file extension and MIME type
         $extension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
         if ($extension !== 'csv') {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Only .csv files are allowed',
+            ], 400);
+        }
+        $finfo = new \finfo(FILEINFO_MIME_TYPE);
+        $mimeType = $finfo->file($file['tmp_name']);
+        if ($mimeType !== false && !in_array($mimeType, ['text/csv', 'text/plain', 'application/csv', 'application/octet-stream'], true)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Invalid file type. Only CSV files are allowed.',
             ], 400);
         }
 

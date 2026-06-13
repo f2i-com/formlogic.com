@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { X, Play, Book, AlertCircle, CheckCircle, Code2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -226,6 +227,9 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
     if (e.key === 'Escape') onClose();
   };
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, isOpen);
+
   if (!isOpen) return null;
 
   const handleSave = () => {
@@ -372,7 +376,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
-      <div role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800 focus:outline-none">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800">
           <div className="flex items-center gap-3">

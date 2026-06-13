@@ -8,6 +8,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
 import { api } from '../lib/api';
+import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -525,77 +526,6 @@ function FieldResponse({
         );
       }
 
-      case 'payment': {
-        const paymentAmount = field.properties.min || 0;
-        const paymentCurrency = field.properties.currency || 'USD';
-        const paymentData = (value as Record<string, string>) || {};
-        return (
-          <div className="p-6 border-2 border-current/20 rounded-xl bg-current/5">
-            <div className="flex items-center justify-between mb-6">
-              <span className="text-lg opacity-70">Amount due:</span>
-              <span className="text-3xl font-bold" style={{ color: primaryColor }}>
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: paymentCurrency }).format(paymentAmount)}
-              </span>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium opacity-60 mb-1.5">Card number</label>
-                <input
-                  type="text"
-                  placeholder="1234 5678 9012 3456"
-                  className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
-                  style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
-                  maxLength={19}
-                  value={paymentData.cardNumber || ''}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, '').replace(/(.{4})/g, '$1 ').trim();
-                    onChange({ ...paymentData, cardNumber: val });
-                  }}
-                />
-              </div>
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium opacity-60 mb-1.5">Expiry date</label>
-                  <input
-                    type="text"
-                    placeholder="MM / YY"
-                    className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
-                    maxLength={7}
-                    value={paymentData.expiry || ''}
-                    onChange={(e) => {
-                      let val = e.target.value.replace(/\D/g, '');
-                      if (val.length >= 2) {
-                        val = val.slice(0, 2) + ' / ' + val.slice(2, 4);
-                      }
-                      onChange({ ...paymentData, expiry: val });
-                    }}
-                  />
-                </div>
-                <div className="w-28">
-                  <label className="block text-sm font-medium opacity-60 mb-1.5">CVC</label>
-                  <input
-                    type="text"
-                    placeholder="123"
-                    className="w-full p-4 border border-current/30 rounded-lg bg-transparent text-lg focus:ring-2 focus:ring-offset-0 focus:border-current/50 outline-none transition-colors"
-                    maxLength={4}
-                    value={paymentData.cvc || ''}
-                    onChange={(e) => {
-                      onChange({ ...paymentData, cvc: e.target.value.replace(/\D/g, '') });
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-            <p className="text-sm opacity-50 mt-5 text-center flex items-center justify-center gap-1.5">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-              </svg>
-              Secure payment processing
-            </p>
-          </div>
-        );
-      }
-
       case 'calculated':
         return (
           <CalculatedFieldDisplay
@@ -880,32 +810,49 @@ export default function FormResponse() {
   const progress = visibleFields.length > 0 ? ((safeCurrentStep + 1) / visibleFields.length) * 100 : 0;
   const isLastStep = safeCurrentStep === visibleFields.length - 1;
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setSubmitError(null);
-    try {
-      const response = submitResponse();
-      if (response) {
-        updateForm(form.id, { responseCount: form.responseCount + 1 });
-        setIsSubmitted(true);
+    if (!form) return;
 
-        // Handle redirectUrl (strict URL validation to prevent XSS)
-        const redirectUrl = form.settings?.redirectUrl;
-        if (redirectUrl) {
-          try {
-            const url = new URL(redirectUrl);
-            if (['http:', 'https:'].includes(url.protocol)) {
-              setIsRedirecting(true);
-              setTimeout(() => {
-                window.location.href = url.toString();
-              }, 2000);
-            }
-          } catch {
-            // Invalid URL — don't redirect
-          }
-        }
+    // Capture completion time before the store clears in-progress state.
+    const startTime = useResponseStore.getState().startTime;
+    const completionTime = startTime ? Math.max(0, Date.now() - startTime) : undefined;
+
+    // Persist to the server so the form owner actually receives the submission and
+    // server-side onSubmit logic runs. POST first (answers still intact) so a
+    // server-side rejection can be surfaced without losing the user's input;
+    // network failures are queued by the service worker's background sync.
+    try {
+      const result = await api.submitResponse(form.id, { answers: currentAnswers, completionTime });
+      if (result.error) {
+        setSubmitError(result.error);
+        return;
       }
-    } catch (error) {
-      setSubmitError(error instanceof Error ? error.message : 'Failed to submit response. Please try again.');
+    } catch (err) {
+      // Offline / unreachable: the queued POST will retry; continue optimistically.
+      logger.error('Failed to submit response to server', err);
+    }
+
+    // Record locally (clears in-progress answers) and reflect in the local view.
+    const response = submitResponse();
+    if (!response) return;
+    updateForm(form.id, { responseCount: form.responseCount + 1 });
+    setIsSubmitted(true);
+
+    // Handle redirectUrl (strict URL validation to prevent XSS)
+    const redirectUrl = form.settings?.redirectUrl;
+    if (redirectUrl) {
+      try {
+        const url = new URL(redirectUrl);
+        if (['http:', 'https:'].includes(url.protocol)) {
+          setIsRedirecting(true);
+          setTimeout(() => {
+            window.location.href = url.toString();
+          }, 2000);
+        }
+      } catch {
+        // Invalid URL — don't redirect
+      }
     }
   };
 

@@ -4,7 +4,7 @@ import { Loader2 } from 'lucide-react';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger';
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'iconOnly';
   isLoading?: boolean;
   leftIcon?: React.ReactNode;
   rightIcon?: React.ReactNode;
@@ -27,7 +27,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const variants = {
       primary:
-        'bg-primary-600 text-white hover:bg-primary-700 dark:hover:bg-primary-500 focus:ring-primary-500 active:bg-primary-800 dark:active:bg-primary-700 shadow-md shadow-primary-600/15 dark:shadow-lg dark:shadow-primary-500/20 dark:hover:shadow-primary-500/30 border border-transparent',
+        'bg-primary-600 text-primary-foreground hover:bg-primary-700 dark:hover:bg-primary-500 focus:ring-primary-500 active:bg-primary-800 dark:active:bg-primary-700 shadow-md shadow-primary-600/15 dark:shadow-lg dark:shadow-primary-500/20 dark:hover:shadow-primary-500/30 border border-transparent',
       secondary:
         'bg-white dark:bg-slate-800/80 text-gray-700 dark:text-slate-100 hover:bg-gray-50 dark:hover:bg-slate-700 focus:ring-gray-500 dark:focus:ring-slate-500 active:bg-gray-100 dark:active:bg-slate-900 border border-gray-200 dark:border-slate-700 shadow-sm',
       outline:
@@ -42,6 +42,8 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       sm: 'px-3 py-1.5 text-xs font-medium gap-1.5',
       md: 'px-4 py-2 text-sm font-medium gap-2',
       lg: 'px-6 py-2.5 text-[15px] font-semibold gap-2.5',
+      // Square icon-only button with a guaranteed >=40px touch target
+      iconOnly: 'h-10 w-10 p-0 gap-0',
     };
 
     return (

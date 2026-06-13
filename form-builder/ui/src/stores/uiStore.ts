@@ -12,6 +12,10 @@ type ModalType =
 type PreviewDevice = 'desktop' | 'mobile';
 type PreviewMode = 'focused' | 'classic';
 
+// 'default' = use the curated per-mode accents (Indigo in light, Lime on navy
+// in dark). The named colors are explicit opt-in overrides applied to both modes.
+export type ThemeColor = 'default' | 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet';
+
 interface UIState {
   // Sidebar
   sidebarCollapsed: boolean;
@@ -44,10 +48,10 @@ interface UIState {
 
   // Theme
   theme: 'light' | 'dark';
-  themeColor: 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet';
+  themeColor: ThemeColor;
   toggleTheme: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
-  setThemeColor: (color: 'indigo' | 'lime' | 'rose' | 'orange' | 'cyan' | 'violet') => void;
+  setThemeColor: (color: ThemeColor) => void;
 }
 
 import { persist } from 'zustand/middleware';
@@ -86,13 +90,24 @@ export const useUIStore = create<UIState>()(
 
       // Theme
       theme: 'dark',
-      themeColor: 'indigo',
+      themeColor: 'default',
       toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
       setTheme: (theme) => set({ theme }),
       setThemeColor: (color) => set({ themeColor: color }),
     }),
     {
       name: 'formlogic-ui-storage',
+      version: 1,
+      // v0 persisted themeColor:'indigo' as the implicit default, which made the
+      // ThemeManager override the curated dark=Lime identity with indigo. Map that
+      // legacy default to 'default' so existing users get the intended accents.
+      migrate: (persisted, version) => {
+        const state = persisted as Partial<UIState> | undefined;
+        if (state && version < 1 && state.themeColor === 'indigo') {
+          state.themeColor = 'default';
+        }
+        return state as UIState;
+      },
       partialize: (state) => ({
         theme: state.theme,
         themeColor: state.themeColor,

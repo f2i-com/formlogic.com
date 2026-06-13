@@ -90,24 +90,32 @@ export default function FormAnalytics() {
 
   // Fetch analytics from API
   useEffect(() => {
+    let cancelled = false;
+    // Clear the previous form's API analytics so it doesn't briefly show for the
+    // new form (or persist if the new fetch fails / isn't applicable).
+    setAnalytics(null);
+
     async function fetchAnalytics() {
       if (storageMode === 'api' && user && formId) {
         setIsLoading(true);
         try {
           const result = await api.getFormAnalytics(formId);
+          if (cancelled) return;
           if (result.data?.analytics) {
             setAnalytics(result.data.analytics);
           }
         } catch (error) {
+          if (cancelled) return;
           logger.error('Failed to fetch analytics:', error);
           toast.warning('Connection Issue', 'Using local analytics data.');
         } finally {
-          setIsLoading(false);
+          if (!cancelled) setIsLoading(false);
         }
       }
     }
 
     fetchAnalytics();
+    return () => { cancelled = true; };
   }, [formId, storageMode, user]);
 
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -224,7 +232,7 @@ export default function FormAnalytics() {
 
   if (!form) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 transition-colors">
+      <div className="min-h-screen flex items-center justify-center transition-colors">
         <EmptyState
           icon={Inbox}
           title="Form not found"
@@ -277,7 +285,11 @@ export default function FormAnalytics() {
         return;
       }
 
-      const escapeCell = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+      const escapeCell = (val: unknown) => {
+        let str = String(val ?? '').replace(/"/g, '""');
+        if (/^[=+\-@]/.test(str)) str = "'" + str;
+        return `"${str}"`;
+      };
       const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...inputFields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
@@ -335,7 +347,7 @@ export default function FormAnalytics() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 transition-colors">
+    <div className="min-h-screen transition-colors">
       <Header
         title={`${form.title} - Analytics`}
         actions={
