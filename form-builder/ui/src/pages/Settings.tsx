@@ -99,6 +99,7 @@ export function Settings() {
   // Profile form state
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
+  const [profilePassword, setProfilePassword] = useState('');
   const [hasProfileChanges, setHasProfileChanges] = useState(false);
 
   // Theme
@@ -149,13 +150,23 @@ export function Settings() {
     setHasProfileChanges(nameChanged || emailChanged);
   }, [name, email, user]);
 
+  const emailChanged = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
+
   const handleSaveProfile = async () => {
+    // Changing the email requires the current password (the backend rejects it
+    // otherwise). Surface that requirement instead of letting the save fail.
+    if (emailChanged && !profilePassword) {
+      toast.error('Password Required', 'Enter your current password to change your email.');
+      return;
+    }
     setIsSavingProfile(true);
     try {
-      const result = await updateProfile({ name, email });
+      const payload = emailChanged ? { name, email, currentPassword: profilePassword } : { name, email };
+      const result = await updateProfile(payload as Parameters<typeof updateProfile>[0]);
       if (result.success) {
         toast.success('Profile Updated', 'Your profile has been saved successfully.');
         setHasProfileChanges(false);
+        setProfilePassword('');
       } else {
         toast.error('Update Failed', result.error || 'Could not update your profile.');
       }
@@ -326,6 +337,16 @@ export function Settings() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
+              {emailChanged && (
+                <Input
+                  label="Current password"
+                  type="password"
+                  placeholder="Required to change your email"
+                  value={profilePassword}
+                  onChange={(e) => setProfilePassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              )}
               <div className="pt-2">
                 <Button
                   onClick={handleSaveProfile}

@@ -219,6 +219,16 @@ class AuthController
                 $this->audit($request, 'auth.profile_update', 'user', $user->id, $auditDetails);
             }
 
+            // A credential change (email or password) bumps token_version, which
+            // revokes the current JWT. Re-issue a fresh cookie so the user stays
+            // signed in on this device instead of being silently 401'd on the
+            // next request.
+            $credentialChanged = isset($filteredData['password'])
+                || (isset($filteredData['email']) && strtolower((string) $filteredData['email']) !== strtolower((string) $user->email));
+            if ($credentialChanged && $updatedUser) {
+                $response = $this->setAuthCookie($response, $this->authService->issueToken($updatedUser));
+            }
+
             return $this->jsonResponse($response, [
                 'user' => $updatedUser->toArray(),
             ]);

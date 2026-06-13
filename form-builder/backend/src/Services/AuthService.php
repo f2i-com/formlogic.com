@@ -452,6 +452,17 @@ class AuthService
     }
 
     /**
+     * Mint a fresh JWT for a user. Used after a credential change to re-issue the
+     * session cookie — the change bumps token_version (revoking old JWTs), so
+     * without a fresh token the user would be silently logged out. Reads the
+     * current token_version, so call this AFTER updateUser has committed.
+     */
+    public function issueToken(User $user): string
+    {
+        return $this->generateToken($user);
+    }
+
+    /**
      * Generate a JWT token for a user
      */
     private function generateToken(User $user): string
