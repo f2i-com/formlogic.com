@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Trash2 } from 'lucide-react';
+import { ArrowLeft, UserPlus, Trash2, Pencil } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
@@ -17,7 +17,7 @@ export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
-  const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, createGroup, deleteGroup } = useAppUserStore();
+  const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup } = useAppUserStore();
   const { fetchRoles } = useAppStore();
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -27,6 +27,27 @@ export function AppUserManager() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: 'removeUser' | 'deleteGroup'; id: string; label: string } | null>(null);
+  const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+  const [editRoleId, setEditRoleId] = useState('');
+  const [editStatus, setEditStatus] = useState<'active' | 'suspended'>('active');
+  const [editSaving, setEditSaving] = useState(false);
+
+  const openEditUser = (user: AppUser) => {
+    setEditingUser(user);
+    setEditRoleId(user.roleId);
+    setEditStatus(user.status === 'suspended' ? 'suspended' : 'active');
+  };
+
+  const handleSaveUser = async () => {
+    if (!appId || !editingUser) return;
+    setEditSaving(true);
+    const ok = await updateUser(appId, editingUser.id, { roleId: editRoleId, status: editStatus });
+    setEditSaving(false);
+    if (ok) {
+      toast.success('Member updated', 'Role and status saved.');
+      setEditingUser(null);
+    }
+  };
 
   useEffect(() => {
     if (!appId) return;
@@ -113,8 +134,12 @@ export function AppUserManager() {
             isLoading={loading}
             searchPlaceholder="Search users..."
             actions={(user) => (
-              <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
-                className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+              <div className="flex items-center justify-end gap-1">
+                <button onClick={() => openEditUser(user as unknown as AppUser)}
+                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Edit member role and status"><Pencil className="h-4 w-4" /></button>
+                <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
+                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+              </div>
             )}
           />
         </TabsContent>
@@ -186,6 +211,36 @@ export function AppUserManager() {
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
             <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={editingUser !== null} onClose={() => setEditingUser(null)} title="Edit Member" size="sm">
+        <div className="p-6 space-y-4">
+          <div>
+            <p className="text-sm font-medium text-gray-900 dark:text-white">{editingUser?.name || editingUser?.email}</p>
+            {editingUser?.status === 'pending' && (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">This member is pending — set status to Active to approve them.</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
+            <select value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)}
+              className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
+              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+            <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as 'active' | 'suspended')}
+              className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
+              <option value="active">Active</option>
+              <option value="suspended">Suspended</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
+            <Button onClick={handleSaveUser} disabled={!editRoleId || editSaving} isLoading={editSaving}>Save</Button>
           </div>
         </div>
       </Modal>
