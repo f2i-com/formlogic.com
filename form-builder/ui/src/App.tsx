@@ -4,6 +4,9 @@ import { AppShell } from './components/layout/AppShell';
 import { Dashboard, FormsList, Settings, Landing } from './pages';
 import { NotFound } from './pages/NotFound';
 import { LegalPage } from './pages/LegalPage';
+import { AcceptInvite } from './pages/AcceptInvite';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
 import { useAuthStore } from './stores/authStore';
 import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
@@ -155,6 +158,10 @@ function AppRoutes() {
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        {/* App invitation acceptance (prompts sign-in if needed) */}
+        <Route path="/accept-invite" element={<AcceptInvite />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -195,6 +202,11 @@ function AppRoutes() {
       {/* Redirect authenticated users from auth pages */}
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="/signup" element={<Navigate to="/" replace />} />
+      {/* App invitation acceptance (logged-in users) */}
+      <Route path="/accept-invite" element={<AcceptInvite />} />
+      {/* Logged-in users shouldn't reach password reset; send them home */}
+      <Route path="/forgot-password" element={<Navigate to="/" replace />} />
+      <Route path="/reset-password" element={<Navigate to="/" replace />} />
 
       {/* Builder route (full screen, no sidebar) */}
       <Route path="/builder/:formId" element={<FormBuilder />} />

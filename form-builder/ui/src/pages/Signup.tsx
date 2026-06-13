@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -14,13 +14,17 @@ export function Signup() {
   const [localError, setLocalError] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { register, isLoading, error, clearError, user } = useAuthStore();
+
+  const redirectParam = searchParams.get('redirect');
+  const dest = redirectParam && redirectParam.startsWith('/') ? redirectParam : '/';
 
   useEffect(() => {
     if (user) {
-      navigate('/');
+      navigate(dest);
     }
-  }, [user, navigate]);
+  }, [user, navigate, dest]);
 
   useEffect(() => {
     return () => {
@@ -50,7 +54,7 @@ export function Signup() {
 
     const result = await register(email, password, name || undefined);
     if (result.success) {
-      navigate('/');
+      navigate(dest);
     }
   };
 

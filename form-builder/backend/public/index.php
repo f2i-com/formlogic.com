@@ -112,12 +112,17 @@ $container->set(SQLiteConnection::class, function (Container $c) {
 });
 
 // Register services
+$container->set(\FormLogic\Services\EmailService::class, function (Container $c) {
+    return new \FormLogic\Services\EmailService($c->get(LoggerInterface::class));
+});
+
 $container->set(AuthService::class, function (Container $c) {
     $settings = $c->get('settings');
     return new AuthService(
         $c->get(MySQLConnection::class),
         $settings['jwt'],
-        $settings['rateLimit']['login'] ?? []
+        $settings['rateLimit']['login'] ?? [],
+        $c->get(\FormLogic\Services\EmailService::class)
     );
 });
 
@@ -493,6 +498,8 @@ $authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth');
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
+    $group->post('/forgot-password', [AuthController::class, 'forgotPassword']);
+    $group->post('/reset-password', [AuthController::class, 'resetPassword']);
 })->add($authRateLimiter);
 
 // Auth routes (protected)

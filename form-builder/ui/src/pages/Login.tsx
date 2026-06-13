@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
@@ -12,13 +12,18 @@ export function Login() {
   const [localError, setLocalError] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, isLoading, error, clearError, user } = useAuthStore();
+
+  // Honor a same-origin redirect target (e.g. accepting an app invitation).
+  const redirectParam = searchParams.get('redirect');
+  const dest = redirectParam && redirectParam.startsWith('/') ? redirectParam : '/';
 
   useEffect(() => {
     if (user) {
-      navigate('/');
+      navigate(dest);
     }
-  }, [user, navigate]);
+  }, [user, navigate, dest]);
 
   useEffect(() => {
     return () => {
@@ -38,7 +43,7 @@ export function Login() {
 
     const result = await login(email, password);
     if (result.success) {
-      navigate('/');
+      navigate(dest);
     }
   };
 
@@ -119,6 +124,12 @@ export function Login() {
               autoComplete="current-password"
               required
             />
+
+            <div className="flex justify-end -mt-1">
+              <Link to="/forgot-password" className="text-sm text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 font-medium transition-colors">
+                Forgot password?
+              </Link>
+            </div>
 
             <div className="pt-1">
               <Button type="submit" className="w-full" size="lg" isLoading={isLoading}>

@@ -247,6 +247,76 @@ class AuthController
     }
 
     /**
+     * Request a password reset link.
+     * POST /api/auth/forgot-password
+     */
+    public function forgotPassword(Request $request, Response $response): Response
+    {
+        $data = $request->getParsedBody();
+        $email = trim((string) ($data['email'] ?? ''));
+
+        // Always respond success regardless of whether the email exists, to avoid
+        // account enumeration.
+        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            try {
+                $base = ($data['resetUrl'] ?? '') ?: $this->frontendUrl($request) . '/reset-password';
+                $this->authService->requestPasswordReset($email, (string) $base);
+            } catch (\Throwable $e) {
+                $this->logger->error('Password reset request error', ['exception' => $e->getMessage()]);
+            }
+        }
+
+        return $this->jsonResponse($response, [
+            'message' => 'If an account exists for that email, a reset link has been sent.',
+        ]);
+    }
+
+    /**
+     * Complete a password reset with a token.
+     * POST /api/auth/reset-password
+     */
+    public function resetPassword(Request $request, Response $response): Response
+    {
+        $data = $request->getParsedBody();
+        $token = (string) ($data['token'] ?? '');
+        $password = (string) ($data['password'] ?? '');
+
+        if ($token === '' || $password === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Token and new password are required'], 400);
+        }
+
+        try {
+            $this->authService->resetPassword($token, $password);
+            return $this->jsonResponse($response, ['message' => 'Your password has been reset. You can now sign in.']);
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            $this->logger->error('Password reset error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
+        }
+    }
+
+    /**
+     * Derive the frontend origin for building links (Origin/Referer header,
+     * falling back to APP_URL env, then the request host).
+     */
+    private function frontendUrl(Request $request): string
+    {
+        $appUrl = getenv('APP_URL');
+        if ($appUrl) {
+            return rtrim((string) $appUrl, '/');
+        }
+        $origin = $request->getHeaderLine('Origin');
+        if ($origin !== '') {
+            return rtrim($origin, '/');
+        }
+        $uri = $request->getUri();
+        $port = $uri->getPort();
+        $authority = $uri->getHost() . ($port && !in_array($port, [80, 443], true) ? ':' . $port : '');
+        return $uri->getScheme() . '://' . $authority;
+    }
+
+    /**
      * Logout user
      * POST /api/auth/logout
      */

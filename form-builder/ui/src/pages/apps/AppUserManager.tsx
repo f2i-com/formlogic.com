@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, UserPlus, Trash2, Pencil, Users } from 'lucide-react';
+import { ArrowLeft, UserPlus, Trash2, Pencil, Users, Check, Copy } from 'lucide-react';
 import { useAppUserStore } from '../../stores/appUserStore';
 import { useAppStore } from '../../stores/appStore';
 import { toast } from '../../stores/toastStore';
@@ -27,6 +27,8 @@ export function AppUserManager() {
   const [newGroupName, setNewGroupName] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ type: 'removeUser' | 'deleteGroup'; id: string; label: string } | null>(null);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [editRoleId, setEditRoleId] = useState('');
@@ -127,18 +129,44 @@ export function AppUserManager() {
     )},
   ];
 
+  const closeInviteModal = () => {
+    setShowInviteModal(false);
+    setInviteError(null);
+    setInviteLink(null);
+    setLinkCopied(false);
+    setInviteEmail('');
+    setInviteRoleId('');
+  };
+
   const handleInvite = async () => {
     if (!appId || !inviteEmail || !inviteRoleId) return;
     setInviteLoading(true);
     setInviteError(null);
-    const success = await inviteUser(appId, inviteEmail, inviteRoleId);
+    const invitation = await inviteUser(appId, inviteEmail, inviteRoleId);
     setInviteLoading(false);
-    if (success) {
-      setShowInviteModal(false);
-      setInviteEmail('');
-      setInviteRoleId('');
+    if (invitation) {
+      // Surface the one-time token as a shareable accept link so the invitee can
+      // be onboarded even when no email service is configured. (If the backend
+      // also emails it, the link is still a convenient fallback to copy.)
+      if (invitation.token) {
+        setInviteLink(`${window.location.origin}/accept-invite?token=${invitation.token}`);
+      } else {
+        closeInviteModal();
+        toast.success('Invitation sent', 'An invite email has been sent to the user.');
+      }
     } else {
       setInviteError('Failed to send invitation. Please check the email and try again.');
+    }
+  };
+
+  const copyInviteLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      toast.error('Copy failed', 'Select and copy the link manually.');
     }
   };
 
@@ -237,7 +265,30 @@ export function AppUserManager() {
     </div>
     </div>
 
-      <Modal isOpen={showInviteModal} onClose={() => { setShowInviteModal(false); setInviteError(null); }} title="Invite User" size="sm">
+      <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite User" size="sm">
+        {inviteLink ? (
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2 p-3 text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 rounded-lg border border-green-200 dark:border-green-500/20">
+              <Check className="h-4 w-4 flex-shrink-0" />
+              <span>Invitation created. Share this link with the user to let them join.</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Invite link</label>
+              <div className="flex gap-2">
+                <input type="text" readOnly value={inviteLink} onFocus={(e) => e.target.select()} aria-label="Invite link"
+                  className="flex-1 min-w-0 px-3 py-2.5 border border-gray-200/80 dark:border-slate-700/60 rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" />
+                <Button variant="outline" size="sm" onClick={copyInviteLink} leftIcon={linkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
+                  {linkCopied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">The user must sign in (or sign up) with the invited email to accept.</p>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => { setInviteLink(null); setLinkCopied(false); }}>Invite another</Button>
+              <Button onClick={closeInviteModal}>Done</Button>
+            </div>
+          </div>
+        ) : (
         <div className="p-6 space-y-4">
           {inviteError && (
             <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
@@ -258,10 +309,11 @@ export function AppUserManager() {
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => { setShowInviteModal(false); setInviteError(null); }}>Cancel</Button>
+            <Button variant="ghost" onClick={closeInviteModal}>Cancel</Button>
             <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
           </div>
         </div>
+        )}
       </Modal>
 
       <Modal isOpen={managingGroup !== null} onClose={() => setManagingGroup(null)} title={managingGroup ? `Members of "${managingGroup.name}"` : 'Members'} size="sm">

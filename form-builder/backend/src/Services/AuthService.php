@@ -6,6 +6,7 @@ namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Models\User;
+use FormLogic\Services\EmailService;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 use PDO;
@@ -27,8 +28,9 @@ class AuthService
     private array $rateLimitConfig;
     // Shared, persistent rate-limit store (works across requests/processes).
     private RateLimiter $rateLimiter;
+    private ?EmailService $emailService;
 
-    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [])
+    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null)
     {
         $this->mysql = $mysql->getConnection();
         $this->jwtConfig = $jwtConfig;
@@ -38,6 +40,7 @@ class AuthService
             'decayMinutes' => 15,
         ], $rateLimitConfig);
         $this->rateLimiter = new RateLimiter($this->mysql);
+        $this->emailService = $emailService;
     }
 
     /** Rate-limit decay window in seconds. */
@@ -448,6 +451,95 @@ class AuthService
             $stmt->execute(['id' => $userId]);
         } catch (\Exception $e) {
             // Column not migrated — nothing to bump.
+        }
+    }
+
+    /**
+     * Begin a password reset: issue a single-use, expiring token and email a
+     * reset link. Always returns silently (never reveals whether the email
+     * exists) to avoid account enumeration. Best-effort email — if no email
+     * service is configured the token is still created but undeliverable.
+     */
+    public function requestPasswordReset(string $email, string $resetUrlBase): void
+    {
+        $stmt = $this->mysql->prepare("SELECT id, name FROM users WHERE email = :email LIMIT 1");
+        $stmt->execute(['email' => trim($email)]);
+        $user = $stmt->fetch();
+        if (!$user) {
+            return; // Don't reveal non-existence.
+        }
+
+        // Invalidate any outstanding resets for this user, then issue a new one.
+        $this->mysql->prepare("DELETE FROM password_resets WHERE user_id = :uid")
+            ->execute(['uid' => $user['id']]);
+
+        $token = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $token);
+        $expiresAt = date('Y-m-d H:i:s', time() + 3600); // 1 hour
+
+        $this->mysql->prepare("
+            INSERT INTO password_resets (id, user_id, token_hash, expires_at)
+            VALUES (:id, :uid, :hash, :expires)
+        ")->execute([
+            'id' => $this->generateUuid(),
+            'uid' => $user['id'],
+            'hash' => $tokenHash,
+            'expires' => $expiresAt,
+        ]);
+
+        if ($this->emailService !== null) {
+            $link = rtrim($resetUrlBase, '?&') . (str_contains($resetUrlBase, '?') ? '&' : '?') . 'token=' . $token;
+            $name = $user['name'] ? htmlspecialchars((string) $user['name'], ENT_QUOTES) : 'there';
+            $safeLink = htmlspecialchars($link, ENT_QUOTES);
+            $html = "<p>Hi {$name},</p>"
+                . "<p>We received a request to reset your FormLogic password. Click the link below to choose a new one. This link expires in 1 hour.</p>"
+                . "<p><a href=\"{$safeLink}\">Reset your password</a></p>"
+                . "<p>If you didn't request this, you can safely ignore this email.</p>";
+            $this->emailService->send((string) $email, 'Reset your FormLogic password', $html);
+        }
+    }
+
+    /**
+     * Complete a password reset using a token from requestPasswordReset.
+     * Throws on invalid/expired/used tokens. Bumps token_version to revoke any
+     * existing sessions.
+     */
+    public function resetPassword(string $token, string $newPassword): void
+    {
+        if (strlen($newPassword) < 8) {
+            throw new \InvalidArgumentException('Password must be at least 8 characters');
+        }
+        $tokenHash = hash('sha256', trim($token));
+        $stmt = $this->mysql->prepare("
+            SELECT id, user_id FROM password_resets
+            WHERE token_hash = :hash AND used_at IS NULL AND expires_at > NOW()
+            LIMIT 1
+        ");
+        $stmt->execute(['hash' => $tokenHash]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            throw new \RuntimeException('This reset link is invalid or has expired.');
+        }
+
+        $this->mysql->beginTransaction();
+        try {
+            $this->mysql->prepare("
+                UPDATE users
+                SET password_hash = :hash, token_version = token_version + 1, updated_at = :now
+                WHERE id = :uid
+            ")->execute([
+                'hash' => password_hash($newPassword, PASSWORD_DEFAULT),
+                'now' => date('Y-m-d H:i:s'),
+                'uid' => $row['user_id'],
+            ]);
+            $this->mysql->prepare("UPDATE password_resets SET used_at = NOW() WHERE id = :id")
+                ->execute(['id' => $row['id']]);
+            $this->mysql->commit();
+        } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
         }
     }
 
