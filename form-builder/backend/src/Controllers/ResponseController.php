@@ -577,7 +577,9 @@ class ResponseController
             ], 404);
         }
 
-        $data = $request->getParsedBody();
+        // Normalize: an empty/non-JSON body parses to null, which would raise an
+        // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
+        $data = $request->getParsedBody() ?? [];
 
         // Drop calculated/unknown-field answers so they can't be tampered on update,
         // then re-derive calculated fields — otherwise editing any answer would

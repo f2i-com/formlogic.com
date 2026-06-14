@@ -322,7 +322,9 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
         }
 
-        $data = $request->getParsedBody();
+        // Normalize: an empty/non-JSON body parses to null, which would raise an
+        // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
+        $data = $request->getParsedBody() ?? [];
 
         // Validate answers if provided
         if (isset($data['answers']) && is_array($data['answers'])) {

@@ -102,7 +102,13 @@ function debouncedSave(formId: string, saveFn: () => void, delay = 1000) {
   if (debounceTimers[formId]) {
     clearTimeout(debounceTimers[formId]);
   }
-  debounceTimers[formId] = setTimeout(saveFn, delay);
+  debounceTimers[formId] = setTimeout(() => {
+    // Drop the handle before running so `debounceTimers[key]` reflects reality: a
+    // subsequent edit then correctly registers a fresh in-flight save instead of
+    // assuming one is already pending.
+    delete debounceTimers[formId];
+    saveFn();
+  }, delay);
 }
 
 function clearDebounceTimer(formId: string) {
@@ -141,8 +147,15 @@ export const useFormStore = create<FormState>()(
 
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
       if (get().storageMode === 'api') {
-        markSaving(formId, true);
-        debouncedSave(`${formId}-${field}`, async () => {
+        const key = `${formId}-${field}`;
+        // Only count a NEW in-flight save. Rapid edits collapse into a single
+        // debounced flush (the pending timer is replaced, its callback never
+        // runs), so incrementing per keystroke while the flush decrements once
+        // left the per-form 'Saving…' counter stuck above zero forever.
+        if (!debounceTimers[key]) {
+          markSaving(formId, true);
+        }
+        debouncedSave(key, async () => {
           try {
             const form = get().forms.find((f) => f.id === formId);
             if (form) {
@@ -323,8 +336,13 @@ export const useFormStore = create<FormState>()(
         // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
         // Reads fresh state inside the callback to avoid stale closures dropping earlier updates
         if (state.storageMode === 'api') {
-          markSaving(id, true);
-          debouncedSave(`${id}-meta`, async () => {
+          const key = `${id}-meta`;
+          // Count only a new in-flight save (see syncFormField) so the spinner
+          // clears once the debounced flush completes.
+          if (!debounceTimers[key]) {
+            markSaving(id, true);
+          }
+          debouncedSave(key, async () => {
             try {
               const currentForm = get().forms.find((f) => f.id === id);
               if (currentForm) {

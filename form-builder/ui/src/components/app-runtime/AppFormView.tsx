@@ -515,6 +515,25 @@ function FieldInput({
  * Returns an error message string if validation fails, or null if valid.
  */
 function validateField(field: FormField, value: unknown): string | null {
+  // Number Min/Max/Step live on field.properties (the builder applies them only as
+  // native <input> attributes, which the custom submit flow bypasses) — enforce them
+  // here. Runs regardless of the validation rules array, which is often empty.
+  if (field.type === 'number' && typeof value === 'number' && !Number.isNaN(value)) {
+    const p = field.properties as { min?: unknown; max?: unknown; step?: unknown };
+    const min = p.min != null && p.min !== '' ? Number(p.min) : null;
+    const max = p.max != null && p.max !== '' ? Number(p.max) : null;
+    const step = p.step != null && p.step !== '' ? Number(p.step) : null;
+    if (min != null && Number.isFinite(min) && value < min) return `Minimum value is ${min}`;
+    if (max != null && Number.isFinite(max) && value > max) return `Maximum value is ${max}`;
+    if (step != null && Number.isFinite(step) && step > 0) {
+      const base = min != null && Number.isFinite(min) ? min : 0;
+      const steps = (value - base) / step;
+      if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+        return base ? `Value must be ${base} plus a multiple of ${step}` : `Value must be a multiple of ${step}`;
+      }
+    }
+  }
+
   const validations = field.validation;
   if (!validations?.length) return null;
 

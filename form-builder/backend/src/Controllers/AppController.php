@@ -120,7 +120,7 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
         }
 
-        $data = $request->getParsedBody();
+        $data = $request->getParsedBody() ?? [];
 
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);

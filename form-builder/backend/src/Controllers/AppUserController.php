@@ -99,7 +99,7 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Role not found'], 404);
         }
 
-        $data = $request->getParsedBody();
+        $data = $request->getParsedBody() ?? [];
 
         try {
             $this->appUserService->updateRole($args['roleId'], $data);
@@ -220,7 +220,7 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
-        $data = $request->getParsedBody();
+        $data = $request->getParsedBody() ?? [];
 
         if (!$this->appUserService->appUserBelongsToApp($args['id'], $appId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'User not found'], 404);
@@ -443,7 +443,7 @@ class AppUserController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Group not found'], 404);
         }
 
-        $data = $request->getParsedBody();
+        $data = $request->getParsedBody() ?? [];
         $this->appUserService->updateGroup($args['id'], $data);
         return $this->jsonResponse($response, ['success' => true]);
     }

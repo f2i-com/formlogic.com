@@ -929,6 +929,28 @@ export default function FormResponse() {
     }
   };
 
+  // Enforce builder-configured number Min/Max/Step. These live on field.properties
+  // and are only applied as native <input> attributes, which the custom submit flow
+  // (onClick handlers, no native form validation) bypasses — so without this check
+  // they're silently ignored. Returns an error message, or null when valid.
+  const validateNumberConstraints = (field: FormField, answer: unknown): string | null => {
+    if (field.type !== 'number' || typeof answer !== 'number' || Number.isNaN(answer)) return null;
+    const p = field.properties as { min?: unknown; max?: unknown; step?: unknown };
+    const min = p.min != null && p.min !== '' ? Number(p.min) : null;
+    const max = p.max != null && p.max !== '' ? Number(p.max) : null;
+    const step = p.step != null && p.step !== '' ? Number(p.step) : null;
+    if (min != null && Number.isFinite(min) && answer < min) return `Minimum value is ${min}`;
+    if (max != null && Number.isFinite(max) && answer > max) return `Maximum value is ${max}`;
+    if (step != null && Number.isFinite(step) && step > 0) {
+      const base = min != null && Number.isFinite(min) ? min : 0;
+      const steps = (answer - base) / step;
+      if (Math.abs(steps - Math.round(steps)) > 1e-9) {
+        return base ? `Value must be ${base} plus a multiple of ${step}` : `Value must be a multiple of ${step}`;
+      }
+    }
+    return null;
+  };
+
   const handleNext = () => {
     setFieldError(null);
     setSubmitError(null);
@@ -983,6 +1005,14 @@ export default function FormResponse() {
             }
           }
         }
+      }
+
+      // Enforce builder-configured number min/max/step (stored on field.properties,
+      // not the validation rules array — the loop above never checks them).
+      const numErr = validateNumberConstraints(currentField, answer);
+      if (numErr) {
+        setFieldError(numErr);
+        return;
       }
     }
 
@@ -1053,6 +1083,13 @@ export default function FormResponse() {
             }
           }
         }
+      }
+
+      // Enforce builder-configured number min/max/step (see validateNumberConstraints).
+      const numErr = validateNumberConstraints(f, answer);
+      if (numErr) {
+        setSubmitError(`${f.label}: ${numErr}`);
+        return;
       }
     }
 

@@ -31,8 +31,13 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         // XSS Protection (legacy but still useful for older browsers)
         $response = $response->withHeader('X-XSS-Protection', '1; mode=block');
 
-        // Prevent proxy/browser caching of API responses (may contain sensitive data)
-        $response = $response->withHeader('Cache-Control', 'no-store');
+        // Prevent proxy/browser caching of API responses (may contain sensitive
+        // data). Don't clobber a handler that set its own policy — e.g. the file
+        // endpoint marks immutable uploaded assets cacheable; unconditionally
+        // overwriting that with no-store made its caching contract dead code.
+        if (!$response->hasHeader('Cache-Control')) {
+            $response = $response->withHeader('Cache-Control', 'no-store');
+        }
 
         // Referrer Policy - don't leak referrer to other origins
         $response = $response->withHeader('Referrer-Policy', 'strict-origin-when-cross-origin');

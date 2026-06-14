@@ -433,8 +433,17 @@ class ResponseService
             throw $mysqlErr;
         }
 
-        // 7. Update analytics
-        $this->updateAnalytics($formId, 'completion');
+        // 7. Update analytics (best-effort: the response is already committed, so a
+        // failure here must NOT bubble up and turn a saved submission into a 500 —
+        // that would make the submitter re-submit and create a duplicate response).
+        try {
+            $this->updateAnalytics($formId, 'completion');
+        } catch (\Throwable $analyticsErr) {
+            $this->logger->error('Failed to update analytics after response create', [
+                'formId' => $formId,
+                'error' => $analyticsErr->getMessage(),
+            ]);
+        }
 
         $createdResponse = $this->getResponse($formId, $id);
 
@@ -673,12 +682,6 @@ class ResponseService
             }
             $updates[] = "status = :status";
             $params['status'] = $data['status'];
-
-            // Update MySQL metadata too
-            $mysqlStmt = $this->mysql->prepare("
-                UPDATE response_metadata SET status = :status WHERE id = :id
-            ");
-            $mysqlStmt->execute(['status' => $data['status'], 'id' => $responseId]);
         }
 
         if (empty($updates)) {
@@ -691,6 +694,17 @@ class ResponseService
         $sql = "UPDATE responses SET " . implode(', ', $updates) . " WHERE id = :id";
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
+
+        // Mirror the status into the MySQL metadata index AFTER the authoritative
+        // SQLite row is updated. Doing MySQL first meant a failed SQLite UPDATE
+        // would leave MySQL showing the new status while SQLite kept the old one,
+        // permanently desyncing the global index from the per-form record.
+        if (isset($data['status'])) {
+            $mysqlStmt = $this->mysql->prepare("
+                UPDATE response_metadata SET status = :status WHERE id = :id
+            ");
+            $mysqlStmt->execute(['status' => $data['status'], 'id' => $responseId]);
+        }
 
         $updatedResponse = $this->getResponse($formId, $responseId);
 

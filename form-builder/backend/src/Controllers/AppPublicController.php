@@ -494,7 +494,9 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
-        $data = $request->getParsedBody();
+        // Normalize: an empty/non-JSON body parses to null, which would raise an
+        // uncaught \TypeError (HTTP 500) when passed to the array-typed service.
+        $data = $request->getParsedBody() ?? [];
 
         // Review-workflow status (approve/reject/review/archive) is a REVIEWER
         // action — gate it on VIEW_ALL_RESPONSES so a submitter with edit rights
@@ -1194,6 +1196,15 @@ class AppPublicController
     private function validateFieldType(array $field, $value): ?string
     {
         $type = $field['type'] ?? 'short_text';
+
+        // Scalar-typed fields must receive a scalar value. A client submitting an
+        // array/object for e.g. a phone field would otherwise reach preg_match()
+        // and throw an uncaught TypeError (HTTP 500). Reject it cleanly as a 400.
+        // (Mirrors the standalone and External API validators.)
+        $scalarTypes = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'datetime', 'time'];
+        if (in_array($type, $scalarTypes, true) && !is_scalar($value)) {
+            return 'Invalid value';
+        }
 
         switch ($type) {
             case 'email':

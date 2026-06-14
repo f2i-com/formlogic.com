@@ -58,11 +58,40 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
 
   const handleToggleStorageMode = async () => {
     if (storageMode === 'local') {
-      setStorageMode('api');
+      // CRITICAL: push local forms to the server BEFORE switching. The persist
+      // layer only keeps `forms` in localStorage while in local mode, so flipping
+      // to 'api' immediately zeroes the local snapshot — any form created locally
+      // but never synced would be lost for good. Sync first; only switch on success.
+      setIsSyncing(true);
+      try {
+        const result = await syncToApi();
+        if (!result.success) {
+          toast.error(
+            'Switch to Cloud failed',
+            `Some forms could not be synced, so cloud storage was not enabled: ${result.errors.join(', ')}`
+          );
+          return;
+        }
+        setStorageMode('api');
+        toast.success(
+          'Cloud storage enabled',
+          result.synced > 0
+            ? `${result.synced} form${result.synced === 1 ? '' : 's'} synced to your account.`
+            : 'Your forms are now stored in your account.'
+        );
+      } catch {
+        toast.error('Switch to Cloud failed', 'Could not sync your forms. Cloud storage was not enabled.');
+        return;
+      } finally {
+        setIsSyncing(false);
+        setIsOpen(false);
+      }
     } else {
+      // api -> local keeps the currently-loaded forms (persist writes them back to
+      // localStorage in local mode), so there's no data-loss risk this direction.
       setStorageMode('local');
+      setIsOpen(false);
     }
-    setIsOpen(false);
   };
 
   const handleSyncToCloud = async () => {
@@ -162,10 +191,16 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           {/* Menu items */}
           <div className="py-1">
             <button
-              onClick={() => { handleToggleStorageMode(); setIsOpen(false); }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              onClick={handleToggleStorageMode}
+              disabled={isSyncing}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
             >
-              {storageMode === 'api' ? (
+              {isSyncing && storageMode === 'local' ? (
+                <>
+                  <RefreshCw className="h-4 w-4 text-gray-400 dark:text-slate-500 animate-spin" />
+                  Switching to Cloud…
+                </>
+              ) : storageMode === 'api' ? (
                 <>
                   <CloudOff className="h-4 w-4 text-gray-400 dark:text-slate-500" />
                   Switch to Local Storage

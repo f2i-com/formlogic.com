@@ -139,7 +139,7 @@ $container->set(AuditService::class, function (Container $c) use ($settings) {
     // Use explicit AUDIT_HMAC_KEY if set, otherwise derive from JWT secret
     $auditHmacKey = $_ENV['AUDIT_HMAC_KEY'] ?? null;
     if (empty($auditHmacKey)) {
-        $jwtSecret = $settings['jwt']['secret'] ?? '';
+        $jwtSecret = $settings['settings']['jwt']['secret'] ?? '';
         $auditHmacKey = hash('sha256', 'formlogic-audit:' . $jwtSecret);
     }
     return new AuditService(
@@ -410,16 +410,29 @@ $errorMiddleware->setDefaultErrorHandler(function (
     bool $logErrors,
     bool $logErrorDetails
 ) use ($app, $appLogger) {
-    // Log unhandled exceptions through Monolog
+    // Log unhandled exceptions through Monolog. Routine routing errors (404/405
+    // and other 4xx HttpExceptions) are logged at info WITHOUT a stack trace, so
+    // bot/scanner traffic to nonexistent paths can't flood the error log with
+    // multi-KB traces; genuine 5xx faults keep the full trace for debugging.
     if ($logErrors) {
-        $appLogger->error('Unhandled exception: ' . $exception->getMessage(), [
-            'exception' => get_class($exception),
-            'file' => $exception->getFile() . ':' . $exception->getLine(),
-            'uri' => (string) $request->getUri(),
-            'method' => $request->getMethod(),
-            // Trace goes to the server log only — never to the HTTP response.
-            'trace' => $exception->getTraceAsString(),
-        ]);
+        $httpCode = $exception instanceof \Slim\Exception\HttpException ? (int) $exception->getCode() : 0;
+        if ($httpCode >= 400 && $httpCode < 500) {
+            $appLogger->info('HTTP client error: ' . $exception->getMessage(), [
+                'exception' => get_class($exception),
+                'status' => $httpCode,
+                'uri' => (string) $request->getUri(),
+                'method' => $request->getMethod(),
+            ]);
+        } else {
+            $appLogger->error('Unhandled exception: ' . $exception->getMessage(), [
+                'exception' => get_class($exception),
+                'file' => $exception->getFile() . ':' . $exception->getLine(),
+                'uri' => (string) $request->getUri(),
+                'method' => $request->getMethod(),
+                // Trace goes to the server log only — never to the HTTP response.
+                'trace' => $exception->getTraceAsString(),
+            ]);
+        }
     }
     $payload = [
         'error' => true,

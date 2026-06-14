@@ -430,7 +430,10 @@ class ApiClient {
         if (response.status === 401) {
           this.handleUnauthorized();
         }
-        return { error: data.error || data.message || 'An error occurred' };
+        // The backend's `error` field is a boolean flag (true), never the message;
+        // `data.error ||` short-circuited to `true`, surfacing a useless boolean to
+        // the user. Read the human-readable message like the other multipart calls.
+        return { error: data.message || 'An error occurred' };
       }
 
       return { data };
