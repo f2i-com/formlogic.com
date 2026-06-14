@@ -67,7 +67,12 @@ async function fetchAllApiResponses(
       all.push({ ...rr, completionTime: rr.completionTime ?? rr.metadata?.completionTime ?? 0 });
     }
     if (batch.length < PAGE) break;
-    if (page === MAX_PAGES - 1) truncated = true;
+    if (page === MAX_PAGES - 1) {
+      // Reached the cap on a full page — probe one more page to avoid a false
+      // "truncated" when the total is an exact multiple of MAX_PAGES*PAGE.
+      const probe = await api.getResponses(formId, { limit: 1, offset: MAX_PAGES * PAGE });
+      truncated = !!probe.data?.responses && probe.data.responses.length > 0;
+    }
   }
   return { responses: all, truncated };
 }

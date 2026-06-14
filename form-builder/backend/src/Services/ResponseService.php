@@ -495,6 +495,11 @@ class ResponseService
                     if (!is_string($targetResponseId) || $targetResponseId === '') {
                         continue;
                     }
+                    // Verify the target actually exists under target_form_id so a
+                    // client can't spoof dangling/cross-form link rows.
+                    if (!$this->responseExistsInForm($targetFormId, $targetResponseId)) {
+                        continue;
+                    }
                     $ins->execute([
                         'id' => $this->generateUuid(),
                         'source_form_id' => $formId,
@@ -516,6 +521,26 @@ class ResponseService
                 'responseId' => $responseId,
                 'error' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Whether a response id exists in a form's per-form SQLite DB. Best-effort
+     * (returns false if the DB doesn't exist); used to validate linked_record
+     * targets before writing inverse-link rows.
+     */
+    private function responseExistsInForm(string $formId, string $responseId): bool
+    {
+        try {
+            if (!$this->sqlite->formDatabaseExists($formId)) {
+                return false;
+            }
+            $db = $this->sqlite->getFormDatabase($formId);
+            $stmt = $db->prepare("SELECT 1 FROM responses WHERE id = :id LIMIT 1");
+            $stmt->execute(['id' => $responseId]);
+            return $stmt->fetchColumn() !== false;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

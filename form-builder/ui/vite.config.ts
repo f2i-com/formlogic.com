@@ -141,4 +141,18 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // Split large vendor libs out of the main chunk so the initial app
+        // bundle is smaller and these cache independently across deploys.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+          motion: ['framer-motion'],
+          icons: ['lucide-react'],
+          dnd: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+        },
+      },
+    },
+  },
 })

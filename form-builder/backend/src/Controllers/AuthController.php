@@ -367,7 +367,11 @@ class AuthController
                 foreach ($this->appService->getAllApps($userId) as $app) {
                     $owner = $app['ownerId'] ?? $app['owner_id'] ?? null;
                     if ($owner === $userId && !empty($app['id'])) {
-                        try { $this->appService->deleteApp((string) $app['id']); } catch (\Throwable $e) { /* best-effort */ }
+                        try {
+                            $this->appService->deleteApp((string) $app['id']);
+                        } catch (\Throwable $e) {
+                            $this->logger->error('Account deletion: failed to delete app', ['appId' => $app['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
+                        }
                     }
                 }
             }
@@ -382,7 +386,11 @@ class AuthController
                     $batch = $this->formService->getAllForms($userId, ['limit' => 1000, 'offset' => 0]);
                     foreach ($batch as $form) {
                         if (!empty($form['id'])) {
-                            try { $this->formService->deleteForm((string) $form['id']); } catch (\Throwable $e) { /* best-effort */ }
+                            try {
+                                $this->formService->deleteForm((string) $form['id']);
+                            } catch (\Throwable $e) {
+                                $this->logger->error('Account deletion: failed to delete form', ['formId' => $form['id'], 'userId' => $userId, 'error' => $e->getMessage()]);
+                            }
                         }
                     }
                 } while (count($batch) > 0 && ++$guard < 1000);
