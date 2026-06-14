@@ -33,7 +33,22 @@ $config = require __DIR__ . '/../config/settings.php';
 $mysqlConfig = $config['settings']['mysql'];
 
 $mysql = new MySQLConnection($mysqlConfig);
+// Ensure the retry columns exist even if the worker runs before the web app
+// has booted (both are idempotent).
+try {
+    $mysql->initializeSchema();
+    $mysql->runMigrations();
+} catch (\Throwable $e) {
+    fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
+}
 $webhookService = new WebhookService($mysql, new NullLogger());
+
+// Single-instance guard so overlapping cron ticks don't both run a pass.
+$lockHandle = fopen(sys_get_temp_dir() . '/formlogic-webhook-worker.lock', 'c');
+if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+    fwrite(STDERR, sprintf("[%s] another webhook worker is already running; exiting\n", date('c')));
+    exit(0);
+}
 
 $loop = in_array('--loop', $argv, true);
 

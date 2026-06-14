@@ -229,11 +229,15 @@ class WebhookService
             return;
         }
 
-        // Drive the parallel transfers to completion.
+        // Drive the parallel transfers to completion. Guard against
+        // curl_multi_select returning -1 (no fds yet) which would otherwise
+        // busy-spin a CPU core for the whole timeout window.
         do {
             $status = curl_multi_exec($mh, $running);
             if ($running) {
-                curl_multi_select($mh, 1.0);
+                if (curl_multi_select($mh, 1.0) === -1) {
+                    usleep(100);
+                }
             }
         } while ($running && $status === CURLM_OK);
 
@@ -414,10 +418,12 @@ class WebhookService
         $maxAttempts = max(1, $maxAttempts);
         $batchSize = max(1, min(500, $batchSize));
 
+        // Candidates: failed-and-due, OR rows left 'retrying' by a crashed worker
+        // whose lease (next_retry_at) has expired (self-healing).
         $stmt = $this->mysql->prepare("
             SELECT id, webhook_id, event, payload, attempt
             FROM webhook_deliveries
-            WHERE status = 'failed' AND attempt < " . (int) $maxAttempts . "
+            WHERE status IN ('failed', 'retrying') AND attempt < " . (int) $maxAttempts . "
               AND next_retry_at IS NOT NULL AND next_retry_at <= NOW()
             ORDER BY next_retry_at ASC
             LIMIT " . (int) $batchSize . "
@@ -425,10 +431,26 @@ class WebhookService
         $stmt->execute();
         $rows = $stmt->fetchAll();
 
+        // Atomically claim each row before sending (lease next_retry_at into the
+        // future + flip to 'retrying') so an overlapping worker run / second host
+        // can't deliver the same row twice. Only the row we win (rowCount==1)
+        // proceeds; retryDelivery then sets the final status/next_retry_at.
+        $claim = $this->mysql->prepare("
+            UPDATE webhook_deliveries
+            SET status = 'retrying', next_retry_at = DATE_ADD(NOW(), INTERVAL 300 SECOND)
+            WHERE id = :id AND status IN ('failed', 'retrying') AND next_retry_at <= NOW()
+        ");
+
         $sent = 0;
         $failed = 0;
         $abandoned = 0;
+        $processed = 0;
         foreach ($rows as $row) {
+            $claim->execute(['id' => $row['id']]);
+            if ($claim->rowCount() !== 1) {
+                continue; // another worker claimed it first
+            }
+            $processed++;
             $result = $this->retryDelivery($row, $maxAttempts);
             if ($result === 'success') {
                 $sent++;
@@ -439,7 +461,7 @@ class WebhookService
             }
         }
 
-        return ['processed' => count($rows), 'sent' => $sent, 'failed' => $failed, 'abandoned' => $abandoned];
+        return ['processed' => $processed, 'sent' => $sent, 'failed' => $failed, 'abandoned' => $abandoned];
     }
 
     /** Re-send a single stored delivery. Returns success|failed|abandoned. */
