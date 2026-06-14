@@ -222,6 +222,29 @@ class PackService
         $stmt->execute(['user_id' => $userId]);
         $rows = $stmt->fetchAll();
 
+        // Batch-fetch the latest version per catalog (one query, not N+1) so we
+        // can flag updates. Keyed by catalog_id => ['id','version','changelog'].
+        $latestByCatalog = [];
+        $catalogIds = array_values(array_unique(array_filter(array_map(fn ($r) => $r['catalog_id'] ?? null, $rows))));
+        if (!empty($catalogIds)) {
+            $placeholders = implode(',', array_fill(0, count($catalogIds), '?'));
+            $vStmt = $this->mysql->prepare("
+                SELECT pv.catalog_id, pv.id, pv.version, pv.changelog
+                FROM pack_versions pv
+                JOIN (
+                    SELECT catalog_id, MAX(created_at) AS mc
+                    FROM pack_versions
+                    WHERE catalog_id IN ($placeholders)
+                    GROUP BY catalog_id
+                ) m ON m.catalog_id = pv.catalog_id AND m.mc = pv.created_at
+            ");
+            $vStmt->execute($catalogIds);
+            foreach ($vStmt->fetchAll() as $v) {
+                // Keep the first per catalog (guards the rare same-second tie).
+                $latestByCatalog[$v['catalog_id']] ??= $v;
+            }
+        }
+
         $installations = [];
         foreach ($rows as $row) {
             $formIds = json_decode($row['form_ids'], true) ?? [];
@@ -231,19 +254,15 @@ class PackService
             $existingForms = $this->countExistingForms($formIds);
             $existingApps = $this->countExistingApps($appIds);
 
-            // Surface a catalog update when a newer version has been published
-            // than the one installed (staleness indicator).
+            // Flag an update by VERSION IDENTITY (latest version row vs the
+            // installed version_id), not version strings — the embedded
+            // packMeta.version often differs from the catalog version, which
+            // produced false "update available" badges right after install.
             $updateAvailable = null;
-            if (!empty($row['catalog_id'])) {
-                $vStmt = $this->mysql->prepare("
-                    SELECT version, changelog FROM pack_versions
-                    WHERE catalog_id = :cid ORDER BY created_at DESC LIMIT 1
-                ");
-                $vStmt->execute(['cid' => $row['catalog_id']]);
-                $latest = $vStmt->fetch();
-                if ($latest && (string) $latest['version'] !== (string) $row['pack_version']) {
-                    $updateAvailable = ['version' => $latest['version'], 'changelog' => $latest['changelog']];
-                }
+            $latest = (!empty($row['catalog_id']) && isset($latestByCatalog[$row['catalog_id']]))
+                ? $latestByCatalog[$row['catalog_id']] : null;
+            if ($latest && !empty($row['version_id']) && (string) $latest['id'] !== (string) $row['version_id']) {
+                $updateAvailable = ['version' => $latest['version'], 'changelog' => $latest['changelog']];
             }
 
             $installations[] = [
