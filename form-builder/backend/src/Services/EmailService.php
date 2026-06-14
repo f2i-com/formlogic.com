@@ -79,12 +79,15 @@ class EmailService
 
         // Fallback: PHP mail().
         try {
+            // Strip CR/LF from the subject to prevent header injection via the
+            // subject (e.g. an app name containing newlines + "Bcc:").
+            $safeSubject = str_replace(["\r", "\n"], '', $subject);
             $headers = [
                 'MIME-Version: 1.0',
                 'Content-Type: text/html; charset=UTF-8',
                 'From: ' . $this->encodeFromHeader(),
             ];
-            $ok = @mail($to, $subject, $htmlBody, implode("\r\n", $headers));
+            $ok = @mail($to, $safeSubject, $htmlBody, implode("\r\n", $headers));
             if (!$ok) {
                 $this->logger->warning('mail() returned false', ['to' => $to]);
             }

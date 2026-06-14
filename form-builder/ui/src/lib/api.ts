@@ -164,9 +164,11 @@ class ApiClient {
   }
 
   async requestPasswordReset(email: string): Promise<ApiResponse<{ message: string }>> {
+    // The reset-link host is resolved server-side from trusted config — we do
+    // NOT send it from the client (that would be a reset-poisoning vector).
     return this.request('/auth/forgot-password', {
       method: 'POST',
-      body: JSON.stringify({ email, resetUrl: `${window.location.origin}/reset-password` }),
+      body: JSON.stringify({ email }),
     });
   }
 

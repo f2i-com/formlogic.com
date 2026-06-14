@@ -322,19 +322,17 @@ class AppUserController
             // link, so onboarding still works if email isn't configured.
             if ($this->emailService !== null && !empty($invitation['token'])) {
                 try {
-                    $origin = $request->getHeaderLine('Origin');
-                    if ($origin === '') {
-                        $origin = rtrim((string) (getenv('APP_URL') ?: ''), '/');
-                    }
-                    if ($origin !== '') {
-                        $app = $this->appService->getApp($appId);
-                        $appName = htmlspecialchars((string) ($app['name'] ?? 'an app'), ENT_QUOTES);
-                        $link = htmlspecialchars(rtrim($origin, '/') . '/accept-invite?token=' . $invitation['token'], ENT_QUOTES);
-                        $html = "<p>You've been invited to join <strong>{$appName}</strong> on FormLogic.</p>"
-                            . "<p><a href=\"{$link}\">Accept your invitation</a></p>"
-                            . "<p>Sign in (or create an account) with this email address to join. This invitation expires in 7 days.</p>";
-                        $this->emailService->send((string) $data['email'], "You're invited to {$appName}", $html);
-                    }
+                    // SECURITY: build the accept-link host from a server-trusted
+                    // source only (never the raw Origin header) so the invite
+                    // token can't be funneled to an attacker domain.
+                    $origin = \FormLogic\Helpers\AppUrl::frontendBase($request);
+                    $app = $this->appService->getApp($appId);
+                    $appName = htmlspecialchars((string) ($app['name'] ?? 'an app'), ENT_QUOTES);
+                    $link = htmlspecialchars($origin . '/accept-invite?token=' . $invitation['token'], ENT_QUOTES);
+                    $html = "<p>You've been invited to join <strong>{$appName}</strong> on FormLogic.</p>"
+                        . "<p><a href=\"{$link}\">Accept your invitation</a></p>"
+                        . "<p>Sign in (or create an account) with this email address to join. This invitation expires in 7 days.</p>";
+                    $this->emailService->send((string) $data['email'], "You're invited to {$appName}", $html);
                 } catch (\Throwable $e) {
                     // Email failure must not fail invitation creation.
                 }

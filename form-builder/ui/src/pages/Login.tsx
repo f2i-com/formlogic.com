@@ -16,8 +16,10 @@ export function Login() {
   const { login, isLoading, error, clearError, user } = useAuthStore();
 
   // Honor a same-origin redirect target (e.g. accepting an app invitation).
+  // Reject protocol-relative (//host) and backslash (/\host) forms, which would
+  // otherwise be open-redirects to another origin.
   const redirectParam = searchParams.get('redirect');
-  const dest = redirectParam && redirectParam.startsWith('/') ? redirectParam : '/';
+  const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
 
   useEffect(() => {
     if (user) {

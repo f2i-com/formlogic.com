@@ -17,8 +17,9 @@ export function Signup() {
   const [searchParams] = useSearchParams();
   const { register, isLoading, error, clearError, user } = useAuthStore();
 
+  // Reject protocol-relative (//host) / backslash forms to avoid open-redirects.
   const redirectParam = searchParams.get('redirect');
-  const dest = redirectParam && redirectParam.startsWith('/') ? redirectParam : '/';
+  const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
 
   useEffect(() => {
     if (user) {

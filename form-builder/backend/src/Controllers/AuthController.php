@@ -9,6 +9,7 @@ use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -265,8 +266,11 @@ class AuthController
         // account enumeration.
         if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
             try {
-                $base = ($data['resetUrl'] ?? '') ?: $this->frontendUrl($request) . '/reset-password';
-                $this->authService->requestPasswordReset($email, (string) $base);
+                // SECURITY: the reset-link host must be server-trusted only — never
+                // from the request body (would let an attacker point a victim's
+                // valid reset token at their own domain = account takeover).
+                $base = AppUrl::frontendBase($request) . '/reset-password';
+                $this->authService->requestPasswordReset($email, $base);
             } catch (\Throwable $e) {
                 $this->logger->error('Password reset request error', ['exception' => $e->getMessage()]);
             }
@@ -300,26 +304,6 @@ class AuthController
             $this->logger->error('Password reset error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
-    }
-
-    /**
-     * Derive the frontend origin for building links (Origin/Referer header,
-     * falling back to APP_URL env, then the request host).
-     */
-    private function frontendUrl(Request $request): string
-    {
-        $appUrl = getenv('APP_URL');
-        if ($appUrl) {
-            return rtrim((string) $appUrl, '/');
-        }
-        $origin = $request->getHeaderLine('Origin');
-        if ($origin !== '') {
-            return rtrim($origin, '/');
-        }
-        $uri = $request->getUri();
-        $port = $uri->getPort();
-        $authority = $uri->getHost() . ($port && !in_array($port, [80, 443], true) ? ':' . $port : '');
-        return $uri->getScheme() . '://' . $authority;
     }
 
     /**
