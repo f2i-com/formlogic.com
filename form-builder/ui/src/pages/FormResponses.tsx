@@ -350,13 +350,16 @@ function FormResponses() {
   // Change a response's review status (submitted/reviewed/approved/rejected/archived).
   // Persisted server-side in API mode; in-memory only for local-storage forms.
   const handleStatusChange = async (responseId: string, newStatus: string) => {
+    const prevStatus = responses.find((r) => r.id === responseId)?.status ?? 'submitted';
     setResponses((prev) => prev.map((r) => (r.id === responseId ? { ...r, status: newStatus } : r)));
     setSelectedResponse((prev) => (prev && prev.id === responseId ? { ...prev, status: newStatus } : prev));
     if (storageMode === 'api' && formId) {
       const result = await api.updateResponse(formId, responseId, { status: newStatus } as Parameters<typeof api.updateResponse>[2]);
       if (result.error) {
         toast.error('Failed to update status', result.error);
-        try { const { responses: all } = await fetchAllApiResponses(formId); setResponses(all); } catch { /* ignore */ }
+        // Roll the optimistic change back in both the list and the open modal.
+        setResponses((prev) => prev.map((r) => (r.id === responseId ? { ...r, status: prevStatus } : r)));
+        setSelectedResponse((prev) => (prev && prev.id === responseId ? { ...prev, status: prevStatus } : prev));
       }
     }
   };
@@ -365,8 +368,10 @@ function FormResponses() {
   const handleRecompute = async (responseId: string) => {
     if (!formId) return;
     const result = await api.recomputeResponse(formId, responseId);
-    if (result.error) {
-      toast.error('Re-run failed', result.error);
+    // The endpoint returns 200 with {success:false, error} when the script
+    // itself fails — surface that instead of a misleading success toast.
+    if (result.error || result.data?.success === false) {
+      toast.error('Re-run failed', result.error || result.data?.error || 'Script error');
       return;
     }
     toast.success('Logic re-run', 'The response was recomputed with the latest script.');

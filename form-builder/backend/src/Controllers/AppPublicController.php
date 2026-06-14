@@ -496,12 +496,14 @@ class AppPublicController
 
         $data = $request->getParsedBody();
 
-        // Allow the review-workflow status (approve/reject/review/archive) for
-        // editors — it's the core purpose of the response lifecycle / NIGO
-        // dashboard. Validate against the allowed set; strip anything else.
-        // (ResponseService also validates as defense-in-depth.)
-        if (isset($data['status']) && !in_array($data['status'], ['submitted', 'reviewed', 'approved', 'rejected', 'archived'], true)) {
-            unset($data['status']);
+        // Review-workflow status (approve/reject/review/archive) is a REVIEWER
+        // action — gate it on VIEW_ALL_RESPONSES so a submitter with edit rights
+        // on their own records can't self-approve. Editors without VIEW_ALL keep
+        // their answer-edit ability; the status field is just dropped for them.
+        if (isset($data['status'])) {
+            if (!$canViewAll || !in_array($data['status'], ['submitted', 'reviewed', 'approved', 'rejected', 'archived'], true)) {
+                unset($data['status']);
+            }
         }
 
         // Validate answers against form fields if answers are being updated
