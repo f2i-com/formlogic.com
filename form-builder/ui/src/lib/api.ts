@@ -650,6 +650,14 @@ class ApiClient {
     return this.request(`/app/${slug}/my-permissions`);
   }
 
+  async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean }>> {
+    return this.request(`/app/${slug}/membership`);
+  }
+
+  async joinApp(slug: string): Promise<ApiResponse<{ success: boolean; status: string }>> {
+    return this.request(`/app/${slug}/join`, { method: 'POST' });
+  }
+
   async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
     return this.request(`/app/${slug}/forms/${formId}`);
   }

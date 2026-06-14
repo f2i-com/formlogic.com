@@ -114,6 +114,74 @@ class AppPublicController
         ]);
     }
 
+    /**
+     * Report the caller's membership status + whether they can self-register.
+     * Does NOT require existing membership (so non-members can discover joinability).
+     * GET /api/app/{slug}/membership
+     */
+    public function membership(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $appUser = $this->appUserService->getAppUser($app['id'], $userId);
+        $status = $appUser ? (string) $appUser['status'] : 'none';
+        $settings = $app['settings'] ?? [];
+        return $this->jsonResponse($response, [
+            'appName' => $app['name'],
+            'status' => $status,
+            'isMember' => $appUser && $status === 'active',
+            'canSelfRegister' => !$appUser && !empty($settings['allowSelfRegistration']),
+        ]);
+    }
+
+    /**
+     * Self-register the caller into the app (when allowed).
+     * POST /api/app/{slug}/join
+     */
+    public function join(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $settings = $app['settings'] ?? [];
+        if (empty($settings['allowSelfRegistration'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This app does not allow self-registration'], 403);
+        }
+
+        try {
+            $result = $this->appUserService->selfRegister(
+                $app['id'],
+                $userId,
+                $settings['defaultRoleId'] ?? null,
+                !empty($settings['requireApproval'])
+            );
+            return $this->jsonResponse($response, ['success' => true, 'status' => $result['status']]);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
+    }
+
     public function getMyPermissions(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];

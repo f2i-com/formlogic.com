@@ -1061,6 +1061,14 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->getMyPermissions($request, $response, $getArgs($request));
     })->add($authRequired);
 
+    // Membership status + self-registration (does NOT require membership)
+    $group->get('/membership', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->membership($request, $response, $getArgs($request));
+    })->add($authRequired);
+    $group->post('/join', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->join($request, $response, $getArgs($request));
+    })->add($authRequired);
+
     // Form in app context
     $group->get('/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->getForm($request, $response, $getArgs($request));

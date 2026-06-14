@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Send, Eye, LayoutGrid } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
@@ -8,10 +9,27 @@ export function AppDashboard() {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const { config, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
+  const redirectedRef = useRef(false);
+
+  const forms = config?.forms || [];
+
+  // Honor the app's configured landing page: redirect once per session to the
+  // chosen form. Guarded by a ref + sessionStorage so returning to the
+  // dashboard manually doesn't bounce the user back out.
+  const landingPage = config?.app?.settings?.landingPage as string | undefined;
+  useEffect(() => {
+    if (redirectedRef.current || !landingPage || !appSlug) return;
+    const key = `applanding:${appSlug}`;
+    if (sessionStorage.getItem(key)) return;
+    const target = forms.find((f) => f.formId === landingPage);
+    if (target) {
+      redirectedRef.current = true;
+      sessionStorage.setItem(key, '1');
+      navigate(`/app/${appSlug}/form/${landingPage}`, { replace: true });
+    }
+  }, [landingPage, appSlug, forms, navigate]);
 
   if (!config) return null;
-
-  const forms = config.forms || [];
 
   return (
     <div className="max-w-4xl mx-auto">

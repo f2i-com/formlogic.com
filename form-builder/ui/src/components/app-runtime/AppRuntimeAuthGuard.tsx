@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
+import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
-import { AlertCircle, Lock, Mail } from 'lucide-react';
+import { AlertCircle, Lock, Mail, UserPlus, Clock } from 'lucide-react';
 
 interface AppRuntimeAuthGuardProps {
   children: React.ReactNode;
@@ -15,6 +16,20 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean } | null>(null);
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+
+  // Logged in but the app didn't load (likely not a member): discover whether
+  // self-registration is allowed or we're awaiting approval.
+  useEffect(() => {
+    if (user && !config && appSlug && !isLoading) {
+      let cancelled = false;
+      api.getAppMembership(appSlug).then((r) => { if (!cancelled && r.data) setMembershipInfo(r.data); }).catch(() => {});
+      return () => { cancelled = true; };
+    }
+    setMembershipInfo(null);
+  }, [user, config, appSlug, isLoading]);
 
   if (isLoading) {
     return (
@@ -122,6 +137,57 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
         </div>
       </div>
     );
+  }
+
+  // Logged in, not a member: offer self-registration or show awaiting-approval.
+  if (user && !config && membershipInfo && !membershipInfo.isMember) {
+    const handleJoin = async () => {
+      if (!appSlug) return;
+      setJoining(true);
+      setJoinError(null);
+      const r = await api.joinApp(appSlug);
+      setJoining(false);
+      if (r.error) { setJoinError(r.error); return; }
+      if (r.data?.status === 'pending') {
+        setMembershipInfo((m) => (m ? { ...m, status: 'pending' } : m));
+      } else {
+        await initialize(appSlug);
+      }
+    };
+
+    if (membershipInfo.status === 'pending') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
+          <div className="text-center max-w-md mx-auto">
+            <div className="w-12 h-12 mx-auto rounded-full bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center mb-4">
+              <Clock className="h-6 w-6 text-amber-500 dark:text-amber-400" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">Awaiting approval</h2>
+            <p className="text-gray-500 dark:text-slate-400 mb-4">Your request to join {membershipInfo.appName} is pending an admin's approval. You'll get access once it's approved.</p>
+            <a href="/" className="text-sm app-text-primary hover:underline">Go to Home</a>
+          </div>
+        </div>
+      );
+    }
+
+    if (membershipInfo.canSelfRegister) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
+          <div className="text-center max-w-md mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+            <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
+              <UserPlus className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">Join {membershipInfo.appName}</h2>
+            <p className="text-gray-500 dark:text-slate-400 mb-6">You're not a member yet. Join to start using this app.</p>
+            {joinError && <p className="text-sm text-red-600 dark:text-red-400 mb-3">{joinError}</p>}
+            <div className="flex flex-col gap-2">
+              <Button onClick={handleJoin} isLoading={joining}>Join app</Button>
+              <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
+            </div>
+          </div>
+        </div>
+      );
+    }
   }
 
   if (error || !config) {

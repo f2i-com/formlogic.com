@@ -4,10 +4,11 @@ import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, R
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { Switch } from '../../components/ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
-import type { App } from '../../types/app';
+import type { App, AppRole, AppForm } from '../../types/app';
 import { DEFAULT_APP_THEME } from '../../types/app';
 
 const tabs = [
@@ -19,11 +20,13 @@ const tabs = [
 export function AppSettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { updateApp, fetchApps } = useAppStore();
+  const { updateApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [roles, setRoles] = useState<AppRole[]>([]);
+  const [appForms, setAppForms] = useState<AppForm[]>([]);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -37,6 +40,16 @@ export function AppSettings() {
       }
     }).finally(() => setLoaded(true));
   }, [appId, fetchApps]);
+
+  // Roles + forms power the membership defaults (default role, landing page).
+  useEffect(() => {
+    if (!appId) return;
+    fetchRoles(appId).then(setRoles).catch(() => {});
+    fetchAppForms(appId).then(setAppForms).catch(() => {});
+  }, [appId, fetchRoles, fetchAppForms]);
+
+  const updateSetting = (key: string, value: unknown) =>
+    setApp((prev) => (prev ? { ...prev, settings: { ...prev.settings, [key]: value } } : prev));
 
   if (!app) {
     if (!loaded) {
@@ -129,6 +142,54 @@ export function AppSettings() {
               <input type="text" value={app.logoUrl || ''} onChange={(e) => setApp({ ...app, logoUrl: e.target.value })}
                 placeholder="https://example.com/logo.png"
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
+            </div>
+
+            {/* Membership */}
+            <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
+              <h3 className="text-sm font-medium text-gray-900 dark:text-white">Membership</h3>
+              <Switch
+                checked={app.settings?.allowSelfRegistration === true}
+                onChange={(checked) => updateSetting('allowSelfRegistration', checked)}
+                label="Allow self-registration"
+                description="Let any signed-in user join this app from its link"
+              />
+              {app.settings?.allowSelfRegistration && (
+                <>
+                  <Switch
+                    checked={app.settings?.requireApproval === true}
+                    onChange={(checked) => updateSetting('requireApproval', checked)}
+                    label="Require approval"
+                    description="New members start as 'pending' until an admin approves them"
+                  />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Default role for new members</label>
+                    <select
+                      value={(app.settings?.defaultRoleId as string) || ''}
+                      onChange={(e) => updateSetting('defaultRoleId', e.target.value || undefined)}
+                      className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    >
+                      <option value="">Lowest-privilege role (automatic)</option>
+                      {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Landing page</label>
+                <select
+                  value={(app.settings?.landingPage as string) || ''}
+                  onChange={(e) => updateSetting('landingPage', e.target.value || undefined)}
+                  className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="">Dashboard (default)</option>
+                  {appForms.map((f) => (
+                    <option key={f.formId} value={f.formId}>{f.displayName}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Where members land when they open the app.</p>
+              </div>
             </div>
           </div>
           </TabsContent>

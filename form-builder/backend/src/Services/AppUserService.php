@@ -504,6 +504,61 @@ class AppUserService
         ];
     }
 
+    /**
+     * Self-register the authenticated user into an app (when the app allows it).
+     * Resolves the role from the app's configured default, else the lowest
+     * non-Owner role. Status is 'pending' when the app requires approval, else
+     * 'active'. Idempotent: returns the existing membership status if already a
+     * member.
+     *
+     * @return array{appId:string,userId:string,roleId?:string,status:string}
+     */
+    public function selfRegister(string $appId, string $userId, ?string $defaultRoleId, bool $requireApproval): array
+    {
+        $stmt = $this->mysql->prepare("SELECT id, status FROM app_users WHERE app_id = :app_id AND user_id = :user_id");
+        $stmt->execute(['app_id' => $appId, 'user_id' => $userId]);
+        $existing = $stmt->fetch();
+        if ($existing) {
+            return ['appId' => $appId, 'userId' => $userId, 'status' => (string) $existing['status']];
+        }
+
+        // Resolve the role to assign.
+        $roleId = null;
+        if ($defaultRoleId && $this->roleBelongsToApp($defaultRoleId, $appId)) {
+            $roleId = $defaultRoleId;
+        }
+        if (!$roleId) {
+            $rStmt = $this->mysql->prepare("
+                SELECT id FROM app_roles
+                WHERE app_id = :app_id AND NOT (is_system = 1 AND name = 'Owner')
+                ORDER BY is_system ASC, sort_order ASC
+                LIMIT 1
+            ");
+            $rStmt->execute(['app_id' => $appId]);
+            $r = $rStmt->fetch();
+            $roleId = $r['id'] ?? null;
+        }
+        if (!$roleId) {
+            throw new \RuntimeException('This app has no role available for new members');
+        }
+
+        $status = $requireApproval ? 'pending' : 'active';
+        $stmt = $this->mysql->prepare("
+            INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at)
+            VALUES (:id, :app_id, :user_id, :role_id, :status, :joined_at)
+        ");
+        $stmt->execute([
+            'id' => $this->generateUuid(),
+            'app_id' => $appId,
+            'user_id' => $userId,
+            'role_id' => $roleId,
+            'status' => $status,
+            'joined_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        return ['appId' => $appId, 'userId' => $userId, 'roleId' => $roleId, 'status' => $status];
+    }
+
     public function acceptInvitation(string $token, string $userId): array
     {
         $tokenHash = hash('sha256', $token);
