@@ -331,10 +331,14 @@ class MySQLConnection
                 duration_ms INT DEFAULT NULL,
                 success TINYINT(1) DEFAULT 0,
                 error_message TEXT DEFAULT NULL,
+                attempt INT DEFAULT 0,
+                next_retry_at TIMESTAMP NULL DEFAULT NULL,
+                status VARCHAR(20) DEFAULT 'success',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE,
                 INDEX idx_deliveries_webhook_id (webhook_id),
-                INDEX idx_deliveries_created_at (created_at)
+                INDEX idx_deliveries_created_at (created_at),
+                INDEX idx_deliveries_retry (status, next_retry_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
@@ -516,6 +520,24 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'field_count'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN field_count INT UNSIGNED DEFAULT 0 AFTER status");
+        }
+
+        // Webhook delivery retry columns (durable retry queue)
+        $hasWebhookDeliveries = $pdo->query("SHOW TABLES LIKE 'webhook_deliveries'")->rowCount() > 0;
+        if ($hasWebhookDeliveries) {
+            if ($pdo->query("SHOW COLUMNS FROM webhook_deliveries LIKE 'attempt'")->rowCount() === 0) {
+                $pdo->exec("ALTER TABLE webhook_deliveries ADD COLUMN attempt INT DEFAULT 0");
+            }
+            if ($pdo->query("SHOW COLUMNS FROM webhook_deliveries LIKE 'next_retry_at'")->rowCount() === 0) {
+                $pdo->exec("ALTER TABLE webhook_deliveries ADD COLUMN next_retry_at TIMESTAMP NULL DEFAULT NULL");
+            }
+            if ($pdo->query("SHOW COLUMNS FROM webhook_deliveries LIKE 'status'")->rowCount() === 0) {
+                $pdo->exec("ALTER TABLE webhook_deliveries ADD COLUMN status VARCHAR(20) DEFAULT 'success'");
+            }
+            $hasIdx = $pdo->query("SHOW INDEX FROM webhook_deliveries WHERE Key_name = 'idx_deliveries_retry'")->rowCount() > 0;
+            if (!$hasIdx) {
+                $pdo->exec("ALTER TABLE webhook_deliveries ADD INDEX idx_deliveries_retry (status, next_retry_at)");
+            }
         }
 
         // Create pack_installations table if it doesn't exist
