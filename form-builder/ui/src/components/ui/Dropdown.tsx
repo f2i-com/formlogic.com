@@ -1,4 +1,5 @@
 import React, { useState, useId, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -31,8 +32,10 @@ export function Dropdown({
 }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [menuRect, setMenuRect] = useState<DOMRect | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const selectedOption = options.find((opt) => opt.value === value);
 
@@ -40,13 +43,39 @@ export function Dropdown({
     if (!isOpen) return;
 
     function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+      const target = event.target as Node;
+      // The menu is portaled to <body>, so it's outside dropdownRef — exclude it
+      // explicitly or clicking an option would close before selecting.
+      if (
+        (dropdownRef.current && dropdownRef.current.contains(target)) ||
+        (listRef.current && listRef.current.contains(target))
+      ) {
+        return;
       }
+      setIsOpen(false);
     }
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  // Track the trigger's viewport position so the portaled menu (fixed) can be
+  // placed beneath it; recompute on scroll/resize while open.
+  useEffect(() => {
+    if (!isOpen) {
+      setMenuRect(null);
+      return;
+    }
+    const update = () => {
+      if (triggerRef.current) setMenuRect(triggerRef.current.getBoundingClientRect());
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
   }, [isOpen]);
 
   useEffect(() => {
@@ -125,6 +154,7 @@ export function Dropdown({
       )}
       <div className="relative">
         <button
+          ref={triggerRef}
           type="button"
           role="combobox"
           aria-expanded={isOpen}
@@ -160,13 +190,19 @@ export function Dropdown({
           />
         </button>
 
-        {isOpen && (
+        {isOpen && menuRect && createPortal(
           <div
             ref={listRef}
             id={listboxId}
             role="listbox"
             aria-label={label || placeholder}
-            className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto"
+            style={{
+              position: 'fixed',
+              top: menuRect.bottom + 4,
+              left: menuRect.left,
+              width: menuRect.width,
+            }}
+            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto"
           >
             {options.map((option, index) => (
               <div
@@ -191,7 +227,8 @@ export function Dropdown({
                 {option.label}
               </div>
             ))}
-          </div>
+          </div>,
+          document.body
         )}
       </div>
       {error && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>}

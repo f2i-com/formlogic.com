@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Send, Eye, LayoutGrid } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
@@ -11,7 +11,7 @@ export function AppDashboard() {
   const { config, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
   const redirectedRef = useRef(false);
 
-  const forms = config?.forms || [];
+  const forms = useMemo(() => config?.forms || [], [config]);
 
   // Honor the app's configured landing page: redirect once per session to the
   // chosen form. Guarded by a ref + sessionStorage so returning to the
