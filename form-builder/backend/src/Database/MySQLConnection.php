@@ -39,6 +39,13 @@ class MySQLConnection
                         PDO::ATTR_EMULATE_PREPARES => false,
                     ]
                 );
+                // Pin the session to UTC so MySQL NOW()/CURRENT_TIMESTAMP align
+                // with PHP's UTC date() strings. Without this, on a server whose
+                // system timezone isn't UTC, PHP-written timestamps (e.g.
+                // password_resets.expires_at, webhook next_retry_at) compared
+                // against NOW() are skewed by the offset — password-reset tokens
+                // would appear expired immediately and webhook retries mis-time.
+                self::$instance->exec("SET time_zone = '+00:00'");
             } catch (PDOException $e) {
                 throw new PDOException('MySQL Connection failed');
             }

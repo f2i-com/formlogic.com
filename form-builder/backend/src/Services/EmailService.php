@@ -32,13 +32,27 @@ class EmailService
     public function __construct(?LoggerInterface $logger = null)
     {
         $this->logger = $logger ?? new NullLogger();
-        $this->fromAddress = (string) (getenv('MAIL_FROM_ADDRESS') ?: '');
-        $this->fromName = (string) (getenv('MAIL_FROM_NAME') ?: 'FormLogic');
-        $this->smtpHost = (string) (getenv('SMTP_HOST') ?: '');
-        $this->smtpPort = (int) (getenv('SMTP_PORT') ?: 587);
-        $this->smtpUser = (string) (getenv('SMTP_USER') ?: '');
-        $this->smtpPassword = (string) (getenv('SMTP_PASSWORD') ?: '');
-        $this->smtpEncryption = (string) (getenv('SMTP_ENCRYPTION') ?: 'tls');
+        $this->fromAddress = self::env('MAIL_FROM_ADDRESS', '');
+        $this->fromName = self::env('MAIL_FROM_NAME', 'FormLogic');
+        $this->smtpHost = self::env('SMTP_HOST', '');
+        $this->smtpPort = (int) (self::env('SMTP_PORT', '587'));
+        $this->smtpUser = self::env('SMTP_USER', '');
+        $this->smtpPassword = self::env('SMTP_PASSWORD', '');
+        $this->smtpEncryption = self::env('SMTP_ENCRYPTION', 'tls');
+    }
+
+    /**
+     * Read an env var via getenv() OR $_ENV. Dotenv's immutable loader populates
+     * $_ENV but not always getenv(), so config read only through getenv() would
+     * be silently missed — leaving email permanently "unconfigured".
+     */
+    private static function env(string $key, string $default): string
+    {
+        $val = getenv($key);
+        if ($val === false || $val === '') {
+            $val = $_ENV[$key] ?? $default;
+        }
+        return (string) ($val !== '' ? $val : $default);
     }
 
     /**
