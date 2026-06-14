@@ -161,11 +161,10 @@ export function AppFormManager() {
     const reordered = [...appForms];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
     setAppForms(reordered);
-    try {
-      await reorderAppForms(appId, reordered.map((f) => f.formId));
-    } catch {
-      await loadForms(); // rollback to server order
-    }
+    // The store resolves (never throws) and returns false on failure, so check
+    // the result and reload to the true server order on failure.
+    const ok = await reorderAppForms(appId, reordered.map((f) => f.formId));
+    if (!ok) await loadForms();
   };
 
   const startRename = (af: AppForm) => {

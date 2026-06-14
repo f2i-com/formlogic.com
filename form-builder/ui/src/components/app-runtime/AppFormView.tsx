@@ -201,7 +201,9 @@ function FieldInput({
     return (
       <input
         type="number"
-        step="any"
+        min={field.properties?.min as number | undefined}
+        max={field.properties?.max as number | undefined}
+        step={(field.properties?.step as number | undefined) ?? 'any'}
         value={(value as number) ?? ''}
         onChange={(e) => {
           const val = parseFloat(e.target.value);
@@ -806,12 +808,17 @@ export function AppFormView() {
           animate={{ opacity: 1, scale: 1 }}
           className="text-center max-w-md mx-auto px-4"
         >
-          <div
-            className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
-            style={{ backgroundColor: primaryColor }}
-          >
-            <CheckCircle className="h-10 w-10" style={{ color: 'var(--app-on-primary)' }} />
-          </div>
+          {(() => {
+            const m = thankYouField?.properties?.mediaUrl as string | undefined;
+            if (!m) return (
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6" style={{ backgroundColor: primaryColor }}>
+                <CheckCircle className="h-10 w-10" style={{ color: 'var(--app-on-primary)' }} />
+              </div>
+            );
+            return (thankYouField?.properties?.mediaType as string | undefined) === 'video'
+              ? <video src={m} controls className="w-full rounded-xl max-h-64 mb-6" />
+              : <img src={m} alt="" className="w-full rounded-xl max-h-64 object-contain mb-6" />;
+          })()}
           <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
           <div className="flex gap-3 justify-center">
@@ -957,7 +964,11 @@ export function AppFormView() {
                   className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
                   style={{ backgroundColor: primaryColor, color: 'var(--app-on-primary)' }}
                 >
-                  {submitting ? 'Submitting...' : isLastStep ? 'Submit' : 'OK'}
+                  {submitting
+                    ? 'Submitting...'
+                    : isLastStep
+                      ? 'Submit'
+                      : (currentField?.type === 'welcome_screen' && (currentField.properties?.buttonText as string | undefined)) || 'OK'}
                   {!submitting && <Check className="h-4 w-4" />}
                 </button>
                 {!submitting && (

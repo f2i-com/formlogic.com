@@ -15,7 +15,8 @@ export interface AppSettings {
   allowSelfRegistration: boolean;
   requireApproval: boolean;
   defaultRoleId?: string;
-  landingPage: 'dashboard' | 'first_form';
+  // 'dashboard' (default) or a specific formId the member lands on.
+  landingPage: 'dashboard' | string;
   showBranding: boolean;
   enablePwa: boolean;
   pwaShortName?: string;

@@ -85,8 +85,13 @@ export function AppRoleEditor() {
     const name = editRoleName.trim();
     setEditingRoleId(null);
     if (!name) return;
-    await updateRole(appId, roleId, { name });
-    setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, name } : r)));
+    // Only apply the optimistic rename if the server accepted it.
+    const ok = await updateRole(appId, roleId, { name });
+    if (ok) {
+      setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, name } : r)));
+    } else {
+      loadData();
+    }
   };
 
   const handleSavePermissions = async () => {

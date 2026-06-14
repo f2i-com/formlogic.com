@@ -70,7 +70,9 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type="number"
-            step="any"
+            min={field.properties.min}
+            max={field.properties.max}
+            step={field.properties.step ?? 'any'}
             value={(value as number) ?? ''}
             onChange={(e) => {
               const val = parseFloat(e.target.value);

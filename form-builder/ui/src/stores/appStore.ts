@@ -25,12 +25,12 @@ interface AppState {
   addFormToApp: (appId: string, formId: string, displayName?: string) => Promise<boolean>;
   removeFormFromApp: (appId: string, formId: string) => Promise<void>;
   updateAppForm: (appId: string, formId: string, data: Partial<AppForm>) => Promise<void>;
-  reorderAppForms: (appId: string, formIds: string[]) => Promise<void>;
+  reorderAppForms: (appId: string, formIds: string[]) => Promise<boolean>;
 
   // Role management
   fetchRoles: (appId: string) => Promise<AppRole[]>;
   createRole: (appId: string, data: { name: string; description?: string }) => Promise<AppRole | null>;
-  updateRole: (appId: string, roleId: string, data: Partial<AppRole>) => Promise<void>;
+  updateRole: (appId: string, roleId: string, data: Partial<AppRole>) => Promise<boolean>;
   deleteRole: (appId: string, roleId: string) => Promise<boolean>;
 }
 
@@ -187,9 +187,11 @@ export const useAppStore = create<AppState>()(
       reorderAppForms: async (appId, formIds) => {
         try {
           const result = await api.reorderAppForms(appId, formIds);
-          if (result.error) toast.error('Reorder failed', result.error);
+          if (result.error) { toast.error('Reorder failed', result.error); return false; }
+          return true;
         } catch {
           toast.error('Reorder failed', 'Could not reorder forms. Please try again.');
+          return false;
         }
       },
 
@@ -214,7 +216,9 @@ export const useAppStore = create<AppState>()(
         const result = await api.updateAppRole(appId, roleId, data);
         if (result.error) {
           toast.error('Update failed', result.error);
+          return false;
         }
+        return true;
       },
 
       deleteRole: async (appId, roleId) => {
