@@ -1031,9 +1031,10 @@ class ApiClient {
     return this.request(`/forms/${formId}/versions/${version}`);
   }
 
-  async restoreFormVersion(formId: string, version: number): Promise<ApiResponse<{ form: Form }>> {
+  async restoreFormVersion(formId: string, version: number, force = false): Promise<ApiResponse<{ form: Form }>> {
     return this.request(`/forms/${formId}/versions/${version}/restore`, {
       method: 'POST',
+      body: JSON.stringify({ force }),
     });
   }
 

@@ -528,10 +528,15 @@ class AppUserService
             $roleId = $defaultRoleId;
         }
         if (!$roleId) {
+            // Pick the LEAST-privileged role (convention: Owner sort_order=0 is
+            // most privileged, so lowest privilege = highest sort_order). Prefer
+            // the built-in 'Member', then the highest-sort_order system role.
+            // Earlier this ordered ASC and silently handed new members the Admin
+            // role — a privilege-escalation bug.
             $rStmt = $this->mysql->prepare("
                 SELECT id FROM app_roles
                 WHERE app_id = :app_id AND NOT (is_system = 1 AND name = 'Owner')
-                ORDER BY is_system ASC, sort_order ASC
+                ORDER BY (is_system = 1 AND name = 'Member') DESC, is_system DESC, sort_order DESC
                 LIMIT 1
             ");
             $rStmt->execute(['app_id' => $appId]);
@@ -543,18 +548,27 @@ class AppUserService
         }
 
         $status = $requireApproval ? 'pending' : 'active';
-        $stmt = $this->mysql->prepare("
-            INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at)
-            VALUES (:id, :app_id, :user_id, :role_id, :status, :joined_at)
-        ");
-        $stmt->execute([
-            'id' => $this->generateUuid(),
-            'app_id' => $appId,
-            'user_id' => $userId,
-            'role_id' => $roleId,
-            'status' => $status,
-            'joined_at' => date('Y-m-d H:i:s'),
-        ]);
+        try {
+            $stmt = $this->mysql->prepare("
+                INSERT INTO app_users (id, app_id, user_id, role_id, status, joined_at)
+                VALUES (:id, :app_id, :user_id, :role_id, :status, :joined_at)
+            ");
+            $stmt->execute([
+                'id' => $this->generateUuid(),
+                'app_id' => $appId,
+                'user_id' => $userId,
+                'role_id' => $roleId,
+                'status' => $status,
+                'joined_at' => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\PDOException $e) {
+            // Lost a race with a concurrent join — return the existing membership.
+            if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
+                $existing2 = $this->getAppUser($appId, $userId);
+                return ['appId' => $appId, 'userId' => $userId, 'status' => (string) ($existing2['status'] ?? 'active')];
+            }
+            throw $e;
+        }
 
         return ['appId' => $appId, 'userId' => $userId, 'roleId' => $roleId, 'status' => $status];
     }

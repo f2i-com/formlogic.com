@@ -712,7 +712,7 @@ export default function FormBuilder() {
         isOpen={activeModal === 'versions'}
         onClose={closeModal}
         formId={form.id}
-        onRestored={() => loadFullForm(form.id)}
+        onRestored={() => loadFullForm(form.id, { force: true })}
       />
 
       {/* Keyboard Shortcuts Help */}

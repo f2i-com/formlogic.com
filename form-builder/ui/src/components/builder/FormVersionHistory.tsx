@@ -51,7 +51,9 @@ export function FormVersionHistory({ isOpen, onClose, formId, onRestored }: Form
   const handleRestore = async (version: number) => {
     setRestoring(true);
     try {
-      const result = await api.restoreFormVersion(formId, version);
+      // The confirm dialog already warns this overwrites the current (possibly
+      // published) form, so pass force to satisfy the backend's published-form guard.
+      const result = await api.restoreFormVersion(formId, version, true);
       if (result.error) {
         toast.error('Restore failed', result.error);
       } else {

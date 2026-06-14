@@ -56,7 +56,7 @@ interface FormState {
   deleteForm: (id: string) => Promise<void>;
   duplicateForm: (id: string) => Promise<Form | null>;
   getForm: (id: string) => Form | undefined;
-  loadFullForm: (id: string) => Promise<Form | undefined>;
+  loadFullForm: (id: string, opts?: { force?: boolean }) => Promise<Form | undefined>;
   setActiveForm: (id: string | null) => void;
   refreshForms: () => Promise<void>;
 
@@ -450,16 +450,20 @@ export const useFormStore = create<FormState>()(
 
       getForm: (id) => get().forms.find((f) => f.id === id),
 
-      loadFullForm: async (id) => {
+      loadFullForm: async (id, opts) => {
         const state = get();
         // In local mode, the form is already fully loaded
         if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
 
         // Check if the form already has fields loaded (use _fieldsLoaded flag
-        // since a form with 0 fields is valid and shouldn't trigger a refetch)
+        // since a form with 0 fields is valid and shouldn't trigger a refetch).
+        // `force` bypasses the cache so callers (e.g. after a version restore)
+        // can pull the server's current state.
         const existing = state.forms.find((f) => f.id === id);
-        if (existing && (existing as Form & { _fieldsLoaded?: boolean })._fieldsLoaded) return existing;
-        if (existing && existing.fields.length > 0) return existing;
+        if (!opts?.force) {
+          if (existing && (existing as Form & { _fieldsLoaded?: boolean })._fieldsLoaded) return existing;
+          if (existing && existing.fields.length > 0) return existing;
+        }
 
         // Fetch full form (with fields) from API
         try {

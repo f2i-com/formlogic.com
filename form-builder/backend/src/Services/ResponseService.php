@@ -18,6 +18,7 @@ class ResponseService
     private ?WebhookService $webhookService;
     private ?FileStorageService $fileStorageService;
     private LoggerInterface $logger;
+    private ?FormLogicService $formLogicService = null;
 
     public function __construct(
         MySQLConnection $mysql,
@@ -33,6 +34,113 @@ class ResponseService
         $this->logger = $logger ?? new NullLogger();
         $this->webhookService = $webhookService;
         $this->fileStorageService = $fileStorageService;
+    }
+
+    /** Lazily resolve the FormLogic engine (no-arg service). */
+    private function getFormLogic(): FormLogicService
+    {
+        return $this->formLogicService ??= new FormLogicService();
+    }
+
+    /**
+     * Compute per-field visibility & effective-required, mirroring the client's
+     * useConditionalLogic hook, so the server doesn't enforce `required` (or
+     * type validation) on fields the user can't see. Shared by the public and
+     * External API submission paths.
+     *
+     * @return array<string, array{visible: bool, required: bool}>
+     */
+    public function computeFieldVisibility(array $fields, array $answers): array
+    {
+        $vis = [];
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (!$id) {
+                continue;
+            }
+            $baseRequired = (bool)($field['required'] ?? false);
+            $cond = $field['conditionalLogic'] ?? null;
+            $expr = (is_array($cond) ? ($cond['expression'] ?? '') : '');
+
+            if (!is_string($expr) || trim($expr) === '') {
+                $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                continue;
+            }
+
+            $action = is_array($cond) ? ($cond['action'] ?? null) : null;
+            try {
+                $result = $this->getFormLogic()->evaluateCondition($expr, $answers);
+            } catch (\Throwable $e) {
+                // Fail OPEN to visible (matches the client) so a malformed
+                // expression can't create an unrecoverable dead-end.
+                $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                continue;
+            }
+
+            switch ($action) {
+                case 'hide':
+                case 'skip':
+                    $visible = !$result;
+                    $vis[$id] = ['visible' => $visible, 'required' => $baseRequired && $visible];
+                    break;
+                case 'require':
+                    $vis[$id] = ['visible' => true, 'required' => $result || $baseRequired];
+                    break;
+                case 'show':
+                    $visible = (bool)$result;
+                    $vis[$id] = ['visible' => $visible, 'required' => $baseRequired && $visible];
+                    break;
+                default:
+                    $vis[$id] = ['visible' => true, 'required' => $baseRequired];
+                    break;
+            }
+        }
+        return $vis;
+    }
+
+    /**
+     * Recompute calculated fields server-side from their calculationExpression
+     * and merge the results into answers (round-trips into storage/export/
+     * analytics; recomputing prevents client tampering). Iterates to a fixed
+     * point so calculated fields that depend on other calculated fields resolve
+     * regardless of document order. Best-effort — a broken expression is skipped.
+     */
+    public function applyCalculatedFields(array $fields, array $answers): array
+    {
+        $calc = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'calculated'
+                && !empty($field['id'])
+                && is_string($field['properties']['calculationExpression'] ?? null)
+                && trim($field['properties']['calculationExpression']) !== '') {
+                $calc[] = $field;
+            }
+        }
+        if (empty($calc)) {
+            return $answers;
+        }
+
+        // Up to N passes (N = number of calculated fields) — enough to resolve
+        // any acyclic chain; stops early once nothing changes.
+        for ($pass = 0; $pass < count($calc); $pass++) {
+            $changed = false;
+            foreach ($calc as $field) {
+                $id = $field['id'];
+                try {
+                    $value = $this->getFormLogic()->calculateField($field['properties']['calculationExpression'], $answers);
+                } catch (\Throwable $e) {
+                    continue;
+                }
+                if (!array_key_exists($id, $answers) || $answers[$id] !== $value) {
+                    $answers[$id] = $value;
+                    $changed = true;
+                }
+            }
+            if (!$changed) {
+                break;
+            }
+        }
+        return $answers;
     }
 
     /**

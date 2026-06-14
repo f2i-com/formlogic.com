@@ -226,7 +226,6 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(SQLiteConnection::class),
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
-        null,
         $c->get(\FormLogic\Services\EmailService::class)
     );
 });

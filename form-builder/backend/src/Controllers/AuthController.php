@@ -318,7 +318,17 @@ class AuthController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Not authenticated'], 401);
         }
 
-        $forms = $this->formService ? $this->formService->getAllForms($userId) : [];
+        // Paginate to completion — getAllForms defaults to 50, which would
+        // silently omit forms beyond the first page from this GDPR export.
+        $forms = [];
+        if ($this->formService) {
+            $offset = 0;
+            do {
+                $batch = $this->formService->getAllForms($userId, ['limit' => 1000, 'offset' => $offset]);
+                $forms = array_merge($forms, $batch);
+                $offset += 1000;
+            } while (count($batch) === 1000);
+        }
         $payload = [
             'exportedAt' => date('c'),
             'user' => $user->toArray(),
@@ -361,13 +371,21 @@ class AuthController
                     }
                 }
             }
-            // Delete the user's forms (incl. their per-form response DB + files).
+            // Delete ALL the user's forms (incl. their per-form response DB +
+            // uploaded files). getAllForms defaults to 50, so loop until empty —
+            // re-querying offset 0 each pass since rows are being removed. Without
+            // this, forms beyond 50 leave orphaned SQLite DBs + PII files on disk
+            // after a GDPR-erasure request.
             if ($this->formService) {
-                foreach ($this->formService->getAllForms($userId) as $form) {
-                    if (!empty($form['id'])) {
-                        try { $this->formService->deleteForm((string) $form['id']); } catch (\Throwable $e) { /* best-effort */ }
+                $guard = 0;
+                do {
+                    $batch = $this->formService->getAllForms($userId, ['limit' => 1000, 'offset' => 0]);
+                    foreach ($batch as $form) {
+                        if (!empty($form['id'])) {
+                            try { $this->formService->deleteForm((string) $form['id']); } catch (\Throwable $e) { /* best-effort */ }
+                        }
                     }
-                }
+                } while (count($batch) > 0 && ++$guard < 1000);
             }
 
             $this->authService->deleteAccount($userId);

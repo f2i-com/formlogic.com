@@ -51,6 +51,14 @@ class FileController
         foreach ($uploadFields as $f) {
             $props = $f['properties'] ?? [];
             $fs = (int) ($props['maxFileSize'] ?? 0);
+            // maxFileSize is stored in BYTES by the builder/AI, but form TEMPLATES
+            // and PACKS ship it in MEGABYTES (e.g. 5, 10). A value under 1 KiB
+            // cannot be a real per-file byte limit, so treat it as megabytes —
+            // otherwise min(global, 5) = 5 BYTES rejects every upload to
+            // template/pack-created forms.
+            if ($fs > 0 && $fs < 1024) {
+                $fs *= 1024 * 1024;
+            }
             if ($fs > $maxFileSize) {
                 $maxFileSize = $fs;
             }
