@@ -245,14 +245,25 @@ class PackService
             }
         }
 
+        // Batch existence checks: one query for all forms, one for all apps,
+        // instead of 2 COUNT(*) per installation row (N+1).
+        $allFormIds = [];
+        $allAppIds = [];
+        foreach ($rows as $row) {
+            foreach (json_decode($row['form_ids'], true) ?? [] as $fid) { $allFormIds[$fid] = true; }
+            foreach (json_decode($row['app_ids'], true) ?? [] as $aid) { $allAppIds[$aid] = true; }
+        }
+        $existingFormIds = $this->existingIds('forms', array_keys($allFormIds));
+        $existingAppIds = $this->existingIds('apps', array_keys($allAppIds));
+
         $installations = [];
         foreach ($rows as $row) {
             $formIds = json_decode($row['form_ids'], true) ?? [];
             $appIds = json_decode($row['app_ids'], true) ?? [];
 
-            // Check which forms/apps still exist
-            $existingForms = $this->countExistingForms($formIds);
-            $existingApps = $this->countExistingApps($appIds);
+            // Count which forms/apps still exist (from the batched sets above)
+            $existingForms = count(array_intersect_key(array_flip($formIds), $existingFormIds));
+            $existingApps = count(array_intersect_key(array_flip($appIds), $existingAppIds));
 
             // Flag an update by VERSION IDENTITY (latest version row vs the
             // installed version_id), not version strings — the embedded
@@ -611,31 +622,18 @@ class PackService
     }
 
     /**
-     * Count how many of the given form IDs still exist in the database.
+     * Return a set (id => true) of which of the given ids exist in $table.
+     * $table is a fixed internal value ('forms' | 'apps'), never user input.
      */
-    private function countExistingForms(array $formIds): int
+    private function existingIds(string $table, array $ids): array
     {
-        if (empty($formIds)) {
-            return 0;
+        if (empty($ids)) {
+            return [];
         }
-        $placeholders = implode(',', array_fill(0, count($formIds), '?'));
-        $stmt = $this->mysql->prepare("SELECT COUNT(*) FROM forms WHERE id IN ($placeholders)");
-        $stmt->execute($formIds);
-        return (int)$stmt->fetchColumn();
-    }
-
-    /**
-     * Count how many of the given app IDs still exist in the database.
-     */
-    private function countExistingApps(array $appIds): int
-    {
-        if (empty($appIds)) {
-            return 0;
-        }
-        $placeholders = implode(',', array_fill(0, count($appIds), '?'));
-        $stmt = $this->mysql->prepare("SELECT COUNT(*) FROM apps WHERE id IN ($placeholders)");
-        $stmt->execute($appIds);
-        return (int)$stmt->fetchColumn();
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->mysql->prepare("SELECT id FROM {$table} WHERE id IN ($placeholders)");
+        $stmt->execute(array_values($ids));
+        return array_fill_keys($stmt->fetchAll(\PDO::FETCH_COLUMN), true);
     }
 
     private function generateUuid(): string
