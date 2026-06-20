@@ -4,7 +4,7 @@ import { ArrowLeft, Trash2, ChevronRight, ChevronLeft, Inbox, Columns3 } from 'l
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { cn } from '../../lib/utils';
+import { cn, parseServerDate } from '../../lib/utils';
 
 const MOBILE_PAGE_SIZE = 15;
 
@@ -54,7 +54,7 @@ const MobileCardList = memo(function MobileCardList({
           >
             <div className="flex items-center justify-between mb-2.5">
               <span className="text-xs text-gray-400 dark:text-slate-500">
-                {r.submittedAt ? new Date(String(r.submittedAt)).toLocaleString() : '-'}
+                {r.submittedAt ? parseServerDate(String(r.submittedAt)).toLocaleString() : '-'}
               </span>
               <div className="flex items-center gap-2">
                 <span className={cn(

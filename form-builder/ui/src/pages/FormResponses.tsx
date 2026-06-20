@@ -206,8 +206,8 @@ function FormResponses() {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const today = new Date().toDateString();
 
-    const thisWeek = responses.filter((r) => new Date(r.submittedAt).getTime() > weekAgo).length;
-    const todayCount = responses.filter((r) => new Date(r.submittedAt).toDateString() === today).length;
+    const thisWeek = responses.filter((r) => parseServerDate(r.submittedAt).getTime() > weekAgo).length;
+    const todayCount = responses.filter((r) => parseServerDate(r.submittedAt).toDateString() === today).length;
     const avgTime = responses.length > 0
       ? responses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / responses.length
       : 0;
@@ -398,7 +398,7 @@ function FormResponses() {
     const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];
     const rows = responses.map((r) => [
       r.id,
-      new Date(r.submittedAt).toLocaleString(),
+      parseServerDate(r.submittedAt).toLocaleString(),
       ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type)),
     ]);
 

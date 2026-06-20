@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { parseServerDate } from '../lib/utils';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -214,7 +215,7 @@ export default function PackDetailPage() {
               </span>
               <span className="inline-flex items-center gap-1">
                 <Calendar className="h-4 w-4" />
-                Published {new Date(pack.createdAt).toLocaleDateString()}
+                Published {parseServerDate(pack.createdAt).toLocaleDateString()}
               </span>
               {pack.latestVersion && (
                 <Badge variant="default" size="sm">v{pack.latestVersion}</Badge>
@@ -376,7 +377,7 @@ export default function PackDetailPage() {
                     <span className="font-medium text-sm text-gray-700 dark:text-slate-300">{r.userName}</span>
                     {renderStars(r.rating)}
                     <span className="text-xs text-gray-400 dark:text-slate-500">
-                      {new Date(r.createdAt).toLocaleDateString()}
+                      {parseServerDate(r.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                   {r.review && (

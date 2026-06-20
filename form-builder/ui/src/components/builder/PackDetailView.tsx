@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { parseServerDate } from '../../lib/utils';
 import {
   ArrowLeft,
   Download,
@@ -222,7 +223,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             </span>
             <span className="inline-flex items-center gap-1">
               <Calendar className="h-3 w-3" />
-              {new Date(pack.createdAt).toLocaleDateString()}
+              {parseServerDate(pack.createdAt).toLocaleDateString()}
             </span>
             {pack.latestVersion && (
               <Badge variant="default" size="sm">v{pack.latestVersion}</Badge>
@@ -377,7 +378,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
                   <span className="font-medium text-gray-700 dark:text-slate-300">{r.userName}</span>
                   {renderStars(r.rating, 'h-3 w-3')}
                   <span className="text-gray-400 dark:text-slate-500">
-                    {new Date(r.createdAt).toLocaleDateString()}
+                    {parseServerDate(r.createdAt).toLocaleDateString()}
                   </span>
                 </div>
                 {r.review && (

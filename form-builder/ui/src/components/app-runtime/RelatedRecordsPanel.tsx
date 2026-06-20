@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Link2, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { RelatedRecordGroup } from '../../lib/api';
+import { parseServerDate } from '../../lib/utils';
 
 const PAGE_SIZE = 50;
 
@@ -126,7 +127,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
                   </p>
                   {record.submittedAt && (
                     <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
-                      {new Date(record.submittedAt).toLocaleString()}
+                      {parseServerDate(record.submittedAt).toLocaleString()}
                     </p>
                   )}
                 </div>

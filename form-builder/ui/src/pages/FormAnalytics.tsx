@@ -12,7 +12,7 @@ import { logger } from '../lib/logger';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
-import { formatDate, sanitizeFilename } from '../lib/utils';
+import { formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 
 interface DailyResponse {
@@ -52,7 +52,7 @@ export default function FormAnalytics() {
     // Group responses by day for chart (last 7 days)
     const responseCounts: Record<string, number> = {};
     localResponses.forEach(r => {
-      const date = new Date(r.submittedAt);
+      const date = parseServerDate(r.submittedAt);
       const dayKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
       responseCounts[dayKey] = (responseCounts[dayKey] || 0) + 1;
     });
@@ -74,9 +74,9 @@ export default function FormAnalytics() {
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-    const thisWeekResponses = localResponses.filter(r => new Date(r.submittedAt) >= oneWeekAgo).length;
+    const thisWeekResponses = localResponses.filter(r => parseServerDate(r.submittedAt) >= oneWeekAgo).length;
     const lastWeekResponses = localResponses.filter(r => {
-      const date = new Date(r.submittedAt);
+      const date = parseServerDate(r.submittedAt);
       return date >= twoWeeksAgo && date < oneWeekAgo;
     }).length;
 
@@ -266,7 +266,7 @@ export default function FormAnalytics() {
       }
     } else {
       for (const r of responses) {
-        const t = new Date(r.submittedAt).getTime();
+        const t = parseServerDate(r.submittedAt).getTime();
         if (t >= oneWeekAgo) thisWeek++;
         else if (t >= twoWeeksAgo && t < oneWeekAgo) lastWeek++;
       }
@@ -337,7 +337,7 @@ export default function FormAnalytics() {
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...inputFields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
         r.id,
-        new Date(r.submittedAt).toLocaleString(),
+        parseServerDate(r.submittedAt).toLocaleString(),
         Math.round(r.completionTime / 1000),
         ...inputFields.map((f) => {
           const v = r.answers[f.id];

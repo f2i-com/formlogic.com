@@ -6,7 +6,7 @@ import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { api } from '../../lib/api';
-import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
+import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
 import { Badge } from '../ui/Badge';
 
 export function AppResponseDetail() {
@@ -215,7 +215,7 @@ export function AppResponseDetail() {
       <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 mb-4 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-5 text-sm">
         <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
           <Clock className="h-4 w-4 flex-shrink-0" />
-          {response.submittedAt ? new Date(String(response.submittedAt)).toLocaleString() : '-'}
+          {response.submittedAt ? parseServerDate(String(response.submittedAt)).toLocaleString() : '-'}
         </div>
         <div className="flex items-center gap-2">
           <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0',

@@ -9,7 +9,7 @@ import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
-import { cn } from '../../lib/utils';
+import { cn, parseServerDate } from '../../lib/utils';
 import type { App } from '../../types/app';
 
 const statusColors: Record<string, string> = {
@@ -225,7 +225,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
 
       <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-slate-700/40">
         <span className="text-xs text-gray-400 dark:text-slate-500">
-          Updated {new Date(app.updatedAt).toLocaleDateString()}
+          Updated {parseServerDate(app.updatedAt).toLocaleDateString()}
         </span>
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           {app.status === 'published' && (

@@ -5,7 +5,7 @@ import { Input } from '../ui/Input';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import type { Webhook, WebhookDelivery } from '../../lib/api';
-import { cn } from '../../lib/utils';
+import { cn, parseServerDate } from '../../lib/utils';
 
 interface WebhookManagerProps {
   formId: string;
@@ -316,7 +316,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                             <Clock className="h-3 w-3" />{d.durationMs}ms
                           </span>
                           {d.errorMessage && <span className="text-red-500 truncate">{d.errorMessage}</span>}
-                          <span className="ml-auto text-gray-400">{new Date(d.createdAt).toLocaleTimeString()}</span>
+                          <span className="ml-auto text-gray-400">{parseServerDate(d.createdAt).toLocaleTimeString()}</span>
                         </div>
                       ))}
                     </div>

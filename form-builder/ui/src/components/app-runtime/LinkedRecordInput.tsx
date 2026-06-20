@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { Search, X, Loader2, ChevronDown } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { LinkedRecord } from '../../lib/api';
-import { cn } from '../../lib/utils';
+import { cn, parseServerDate } from '../../lib/utils';
 
 interface LinkedRecordInputProps {
   formId: string;
@@ -285,7 +285,7 @@ export function LinkedRecordInput({
                 <span className="font-medium">{record.display}</span>
                 {record.submittedAt && (
                   <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
-                    {new Date(record.submittedAt).toLocaleDateString()}
+                    {parseServerDate(record.submittedAt).toLocaleDateString()}
                   </span>
                 )}
               </button>

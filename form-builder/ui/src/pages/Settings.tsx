@@ -11,6 +11,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { parseServerDate } from '../lib/utils';
 import {
   User,
   Bell,
@@ -742,9 +743,9 @@ export function Settings() {
                         </div>
                         <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
                           {key.lastUsedAt
-                            ? `Last used ${new Date(key.lastUsedAt).toLocaleDateString()}`
+                            ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}`
                             : 'Never used'}
-                          {' · '}Created {new Date(key.createdAt).toLocaleDateString()}
+                          {' · '}Created {parseServerDate(key.createdAt).toLocaleDateString()}
                         </p>
                       </div>
                       <button
