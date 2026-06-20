@@ -48,6 +48,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -58,6 +59,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
       case 'long_text':
         return (
           <textarea
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
@@ -70,6 +72,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type="number"
+            aria-label={field.label}
             min={field.properties.min}
             max={field.properties.max}
             step={field.properties.step ?? 'any'}
@@ -87,6 +90,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type="date"
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
@@ -98,6 +102,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type="time"
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
@@ -108,6 +113,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
         return (
           <input
             type="datetime-local"
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-primary-500 outline-none py-2 text-lg transition-colors"
@@ -185,6 +191,7 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
           <p className="opacity-50 italic text-sm">No options configured</p>
         ) : (
           <select
+            aria-label={field.label}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-2 border-current/30 focus:border-primary-500 outline-none py-3 px-4 rounded-lg text-lg transition-colors"

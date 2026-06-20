@@ -32,12 +32,12 @@ class AppResponseService
 
     public function createResponse(string $appId, string $formId, array $data, string $userId, ?string $script = null): array|ScriptRejection
     {
-        // Set server-controlled metadata fields at the top level where
-        // ResponseService::createResponse() reads them, preventing client spoofing
+        // Set the server-controlled submitter at the top level where
+        // ResponseService::createResponse() reads it, preventing client spoofing.
+        // (appId is intentionally not persisted on the response — it's derivable
+        // from the form's app — and the previous metadata merge was a no-op since
+        // ResponseService rebuilds the metadata object from scratch.)
         $data['submittedByUserId'] = $userId;
-        $data['metadata'] = array_merge($data['metadata'] ?? [], [
-            'appId' => $appId,
-        ]);
 
         $result = $this->responseService->createResponse($formId, $data, $script);
 

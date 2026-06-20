@@ -21,6 +21,9 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+// Match the web app: PHP timezone UTC so date() aligns with the DB session.
+date_default_timezone_set('UTC');
+
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\WebhookService;
 use Psr\Log\NullLogger;

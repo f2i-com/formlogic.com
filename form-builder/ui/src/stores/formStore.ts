@@ -551,6 +551,11 @@ export const useFormStore = create<FormState>()(
       },
 
       deleteField: (formId, fieldId) => {
+        // Match the deleted field as a whole token so deleting "email" doesn't also
+        // wipe conditional/calc logic that references a sibling like "email_address"
+        // (a plain substring `.includes` did exactly that).
+        const escaped = fieldId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const refsDeletedField = (expr: string) => new RegExp(`\\b${escaped}\\b`).test(expr);
         set((state) => ({
           forms: state.forms.map((form) => {
             if (form.id !== formId) return form;
@@ -562,12 +567,12 @@ export const useFormStore = create<FormState>()(
                   let updated = { ...field, order: index };
                   // Clear conditional logic that references the deleted field
                   if (updated.conditionalLogic?.expression &&
-                      updated.conditionalLogic.expression.includes(fieldId)) {
+                      refsDeletedField(updated.conditionalLogic.expression)) {
                     updated = { ...updated, conditionalLogic: undefined };
                   }
                   // Clear calculation expressions that reference the deleted field
                   if (updated.properties?.calculationExpression &&
-                      updated.properties.calculationExpression.includes(fieldId)) {
+                      refsDeletedField(updated.properties.calculationExpression)) {
                     updated = { ...updated, properties: { ...updated.properties, calculationExpression: undefined } };
                   }
                   return updated;

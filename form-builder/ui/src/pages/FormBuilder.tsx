@@ -72,6 +72,7 @@ export default function FormBuilder() {
     duplicateField,
   } = useFormStore();
   const isSaving = useFormStore((s) => formId ? !!s.savingFormIds[formId] : false);
+  const storageMode = useFormStore((s) => s.storageMode);
 
   const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
 
@@ -535,11 +536,20 @@ export default function FormBuilder() {
               }
               const alreadyLive = form.status === 'published';
               await updateForm(form.id, { status: 'published' });
-              toast.success(
-                alreadyLive ? 'Changes published' : 'Your form is live',
-                'Share the link or embed it anywhere.'
-              );
-              setActiveModal('embed');
+              // Only cloud-stored forms have a public link / embed; a local form
+              // isn't on the server, so don't claim a shareable link for it.
+              if (storageMode === 'api') {
+                toast.success(
+                  alreadyLive ? 'Changes published' : 'Your form is live',
+                  'Share the link or embed it anywhere.'
+                );
+                setActiveModal('embed');
+              } else {
+                toast.success(
+                  alreadyLive ? 'Changes published' : 'Form published',
+                  'Switch to Cloud storage (top-right menu) to share it with a public link.'
+                );
+              }
             }}
           >
             <span className="hidden sm:inline">{form.status === 'published' ? 'Published' : 'Publish'}</span>

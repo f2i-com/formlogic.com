@@ -295,6 +295,10 @@ class AppPublicController
             // Drop answers for non-input/unknown fields (e.g. forged calculated
             // values or arbitrary field IDs) before validating and persisting.
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+            // Recompute calculated fields server-side (sanitize just stripped any
+            // client-sent values) so app-runtime submissions persist them too —
+            // parity with the standalone and External API submission paths.
+            $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
 
             // Validate answers against form fields
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
@@ -514,6 +518,7 @@ class AppPublicController
             if ($form) {
                 // Drop non-input/unknown field answers before validating/persisting
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+                $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
                 $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
                 if (!empty($validationErrors)) {
                     return $this->jsonResponse($response, [

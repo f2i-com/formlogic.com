@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
@@ -70,7 +70,17 @@ export function AppShell() {
           !isOnline && 'pt-8'
         )}
       >
-        <Outlet />
+        {/* Content-area Suspense so lazy pages load WITHOUT blanking the sidebar/
+            nav (the app-level boundary would unmount the whole shell). */}
+        <Suspense
+          fallback={
+            <div className="flex items-center justify-center py-32" role="status" aria-label="Loading">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+            </div>
+          }
+        >
+          <Outlet />
+        </Suspense>
       </main>
 
       {/* Mobile Bottom Nav */}

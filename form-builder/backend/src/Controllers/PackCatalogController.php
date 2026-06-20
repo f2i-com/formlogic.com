@@ -181,7 +181,7 @@ class PackCatalogController
 
         // Strict emptiness check so the literal version "0" isn't rejected by
         // PHP truthiness.
-        if (!$packData || !is_string($version) || trim($version) === '') {
+        if (!$packData || !is_array($packData) || !is_string($version) || trim($version) === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data and version are required'], 400);
         }
 

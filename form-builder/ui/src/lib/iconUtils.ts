@@ -23,6 +23,10 @@ import {
   School, Presentation,
   Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
   Rocket,
+  // Names used by bundled packs' form icons (must be here or DynamicIcon falls
+  // back to the generic FileText for those forms).
+  ArrowUpCircle, CalendarDays, HandHelping, LayoutGrid, LifeBuoy, LogOut, Mic,
+  Newspaper, PartyPopper, RotateCcw, Ticket,
 } from 'lucide-react';
 
 // Explicit icon map. Importing lucide's `{ icons }` barrel and looking up by
@@ -54,6 +58,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
   School, Presentation,
   Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
   Rocket,
+  ArrowUpCircle, CalendarDays, HandHelping, LayoutGrid, LifeBuoy, LogOut, Mic,
+  Newspaper, PartyPopper, RotateCcw, Ticket,
 };
 
 export function getLucideIcon(name: string): LucideIcon | null {
@@ -65,24 +71,25 @@ export const ICON_CATEGORIES: Record<string, string[]> = {
     'FileText', 'File', 'Folder', 'Star', 'Heart', 'Flag', 'Bookmark', 'Tag',
     'Search', 'Home', 'Bell', 'Clock', 'Calendar', 'Map', 'Globe', 'Lock',
     'Unlock', 'Eye', 'EyeOff', 'Filter', 'List', 'Grid3X3', 'Layers', 'Layout',
+    'LayoutGrid', 'CalendarDays', 'Newspaper', 'PartyPopper',
   ],
   Business: [
     'Briefcase', 'Building', 'Building2', 'DollarSign', 'CreditCard', 'Receipt',
     'Wallet', 'TrendingUp', 'TrendingDown', 'BarChart3', 'PieChart', 'Target',
-    'Award', 'Trophy', 'Handshake', 'Store', 'ShoppingCart', 'Package',
+    'Award', 'Trophy', 'Handshake', 'Store', 'ShoppingCart', 'Package', 'Ticket',
   ],
   People: [
     'User', 'Users', 'UserCheck', 'UserPlus', 'UserX', 'UserCog',
-    'Contact', 'CircleUser', 'Baby', 'Accessibility',
+    'Contact', 'CircleUser', 'Baby', 'Accessibility', 'HandHelping', 'LogOut',
   ],
   Communication: [
     'Mail', 'MessageSquare', 'MessageCircle', 'Phone', 'PhoneCall', 'Video',
-    'Send', 'Inbox', 'AtSign', 'Megaphone', 'Radio', 'Rss',
+    'Send', 'Inbox', 'AtSign', 'Megaphone', 'Radio', 'Rss', 'Mic',
   ],
   'Safety & Compliance': [
     'ShieldCheck', 'Shield', 'ShieldAlert', 'AlertTriangle', 'AlertCircle',
     'HardHat', 'Flame', 'Siren', 'BadgeCheck', 'Scale', 'Gavel',
-    'ClipboardCheck', 'ClipboardList', 'FileCheck', 'FileWarning',
+    'ClipboardCheck', 'ClipboardList', 'FileCheck', 'FileWarning', 'LifeBuoy', 'ArrowUpCircle',
   ],
   Health: [
     'Activity', 'HeartPulse', 'Stethoscope', 'Pill', 'Thermometer',
@@ -90,7 +97,7 @@ export const ICON_CATEGORIES: Record<string, string[]> = {
   ],
   Tools: [
     'Wrench', 'Hammer', 'Settings', 'Cog', 'SlidersHorizontal', 'Gauge',
-    'Zap', 'Plug', 'Cpu', 'Database', 'Server', 'Terminal', 'Code',
+    'Zap', 'Plug', 'Cpu', 'Database', 'Server', 'Terminal', 'Code', 'RotateCcw',
   ],
   Nature: [
     'Leaf', 'Cloud', 'Sun', 'Moon', 'Droplet', 'Mountain', 'TreePine',
