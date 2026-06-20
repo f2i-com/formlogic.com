@@ -15,11 +15,35 @@ class FormLogicService
 {
     private FormLogicEngine $engine;
 
+    /**
+     * FormLogic-source prelude prepended to every user EXPRESSION before eval, so
+     * the helper builtins/modules (isEmpty/isNotEmpty/contains/sum/avg/count and
+     * validators/format/compliance/finance/safety) resolve server-side exactly as
+     * they do client-side. Without it those helpers throw on the server, breaking
+     * conditional visibility (fails open) and calculated-field recompute. The
+     * engine doesn't persist globals across eval() calls, so it's prepended per
+     * eval. Kept in sync with the client prelude (ui/.../formlogic/engine.ts).
+     */
+    private string $prelude = '';
+
     public function __construct()
     {
         $this->engine = new FormLogicEngine();
         // Apply execution limits to prevent DoS via user-provided expressions
         $this->engine->setLimits(10000, 1000, 50);
+
+        $preludePath = __DIR__ . '/../../resources/formlogic-prelude.fl';
+        if (is_file($preludePath)) {
+            $this->prelude = (string) file_get_contents($preludePath);
+        }
+    }
+
+    /**
+     * Prepend the helper prelude to a user expression so its builtins resolve.
+     */
+    private function withPrelude(string $expression): string
+    {
+        return $this->prelude === '' ? $expression : $this->prelude . "\n" . $expression;
     }
 
     /**
@@ -30,7 +54,7 @@ class FormLogicService
      */
     public function evaluate(string $expression, array $context = []): mixed
     {
-        return $this->engine->eval($expression, $context);
+        return $this->engine->eval($this->withPrelude($expression), $context);
     }
 
     /**
@@ -64,7 +88,7 @@ class FormLogicService
     public function validateField(string $rule, mixed $value, array $formData = []): bool
     {
         $context = array_merge($formData, ['value' => $value]);
-        $result = $this->engine->eval($rule, $context);
+        $result = $this->engine->eval($this->withPrelude($rule), $context);
         return (bool) $result;
     }
 
@@ -76,7 +100,7 @@ class FormLogicService
      */
     public function evaluateCondition(string $condition, array $formData): bool
     {
-        $result = $this->engine->eval($condition, $formData);
+        $result = $this->engine->eval($this->withPrelude($condition), $formData);
         return (bool) $result;
     }
 
@@ -88,7 +112,7 @@ class FormLogicService
      */
     public function calculateField(string $formula, array $formData): mixed
     {
-        return $this->engine->eval($formula, $formData);
+        return $this->engine->eval($this->withPrelude($formula), $formData);
     }
 
     /**
