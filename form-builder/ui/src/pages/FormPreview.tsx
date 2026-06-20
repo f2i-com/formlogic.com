@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { handleRovingKeys } from '../lib/a11y';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { useFormStore } from '../stores/formStore';
@@ -120,16 +121,20 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
           />
         );
 
-      case 'multiple_choice':
+      case 'multiple_choice': {
+        const mcOpts = field.properties.options ?? [];
+        const radioFocusIdx = Math.max(0, mcOpts.findIndex((o) => o.value === value));
         return (
-          <div className="space-y-3" role="radiogroup" aria-label={field.label}>
-            {(field.properties.options?.length ?? 0) === 0 ? (
+          <div className="space-y-3" role="radiogroup" aria-label={field.label} aria-required={field.required || undefined}>
+            {mcOpts.length === 0 ? (
               <p className="opacity-50 italic text-sm">No options configured</p>
-            ) : field.properties.options?.map((option, index) => (
+            ) : mcOpts.map((option, index) => (
               <button
                 key={option.id}
                 role="radio"
                 aria-checked={value === option.value}
+                tabIndex={index === radioFocusIdx ? 0 : -1}
+                onKeyDown={(e) => handleRovingKeys(e, mcOpts, true, onChange)}
                 onClick={() => onChange(option.value)}
                 className={cn(
                   'w-full flex items-center gap-3 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
@@ -146,18 +151,22 @@ const FieldPreview = memo(function FieldPreview({ field, value, onChange, isRequ
             ))}
           </div>
         );
+      }
 
       case 'checkboxes': {
         const selectedValues = (value as string[]) || [];
+        const cbOpts = field.properties.options ?? [];
         return (
-          <div className="space-y-3" role="group" aria-label={field.label}>
-            {(field.properties.options?.length ?? 0) === 0 ? (
+          <div className="space-y-3" role="group" aria-label={field.label} aria-required={field.required || undefined}>
+            {cbOpts.length === 0 ? (
               <p className="opacity-50 italic text-sm">No options configured</p>
-            ) : field.properties.options?.map((option) => (
+            ) : cbOpts.map((option, index) => (
               <button
                 key={option.id}
                 role="checkbox"
                 aria-checked={selectedValues.includes(option.value)}
+                tabIndex={index === 0 ? 0 : -1}
+                onKeyDown={(e) => handleRovingKeys(e, cbOpts, false)}
                 onClick={() => {
                   const newValues = selectedValues.includes(option.value)
                     ? selectedValues.filter((v) => v !== option.value)

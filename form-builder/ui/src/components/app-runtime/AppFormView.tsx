@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { handleRovingKeys } from '../../lib/a11y';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
@@ -245,8 +246,9 @@ function FieldInput({
   if (field.type === 'multiple_choice') {
     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
+    const radioFocusIdx = Math.max(0, options.findIndex((o) => o.value === value));
     return (
-      <div className="space-y-3" role="radiogroup" aria-label={field.label}>
+      <div className="space-y-3" role="radiogroup" aria-label={field.label} aria-required={field.required || undefined}>
         {options.map((option, index) => {
           const selected = value === option.value;
           return (
@@ -255,6 +257,8 @@ function FieldInput({
               type="button"
               role="radio"
               aria-checked={selected}
+              tabIndex={index === radioFocusIdx ? 0 : -1}
+              onKeyDown={(e) => handleRovingKeys(e, options, true, onChange)}
               onClick={() => onChange(option.value)}
               className={cn(
                 'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
@@ -304,7 +308,7 @@ function FieldInput({
     const current = (value as string[]) ?? [];
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
-      <div className="space-y-3" role="group" aria-label={field.label}>
+      <div className="space-y-3" role="group" aria-label={field.label} aria-required={field.required || undefined}>
         {options.map((option, index) => {
           const checked = current.includes(option.value);
           return (
@@ -314,6 +318,8 @@ function FieldInput({
               role="checkbox"
               aria-checked={checked}
               aria-label={option.label}
+              tabIndex={index === 0 ? 0 : -1}
+              onKeyDown={(e) => handleRovingKeys(e, options, false)}
               onClick={() => {
                 onChange(checked ? current.filter((v) => v !== option.value) : [...current, option.value]);
               }}
