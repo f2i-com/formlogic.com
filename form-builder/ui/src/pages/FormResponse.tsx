@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw } from 'lucide-react';
@@ -696,6 +696,9 @@ export default function FormResponse() {
   // Respect the OS "reduce motion" setting — framer-motion ignores the CSS query,
   // so flatten the per-question slide to a plain fade for those users.
   const reduceMotion = useReducedMotion();
+  // Tracks the last step we moved focus/scroll to, so the per-step effect fires
+  // once per navigation (not on every re-render). Init to 0 = skip initial mount.
+  const lastFocusedStepRef = useRef(0);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -1192,11 +1195,24 @@ export default function FormResponse() {
         <AnimatePresence mode="wait">
           <motion.div
             key={currentField.id}
+            ref={(el) => {
+              // On step change, bring the new question into view and — for field
+              // types that don't autoFocus an input — move focus to the question so
+              // keyboard/screen-reader users aren't stranded on the old control.
+              if (!el || lastFocusedStepRef.current === safeCurrentStep) return;
+              lastFocusedStepRef.current = safeCurrentStep;
+              const TEXTUAL = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'time', 'datetime', 'dropdown'];
+              if (currentField && !TEXTUAL.includes(currentField.type)) el.focus({ preventScroll: true });
+              el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+            }}
+            tabIndex={-1}
+            role="group"
+            aria-label={currentField.label}
             initial={{ opacity: 0, y: reduceMotion ? 0 : 30 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
             transition={{ duration: reduceMotion ? 0 : 0.4 }}
-            className="w-full"
+            className="w-full outline-none"
           >
             <FieldResponse
               field={currentField}

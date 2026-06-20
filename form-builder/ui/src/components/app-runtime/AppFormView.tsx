@@ -584,6 +584,8 @@ export function AppFormView() {
   const navigate = useNavigate();
   const { config, createResponse, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
   const reduceMotion = useReducedMotion();
+  // Fires the per-step focus/scroll once per navigation (init 0 = skip mount).
+  const lastFocusedStepRef = useRef(0);
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [currentStep, setCurrentStep] = useState(0);
@@ -942,11 +944,23 @@ export function AppFormView() {
           <AnimatePresence mode="wait">
             <motion.div
               key={currentField.id}
+              ref={(el) => {
+                // On step change, scroll the new question into view and move focus
+                // to it for non-text fields (text fields autoFocus their input).
+                if (!el || lastFocusedStepRef.current === safeStep) return;
+                lastFocusedStepRef.current = safeStep;
+                const TEXTUAL = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'time', 'datetime', 'dropdown'];
+                if (currentField && !TEXTUAL.includes((currentField as { type: string }).type)) el.focus({ preventScroll: true });
+                el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+              }}
+              tabIndex={-1}
+              role="group"
+              aria-label={(currentField as { label?: string }).label}
               initial={{ opacity: 0, y: reduceMotion ? 0 : 30 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
               transition={{ duration: reduceMotion ? 0 : 0.35 }}
-              className="w-full"
+              className="w-full outline-none"
             >
               {/* Field label & description */}
               <div className="mb-8">
