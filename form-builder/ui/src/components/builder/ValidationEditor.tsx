@@ -20,16 +20,15 @@ const VALIDATION_TYPES: Record<string, { label: string; hasValue: boolean; value
     { label: 'Minimum Length', hasValue: true, valueType: 'number' },
     { label: 'Maximum Length', hasValue: true, valueType: 'number' },
     { label: 'Pattern (Regex)', hasValue: true, valueType: 'text' },
-    { label: 'Custom Expression', hasValue: false, valueType: 'text' },
   ],
   number: [
     { label: 'Minimum Value', hasValue: true, valueType: 'number' },
     { label: 'Maximum Value', hasValue: true, valueType: 'number' },
-    { label: 'Custom Expression', hasValue: false, valueType: 'text' },
   ],
-  default: [
-    { label: 'Custom Expression', hasValue: false, valueType: 'text' },
-  ],
+  // 'Custom Expression' (type 'custom') was removed: it was never enforced at
+  // submit time in either runtime or on the server, so offering it was misleading.
+  // Existing saved custom rules remain in data (and stay inert) for back-compat.
+  default: [],
 };
 
 const TYPE_TO_VALIDATION: Record<string, string> = {

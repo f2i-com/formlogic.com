@@ -49,11 +49,13 @@ export default function FormAnalytics() {
       ? Math.round(localResponses.reduce((sum, r) => sum + r.completionTime, 0) / localResponses.length / 1000)
       : 0;
 
-    // Group responses by day for chart (last 7 days)
+    // Group responses by day for chart (last 7 days). Bucket by LOCAL calendar day
+    // so each response lands under the bar labeled with the same local day
+    // (toISOString would bucket by UTC day, mis-attributing near-midnight responses).
+    const localDayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const responseCounts: Record<string, number> = {};
     localResponses.forEach(r => {
-      const date = parseServerDate(r.submittedAt);
-      const dayKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
+      const dayKey = localDayKey(parseServerDate(r.submittedAt));
       responseCounts[dayKey] = (responseCounts[dayKey] || 0) + 1;
     });
 
@@ -61,7 +63,7 @@ export default function FormAnalytics() {
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const dayKey = date.toISOString().split('T')[0];
+      const dayKey = localDayKey(date);
       last7Days.push({
         day: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
         count: responseCounts[dayKey] || 0,

@@ -6,6 +6,15 @@ import { api } from '../lib/api';
 import { logger } from '../lib/logger';
 import { toast } from './toastStore';
 
+// Field-id slugs must not collide with the FormLogic expression prelude's global
+// names: a field id like "count"/"sum"/"format" would shadow that builtin in the
+// generated expression context (let count = <value>) and break every conditional/
+// calculated expression on the form. Such collisions get a numeric suffix instead.
+const RESERVED_FIELD_IDS = new Set([
+  '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
+  'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
+]);
+
 // Generate a human-friendly field ID from a label
 function generateFieldId(label: string, existingIds: string[]): string {
   // Convert label to slug: lowercase, replace spaces/special chars with underscores
@@ -24,7 +33,7 @@ function generateFieldId(label: string, existingIds: string[]): string {
   // Check if ID already exists, if so append a number
   let finalId = baseId;
   let counter = 1;
-  while (existingIds.includes(finalId)) {
+  while (existingIds.includes(finalId) || RESERVED_FIELD_IDS.has(finalId)) {
     finalId = `${baseId}_${counter}`;
     counter++;
   }

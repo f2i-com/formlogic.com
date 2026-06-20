@@ -71,7 +71,19 @@ class SQLiteConnection
             return $pdo;
 
         } catch (PDOException $e) {
-            throw new PDOException('SQLite Connection failed');
+            // A fault during first-time init would otherwise leave a half-built
+            // .sqlite that never self-heals (later connects take the non-$isNew
+            // path and skip base-table creation). Remove the partial DB so the
+            // next request re-initializes cleanly, and preserve the real cause.
+            if ($isNew) {
+                if (isset($pdo)) {
+                    $pdo = null; // close the handle so the file is removable (Windows)
+                }
+                @unlink($dbPath);
+                @unlink($dbPath . '-wal');
+                @unlink($dbPath . '-shm');
+            }
+            throw new PDOException('SQLite Connection failed', 0, $e);
         }
     }
 
