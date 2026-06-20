@@ -839,7 +839,7 @@ class AppPublicController
 
         // Use response_links table for efficient inverse lookup with pagination
         $stmt = $this->mysql->prepare(
-            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :target_form_id AND target_response_id = :target_response_id LIMIT :lim OFFSET :off"
+            "SELECT source_form_id, source_response_id, field_id FROM response_links WHERE target_form_id = :target_form_id AND target_response_id = :target_response_id ORDER BY source_form_id, source_response_id, field_id LIMIT :lim OFFSET :off"
         );
         $stmt->bindValue('target_form_id', $formId);
         $stmt->bindValue('target_response_id', $responseId);

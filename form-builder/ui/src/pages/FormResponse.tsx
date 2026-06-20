@@ -248,6 +248,8 @@ function FieldResponse({
           <p className="opacity-50 italic text-sm">No options configured</p>
         ) : (
           <select
+            aria-label={field.label}
+            aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-none py-3 px-4 rounded-lg text-xl transition-colors"

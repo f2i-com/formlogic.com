@@ -251,13 +251,21 @@ class FileController
         $stream = fopen($filePath, 'rb');
         $body = new \Slim\Psr7\Stream($stream);
 
+        // Only files of a publicly-fillable standalone form may be cached by shared
+        // caches/CDNs. App-scoped or unpublished forms are access-controlled, so
+        // their files must not be stored by intermediaries (mirrors authorizeFileAccess).
+        $form = $this->formService->getForm($formId);
+        $appScoped = $this->appService ? $this->appService->isFormInAnyApp($formId) : false;
+        $isPublic = $form && !$appScoped && ($form['status'] ?? null) === 'published';
+        $cacheControl = $isPublic ? 'public, max-age=31536000, immutable' : 'private, no-store';
+
         return $response
             ->withHeader('Content-Type', $mimeType)
             ->withHeader('Content-Length', (string) $fileSize)
             ->withHeader('Content-Disposition', 'inline; filename="' . preg_replace('/[\x00-\x1f\x7f"\\\\]/', '_', $filename) . '"')
             // Prevent MIME sniffing of user-uploaded content (stored-XSS hardening)
             ->withHeader('X-Content-Type-Options', 'nosniff')
-            ->withHeader('Cache-Control', 'public, max-age=31536000, immutable')
+            ->withHeader('Cache-Control', $cacheControl)
             ->withBody($body);
     }
 

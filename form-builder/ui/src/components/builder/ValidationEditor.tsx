@@ -191,10 +191,14 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     <Input
                       label="Value"
                       type="number"
-                      value={rule.value as number}
-                      onChange={(e) =>
-                        updateRule(rule.id, { value: parseInt(e.target.value) || 0 })
-                      }
+                      value={rule.value ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        // Preserve decimals (parseInt truncated min/max) and treat an
+                        // empty input as "no value" rather than silently becoming 0.
+                        const n = raw === '' ? undefined : Number(raw);
+                        updateRule(rule.id, { value: n === undefined || Number.isNaN(n) ? undefined : n });
+                      }}
                     />
                   )}
 

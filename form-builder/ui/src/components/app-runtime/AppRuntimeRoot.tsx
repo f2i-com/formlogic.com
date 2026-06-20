@@ -54,6 +54,16 @@ export function AppRuntimeRoot() {
     };
   }, [appSlug, config]);
 
+  // Set the tab title to the app's own name (no "· FormLogic" suffix — these
+  // runtimes are white-labeled), restoring the platform title on the way out.
+  useEffect(() => {
+    const name = config?.app?.name;
+    if (!name) return;
+    const prev = document.title;
+    document.title = name;
+    return () => { document.title = prev; };
+  }, [config?.app?.name]);
+
   return (
     <AppRuntimeThemeProvider theme={config?.app?.theme}>
       <AppRuntimeAuthGuard>

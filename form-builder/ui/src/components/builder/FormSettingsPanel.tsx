@@ -23,6 +23,16 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
   const [editedSettings, setEditedSettings] = useState<FormSettings>(settings);
   const [activeTab, setActiveTab] = useState<SettingsTab>('presentation');
 
+  // Re-seed the edit buffer every time the modal opens so it reflects the CURRENT
+  // form.settings (the modal stays mounted, so without this it keeps stale
+  // first-mount values and Save would clobber e.g. a version-restored settings).
+  useEffect(() => {
+    if (isOpen) {
+      setEditedSettings(settings);
+      setActiveTab('presentation');
+    }
+  }, [isOpen, settings]);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {

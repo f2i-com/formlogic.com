@@ -17,8 +17,22 @@ export function generateId(): string {
   });
 }
 
+/**
+ * Parse a timestamp coming from the API. The backend stores/returns UTC as a
+ * space-separated, offset-less string ("YYYY-MM-DD HH:MM:SS"); the JS Date parser
+ * interprets that form in the BROWSER's local zone, which shifts every displayed
+ * time by the viewer's UTC offset (e.g. ~10h in AU). Normalize it to an explicit
+ * UTC instant. Strings already carrying a T + Z/offset (ISO-8601) pass through,
+ * and Date instances are returned as-is.
+ */
+export function parseServerDate(date: string | Date): Date {
+  if (date instanceof Date) return date;
+  const isOffsetlessSql = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date);
+  return new Date(isOffsetlessSql ? date.replace(' ', 'T') + 'Z' : date);
+}
+
 export function formatDate(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = parseServerDate(date);
   if (isNaN(d.getTime())) return 'Unknown';
   return d.toLocaleDateString(undefined, {
     year: 'numeric',
@@ -28,7 +42,7 @@ export function formatDate(date: string | Date): string {
 }
 
 export function formatRelativeTime(date: string | Date): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = parseServerDate(date);
   if (isNaN(d.getTime())) return 'Unknown';
   const now = new Date();
   const diffMs = now.getTime() - d.getTime();

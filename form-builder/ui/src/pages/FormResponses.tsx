@@ -30,7 +30,7 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
-import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel } from '../lib/utils';
+import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
 import { Badge } from '../components/ui/Badge';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
@@ -441,9 +441,9 @@ function FormResponses() {
     return String(value);
   };
 
-  // Format date
+  // Format date (server timestamps are UTC — parse them as such)
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    const date = parseServerDate(dateStr);
     return date.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',

@@ -147,6 +147,15 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   const logoInputRef = useRef<HTMLInputElement>(null);
   const bgInputRef = useRef<HTMLInputElement>(null);
 
+  // Re-seed from props on open (the modal stays mounted) so it never edits/saves
+  // stale theme data after the form's theme changed underneath it.
+  useEffect(() => {
+    if (isOpen) {
+      setEditedTheme(theme);
+      setActivePreset(null);
+    }
+  }, [isOpen, theme]);
+
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
