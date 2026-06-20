@@ -149,7 +149,10 @@ export default defineConfig({
         manualChunks: {
           react: ['react', 'react-dom', 'react-router-dom'],
           motion: ['framer-motion'],
-          icons: ['lucide-react'],
+          // lucide-react is intentionally NOT chunked here: icons are now imported
+          // by explicit name (see lib/iconUtils.ts) so they tree-shake and fold
+          // into the component chunks that use them. A dedicated chunk would have
+          // re-bundled the whole ~1,500-icon set.
           dnd: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
         },
       },

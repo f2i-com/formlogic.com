@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
@@ -572,6 +572,7 @@ export function AppFormView() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
   const { config, createResponse, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
+  const reduceMotion = useReducedMotion();
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [currentStep, setCurrentStep] = useState(0);
@@ -930,10 +931,10 @@ export function AppFormView() {
           <AnimatePresence mode="wait">
             <motion.div
               key={currentField.id}
-              initial={{ opacity: 0, y: 30 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 30 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -30 }}
-              transition={{ duration: 0.35 }}
+              exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35 }}
               className="w-full"
             >
               {/* Field label & description */}

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { useFormStore } from '../stores/formStore';
@@ -497,6 +497,7 @@ export default function FormPreview() {
   const { getForm, loadFullForm } = useFormStore();
   const { previewDevice, setPreviewDevice, previewMode, setPreviewMode } = useUIStore();
 
+  const reduceMotion = useReducedMotion();
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [showEmbedModal, setShowEmbedModal] = useState(false);
@@ -752,10 +753,10 @@ export default function FormPreview() {
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={currentField.id}
-                    initial={{ opacity: 0, y: 20 }}
+                    initial={{ opacity: 0, y: reduceMotion ? 0 : 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.3 }}
+                    exit={{ opacity: 0, y: reduceMotion ? 0 : -20 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.3 }}
                     className="w-full max-w-lg"
                   >
                     <FieldPreview

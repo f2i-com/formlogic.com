@@ -1,6 +1,6 @@
 import React, { useId, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -188,5 +188,10 @@ export function Modal({
     </AnimatePresence>
   );
 
-  return createPortal(content, document.body);
+  // reducedMotion="user" drops the scale/transform for users who set the OS
+  // "reduce motion" preference (framer-motion ignores the CSS media query).
+  return createPortal(
+    <MotionConfig reducedMotion="user">{content}</MotionConfig>,
+    document.body
+  );
 }

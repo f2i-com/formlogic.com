@@ -1,7 +1,63 @@
-import { icons } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import {
+  FileText, File, Folder, Star, Heart, Flag, Bookmark, Tag, Search, Home, Bell,
+  Clock, Calendar, Map, Globe, Lock, Unlock, Eye, EyeOff, Filter, List, Grid3X3,
+  Layers, Layout,
+  Briefcase, Building, Building2, DollarSign, CreditCard, Receipt, Wallet,
+  TrendingUp, TrendingDown, BarChart3, PieChart, Target, Award, Trophy, Handshake,
+  Store, ShoppingCart, Package,
+  User, Users, UserCheck, UserPlus, UserX, UserCog, Contact, CircleUser, Baby,
+  Accessibility,
+  Mail, MessageSquare, MessageCircle, Phone, PhoneCall, Video, Send, Inbox, AtSign,
+  Megaphone, Radio, Rss,
+  ShieldCheck, Shield, ShieldAlert, AlertTriangle, AlertCircle, HardHat, Flame,
+  Siren, BadgeCheck, Scale, Gavel, ClipboardCheck, ClipboardList, FileCheck,
+  FileWarning,
+  Activity, HeartPulse, Stethoscope, Pill, Thermometer, Syringe, Cross, Hospital,
+  Dna, Microscope,
+  Wrench, Hammer, Settings, Cog, SlidersHorizontal, Gauge, Zap, Plug, Cpu, Database,
+  Server, Terminal, Code,
+  Leaf, Cloud, Sun, Moon, Droplet, Mountain, TreePine, Flower2, Bug, Fish, Bird,
+  Waves,
+  GraduationCap, BookOpen, Library, PenTool, Pencil, Ruler, Calculator, Lightbulb,
+  School, Presentation,
+  Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
+  Rocket,
+} from 'lucide-react';
 
-export function getLucideIcon(name: string): (typeof icons)[keyof typeof icons] | null {
-  return (icons as Record<string, (typeof icons)[keyof typeof icons]>)[name] ?? null;
+// Explicit icon map. Importing lucide's `{ icons }` barrel and looking up by
+// string defeated tree-shaking, so the ENTIRE ~1,500-icon set (a ~486 KB chunk)
+// shipped to every signed-in user even though only the ~136 names below are ever
+// offered in the picker. Statically importing exactly those folds them into the
+// component chunks and drops the standalone icons chunk.
+const ICON_MAP: Record<string, LucideIcon> = {
+  FileText, File, Folder, Star, Heart, Flag, Bookmark, Tag, Search, Home, Bell,
+  Clock, Calendar, Map, Globe, Lock, Unlock, Eye, EyeOff, Filter, List, Grid3X3,
+  Layers, Layout,
+  Briefcase, Building, Building2, DollarSign, CreditCard, Receipt, Wallet,
+  TrendingUp, TrendingDown, BarChart3, PieChart, Target, Award, Trophy, Handshake,
+  Store, ShoppingCart, Package,
+  User, Users, UserCheck, UserPlus, UserX, UserCog, Contact, CircleUser, Baby,
+  Accessibility,
+  Mail, MessageSquare, MessageCircle, Phone, PhoneCall, Video, Send, Inbox, AtSign,
+  Megaphone, Radio, Rss,
+  ShieldCheck, Shield, ShieldAlert, AlertTriangle, AlertCircle, HardHat, Flame,
+  Siren, BadgeCheck, Scale, Gavel, ClipboardCheck, ClipboardList, FileCheck,
+  FileWarning,
+  Activity, HeartPulse, Stethoscope, Pill, Thermometer, Syringe, Cross, Hospital,
+  Dna, Microscope,
+  Wrench, Hammer, Settings, Cog, SlidersHorizontal, Gauge, Zap, Plug, Cpu, Database,
+  Server, Terminal, Code,
+  Leaf, Cloud, Sun, Moon, Droplet, Mountain, TreePine, Flower2, Bug, Fish, Bird,
+  Waves,
+  GraduationCap, BookOpen, Library, PenTool, Pencil, Ruler, Calculator, Lightbulb,
+  School, Presentation,
+  Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
+  Rocket,
+};
+
+export function getLucideIcon(name: string): LucideIcon | null {
+  return ICON_MAP[name] ?? null;
 }
 
 export const ICON_CATEGORIES: Record<string, string[]> = {

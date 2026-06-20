@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { ChevronUp, ChevronDown, Check } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useFormStore } from '../stores/formStore';
@@ -687,6 +687,9 @@ export default function FormResponse() {
     resetCurrentResponse,
   } = useResponseStore();
 
+  // Respect the OS "reduce motion" setting — framer-motion ignores the CSS query,
+  // so flatten the per-question slide to a plain fade for those users.
+  const reduceMotion = useReducedMotion();
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -1171,10 +1174,10 @@ export default function FormResponse() {
         <AnimatePresence mode="wait">
           <motion.div
             key={currentField.id}
-            initial={{ opacity: 0, y: 30 }}
+            initial={{ opacity: 0, y: reduceMotion ? 0 : 30 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -30 }}
-            transition={{ duration: 0.4 }}
+            exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
+            transition={{ duration: reduceMotion ? 0 : 0.4 }}
             className="w-full"
           >
             <FieldResponse

@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { cn } from '../../lib/utils';
 
 interface SwitchProps {
@@ -17,6 +18,14 @@ export function Switch({
   disabled,
   size = 'md',
 }: SwitchProps) {
+  // A native <label> only associates with form controls, never a <button>, so the
+  // old markup left the toggle nameless to screen readers and the text non-clickable.
+  // Use a plain container, wire the button's accessible name via aria-labelledby/
+  // describedby, and let the text toggle it too.
+  const id = useId();
+  const labelId = `${id}-label`;
+  const descId = `${id}-desc`;
+
   const sizes = {
     sm: {
       track: 'w-8 h-[18px]',
@@ -30,22 +39,24 @@ export function Switch({
     },
   };
 
+  const toggle = () => {
+    if (!disabled) onChange(!checked);
+  };
+
   return (
-    <label
-      className={cn(
-        'flex items-start gap-3 cursor-pointer select-none',
-        disabled && 'opacity-50 cursor-not-allowed'
-      )}
-    >
+    <div className={cn('flex items-start gap-3 select-none', disabled && 'opacity-50')}>
       <button
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-labelledby={label ? labelId : undefined}
+        aria-describedby={description ? descId : undefined}
         disabled={disabled}
-        onClick={() => !disabled && onChange(!checked)}
+        onClick={toggle}
         className={cn(
           'relative inline-flex shrink-0 rounded-full transition-all duration-200',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-900',
+          disabled ? 'cursor-not-allowed' : 'cursor-pointer',
           sizes[size].track,
           checked
             ? 'bg-primary-600 shadow-inner'
@@ -64,15 +75,18 @@ export function Switch({
         />
       </button>
       {(label || description) && (
-        <div className="flex flex-col pt-0.5">
+        <div
+          className={cn('flex flex-col pt-0.5', !disabled && 'cursor-pointer')}
+          onClick={toggle}
+        >
           {label && (
-            <span className="text-sm font-medium text-gray-900 dark:text-white leading-tight">{label}</span>
+            <span id={labelId} className="text-sm font-medium text-gray-900 dark:text-white leading-tight">{label}</span>
           )}
           {description && (
-            <span className="text-sm text-gray-500 dark:text-slate-400 leading-snug mt-0.5">{description}</span>
+            <span id={descId} className="text-sm text-gray-500 dark:text-slate-400 leading-snug mt-0.5">{description}</span>
           )}
         </div>
       )}
-    </label>
+    </div>
   );
 }

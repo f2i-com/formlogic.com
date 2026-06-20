@@ -1,7 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, matchPath } from 'react-router-dom';
 import { AppShell } from './components/layout/AppShell';
-import { Dashboard, FormsList, Settings, Landing } from './pages';
+// Landing stays eager so the unauthenticated marketing page paints immediately;
+// the authed pages below are lazy so unauthenticated visitors don't download the
+// whole dashboard (and its heavy icon/motion deps) before seeing the landing.
+import { Landing } from './pages/Landing';
 import { NotFound } from './pages/NotFound';
 import { LegalPage } from './pages/LegalPage';
 import { AcceptInvite } from './pages/AcceptInvite';
@@ -37,6 +40,9 @@ function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any
 }
 
 // Lazy load pages for better performance
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
+const Settings = lazyWithRetry(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
 const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
 const FormAnalytics = lazyWithRetry(() => import('./pages/FormAnalytics'));
