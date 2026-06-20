@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { logger } from '../lib/logger';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   Plus,
   Search,
@@ -258,6 +259,7 @@ const FormCard = memo(function FormCard({
 });
 
 export function FormsList() {
+  useDocumentTitle('My Forms');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
@@ -497,16 +499,29 @@ export function FormsList() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredForms.length === 0 ? (
                 <div className="col-span-full">
-                  <EmptyState
-                    icon={Inbox}
-                    title="No forms yet"
-                    description="Create your first form to get started"
-                    action={
-                      <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-                        Create Form
-                      </Button>
-                    }
-                  />
+                  {(searchQuery || packFilter !== 'all') ? (
+                    <EmptyState
+                      icon={Search}
+                      title="No forms match your filters"
+                      description="Try a different search term, or clear the filters to see all your forms."
+                      action={
+                        <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
+                          Clear filters
+                        </Button>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      icon={Inbox}
+                      title="No forms yet"
+                      description="Create your first form to get started"
+                      action={
+                        <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+                          Create Form
+                        </Button>
+                      }
+                    />
+                  )}
                 </div>
               ) : (
                 filteredForms.map(renderFormCard)

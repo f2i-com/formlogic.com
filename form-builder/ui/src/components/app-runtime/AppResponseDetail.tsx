@@ -6,7 +6,8 @@ import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { api } from '../../lib/api';
-import { cn } from '../../lib/utils';
+import { cn, statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
+import { Badge } from '../ui/Badge';
 
 export function AppResponseDetail() {
   const { appSlug, formId, responseId } = useParams();
@@ -231,15 +232,9 @@ export function AppResponseDetail() {
               ))}
             </select>
           ) : (
-            <span className={cn(
-              'px-2.5 py-0.5 rounded-full text-xs font-medium',
-              status === 'approved' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400'
-                : status === 'rejected' ? 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400'
-                : status === 'submitted' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400'
-                : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-            )}>
-              {status.charAt(0).toUpperCase() + status.slice(1)}
-            </span>
+            <Badge variant={statusBadgeVariant(status)} className="rounded-full">
+              {formatStatusLabel(status)}
+            </Badge>
           )}
         </div>
       </div>

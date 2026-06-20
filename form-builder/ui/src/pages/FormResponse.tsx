@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check } from 'lucide-react';
+import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
@@ -16,6 +16,7 @@ import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { FileUploadField } from '../components/ui/FileUploadField';
 import { LocationField } from '../components/ui/LocationField';
 import type { FormField } from '../types/form';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
 // Field Response Component
@@ -84,6 +85,8 @@ function FieldResponse({
         return (
           <input
             type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
+            inputMode={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
+            autoComplete={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
             aria-label={field.label}
             aria-required={required}
             value={(value as string) || ''}
@@ -113,6 +116,7 @@ function FieldResponse({
         return (
           <input
             type="number"
+            inputMode="decimal"
             aria-label={field.label}
             aria-required={required}
             value={(value as number) ?? ''}
@@ -769,6 +773,7 @@ export default function FormResponse() {
 
   // Use store form (with fields) if available, otherwise fetched form
   const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
+  useDocumentTitle(form?.title);
 
   // Merge user answers with computed calculated field values so dependent
   // calculated fields (e.g. risk_level depending on risk_score) can resolve
@@ -833,8 +838,19 @@ export default function FormResponse() {
 
   if (!form || formLoadError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
-        <p className="text-gray-500 dark:text-slate-400">Form not found</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-gray-200/70 dark:bg-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <FileQuestion className="h-8 w-8 text-gray-400 dark:text-slate-500" />
+          </div>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">We couldn't load this form</h1>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">
+            It may have been unpublished or removed — or your connection dropped. Check the link and try again.
+          </p>
+          <Button onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+            Try again
+          </Button>
+        </div>
       </div>
     );
   }

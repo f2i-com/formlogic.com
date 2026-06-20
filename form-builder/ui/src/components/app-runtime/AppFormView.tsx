@@ -173,6 +173,10 @@ function FieldInput({
     return (
       <input
         type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
+        inputMode={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
+        autoComplete={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
+        aria-label={field.label}
+        aria-required={field.required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder || 'Type your answer here...'}
@@ -186,6 +190,8 @@ function FieldInput({
   if (field.type === 'long_text') {
     return (
       <textarea
+        aria-label={field.label}
+        aria-required={field.required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder || 'Type your answer here...'}
@@ -201,6 +207,9 @@ function FieldInput({
     return (
       <input
         type="number"
+        inputMode="decimal"
+        aria-label={field.label}
+        aria-required={field.required || undefined}
         min={field.properties?.min as number | undefined}
         max={field.properties?.max as number | undefined}
         step={(field.properties?.step as number | undefined) ?? 'any'}
@@ -221,6 +230,8 @@ function FieldInput({
     return (
       <input
         type={field.type === 'datetime' ? 'datetime-local' : field.type}
+        aria-label={field.label}
+        aria-required={field.required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}

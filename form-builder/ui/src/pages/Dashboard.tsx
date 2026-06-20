@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
 import { logger } from '../lib/logger';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   FileText,
   Eye,
@@ -329,6 +330,7 @@ function FormActionsDropdown({
 }
 
 export function Dashboard() {
+  useDocumentTitle('Dashboard');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, addField, storageMode } = useFormStore();
   const { getResponsesByFormId, responses } = useResponseStore();

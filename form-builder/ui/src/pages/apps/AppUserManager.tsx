@@ -11,7 +11,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Modal } from '../../components/ui/Modal';
 import { DataTable, type Column } from '../../components/ui/DataTable';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
-import { cn } from '../../lib/utils';
+import { statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
+import { Badge } from '../../components/ui/Badge';
 import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
 
 export function AppUserManager() {
@@ -121,11 +122,7 @@ export function AppUserManager() {
     { key: 'email', label: 'Email', sortable: true },
     { key: 'roleName', label: 'Role', sortable: true },
     { key: 'status', label: 'Status', sortable: true, render: (u) => (
-      <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
-        u.status === 'active' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' :
-        u.status === 'pending' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400' :
-        'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'
-      )}>{u.status}</span>
+      <Badge variant={statusBadgeVariant(u.status)} className="rounded-full">{formatStatusLabel(u.status)}</Badge>
     )},
   ];
 

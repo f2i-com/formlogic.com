@@ -10,6 +10,7 @@ import { Switch } from '../components/ui/Switch';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   User,
   Bell,
@@ -95,6 +96,7 @@ function SectionHeader({
 }
 
 export function Settings() {
+  useDocumentTitle('Settings');
   const user = useAuthStore((state) => state.user);
   const updateProfile = useAuthStore((state) => state.updateProfile);
 

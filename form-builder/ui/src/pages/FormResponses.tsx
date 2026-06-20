@@ -30,7 +30,8 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { toast } from '../stores/toastStore';
-import { cn, sanitizeFilename } from '../lib/utils';
+import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel } from '../lib/utils';
+import { Badge } from '../components/ui/Badge';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { CsvImportWizard } from '../components/builder';
 import type { Form, FormField, LocalFormResponse } from '../types/form';
@@ -79,15 +80,8 @@ async function fetchAllApiResponses(
 
 const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
 
-function statusBadgeClass(status: string): string {
-  switch (status) {
-    case 'approved': return 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400';
-    case 'rejected': return 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400';
-    case 'reviewed': return 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400';
-    case 'archived': return 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-slate-400';
-    default: return 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400'; // submitted
-  }
-}
+// Status pills render via the shared <Badge> (statusBadgeVariant in lib/utils),
+// so the responses table, response detail, and members list stay in one palette.
 
 // Stats card component for consistency
 function StatCard({
@@ -631,6 +625,17 @@ function FormResponses() {
               />
             </CardContent>
           </Card>
+        ) : filteredResponses.length === 0 ? (
+          <Card>
+            <CardContent className="p-0">
+              <EmptyState
+                icon={Search}
+                title="No responses match your filters"
+                description="Try a different search term or status filter."
+                action={<Button variant="outline" onClick={() => { setSearchQuery(''); setStatusFilter('all'); }}>Clear filters</Button>}
+              />
+            </CardContent>
+          </Card>
         ) : (
           <Card className="overflow-hidden bg-white dark:bg-slate-900/50 border-gray-200 dark:border-slate-800">
             {/* Mobile card list (below sm) — the table hides field columns on phones,
@@ -715,9 +720,9 @@ function FormResponses() {
                         {formatDuration(response.completionTime || 0)}
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(response.status || 'submitted'))}>
-                          {(response.status || 'submitted').charAt(0).toUpperCase() + (response.status || 'submitted').slice(1)}
-                        </span>
+                        <Badge variant={statusBadgeVariant(response.status || 'submitted')} className="rounded-full">
+                          {formatStatusLabel(response.status || 'submitted')}
+                        </Badge>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-right">
                         <div className="flex justify-end gap-1">
@@ -843,9 +848,9 @@ function FormResponses() {
                         ))}
                       </select>
                     ) : (
-                      <span className={cn('inline-block px-2 py-0.5 rounded-full text-xs font-medium', statusBadgeClass(selectedResponse.status || 'submitted'))}>
-                        {(selectedResponse.status || 'submitted').charAt(0).toUpperCase() + (selectedResponse.status || 'submitted').slice(1)}
-                      </span>
+                      <Badge variant={statusBadgeVariant(selectedResponse.status || 'submitted')} className="rounded-full">
+                        {formatStatusLabel(selectedResponse.status || 'submitted')}
+                      </Badge>
                     )}
                   </div>
                   {selectedResponse.metadata?.userAgent && (

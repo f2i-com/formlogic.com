@@ -56,6 +56,41 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
   };
 }
 
+export type BadgeVariant = 'default' | 'success' | 'warning' | 'error' | 'info' | 'primary';
+
+/**
+ * Maps a response/user status to a single Badge variant so the same semantic
+ * state renders one consistent color across the responses table, response detail,
+ * and members list (the mapping was previously hand-rolled per screen and had
+ * drifted into three different greens).
+ */
+export function statusBadgeVariant(status: string | undefined | null): BadgeVariant {
+  switch ((status || '').toLowerCase()) {
+    case 'approved':
+    case 'active':
+    case 'completed':
+      return 'success';
+    case 'rejected':
+    case 'disabled':
+    case 'suspended':
+      return 'error';
+    case 'submitted':
+    case 'reviewed':
+      return 'info';
+    case 'pending':
+    case 'invited':
+      return 'warning';
+    default:
+      return 'default'; // archived, unknown, etc.
+  }
+}
+
+/** Capitalized, human-friendly label for a status string. */
+export function formatStatusLabel(status: string | undefined | null): string {
+  const s = (status || '').trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
+}
+
 export function sanitizeFilename(name: string): string {
   return name.replace(/[<>:"/\\|?*]+/g, '').replace(/\s+/g, '-').trim() || 'export';
 }

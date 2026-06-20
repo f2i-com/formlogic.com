@@ -45,6 +45,7 @@ import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHe
 import { useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { toast } from '../stores/toastStore';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
 import type { FormField, FieldType } from '../types/form';
 
@@ -88,6 +89,7 @@ export default function FormBuilder() {
   }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
+  useDocumentTitle(form ? `${form.title} — Builder` : 'Form Builder');
 
   // Local title state to avoid calling updateForm on every keystroke
   const [localTitle, setLocalTitle] = useState(form?.title ?? '');
@@ -522,12 +524,25 @@ export default function FormBuilder() {
             )}
           </div>
 
-          {/* Publish */}
+          {/* Publish — make it a real activation moment: confirm + surface the
+              live link so first-time users know it worked and where it lives. */}
           <Button
             size="sm"
-            onClick={() => updateForm(form.id, { status: 'published' })}
+            onClick={async () => {
+              if ((form.fields?.length ?? 0) === 0) {
+                toast.warning('Add a field first', 'Your form needs at least one field before publishing.');
+                return;
+              }
+              const alreadyLive = form.status === 'published';
+              await updateForm(form.id, { status: 'published' });
+              toast.success(
+                alreadyLive ? 'Changes published' : 'Your form is live',
+                'Share the link or embed it anywhere.'
+              );
+              setActiveModal('embed');
+            }}
           >
-            <span className="hidden sm:inline">Publish</span>
+            <span className="hidden sm:inline">{form.status === 'published' ? 'Published' : 'Publish'}</span>
             <span className="sm:hidden">Save</span>
           </Button>
         </div>
