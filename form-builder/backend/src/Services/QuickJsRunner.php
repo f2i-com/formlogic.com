@@ -19,11 +19,16 @@ namespace FormLogic\Services;
  *    dispatched back to a PHP host handler via synchronous RPC, so all IO and its
  *    SSRF/DNS-pinning guards stay in PHP.
  *
- * IO model: stdout/stderr pipes are non-blocking and polled (works on Windows,
- * where stream_select() does not support process pipes). A CPU-wall deadline
- * hard-kills a wedged/looping process via proc_terminate(); time spent inside a
- * host handler (e.g. a slow HTTP call) is added back so it doesn't count against
- * the guest's CPU budget.
+ * IO model: stdio pipes are left BLOCKING. The NDJSON protocol is strictly
+ * turn-based (qjs writes exactly one line then blocks reading our reply), so
+ * blocking fgets cannot deadlock. A runaway/looping guest is hard-killed by an
+ * EXTERNAL watchdog process (ping+taskkill on Windows / sleep+kill on POSIX, see
+ * spawnWatchdog) when a single compute window overruns the CPU budget; that
+ * closes the pipes and unblocks fgets. proc_terminate() in run() is only a
+ * post-loop cleanup fallback. Windows proc_open pipes don't support non-blocking
+ * reads, stream_select or stream_set_timeout, which is why this design is used.
+ * The watchdog is paused around host calls so handler latency (e.g. a slow HTTP
+ * request, bounded separately) doesn't count against the guest's compute budget.
  */
 class QuickJsRunner
 {
@@ -35,8 +40,8 @@ class QuickJsRunner
 
     public function __construct(
         ?string $binary = null,
-        int $memoryLimitKb = 131072, // 128 MiB
-        int $stackSizeKb = 1024
+        int $memoryLimitKb = 65536, // 64 MiB — matches the browser VM (quickjs-host.ts)
+        int $stackSizeKb = 512
     ) {
         $base = dirname(__DIR__, 2); // .../backend
         $this->binary = $binary ?? $this->detectBinary($base);
@@ -75,7 +80,7 @@ class QuickJsRunner
      * @param array<int, array{id: string, expression: string, context?: array}> $jobs
      * @return array<string, array{ok: bool, value?: mixed, error?: string}> keyed by job id
      */
-    public function evaluateBatch(array $jobs, int $cpuBudgetMs = 1500): array
+    public function evaluateBatch(array $jobs, int $cpuBudgetMs = 1000): array
     {
         $payload = ['mode' => 'eval', 'jobs' => array_values($jobs)];
         $done = $this->run($payload, null, $cpuBudgetMs);
@@ -96,7 +101,7 @@ class QuickJsRunner
      * @param array<string, mixed> $context
      * @return array{ok: bool, value?: mixed, error?: string}
      */
-    public function evaluate(string $expression, array $context = [], int $cpuBudgetMs = 1500): array
+    public function evaluate(string $expression, array $context = [], int $cpuBudgetMs = 1000): array
     {
         $results = $this->evaluateBatch(
             [['id' => '0', 'expression' => $expression, 'context' => (object) $context]],
@@ -161,21 +166,20 @@ class QuickJsRunner
 
         $pid = (int) (proc_get_status($proc)['pid'] ?? 0);
 
-        // Windows proc_open pipes don't support non-blocking reads, stream_select,
-        // or stream_set_timeout, so we can't poll a deadline while blocked on a
-        // read. Instead the protocol is strictly turn-based (qjs writes exactly
-        // one line, then blocks reading our reply) so blocking I/O can't deadlock,
-        // and an external watchdog process SIGKILLs qjs if a single COMPUTE window
-        // overruns $cpuBudgetMs — which closes the pipes and unblocks fgets. The
-        // watchdog is paused around host calls so HTTP latency (bounded separately
-        // by the handler) doesn't count against the guest's compute budget.
+        // See the class docblock for the blocking-lockstep + external-watchdog IO
+        // model (and why non-blocking pipes can't be used on Windows).
         $cpuSecs = max(1, (int) ceil($cpuBudgetMs / 1000));
         $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
+        // Fail closed: without an armed watchdog a runaway guest would wedge this
+        // worker forever on the blocking read. Callers degrade like any error.
+        if ($watchdog === null) {
+            $this->cleanup($proc, $pipes);
+            return ['error' => 'FormLogic runtime watchdog could not be started'];
+        }
 
         // Send the job (single line of JSON).
-        $jobLine = json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-        fwrite($pipes[0], $jobLine . "\n");
-        fflush($pipes[0]);
+        @fwrite($pipes[0], $this->encodeLine($payload));
+        @fflush($pipes[0]);
 
         $done = null;
         while (($line = fgets($pipes[1])) !== false) {
@@ -189,17 +193,21 @@ class QuickJsRunner
             }
             $type = $msg['type'] ?? null;
             if ($type === 'call') {
-                $isHttp = ($msg['module'] ?? '') === 'http';
-                // HTTP may legitimately take seconds; pause the compute watchdog
-                // so it doesn't kill the (idle, waiting) guest mid-request.
-                if ($isHttp) {
-                    $this->stopWatchdog($watchdog);
-                }
+                // Pause the compute watchdog around EVERY host call: the handler
+                // runs on the trusted PHP side while the guest sits idle waiting
+                // for the reply, so it must not burn the compute budget — and this
+                // also closes the kill-mid-dispatch race for db/utils calls.
+                $this->stopWatchdog($watchdog);
                 $reply = $this->dispatchHostCall($hostHandler, $msg);
-                fwrite($pipes[0], json_encode($reply, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
-                fflush($pipes[0]);
-                if ($isHttp) {
-                    $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
+                // qjs may have been killed (or the pipe broken) meanwhile; stop if so.
+                $st = proc_get_status($proc);
+                if (empty($st['running']) || @fwrite($pipes[0], $this->encodeLine($reply)) === false) {
+                    break;
+                }
+                @fflush($pipes[0]);
+                $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
+                if ($watchdog === null) {
+                    break; // can't re-arm — don't enter another unbounded read
                 }
             } elseif ($type === 'done') {
                 $done = $msg;
@@ -208,22 +216,54 @@ class QuickJsRunner
         }
 
         $this->stopWatchdog($watchdog);
-        $st = proc_get_status($proc);
-        if (!empty($st['running'])) {
-            proc_terminate($proc);
-        }
-        foreach ($pipes as $p) {
-            if (is_resource($p)) {
-                fclose($p);
-            }
-        }
-        proc_close($proc);
+        $this->cleanup($proc, $pipes);
 
         if ($done === null) {
             // fgets hit EOF without a "done" — watchdog kill or crash.
             return ['error' => 'FormLogic runtime timed out or crashed'];
         }
         return $done;
+    }
+
+    /**
+     * JSON-encode one NDJSON protocol line, tolerant of non-finite floats
+     * (INF/NaN from e.g. an over-range HTTP JSON number) so the lockstep channel
+     * is never broken by an unencodable value.
+     */
+    private function encodeLine(array $data): string
+    {
+        $json = json_encode(
+            $data,
+            JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR
+        );
+        if ($json === false) {
+            $json = json_encode(['error' => 'host reply not encodable']);
+        }
+        return $json . "\n";
+    }
+
+    /**
+     * Terminate (if still running) and fully release a qjs process and its pipes.
+     *
+     * @param resource $proc
+     * @param array<int, resource> $pipes
+     */
+    private function cleanup($proc, array $pipes): void
+    {
+        if (is_resource($proc)) {
+            $st = proc_get_status($proc);
+            if (!empty($st['running'])) {
+                proc_terminate($proc);
+            }
+        }
+        foreach ($pipes as $p) {
+            if (is_resource($p)) {
+                fclose($p);
+            }
+        }
+        if (is_resource($proc)) {
+            proc_close($proc);
+        }
     }
 
     /**

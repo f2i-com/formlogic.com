@@ -65,7 +65,9 @@ const BOOTSTRAP = `;(function(){
   var __c;
   try { __c = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __c = {}; }
   for (var __k in __c) {
-    if (Object.prototype.hasOwnProperty.call(__c, __k) && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)) {
+    if (Object.prototype.hasOwnProperty.call(__c, __k)
+        && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(__k)
+        && __k !== "__proto__" && __k !== "constructor" && __k !== "prototype") {
       globalThis[__k] = __c[__k];
     }
   }

@@ -23,9 +23,15 @@
 
   var _std = globalThis.std;
   var _indirectEval = eval; // capture the global (indirect) eval
+  var MAX_OUTPUT_BYTES = 4 * 1024 * 1024; // hard cap on any single NDJSON line
 
   function write(obj) {
-    _std.out.puts(JSON.stringify(obj) + "\n");
+    var s = JSON.stringify(obj);
+    // Cap output so a guest can't force PHP to buffer/parse a huge line (OOM).
+    if (s.length > MAX_OUTPUT_BYTES) {
+      s = JSON.stringify({ type: "done", error: "Script output too large" });
+    }
+    _std.out.puts(s + "\n");
     _std.out.flush();
   }
   function readLine() {
@@ -89,6 +95,12 @@
   function nuke(name) { try { delete globalThis[name]; } catch (e) {} }
   nuke("std"); nuke("os"); nuke("bjson"); nuke("scriptArgs");
   nuke("print");
+  // qjs-ng also injects these host/web globals under --std. Remove them so guest
+  // code can't read server paths/config (argv0/execArgv) or use gc/Atomics for
+  // DoS, and so the global surface matches the browser VM.
+  nuke("argv0"); nuke("execArgv"); nuke("navigator"); nuke("gc");
+  nuke("performance"); nuke("Atomics"); nuke("SharedArrayBuffer");
+  nuke("btoa"); nuke("atob");
   globalThis.print = function () {};
   globalThis.console = {
     log: function () {}, info: function () {}, warn: function () {},
@@ -120,10 +132,13 @@
       var j = jobs[i];
       try {
         prev = setContextGlobals(j.context || {}, prev);
-        // new Function body runs in global scope only: sees the prelude globals
-        // and the injected context globals, NOT this harness's locals.
-        var fn = new Function("return (\n" + String(j.expression) + "\n);");
-        results.push({ id: j.id, ok: true, value: sanitize(fn(), 0) });
+        // Indirect eval runs the expression as a full PROGRAM in global scope
+        // only (sees prelude + injected context globals, never this harness's
+        // locals), returning the completion value. This matches the client's
+        // ctx.evalCode semantics exactly, so trailing-semicolon and
+        // multi-statement expressions behave identically on both sides.
+        var value = _indirectEval(String(j.expression));
+        results.push({ id: j.id, ok: true, value: sanitize(value, 0) });
       } catch (e) {
         results.push({ id: j.id, ok: false, error: (e && e.message) ? String(e.message) : "error" });
       }

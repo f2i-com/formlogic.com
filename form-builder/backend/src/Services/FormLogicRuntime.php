@@ -43,7 +43,10 @@ class FormLogicRuntime
         $this->maxInstructions = $config['maxInstructions'] ?? 50000;
         $this->maxWallTimeMs = $config['maxWallTimeMs'] ?? 2000;
         $this->maxCallDepth = $config['maxCallDepth'] ?? 100;
-        $this->runner = $runner ?? new QuickJsRunner();
+        // onSubmit scripts can do more than a field expression, so give them more
+        // memory/stack headroom than the field-expression default (which matches
+        // the browser VM). Field-expression parity is handled by FormLogicService.
+        $this->runner = $runner ?? new QuickJsRunner(null, 131072, 1024);
     }
 
     /**
