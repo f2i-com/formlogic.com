@@ -68,6 +68,12 @@ class ApiKeyService
             if ($ts === false || $ts <= time()) {
                 throw new \InvalidArgumentException('Expiration date must be in the future');
             }
+            // Reject dates past the MySQL TIMESTAMP max (2038-01-19 03:14:07 UTC).
+            // Without this, the INSERT overflows -> strict-mode PDOException (500) or,
+            // under non-strict mode, a zero date that makes the new key already-expired.
+            if ($ts > 2147483647) {
+                throw new \InvalidArgumentException('Expiration date is too far in the future');
+            }
             // Normalize to a MySQL-valid datetime so a relative/ambiguous but
             // strtotime-parseable value (e.g. "+30 days", "tomorrow") can't reach
             // the TIMESTAMP column and throw a strict-mode PDOException.

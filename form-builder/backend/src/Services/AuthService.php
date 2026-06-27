@@ -113,21 +113,25 @@ class AuthService
         $rateLimitKey = $this->getRateLimitKey($email, $ipAddress);
         $emailKey = $this->getEmailRateLimitKey($email);
 
-        // Check per-IP+email rate limit
-        if ($this->isRateLimited($rateLimitKey)) {
-            $remainingSeconds = $this->getRateLimitRemainingSeconds($rateLimitKey);
+        // Atomically increment + gate on the returned count. The previous
+        // count()-then-hit()-on-failure pattern was a TOCTOU: a concurrent burst
+        // from many IPs could all read count < limit and all pass the per-email
+        // gate (the documented distributed-attack defense). Every attempt is now
+        // counted up front; a successful login clears both keys below, so legitimate
+        // logins aren't penalized. hit() returns 0 on storage error (fail open).
+        $window = $this->decaySeconds();
+        $ipCount = $this->rateLimiter->hit($rateLimitKey, $window);
+        $emailCount = $this->rateLimiter->hit($emailKey, $window);
+        if ($ipCount > $this->rateLimitConfig['maxAttempts']) {
             throw new \RuntimeException(
                 "Too many login attempts. Please try again in " .
-                ceil($remainingSeconds / 60) . " minute(s)."
+                ceil($this->getRateLimitRemainingSeconds($rateLimitKey) / 60) . " minute(s)."
             );
         }
-
-        // Check per-email rate limit (protects against distributed attacks)
-        if ($this->isEmailRateLimited($emailKey)) {
-            $remainingSeconds = $this->getEmailRateLimitRemainingSeconds($emailKey);
+        if ($emailCount > $this->rateLimitConfig['maxEmailAttempts']) {
             throw new \RuntimeException(
                 "Too many login attempts for this account. Please try again in " .
-                ceil($remainingSeconds / 60) . " minute(s)."
+                ceil($this->getEmailRateLimitRemainingSeconds($emailKey) / 60) . " minute(s)."
             );
         }
 
@@ -141,12 +145,10 @@ class AuthService
             // path. Without this, response latency leaks whether an email is
             // registered (user enumeration), defeating the generic error message.
             password_verify($password, self::DUMMY_PASSWORD_HASH);
-            $this->recordFailedLogin($rateLimitKey, $emailKey);
             throw new \RuntimeException('Invalid email or password');
         }
 
         if (!password_verify($password, $row['password_hash'])) {
-            $this->recordFailedLogin($rateLimitKey, $emailKey);
             throw new \RuntimeException('Invalid email or password');
         }
 
@@ -188,22 +190,6 @@ class AuthService
     }
 
     /**
-     * Check if a rate limit key is currently rate limited (IP+email combo)
-     */
-    private function isRateLimited(string $key): bool
-    {
-        return $this->rateLimiter->count($key, $this->decaySeconds()) >= $this->rateLimitConfig['maxAttempts'];
-    }
-
-    /**
-     * Check if an email is rate limited (across all IPs)
-     */
-    private function isEmailRateLimited(string $emailKey): bool
-    {
-        return $this->rateLimiter->count($emailKey, $this->decaySeconds()) >= $this->rateLimitConfig['maxEmailAttempts'];
-    }
-
-    /**
      * Get remaining seconds until rate limit expires (IP+email combo)
      */
     private function getRateLimitRemainingSeconds(string $key): int
@@ -217,16 +203,6 @@ class AuthService
     private function getEmailRateLimitRemainingSeconds(string $emailKey): int
     {
         return $this->rateLimiter->secondsUntilReset($this->decaySeconds());
-    }
-
-    /**
-     * Record a failed login attempt for both IP+email and email-only tracking
-     */
-    private function recordFailedLogin(string $key, string $emailKey): void
-    {
-        $window = $this->decaySeconds();
-        $this->rateLimiter->hit($key, $window);
-        $this->rateLimiter->hit($emailKey, $window);
     }
 
     /**

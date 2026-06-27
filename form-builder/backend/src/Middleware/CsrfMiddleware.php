@@ -49,9 +49,25 @@ class CsrfMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        $path = $request->getUri()->getPath();
+
+        // Cookie-SETTING auth routes (login/register) can't use the double-submit
+        // token because they MINT it — but a blanket exemption made them a login-CSRF
+        // hole. Guard them by requiring a JSON content-type: a cross-site
+        // auto-submitting <form> can only send simple content-types
+        // (form-urlencoded / multipart / text-plain) without a CORS preflight, so
+        // this blocks the form vector; a JSON fetch from another origin triggers a
+        // preflight the CORS allowlist rejects. The SPA already sends JSON.
+        if ($this->isAuthCookieSettingRoute($path)) {
+            $contentType = strtolower($request->getHeaderLine('Content-Type'));
+            if (strpos($contentType, 'application/json') === false) {
+                return $this->forbidden('Login and registration require a JSON request');
+            }
+            return $handler->handle($request);
+        }
+
         // Skip validation for public endpoints that don't use cookie auth
         // (e.g. public form submissions that may come from embedded forms)
-        $path = $request->getUri()->getPath();
         if ($this->isExempt($path, $method)) {
             return $handler->handle($request);
         }
@@ -88,23 +104,22 @@ class CsrfMiddleware implements MiddlewareInterface
      */
     private function isExempt(string $path, string $method): bool
     {
-        // Login/register - these set the CSRF token
-        // Note: /api/auth/me (GET/PUT) is NOT exempt — profile updates need CSRF protection
-        // Note: /api/auth/logout is NOT exempt — CSRF logout attack prevention
-        $authExemptPaths = [
-            '/api/auth/login',
-            '/api/auth/register',
-        ];
-        if (in_array($path, $authExemptPaths, true)) {
-            return true;
-        }
-
         // Public form submission endpoint (no cookie auth, uses rate limiting instead)
         if ($method === 'POST' && preg_match('#^/api/forms/[^/]+/responses$#', $path)) {
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Cookie-setting auth routes that mint the CSRF token (so they can't validate
+     * it). Handled with a JSON-content-type guard instead of a blanket exemption.
+     */
+    private function isAuthCookieSettingRoute(string $path): bool
+    {
+        // Note: /api/auth/me and /api/auth/logout are NOT here — they require CSRF.
+        return in_array($path, ['/api/auth/login', '/api/auth/register'], true);
     }
 
     /**

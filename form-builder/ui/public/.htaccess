@@ -1,3 +1,20 @@
+<IfModule mod_headers.c>
+  # Security headers for the static SPA document (the API sets its own via
+  # SecurityHeadersMiddleware; this covers the React document served by Apache).
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+  # Deny framing of the app shell (clickjacking / UI-redress). No script-src/style-src
+  # so the SPA + QuickJS WASM worker are unaffected — only framing is restricted.
+  Header always set X-Frame-Options "DENY"
+  Header always set Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+  # The public form runtime (/form/...) is intentionally embeddable. SetEnvIf matches
+  # the original request path before the SPA rewrite to /index.html.
+  SetEnvIf Request_URI "^/form/" IS_FORM_RUNTIME
+  Header always unset X-Frame-Options env=IS_FORM_RUNTIME
+  Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_FORM_RUNTIME
+</IfModule>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /

@@ -21,7 +21,16 @@ import { ThemeManager } from './components/ui/ThemeManager';
 // Retry wrapper for lazy imports — handles stale chunk references after deploys
 function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
   return React.lazy(() =>
-    factory().catch((error: Error) => {
+    factory()
+      .then((mod) => {
+        // Clear the retry guard only on a SUCCESSFUL chunk load, so the 30s window
+        // survives across reloads when a chunk is persistently missing. Clearing it
+        // on every app mount (as AppInitializer did) defeated the guard and caused
+        // an infinite reload loop on a stale/missing chunk.
+        try { sessionStorage.removeItem('lazy_refresh'); } catch { /* ignore */ }
+        return mod;
+      })
+      .catch((error: Error) => {
       const isChunkError =
         error.message.includes('Failed to fetch dynamically imported module') ||
         error.message.includes('Loading chunk') ||
@@ -101,11 +110,6 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
       document.documentElement.classList.remove('dark');
     }
   }, [theme]);
-
-  useEffect(() => {
-    // Clear chunk retry timestamp on successful load so future deploys can retry
-    sessionStorage.removeItem('lazy_refresh');
-  }, []);
 
   // Step 1: Check for an existing session (runs once on mount)
   useEffect(() => {

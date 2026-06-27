@@ -106,7 +106,8 @@ class MySQLConnection
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
                 INDEX idx_user_id (user_id),
                 INDEX idx_status (status),
-                INDEX idx_created_at (created_at)
+                INDEX idx_created_at (created_at),
+                INDEX idx_user_updated (user_id, updated_at, id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
