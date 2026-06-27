@@ -65,6 +65,35 @@ class FormLogicService
     }
 
     /**
+     * Evaluate many expressions against ONE shared context in a single qjs
+     * round-trip (instead of one process spawn per expression). Returns RAW
+     * per-id results so the caller can apply its own failure policy (e.g.
+     * fail-open visibility, skip calculated fields).
+     *
+     * @param array<int, array{id: string, expression: string}> $items
+     * @param array<string, mixed> $context
+     * @return array<string, array{ok: bool, value?: mixed, error?: string}> keyed by id
+     */
+    public function evaluateBatch(array $items, array $context): array
+    {
+        $jobs = [];
+        foreach ($items as $item) {
+            if (!isset($item['id'], $item['expression'])) {
+                continue;
+            }
+            $jobs[] = [
+                'id' => (string) $item['id'],
+                'expression' => (string) $item['expression'],
+                'context' => (object) $context,
+            ];
+        }
+        if ($jobs === []) {
+            return [];
+        }
+        return $this->runner->evaluateBatch($jobs);
+    }
+
+    /**
      * @param array{ok: bool, value?: mixed, error?: string} $result
      */
     private function unwrap(array $result): mixed

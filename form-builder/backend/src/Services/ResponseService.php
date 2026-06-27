@@ -53,6 +53,9 @@ class ResponseService
     public function computeFieldVisibility(array $fields, array $answers): array
     {
         $vis = [];
+        $jobs = [];   // conditional expressions to evaluate: [['id'=>..,'expression'=>..]]
+        $meta = [];   // id => ['action'=>?, 'baseRequired'=>bool]
+
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
             if (!$id) {
@@ -67,17 +70,36 @@ class ResponseService
                 continue;
             }
 
-            $action = is_array($cond) ? ($cond['action'] ?? null) : null;
-            try {
-                $result = $this->getFormLogic()->evaluateCondition($expr, $answers);
-            } catch (\Throwable $e) {
-                // Fail OPEN to visible (matches the client) so a malformed
-                // expression can't create an unrecoverable dead-end.
+            $jobs[] = ['id' => $id, 'expression' => $expr];
+            $meta[$id] = [
+                'action' => is_array($cond) ? ($cond['action'] ?? null) : null,
+                'baseRequired' => $baseRequired,
+            ];
+        }
+
+        if ($jobs === []) {
+            return $vis;
+        }
+
+        // Evaluate ALL conditional expressions in a single qjs round-trip.
+        try {
+            $results = $this->getFormLogic()->evaluateBatch($jobs, $answers);
+        } catch (\Throwable $e) {
+            $results = [];
+        }
+
+        foreach ($meta as $id => $m) {
+            $r = $results[$id] ?? null;
+            $baseRequired = $m['baseRequired'];
+            if ($r === null || !($r['ok'] ?? false)) {
+                // Fail OPEN to visible (matches the client) so a malformed/missing
+                // result can't create an unrecoverable dead-end.
                 $vis[$id] = ['visible' => true, 'required' => $baseRequired];
                 continue;
             }
+            $result = (bool)($r['value'] ?? false);
 
-            switch ($action) {
+            switch ($m['action']) {
                 case 'hide':
                 case 'skip':
                     $visible = !$result;
@@ -87,7 +109,7 @@ class ResponseService
                     $vis[$id] = ['visible' => true, 'required' => $result || $baseRequired];
                     break;
                 case 'show':
-                    $visible = (bool)$result;
+                    $visible = $result;
                     $vis[$id] = ['visible' => $visible, 'required' => $baseRequired && $visible];
                     break;
                 default:
@@ -107,30 +129,39 @@ class ResponseService
      */
     public function applyCalculatedFields(array $fields, array $answers): array
     {
-        $calc = [];
+        $jobs = [];   // [['id'=>fieldId, 'expression'=>calculationExpression]]
         foreach ($fields as $field) {
             if (($field['type'] ?? '') === 'calculated'
                 && !empty($field['id'])
                 && is_string($field['properties']['calculationExpression'] ?? null)
                 && trim($field['properties']['calculationExpression']) !== '') {
-                $calc[] = $field;
+                $jobs[] = ['id' => (string)$field['id'], 'expression' => $field['properties']['calculationExpression']];
             }
         }
-        if (empty($calc)) {
+        if ($jobs === []) {
             return $answers;
         }
 
-        // Up to N passes (N = number of calculated fields) — enough to resolve
-        // any acyclic chain; stops early once nothing changes.
-        for ($pass = 0; $pass < count($calc); $pass++) {
+        // Up to N passes (N = number of calculated fields) — enough to resolve any
+        // acyclic dependency chain regardless of document order; stops early once
+        // nothing changes. Each pass is ONE qjs round-trip for all calculated
+        // fields (was one process spawn per field per pass). Best-effort — a
+        // broken expression is skipped.
+        $passes = count($jobs);
+        for ($pass = 0; $pass < $passes; $pass++) {
+            try {
+                $results = $this->getFormLogic()->evaluateBatch($jobs, $answers);
+            } catch (\Throwable $e) {
+                break;
+            }
             $changed = false;
-            foreach ($calc as $field) {
-                $id = $field['id'];
-                try {
-                    $value = $this->getFormLogic()->calculateField($field['properties']['calculationExpression'], $answers);
-                } catch (\Throwable $e) {
+            foreach ($jobs as $job) {
+                $id = $job['id'];
+                $r = $results[$id] ?? null;
+                if ($r === null || !($r['ok'] ?? false)) {
                     continue;
                 }
+                $value = $r['value'] ?? null;
                 if (!array_key_exists($id, $answers) || $answers[$id] !== $value) {
                     $answers[$id] = $value;
                     $changed = true;
