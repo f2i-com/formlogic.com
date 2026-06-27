@@ -49,32 +49,15 @@ export default defineConfig({
         // platform shell now that scope is '/'.
         navigateFallbackAllowlist: [/^\/(?!api\/)/],
         runtimeCaching: [
-          // Cache app config with stale-while-revalidate
-          {
-            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+$/,
-            handler: 'StaleWhileRevalidate',
-            options: {
-              cacheName: 'app-config-cache',
-              expiration: {
-                maxEntries: 20,
-                maxAgeSeconds: 60 * 60, // 1 hour
-              },
-            },
-          },
-          // Cache form definitions — use NetworkFirst so published changes appear quickly
-          {
-            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+$/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'app-forms-cache',
-              networkTimeoutSeconds: 5,
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 5 * 60, // 5 minutes fallback
-              },
-            },
-          },
-          // Queue failed form submissions for background sync
+          // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
+          // .../forms/{id}, .../responses) are intentionally NOT cached. Workbox
+          // caches purely on HTTP status and ignores the backend's Cache-Control:
+          // no-store, so caching them leaked one user's app config / forms /
+          // responses to the next user on a SHARED device (and private uploads via
+          // the image cache). Offline submission still works via the background-sync
+          // POST queues below; the app shell + static assets are precached.
+
+          // Queue failed app form submissions for background sync (no response cached)
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+\/responses$/,
             handler: 'NetworkOnly',
@@ -102,19 +85,7 @@ export default defineConfig({
               },
             },
           },
-          // Cache responses with network-first
-          {
-            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/forms\/[^/]+\/responses/,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'app-responses-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 5, // 5 minutes
-              },
-              networkTimeoutSeconds: 10,
-            },
-          },
+          // App PWA manifest (branding only — name/icons/theme; needed for install)
           {
             urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/manifest\.json$/,
             handler: 'StaleWhileRevalidate',
@@ -126,8 +97,10 @@ export default defineConfig({
               },
             },
           },
+          // Static image assets ONLY. The negative lookahead excludes anything under
+          // /api/ so private uploads (/api/files/...) are never cached.
           {
-            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/,
+            urlPattern: /^(?!.*\/api\/).*\.(?:png|jpg|jpeg|svg|gif|webp)$/,
             handler: 'CacheFirst',
             options: {
               cacheName: 'app-images-cache',

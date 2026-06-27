@@ -169,6 +169,20 @@ class QuickJsRunner
         // See the class docblock for the blocking-lockstep + external-watchdog IO
         // model (and why non-blocking pipes can't be used on Windows).
         $cpuSecs = max(1, (int) ceil($cpuBudgetMs / 1000));
+        // CUMULATIVE guest-compute budget that host calls cannot reset. The watchdog
+        // is paused/re-armed around every host call; re-arming with the FULL window
+        // each time let a guest emitting cheap host calls in a loop run forever
+        // (pinning this PHP worker — a cross-tenant DoS that defeated the runaway
+        // kill). We cap total guest-compute time across all windows, and cap the
+        // host-call COUNT (a tight fast-host-call loop consumes ~0 compute per window
+        // but churns proc_open and still pins the worker).
+        $budgetSecs = max(1.0, $cpuBudgetMs / 1000);
+        $consumedSecs = 0.0;
+        $hostCalls = 0;
+        // Generous vs any legit onSubmit (ctx.db caps at 50 fields/20 tags, ctx.http
+        // is separately capped), but bounds a tight fast-host-call loop that consumes
+        // ~0 compute per window yet churns proc_open and pins the worker.
+        $maxHostCalls = 2000;
         $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
         // Fail closed: without an armed watchdog a runaway guest would wedge this
         // worker forever on the blocking read. Callers degrade like any error.
@@ -180,6 +194,7 @@ class QuickJsRunner
         // Send the job (single line of JSON).
         @fwrite($pipes[0], $this->encodeLine($payload));
         @fflush($pipes[0]);
+        $windowStart = microtime(true);
 
         $done = null;
         while (($line = fgets($pipes[1])) !== false) {
@@ -193,6 +208,13 @@ class QuickJsRunner
             }
             $type = $msg['type'] ?? null;
             if ($type === 'call') {
+                // Account the guest-compute time of the window that just ended, then
+                // enforce the cumulative budget + host-call cap BEFORE more work —
+                // neither can be reset by the guest.
+                $consumedSecs += microtime(true) - $windowStart;
+                if (++$hostCalls > $maxHostCalls || $consumedSecs >= $budgetSecs) {
+                    break; // budget / host-call cap exhausted — cleanup() kills the guest
+                }
                 // Pause the compute watchdog around EVERY host call: the handler
                 // runs on the trusted PHP side while the guest sits idle waiting
                 // for the reply, so it must not burn the compute budget — and this
@@ -205,7 +227,11 @@ class QuickJsRunner
                     break;
                 }
                 @fflush($pipes[0]);
-                $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
+                // Re-arm with only the REMAINING compute budget (never the full
+                // window again) so cumulative guest compute stays bounded.
+                $remainingSecs = max(1, (int) ceil($budgetSecs - $consumedSecs));
+                $windowStart = microtime(true);
+                $watchdog = $this->spawnWatchdog($pid, $remainingSecs);
                 if ($watchdog === null) {
                     break; // can't re-arm — don't enter another unbounded read
                 }

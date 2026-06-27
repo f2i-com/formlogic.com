@@ -165,6 +165,19 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // localStorage may be unavailable (e.g. private browsing)
         }
+
+        // Purge service-worker Cache Storage so a previous session's app/manifest
+        // data can't be served to the next user on a shared device (defense in
+        // depth — authenticated API responses are no longer cached, but old SW
+        // versions or the manifest cache may still hold entries).
+        try {
+          if (typeof caches !== 'undefined') {
+            const keys = await caches.keys();
+            await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
+          }
+        } catch {
+          // Cache API may be unavailable; non-fatal.
+        }
       },
 
       updateProfile: async (data: Partial<User>) => {
