@@ -22,6 +22,7 @@ export function AppsDashboard() {
   const navigate = useNavigate();
   const { apps, isLoading, fetchApps, deleteApp } = useAppStore();
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
@@ -165,11 +166,17 @@ export function AppsDashboard() {
       <ConfirmDialog
         isOpen={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
-        onConfirm={async () => { if (deleteTarget) { await deleteApp(deleteTarget.id); setDeleteTarget(null); } }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setDeleting(true);
+          try { await deleteApp(deleteTarget.id); setDeleteTarget(null); }
+          finally { setDeleting(false); }
+        }}
         title="Delete App"
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This will permanently remove all forms, users, roles, and data associated with this app. This action cannot be undone.`}
         confirmLabel="Delete App"
         variant="danger"
+        isLoading={deleting}
       />
     </div>
   );

@@ -146,6 +146,7 @@ function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors cursor-pointer"
+            autoFocus
           />
         );
 
@@ -158,6 +159,7 @@ function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            autoFocus
           />
         );
 
@@ -170,6 +172,7 @@ function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            autoFocus
           />
         );
 
@@ -265,6 +268,7 @@ function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
             style={{ borderColor: value ? primaryColor : undefined }}
+            autoFocus
           >
             <option value="">Select an option...</option>
             {field.properties.options?.map((option) => (
@@ -1089,7 +1093,15 @@ export default function FormResponse() {
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
     });
     if (missingFields.length > 0) {
-      setSubmitError(`Please fill in all required fields (${missingFields.length} remaining)`);
+      const names = missingFields.map(f => f.label).filter(Boolean);
+      const shown = names.slice(0, 3).join(', ');
+      setSubmitError(
+        names.length <= 3
+          ? `Please fill in: ${shown}`
+          : `Please fill in: ${shown} and ${names.length - 3} more`
+      );
+      // Scroll the first missing field into view so the user knows where to look.
+      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
 
@@ -1326,7 +1338,7 @@ export default function FormResponse() {
 
             <div className="space-y-8">
               {visibleFields.map((field) => (
-                <div key={field.id} className="pb-6 border-b last:border-0" style={{ borderColor: `${form.theme.textColor}15` }}>
+                <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
                   <FieldResponse
                     field={field}
                     value={currentAnswers[field.id]}

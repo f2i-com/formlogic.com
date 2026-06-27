@@ -132,18 +132,24 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-medium text-gray-700 dark:text-slate-200">Validation Rules</h4>
-        <Dropdown
-          options={options.map((o) => ({ value: o.label, label: o.label }))}
-          value=""
-          onChange={addRule}
-          placeholder="+ Add Rule"
-          className="w-48"
-        />
+        {/* Only show the picker when this field type actually has rules to add —
+            otherwise "+ Add Rule" opened an empty menu (e.g. for 11 field types). */}
+        {options.length > 0 && (
+          <Dropdown
+            options={options.map((o) => ({ value: o.label, label: o.label }))}
+            value=""
+            onChange={addRule}
+            placeholder="+ Add Rule"
+            className="w-48"
+          />
+        )}
       </div>
 
       {rules.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-slate-400 text-center py-4">
-          No validation rules. Add a rule to validate field input.
+          {options.length > 0
+            ? 'No validation rules. Add a rule to validate field input.'
+            : 'This field type has no configurable validation rules.'}
         </p>
       ) : (
         <div className="space-y-2">

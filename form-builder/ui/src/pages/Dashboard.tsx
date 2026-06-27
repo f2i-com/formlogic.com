@@ -38,7 +38,7 @@ import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
-import { formatRelativeTime, sanitizeFilename } from '../lib/utils';
+import { formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -333,6 +333,7 @@ export function Dashboard() {
   useDocumentTitle('Dashboard');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, addField, storageMode } = useFormStore();
+  const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
@@ -434,7 +435,7 @@ export function Dashboard() {
 
   // Get recent forms
   const recentForms = [...forms]
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
     .slice(0, 5);
 
   // Get recent responses across all forms
@@ -459,8 +460,9 @@ export function Dashboard() {
     day: 'numeric',
   });
 
-  // Show getting started for new users
-  const showGettingStarted = forms.length === 0;
+  // Show getting started only for genuinely-new users — not during the initial
+  // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
+  const showGettingStarted = forms.length === 0 && !formsLoading;
 
   return (
     <div className="min-h-screen">
@@ -601,7 +603,7 @@ export function Dashboard() {
                   variant="ghost"
                   size="sm"
                   onClick={() => navigate('/forms')}
-                  className="text-primary-400 hover:text-primary-300"
+                  className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                 >
                   View All
                   <ArrowRight className="h-4 w-4 ml-1" />

@@ -85,7 +85,19 @@ const MobileCardList = memo(function MobileCardList({
               const answers = r.answers as Record<string, unknown> | undefined;
               const val = answers?.[field.id];
               if (val == null) return null;
-              const display = Array.isArray(val) ? val.join(', ') : String(val);
+              let display: string;
+              if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in (val as object)) {
+                const loc = val as { latitude: number; longitude: number };
+                display = `${Number(loc.latitude).toFixed(5)}, ${Number(loc.longitude).toFixed(5)}`;
+              } else if (field.type === 'file_upload' && Array.isArray(val)) {
+                display = (val as Array<{ originalFilename?: string }>).map((f) => (f && f.originalFilename) || 'File').join(', ');
+              } else if (Array.isArray(val)) {
+                display = val.join(', ');
+              } else if (typeof val === 'object') {
+                display = JSON.stringify(val);
+              } else {
+                display = String(val);
+              }
               return (
                 <div key={field.id} className="text-sm mb-1 last:mb-0">
                   <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>

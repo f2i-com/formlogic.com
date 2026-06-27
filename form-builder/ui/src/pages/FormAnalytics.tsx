@@ -293,13 +293,31 @@ export default function FormAnalytics() {
   const completionRate = analytics?.completionRate ?? localAnalytics.completionRate;
   const avgCompletionTime = Math.round((analytics?.averageCompletionTime ?? localAnalytics.averageCompletionTime) / 1000);
 
-  // Process daily responses for chart
+  // Process daily responses for chart. Fill the last 7 CONTIGUOUS calendar days
+  // (so empty days render as gaps, not collapsed into adjacent bars) and derive each
+  // label from a local Date (so labels aren't off-by-one in negative-UTC zones the
+  // way `new Date('YYYY-MM-DD')` — parsed as UTC midnight — would be). Mirrors the
+  // local-mode fill above.
   const dailyResponses: DailyResponse[] = analytics?.responsesByDate
-    ? analytics.responsesByDate.slice(-7).map(item => ({
-      day: new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-      count: item.count,
-    }))
+    ? (() => {
+        const counts: Record<string, number> = {};
+        for (const { date, count } of analytics.responsesByDate) counts[date] = count;
+        const out: DailyResponse[] = [];
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          out.push({ day: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), count: counts[key] || 0 });
+        }
+        return out;
+      })()
     : localAnalytics.dailyResponses;
+
+  // Preview only INPUT fields (skip welcome/statement/thank-you layout fields,
+  // which have no answer and otherwise show as empty "-" columns).
+  const previewFields = form.fields
+    .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+    .slice(0, 3);
 
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
 
@@ -545,6 +563,11 @@ export default function FormAnalytics() {
             <CardHeader className="flex flex-row items-center gap-2">
               <BarChart3 className="h-4 w-4 sm:h-5 sm:w-5 text-primary-500" />
               <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Field Breakdown</h2>
+              {storageMode === 'api' && totalResponses > responses.length && (
+                <span className="ml-auto text-xs text-gray-400 dark:text-slate-500">
+                  Based on the latest {responses.length} of {totalResponses}
+                </span>
+              )}
             </CardHeader>
             <CardContent>
               <div className="space-y-6 sm:space-y-8">
@@ -611,7 +634,7 @@ export default function FormAnalytics() {
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">ID</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Submitted</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Time</th>
-                      {form.fields.slice(0, 3).map((field) => (
+                      {previewFields.map((field) => (
                         <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">
                           {field.label}
                         </th>
@@ -630,7 +653,7 @@ export default function FormAnalytics() {
                         <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {Math.round((response.completionTime || 0) / 1000)}s
                         </td>
-                        {form.fields.slice(0, 3).map((field) => {
+                        {previewFields.map((field) => {
                           const val = response.answers[field.id];
                           let display = '-';
                           if (val !== null && val !== undefined && val !== '') {

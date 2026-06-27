@@ -16,6 +16,7 @@ import {
   Cloud,
   Check,
   Loader2,
+  HardDrive,
 } from 'lucide-react';
 import {
   DndContext,
@@ -406,12 +407,15 @@ export default function FormBuilder() {
             aria-label="Form title"
             className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
           />
-          {/* Save indicator */}
-          <span className="hidden sm:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
+          {/* Save indicator — reflects the real storage mode (cloud vs local) and
+              is announced to screen readers. */}
+          <span role="status" aria-live="polite" className="hidden sm:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
             {isSaving ? (
               <><Loader2 className="h-3 w-3 animate-spin" />Saving</>
+            ) : storageMode === 'api' ? (
+              <><Cloud className="h-3 w-3" /><Check className="h-3 w-3" /><span className="sr-only">Saved to cloud</span></>
             ) : (
-              <><Cloud className="h-3 w-3" /><Check className="h-3 w-3" /></>
+              <><HardDrive className="h-3 w-3" /><Check className="h-3 w-3" /><span className="sr-only">Saved locally</span></>
             )}
           </span>
         </div>
@@ -572,8 +576,7 @@ export default function FormBuilder() {
               }
             }}
           >
-            <span className="hidden sm:inline">{form.status === 'published' ? 'Published' : 'Publish'}</span>
-            <span className="sm:hidden">Save</span>
+            <span>{form.status === 'published' ? 'Published' : 'Publish'}</span>
           </Button>
         </div>
       </header>
@@ -677,7 +680,7 @@ export default function FormBuilder() {
 
               {form.fields.length > 0 && (
                 <button
-                  onClick={() => setMobilePanel('palette')}
+                  onClick={() => isMobile ? setMobilePanel('palette') : handleAddField('short_text')}
                   className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />

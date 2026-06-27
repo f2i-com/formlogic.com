@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { UserMenu } from '../auth/UserMenu';
 import { AuthModal } from '../auth/AuthModal';
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { cn } from '../../lib/utils';
 
 interface HeaderProps {
   title?: string;
@@ -10,10 +12,16 @@ interface HeaderProps {
 
 export function Header({ title, actions }: HeaderProps) {
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const isOnline = useOnlineStatus();
 
   return (
     <>
-      <header className="h-14 sm:h-16 bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-b border-gray-200/60 dark:border-white/[0.06] sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4">
+      {/* Offset the sticky header below the fixed offline banner (h-8) so it
+          isn't occluded when offline. */}
+      <header className={cn(
+        'h-14 sm:h-16 bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-b border-gray-200/60 dark:border-white/[0.06] sticky z-30 flex items-center justify-between px-4 sm:px-6 gap-3 sm:gap-4',
+        isOnline ? 'top-0' : 'top-8'
+      )}>
         <div className="flex-1 min-w-0 overflow-hidden">
           {title && (
             <h1

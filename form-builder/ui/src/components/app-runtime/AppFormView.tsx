@@ -447,7 +447,9 @@ function FieldInput({
         ) : (
           <img src={mediaUrl} alt="" className="w-full rounded-xl max-h-80 object-contain" />
         ))}
-        <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description || 'Statement content'}</p>
+        {field.description && (
+          <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description}</p>
+        )}
       </div>
     );
   }
@@ -1050,7 +1052,7 @@ export function AppFormView() {
                   {!submitting && <Check className="h-4 w-4" />}
                 </button>
                 {!submitting && (
-                  <span className="text-sm text-gray-400 dark:text-slate-500">
+                  <span className="hidden sm:inline text-sm text-gray-400 dark:text-slate-500">
                     press <kbd className="px-1.5 py-0.5 bg-gray-100 dark:bg-slate-800 rounded text-xs text-gray-600 dark:text-slate-400 font-mono">Enter ↵</kbd>
                   </span>
                 )}

@@ -20,6 +20,14 @@ export function useKeyboardShortcuts({ shortcuts, enabled = true }: UseKeyboardS
     (event: KeyboardEvent) => {
       if (!enabled) return;
 
+      // Don't let builder shortcuts leak through an open modal dialog — its own
+      // handlers (Escape/Tab, dropdown arrows) should own the keyboard. Otherwise
+      // ArrowUp/Down/t/e/n/r/Delete would jump field selection / add / delete
+      // fields behind the modal (and remount the panel, closing the modal).
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      // Respect controls that already handled the key (e.g. the custom Dropdown).
+      if (event.defaultPrevented) return;
+
       // Don't trigger shortcuts when typing in inputs
       const target = event.target as HTMLElement;
       const isInput = target.tagName === 'INPUT' ||

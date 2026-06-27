@@ -20,6 +20,7 @@ import {
   EyeOff,
   Package,
   FileText,
+  Loader2,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -33,7 +34,7 @@ import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { toast } from '../stores/toastStore';
-import { formatRelativeTime } from '../lib/utils';
+import { formatRelativeTime, parseServerDate } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { PackImportModal } from '../components/builder/PackImportModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -262,6 +263,7 @@ export function FormsList() {
   useDocumentTitle('My Forms');
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
+  const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const { getResponsesByFormId } = useResponseStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
@@ -405,7 +407,7 @@ export function FormsList() {
             return getResponsesByFormId(b.id).length - getResponsesByFormId(a.id).length;
           case 'modified':
           default:
-            return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+            return parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime();
         }
       }),
     [forms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap]
@@ -499,7 +501,11 @@ export function FormsList() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               {filteredForms.length === 0 ? (
                 <div className="col-span-full">
-                  {(searchQuery || packFilter !== 'all') ? (
+                  {formsLoading && !searchQuery && packFilter === 'all' ? (
+                    <div className="flex items-center justify-center py-16" role="status" aria-label="Loading forms">
+                      <Loader2 className="h-7 w-7 animate-spin text-gray-400 dark:text-slate-500" />
+                    </div>
+                  ) : (searchQuery || packFilter !== 'all') ? (
                     <EmptyState
                       icon={Search}
                       title="No forms match your filters"

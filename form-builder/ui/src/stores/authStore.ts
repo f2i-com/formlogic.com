@@ -6,6 +6,7 @@ import { useAppStore } from './appStore';
 import { useAppUserStore } from './appUserStore';
 import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
+import { toast } from './toastStore';
 
 interface User {
   id: string;
@@ -52,6 +53,8 @@ export const useAuthStore = create<AuthState>()(
           const current = get();
           if (current.user) {
             set({ user: null, error: null });
+            // Tell the user why they were bounced to the landing page.
+            toast.warning('Session expired', 'Please sign in again to continue.');
           }
         };
         api.onSessionExpired(_authSessionCallback);

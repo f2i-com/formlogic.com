@@ -196,13 +196,23 @@ export function Dropdown({
             id={listboxId}
             role="listbox"
             aria-label={label || placeholder}
-            style={{
-              position: 'fixed',
-              top: menuRect.bottom + 4,
-              left: menuRect.left,
-              width: menuRect.width,
-            }}
-            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg max-h-60 overflow-auto"
+            style={(() => {
+              // Flip up when there isn't room below, and cap the height to the
+              // available space so the menu never renders off-screen at the bottom.
+              const spaceBelow = window.innerHeight - menuRect.bottom;
+              const spaceAbove = menuRect.top;
+              const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+              return {
+                position: 'fixed' as const,
+                left: menuRect.left,
+                width: menuRect.width,
+                maxHeight: Math.max(120, Math.min(240, (openUp ? spaceAbove : spaceBelow) - 8)),
+                ...(openUp
+                  ? { bottom: window.innerHeight - menuRect.top + 4 }
+                  : { top: menuRect.bottom + 4 }),
+              };
+            })()}
+            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-auto"
           >
             {options.map((option, index) => (
               <div

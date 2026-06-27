@@ -460,6 +460,27 @@ export function AppResponseDetail() {
                         if (field.type === 'long_text' && typeof val === 'string') {
                           return <span className="whitespace-pre-wrap">{val}</span>;
                         }
+                        // File uploads: render as links (was "[object Object]")
+                        if (field.type === 'file_upload' && Array.isArray(val)) {
+                          return (
+                            <div className="flex flex-col gap-1">
+                              {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
+                                f && f.url
+                                  ? <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
+                                  : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
+                              ))}
+                            </div>
+                          );
+                        }
+                        // Location: lat, lng (was "[object Object]")
+                        if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in (val as object)) {
+                          const loc = val as { latitude: number; longitude: number };
+                          return `${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}`;
+                        }
+                        // Signature: render the image (was a raw base64 blob)
+                        if (field.type === 'signature' && typeof val === 'string' && val.startsWith('data:image')) {
+                          return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                        }
                         // Arrays (checkboxes, etc.)
                         if (Array.isArray(val)) return (val as unknown[]).join(', ');
                         return String(val);

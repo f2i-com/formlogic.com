@@ -48,7 +48,7 @@ export function AppShell() {
       {!isOnline && (
         <div
           role="status"
-          className="fixed top-0 inset-x-0 z-50 h-8 bg-amber-500 text-white text-center text-sm font-medium flex items-center justify-center gap-2"
+          className="fixed top-0 inset-x-0 z-50 h-8 bg-amber-500 text-amber-950 text-center text-sm font-medium flex items-center justify-center gap-2"
         >
           <WifiOff className="h-4 w-4" />
           You're offline — changes will sync when you reconnect

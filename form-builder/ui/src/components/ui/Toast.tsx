@@ -90,7 +90,7 @@ function ToastItem({ toast }: { toast: ToastType }) {
       <button
         onClick={handleClose}
         aria-label="Dismiss notification"
-        className="flex-shrink-0 p-1.5 -m-1 rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className="flex-shrink-0 p-1.5 -m-1 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
       >
         <X className="h-4 w-4" />
       </button>
