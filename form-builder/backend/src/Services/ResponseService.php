@@ -81,9 +81,21 @@ class ResponseService
             return $vis;
         }
 
+        // Default every field id to null so a condition referencing a field that
+        // wasn't submitted (e.g. a partial External API payload) evaluates cleanly
+        // instead of throwing -> failing open -> wrongly requiring a hidden field.
+        // Mirrors the client (useConditionalLogic).
+        $ctx = [];
+        foreach ($fields as $field) {
+            if (!empty($field['id'])) {
+                $ctx[$field['id']] = null;
+            }
+        }
+        $ctx = array_merge($ctx, $answers);
+
         // Evaluate ALL conditional expressions in a single qjs round-trip.
         try {
-            $results = $this->getFormLogic()->evaluateBatch($jobs, $answers);
+            $results = $this->getFormLogic()->evaluateBatch($jobs, $ctx);
         } catch (\Throwable $e) {
             $results = [];
         }

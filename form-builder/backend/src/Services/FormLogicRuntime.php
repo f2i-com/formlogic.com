@@ -402,6 +402,15 @@ class FormLogicRuntime
             $curlOptions[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
         }
 
+        // Use the vendored Mozilla CA bundle so outbound HTTPS verification works
+        // regardless of php.ini curl.cainfo (WAMP and many hosts ship none, which
+        // would otherwise fail every ctx.http HTTPS call with errno 60). Carries
+        // into redirect hops too ($redirectOptions copies $curlOptions).
+        $caBundle = __DIR__ . '/../../resources/cacert.pem';
+        if (is_file($caBundle)) {
+            $curlOptions[CURLOPT_CAINFO] = $caBundle;
+        }
+
         curl_setopt_array($ch, $curlOptions);
 
         if ($bodyString !== null && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {

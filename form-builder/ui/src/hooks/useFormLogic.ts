@@ -43,6 +43,14 @@ export function useConditionalLogic(
     const visible = new Set<string>();
     const required = new Set<string>();
 
+    // Default every field id to null so a condition that references a not-yet-
+    // answered field evaluates cleanly (=> falsy) instead of throwing a
+    // ReferenceError and failing OPEN — which would show a show-when field
+    // before its trigger has been answered (visible in classic/all-on-page mode).
+    const ctx: Record<string, unknown> = {};
+    for (const f of fields) ctx[f.id] = null;
+    Object.assign(ctx, formData);
+
     for (const field of fields) {
       // If no conditional logic, field is visible
       if (!field.conditionalLogic?.expression) {
@@ -54,7 +62,7 @@ export function useConditionalLogic(
       try {
         const result = await evaluateCondition(
           field.conditionalLogic.expression,
-          formData
+          ctx
         );
 
         // Bail out if a newer evaluation has started
