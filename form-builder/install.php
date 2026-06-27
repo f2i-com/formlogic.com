@@ -129,14 +129,17 @@ function checkRequirements(): array
         ];
     }
 
-    // WASM files
-    $wasmExists = file_exists(__DIR__ . '/ui/src/lib/formlogic/wasm/formlogic_wasm_bg.wasm');
-    $checks['wasm'] = [
-        'label' => 'FormLogic WASM Engine',
+    // FormLogic qjs sandbox binary (server-side runtime)
+    $qjsBin = stripos(PHP_OS, 'WIN') === 0
+        ? __DIR__ . '/backend/bin/qjs/qjs-windows-x86_64.exe'
+        : __DIR__ . '/backend/bin/qjs/qjs-linux-x86_64';
+    $qjsExists = file_exists($qjsBin);
+    $checks['qjs'] = [
+        'label' => 'FormLogic qjs Runtime',
         'required' => 'Present',
-        'current' => $wasmExists ? 'Present' : 'Missing',
-        'pass' => $wasmExists,
-        'help' => $wasmExists ? '' : 'The install wizard will attempt to download it, or run install.sh',
+        'current' => $qjsExists ? 'Present' : 'Missing',
+        'pass' => $qjsExists,
+        'help' => $qjsExists ? '' : 'Vendored under backend/bin/qjs; re-clone the repo or fetch qjs from github.com/quickjs-ng/quickjs',
     ];
 
     // Node.js (best effort)
@@ -405,12 +408,14 @@ function runInstall(array $data): array
         $steps[] = ['label' => 'npm dependencies', 'status' => 'ok'];
     }
 
-    // 8. Check WASM engine
-    $wasmDir = $uiDir . '/src/lib/formlogic/wasm';
-    if (!file_exists($wasmDir . '/formlogic_wasm_bg.wasm')) {
-        $steps[] = ['label' => 'WASM engine', 'status' => 'warn', 'message' => 'Not present. Run install.sh or download from github.com/f2i-com/formlogic-rust'];
+    // 8. Check FormLogic qjs runtime binary
+    $qjsBin = stripos(PHP_OS, 'WIN') === 0
+        ? __DIR__ . '/backend/bin/qjs/qjs-windows-x86_64.exe'
+        : __DIR__ . '/backend/bin/qjs/qjs-linux-x86_64';
+    if (!file_exists($qjsBin)) {
+        $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'warn', 'message' => 'Binary not present at backend/bin/qjs — form logic & scripts will be disabled'];
     } else {
-        $steps[] = ['label' => 'WASM engine', 'status' => 'ok'];
+        $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'ok'];
     }
 
     $hasErrors = false;
@@ -605,9 +610,10 @@ function runInstall(array $data): array
           <code>cd ui && npm install</code>
         </li>
         <li id="ns-wasm" class="hidden">
-          Download the WASM engine (run <code>install.sh</code> or manually):<br>
-          <code>git clone --depth 1 https://github.com/f2i-com/formlogic-rust.git /tmp/fl-rust</code><br>
-          <code>cp /tmp/fl-rust/dist-wasm/* ui/src/lib/formlogic/wasm/</code>
+          The FormLogic qjs runtime binary is missing. It is vendored in the repo
+          under <code>backend/bin/qjs/</code> — re-clone the repository, or fetch a
+          static <code>qjs</code> build from
+          <code>github.com/quickjs-ng/quickjs</code> for your platform.
         </li>
         <li>
           Start the backend API server:<br>
@@ -760,7 +766,7 @@ function runInstall() {
 
       if (step.label && step.label.includes('Composer') && step.status === 'warn') needComposer = true;
       if (step.label && step.label.includes('npm') && step.status === 'warn') needNpm = true;
-      if (step.label && step.label.includes('WASM') && step.status === 'warn') needWasm = true;
+      if (step.label && step.label.includes('qjs') && step.status === 'warn') needWasm = true;
     }
 
     // Show result

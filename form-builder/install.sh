@@ -22,7 +22,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 UI_DIR="$SCRIPT_DIR/ui"
-WASM_DIR="$UI_DIR/src/lib/formlogic/wasm"
+QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-linux-x86_64"
 
 # Colors
 RED='\033[0;31m'
@@ -165,28 +165,15 @@ else
     ok ".env already exists"
 fi
 
-# Download latest formlogic-rust WASM if not present
-if [[ ! -f "$WASM_DIR/formlogic_wasm_bg.wasm" ]]; then
-    info "Downloading FormLogic WASM engine..."
-    mkdir -p "$WASM_DIR"
-
-    WASM_TEMP=$(mktemp -d)
-    git clone --depth 1 https://github.com/f2i-com/formlogic-rust.git "$WASM_TEMP" 2>/dev/null
-
-    if [[ -d "$WASM_TEMP/dist-wasm" ]]; then
-        cp "$WASM_TEMP/dist-wasm/formlogic_wasm.js" "$WASM_DIR/"
-        cp "$WASM_TEMP/dist-wasm/formlogic_wasm.d.ts" "$WASM_DIR/"
-        cp "$WASM_TEMP/dist-wasm/formlogic_wasm_bg.wasm" "$WASM_DIR/"
-        cp "$WASM_TEMP/dist-wasm/formlogic_wasm_bg.wasm.d.ts" "$WASM_DIR/"
-        ok "WASM engine installed"
-    else
-        warn "Could not find pre-built WASM in formlogic-rust repo"
-        warn "You may need to build it manually: cd formlogic-rust && wasm-pack build crates/formlogic-wasm --target web"
-    fi
-
-    rm -rf "$WASM_TEMP"
+# FormLogic runtime: the browser engine (quickjs-emscripten) is installed via the
+# npm step above, and the canonical prelude is synced into the backend by the
+# `npm run build` prebuild step below. The backend uses the vendored static qjs
+# sandbox binary (committed under backend/bin/qjs); just make it executable.
+if [[ -f "$QJS_BIN" ]]; then
+    chmod +x "$QJS_BIN" 2>/dev/null || true
+    ok "FormLogic qjs runtime present"
 else
-    ok "WASM engine already present"
+    warn "FormLogic qjs binary missing at $QJS_BIN — form logic & scripts will be disabled server-side"
 fi
 
 # Build frontend

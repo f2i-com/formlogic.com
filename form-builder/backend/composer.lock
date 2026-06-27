@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "0958290dd770d77662f84a4721bb400d",
+    "content-hash": "c7880389f2312ce6d1e55564d57bf15e",
     "packages": [
         {
             "name": "fig/http-message-util",
@@ -124,46 +124,6 @@
                 "source": "https://github.com/firebase/php-jwt/tree/v7.0.2"
             },
             "time": "2025-12-16T22:17:28+00:00"
-        },
-        {
-            "name": "formlogic/formlogic-lang",
-            "version": "dev-main",
-            "dist": {
-                "type": "path",
-                "url": "../../formlogic-php",
-                "reference": "badcab39286ba6463e34ba5b045814ed197adc63"
-            },
-            "require": {
-                "php": ">=8.1"
-            },
-            "require-dev": {
-                "phpunit/phpunit": "^10.0"
-            },
-            "type": "library",
-            "autoload": {
-                "psr-4": {
-                    "FormLogic\\Lang\\": "src/"
-                },
-                "files": [
-                    "src/Token.php",
-                    "src/Code.php",
-                    "src/Objects.php",
-                    "src/AST.php",
-                    "src/Compiler.php"
-                ]
-            },
-            "license": [
-                "MIT"
-            ],
-            "authors": [
-                {
-                    "name": "FormLogic Team"
-                }
-            ],
-            "description": "FormLogic expression language interpreter for PHP",
-            "transport-options": {
-                "relative": true
-            }
         },
         {
             "name": "graham-campbell/result-type",

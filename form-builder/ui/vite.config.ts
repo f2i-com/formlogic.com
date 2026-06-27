@@ -141,6 +141,12 @@ export default defineConfig({
       },
     }),
   ],
+  // The FormLogic evaluation worker (src/lib/formlogic/formlogic.worker.ts) is a
+  // module worker and pulls in the QuickJS WASM sandbox, which code-splits; module
+  // workers require the ES output format (the default 'iife' can't code-split).
+  worker: {
+    format: 'es',
+  },
   build: {
     rollupOptions: {
       output: {

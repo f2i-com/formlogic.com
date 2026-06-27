@@ -4,167 +4,74 @@ declare(strict_types=1);
 
 namespace FormLogic\Services;
 
-use FormLogic\Lang\FormLogicEngine;
-use FormLogic\Lang\Objects\BaseObject;
-use function FormLogic\Lang\Objects\getValue;
-
 /**
- * Service for evaluating FormLogic expressions in the backend
+ * Evaluates FormLogic field expressions (conditional visibility, calculated
+ * fields, validation rules) server-side.
+ *
+ * Expressions run inside the QuickJS sandbox via {@see QuickJsRunner} — the exact
+ * same engine and standard-library prelude the browser uses — so server results
+ * match the client by construction. Each method throws on evaluation error; the
+ * callers (ResponseService) decide the failure policy (visibility fails open,
+ * calculated fields are skipped).
  */
 class FormLogicService
 {
-    private FormLogicEngine $engine;
+    private QuickJsRunner $runner;
 
-    /**
-     * FormLogic-source prelude prepended to every user EXPRESSION before eval, so
-     * the helper builtins/modules (isEmpty/isNotEmpty/contains/sum/avg/count and
-     * validators/format/compliance/finance/safety) resolve server-side exactly as
-     * they do client-side. Without it those helpers throw on the server, breaking
-     * conditional visibility (fails open) and calculated-field recompute. The
-     * engine doesn't persist globals across eval() calls, so it's prepended per
-     * eval. Kept in sync with the client prelude (ui/.../formlogic/engine.ts).
-     */
-    private string $prelude = '';
-
-    public function __construct()
+    public function __construct(?QuickJsRunner $runner = null)
     {
-        $this->engine = new FormLogicEngine();
-        // Apply execution limits to prevent DoS via user-provided expressions
-        $this->engine->setLimits(10000, 1000, 50);
-
-        $preludePath = __DIR__ . '/../../resources/formlogic-prelude.fl';
-        if (is_file($preludePath)) {
-            $this->prelude = (string) file_get_contents($preludePath);
-        }
+        $this->runner = $runner ?? new QuickJsRunner();
     }
 
     /**
-     * Prepend the helper prelude to a user expression so its builtins resolve.
-     */
-    private function withPrelude(string $expression): string
-    {
-        return $this->prelude === '' ? $expression : $this->prelude . "\n" . $expression;
-    }
-
-    /**
-     * Evaluate a FormLogic expression with context
-     * @param string $expression The FormLogic expression to evaluate
-     * @param array<string, mixed> $context Context variables available to the expression
-     * @return mixed The result of the expression
+     * Evaluate an expression with a context of variables.
+     *
+     * @param array<string, mixed> $context
      */
     public function evaluate(string $expression, array $context = []): mixed
     {
-        return $this->engine->eval($this->withPrelude($expression), $context);
+        return $this->unwrap($this->runner->evaluate($expression, $context));
     }
 
     /**
-     * Run FormLogic code and return the raw object result
-     * @param string $code The FormLogic code to run
-     * @return BaseObject The result object
-     */
-    public function run(string $code): BaseObject
-    {
-        return $this->engine->run($code);
-    }
-
-    /**
-     * Run FormLogic code with context and return the raw object result
-     * @param string $code The FormLogic code to run
-     * @param array<string, mixed> $context Context variables
-     * @return BaseObject The result object
-     */
-    public function runWithContext(string $code, array $context): BaseObject
-    {
-        return $this->engine->runWithContext($code, $context);
-    }
-
-    /**
-     * Evaluate a validation rule
-     * @param string $rule The validation rule expression
-     * @param mixed $value The value to validate
-     * @param array<string, mixed> $formData All form data for complex validations
-     * @return bool Whether the validation passes
+     * Evaluate a validation rule against a value.
+     *
+     * @param array<string, mixed> $formData
      */
     public function validateField(string $rule, mixed $value, array $formData = []): bool
     {
         $context = array_merge($formData, ['value' => $value]);
-        $result = $this->engine->eval($this->withPrelude($rule), $context);
-        return (bool) $result;
+        return (bool) $this->unwrap($this->runner->evaluate($rule, $context));
     }
 
     /**
-     * Evaluate a conditional visibility rule
-     * @param string $condition The visibility condition
-     * @param array<string, mixed> $formData Form data for the condition
-     * @return bool Whether the field should be visible
+     * Evaluate a conditional-visibility rule.
+     *
+     * @param array<string, mixed> $formData
      */
     public function evaluateCondition(string $condition, array $formData): bool
     {
-        $result = $this->engine->eval($this->withPrelude($condition), $formData);
-        return (bool) $result;
+        return (bool) $this->unwrap($this->runner->evaluate($condition, $formData));
     }
 
     /**
-     * Calculate a computed field value
-     * @param string $formula The calculation formula
-     * @param array<string, mixed> $formData Form data for the calculation
-     * @return mixed The calculated value
+     * Calculate a computed-field value.
+     *
+     * @param array<string, mixed> $formData
      */
     public function calculateField(string $formula, array $formData): mixed
     {
-        return $this->engine->eval($this->withPrelude($formula), $formData);
+        return $this->unwrap($this->runner->evaluate($formula, $formData));
     }
 
     /**
-     * Run business logic code
-     * @param string $code The business logic code
-     * @param array<string, mixed> $data Input data
-     * @return array<string, mixed> Output data
+     * @param array{ok: bool, value?: mixed, error?: string} $result
      */
-    public function runBusinessLogic(string $code, array $data): array
+    private function unwrap(array $result): mixed
     {
-        $result = $this->engine->eval($code, $data);
-        if (is_array($result)) {
-            return $result;
+        if (!($result['ok'] ?? false)) {
+            throw new \RuntimeException($result['error'] ?? 'FormLogic evaluation failed');
         }
-        return ['result' => $result];
-    }
-
-    /**
-     * Register a custom PHP function as a builtin in FormLogic
-     * @param string $name The function name
-     * @param callable $fn The PHP function
-     */
-    public function registerFunction(string $name, callable $fn): void
-    {
-        $this->engine->registerNativeFunction($name, function ($args) use ($fn) {
-            $nativeArgs = array_map(fn($a) => getValue($a), $args);
-            return \FormLogic\Lang\Objects\nativeToObject($fn(...$nativeArgs));
-        });
-    }
-
-    /**
-     * Register a custom module with methods
-     * @param string $name Module name
-     * @param array<string, callable> $methods Module methods
-     */
-    public function registerModule(string $name, array $methods): void
-    {
-        $wrappedMethods = [];
-        foreach ($methods as $methodName => $fn) {
-            $wrappedMethods[$methodName] = function ($args) use ($fn) {
-                $nativeArgs = array_map(fn($a) => getValue($a), $args);
-                return \FormLogic\Lang\Objects\nativeToObject($fn(...$nativeArgs));
-            };
-        }
-        $this->engine->registerModule($name, $wrappedMethods);
-    }
-
-    /**
-     * Get the underlying FormLogicEngine instance
-     */
-    public function getEngine(): FormLogicEngine
-    {
-        return $this->engine;
+        return $result['value'] ?? null;
     }
 }

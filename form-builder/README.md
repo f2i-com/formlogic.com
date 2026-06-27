@@ -138,24 +138,21 @@ cp .env.example .env
 
 The default `ui/.env` points to `http://localhost:8080/api` for development. For production (same-domain), change it to `/api`.
 
-#### 5. Download the WASM engine
+#### 5. FormLogic runtime (no extra steps)
 
-The FormLogic scripting engine runs in the browser via WebAssembly. Download the pre-built files:
+FormLogic expressions and `onSubmit` scripts run inside a **QuickJS** sandbox on
+both sides, using one shared standard-library prelude
+(`ui/src/lib/formlogic/prelude.js`):
 
-```bash
-mkdir -p src/lib/formlogic/wasm
-cd src/lib/formlogic/wasm
+- **Browser:** `quickjs-emscripten` (installed by `npm install` above) runs the
+  engine in a Web Worker. The prelude is bundled automatically.
+- **Backend:** the PHP API shells out to a vendored static `qjs` binary
+  (committed under `backend/bin/qjs/`, selected per-OS) — **no Node.js required
+  on the server**. `npm run build` runs a `prebuild` step that syncs the prelude
+  into `backend/resources/formlogic-prelude.js`.
 
-# Clone and copy WASM files
-git clone --depth 1 https://github.com/f2i-com/formlogic-rust.git /tmp/formlogic-rust
-cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm.js .
-cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm.d.ts .
-cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm_bg.wasm .
-cp /tmp/formlogic-rust/dist-wasm/formlogic_wasm_bg.wasm.d.ts .
-rm -rf /tmp/formlogic-rust
-
-cd ../../../..
-```
+There is nothing to download. On Linux, ensure the binary is executable
+(`chmod +x backend/bin/qjs/qjs-linux-x86_64`); `install.sh` does this for you.
 
 ### Running the App
 

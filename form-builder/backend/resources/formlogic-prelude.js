@@ -1,10 +1,20 @@
-// FormLogic expression PRELUDE for SERVER-SIDE evaluation (helpers + modules:
-// isEmpty/isNotEmpty/contains/sum/avg/count, validators/format/compliance/finance/safety).
-// MUST stay byte-for-behavior in sync with the CLIENT prelude in
-// form-builder/ui/src/lib/formlogic/engine.ts (the two runtimes can't share one file
-// at deploy time). See memory: formlogic-engine-prelude-divergence.
+// CANONICAL FORMLOGIC PRELUDE — single source of truth.
+// This plain-JS standard library is evaluated inside the QuickJS sandbox on
+// BOTH the browser (quickjs-emscripten) and the backend (qjs harness) before
+// every user expression/script, so helper builtins resolve identically on
+// each side. It is imported as raw text in the browser and read from disk by
+// the backend; the backend copy at backend/resources/formlogic-prelude.js is
+// generated from THIS file by scripts/sync-prelude.mjs (run in prebuild) —
+// edit this file and never hand-edit the generated copy.
+//
+// The module objects are declared with `var` (not `let`) on purpose: the qjs
+// harness installs the prelude via indirect eval and then runs user code via
+// `new Function`, whose body sees global *object* properties (var/function) but
+// NOT global lexical (let/const) bindings. `var` keeps them resolvable on both
+// engines.
+
 function __isArr(a) { return typeof a == "object" && a != null && typeof a.length == "number"; }
-let validators = {
+var validators = {
   email: function(value) {
     if (typeof value != "string") { return false; }
     return /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(value);
@@ -47,7 +57,7 @@ let validators = {
     return value <= m;
   }
 };
-let format = {
+var format = {
   currency: function(value, cur) {
     if (typeof value != "number") { return ""; }
     let prefix = "$";
@@ -88,7 +98,7 @@ let format = {
     return value.toLowerCase();
   }
 };
-let compliance = {
+var compliance = {
   regBICheck: function(riskScore, portfolioType) {
     if (typeof riskScore != "number" || typeof portfolioType != "string") { return false; }
     let pt = portfolioType.toLowerCase();
@@ -167,7 +177,7 @@ let compliance = {
     return /^[0-9]{3}-?[0-9]{3}-?[0-9]{3}$/.test(tfn.trim());
   }
 };
-let finance = {
+var finance = {
   compoundInterest: function(principal, rate, periods) {
     if (typeof principal != "number" || typeof rate != "number" || typeof periods != "number") { return 0; }
     let result = principal * Math.pow(1 + rate, periods);
@@ -259,7 +269,7 @@ let finance = {
     return 55;
   }
 };
-let safety = {
+var safety = {
   riskMatrix: function(likelihood, consequence) {
     if (typeof likelihood != "number" || typeof consequence != "number") { return 0; }
     let l = Math.max(1, Math.min(5, Math.round(likelihood)));
