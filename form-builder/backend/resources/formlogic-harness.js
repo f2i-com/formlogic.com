@@ -29,10 +29,23 @@
     var s = JSON.stringify(obj);
     // Cap output so a guest can't force PHP to buffer/parse a huge line (OOM).
     if (s.length > MAX_OUTPUT_BYTES) {
-      s = JSON.stringify({ type: "done", error: "Script output too large" });
+      obj = { type: "done", error: "Script output too large" };
+      s = JSON.stringify(obj);
     }
     _std.out.puts(s + "\n");
     _std.out.flush();
+    // CRITICAL (sandbox escape defense): exit SYNCHRONOUSLY on the terminal "done"
+    // line so the post-script promise-job drain NEVER runs. Guest code can
+    // re-acquire full host modules via dynamic import('qjs:std'/'qjs:os') — the
+    // lock-down nuke only deletes the global property, not the qjs module loader —
+    // and a deferred .then() callback would otherwise run AFTER "done" with host
+    // privileges (arbitrary FS / std.popen exec / getenv / urlGet SSRF-bypass = RCE),
+    // with PHP's proc_terminate losing the race. Promise jobs are NOT pumped during
+    // a host call's blocking getline, so "done" is the only window. "call" is
+    // non-terminal (must block for its reply), so never exit on it.
+    if (obj && obj.type === "done") {
+      _std.exit(0);
+    }
   }
   function readLine() {
     return _std.in.getline(); // returns null at EOF
