@@ -80,9 +80,11 @@ class QuickJsRunner
      * @param array<int, array{id: string, expression: string, context?: array}> $jobs
      * @return array<string, array{ok: bool, value?: mixed, error?: string}> keyed by job id
      */
-    public function evaluateBatch(array $jobs, int $cpuBudgetMs = 1000): array
+    public function evaluateBatch(array $jobs, array $context = [], int $cpuBudgetMs = 1000): array
     {
-        $payload = ['mode' => 'eval', 'jobs' => array_values($jobs)];
+        // Shared context sent ONCE at the payload top level (the harness applies it
+        // to all jobs) instead of duplicated into every job — see FormLogicService.
+        $payload = ['mode' => 'eval', 'jobs' => array_values($jobs), 'context' => (object) $context];
         $done = $this->run($payload, null, $cpuBudgetMs);
 
         $out = [];
@@ -104,7 +106,8 @@ class QuickJsRunner
     public function evaluate(string $expression, array $context = [], int $cpuBudgetMs = 1000): array
     {
         $results = $this->evaluateBatch(
-            [['id' => '0', 'expression' => $expression, 'context' => (object) $context]],
+            [['id' => '0', 'expression' => $expression]],
+            $context,
             $cpuBudgetMs
         );
         return $results['0'] ?? ['ok' => false, 'error' => 'no result'];
@@ -182,7 +185,11 @@ class QuickJsRunner
         // Generous vs any legit onSubmit (ctx.db caps at 50 fields/20 tags, ctx.http
         // is separately capped), but bounds a tight fast-host-call loop that consumes
         // ~0 compute per window yet churns proc_open and pins the worker.
-        $maxHostCalls = 2000;
+        // A legit onSubmit caps at 50 fields + 20 tags via ctx.db (plus
+        // separately-capped ctx.http) — well under ~100 host calls — so 256 keeps
+        // generous headroom while tightly bounding a fast-host-call loop's
+        // proc_open(watchdog) churn.
+        $maxHostCalls = 256;
         $watchdog = $this->spawnWatchdog($pid, $cpuSecs);
         // Fail closed: without an armed watchdog a runaway guest would wedge this
         // worker forever on the blocking read. Callers degrade like any error.

@@ -84,13 +84,15 @@ class FormLogicService
             $jobs[] = [
                 'id' => (string) $item['id'],
                 'expression' => (string) $item['expression'],
-                'context' => (object) $context,
             ];
         }
         if ($jobs === []) {
             return [];
         }
-        return $this->runner->evaluateBatch($jobs);
+        // Pass the shared context ONCE — duplicating it into every job made a batch
+        // of N expressions json_encode N copies of the full context into a single
+        // NDJSON line (an unauthenticated host-OOM vector on the public form path).
+        return $this->runner->evaluateBatch($jobs, $context);
     }
 
     /**

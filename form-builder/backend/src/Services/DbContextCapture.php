@@ -15,6 +15,10 @@ class DbContextCapture
     private const MAX_TAGS = 20;
     private const MAX_FIELD_NAME_LENGTH = 64;
     private const MAX_TAG_LENGTH = 32;
+    // Bound computed-field value sizes (defense vs host OOM: the field-COUNT cap
+    // alone let 50 fields x multi-MB values amplify into ~hundreds of MB in PHP).
+    private const MAX_VALUE_BYTES = 65536;          // 64 KB per field value
+    private const MAX_TOTAL_VALUE_BYTES = 524288;   // 512 KB across all fields
 
     // Allowed status values
     private const ALLOWED_STATUSES = [
@@ -33,6 +37,8 @@ class DbContextCapture
     private array $tags = [];
 
     private ?string $status = null;
+
+    private int $totalValueBytes = 0;
 
     /**
      * Set a computed field value
@@ -56,6 +62,19 @@ class DbContextCapture
         if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
             return false;
         }
+
+        // Bound the value size, per-value and in aggregate, so a guest can't OOM the
+        // PHP host by setting large field values.
+        $encoded = json_encode($value);
+        $bytes = $encoded === false ? PHP_INT_MAX : strlen($encoded);
+        if ($bytes > self::MAX_VALUE_BYTES) {
+            return false;
+        }
+        $prev = isset($this->fields[$name]) ? strlen((string) json_encode($this->fields[$name])) : 0;
+        if (($this->totalValueBytes - $prev + $bytes) > self::MAX_TOTAL_VALUE_BYTES) {
+            return false;
+        }
+        $this->totalValueBytes = $this->totalValueBytes - $prev + $bytes;
 
         $this->fields[$name] = $value;
         return true;
@@ -155,5 +174,6 @@ class DbContextCapture
         $this->fields = [];
         $this->tags = [];
         $this->status = null;
+        $this->totalValueBytes = 0;
     }
 }

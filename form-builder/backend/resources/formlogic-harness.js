@@ -146,12 +146,16 @@
   // --- mode: eval (batch of pure expressions) -------------------------------
   if (job.mode === "eval") {
     var results = [];
-    var prev = [];
     var jobs = job.jobs || [];
+    // Shared context for all jobs, applied ONCE from the payload top level (it used
+    // to be duplicated into every job — host-OOM on large contexts). A per-job
+    // j.context, if present, still overrides for backward safety.
+    setContextGlobals(job.context || {}, []);
+    var prev = [];
     for (var i = 0; i < jobs.length; i++) {
       var j = jobs[i];
       try {
-        prev = setContextGlobals(j.context || {}, prev);
+        if (j.context) { prev = setContextGlobals(j.context, prev); }
         // Indirect eval runs the expression as a full PROGRAM in global scope
         // only (sees prelude + injected context globals, never this harness's
         // locals), returning the completion value. This matches the client's
