@@ -101,6 +101,13 @@
   nuke("argv0"); nuke("execArgv"); nuke("navigator"); nuke("gc");
   nuke("performance"); nuke("Atomics"); nuke("SharedArrayBuffer");
   nuke("btoa"); nuke("atob");
+  // Suppress stack traces in guest code: error.stack otherwise leaks this harness's
+  // absolute server path (install-dir disclosure). Non-writable + non-configurable
+  // so guest code can't restore the limit. The harness only ever reads e.message.
+  try {
+    Error.stackTraceLimit = 0;
+    Object.defineProperty(Error, "stackTraceLimit", { value: 0, writable: false, configurable: false });
+  } catch (e) {}
   globalThis.print = function () {};
   globalThis.console = {
     log: function () {}, info: function () {}, warn: function () {},
