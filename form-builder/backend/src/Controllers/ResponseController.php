@@ -766,6 +766,53 @@ class ResponseController
     }
 
     /**
+     * Test an onSubmit script against sample answers WITHOUT persisting anything.
+     * Powers the ScriptEditor "Test" button. Auth + form ownership required.
+     * POST /api/forms/{formId}/script/test  body: { script, answers? }
+     */
+    public function testScript(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        // Authorization check - user must own the form
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
+        $data = $request->getParsedBody();
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 422);
+        }
+
+        $script = $data['script'] ?? null;
+        if (!is_string($script) || trim($script) === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'A script is required'], 422);
+        }
+        if (strlen($script) > 102400) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Script must be 100KB or smaller'], 422);
+        }
+
+        $answers = (isset($data['answers']) && is_array($data['answers'])) ? $data['answers'] : [];
+
+        try {
+            $result = $this->responseService->testScript($script, $answers, [
+                'ipAddress' => $this->getClientIp($request),
+                'userAgent' => substr($request->getHeaderLine('User-Agent'), 0, 500),
+                'formId' => $formId,
+            ]);
+            $this->audit($request, 'script.test', 'form', $formId);
+            return $this->jsonResponse($response, ['result' => $result->toArray()]);
+        } catch (\Throwable $e) {
+            $this->logger->error('Script test error', ['formId' => $formId, 'exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run script test'], 500);
+        }
+    }
+
+    /**
      * Import CSV responses
      * POST /api/forms/{formId}/responses/import
      */

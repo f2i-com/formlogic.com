@@ -695,6 +695,11 @@ $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($
     return $container->get(ResponseController::class)->analytics($request, $response, $getArgs($request));
 })->add($authRequired);
 
+// Test an onSubmit script against sample answers without persisting (protected)
+$app->post('/api/forms/{formId}/script/test', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->testScript($request, $response, $getArgs($request));
+})->add($authRequired);
+
 // Export routes (protected)
 $app->get('/api/forms/{formId}/export/sqlite', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->exportSqlite($request, $response, $getArgs($request));

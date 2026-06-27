@@ -642,6 +642,30 @@ class ResponseService
     }
 
     /**
+     * Run a script against sample answers WITHOUT persisting anything — powers the
+     * ScriptEditor "Test" button so authors can run their onSubmit before saving.
+     * ctx.db operations are captured and returned (never written); ctx.http still
+     * makes real, SSRF-guarded external calls so the test reflects production.
+     *
+     * @param array<string, mixed> $answers Sample form answers
+     * @param array{ipAddress?: ?string, userAgent?: ?string, formId?: ?string} $meta
+     */
+    public function testScript(string $script, array $answers, array $meta = []): ScriptResult
+    {
+        if ($this->runtime === null) {
+            return ScriptResult::error('Script runtime not available');
+        }
+        return $this->runtime->execute($script, [
+            'answers' => $answers,
+            'ipAddress' => $meta['ipAddress'] ?? null,
+            'userAgent' => $meta['userAgent'] ?? null,
+            'timestamp' => time(),
+            'responseId' => 'test-' . $this->generateUuid(),
+            'formId' => $meta['formId'] ?? null,
+        ]);
+    }
+
+    /**
      * Apply script results to the database
      */
     private function applyScriptResult(PDO $db, string $responseId, ScriptResult $result): void

@@ -698,6 +698,7 @@ export default function FormBuilder() {
           toast.success('Script Saved', 'Your backend logic script has been saved');
         }}
         formFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+        formId={form.id}
       />
 
       {/* Embed Modal */}

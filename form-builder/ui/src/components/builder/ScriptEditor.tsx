@@ -12,6 +12,42 @@ interface ScriptEditorProps {
   script: string;
   onSave: (script: string) => void;
   formFields: Array<{ id: string; label: string; type: string }>;
+  /** Form id — enables running the script server-side via the test endpoint. */
+  formId?: string;
+}
+
+/**
+ * Build a representative sample answer set from the form's fields so a test run
+ * has data to work with. Type-aware defaults; non-input field types are skipped.
+ */
+function buildSampleAnswers(fields: Array<{ id: string; type: string }>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of fields) {
+    switch (f.type) {
+      case 'number':
+      case 'rating':
+      case 'scale':
+        out[f.id] = 1;
+        break;
+      case 'checkboxes':
+        out[f.id] = [];
+        break;
+      case 'email':
+        out[f.id] = 'test@example.com';
+        break;
+      case 'calculated':
+      case 'statement':
+      case 'welcome_screen':
+      case 'thank_you':
+      case 'linked_record':
+      case 'file_upload':
+      case 'signature':
+        break; // not user-typed inputs
+      default:
+        out[f.id] = 'test';
+    }
+  }
+  return out;
 }
 
 const EXAMPLE_SCRIPT = `// This script runs when a form is submitted
@@ -210,7 +246,7 @@ const custom = ctx.http.request({
   },
 ];
 
-export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: ScriptEditorProps) {
+export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, formId }: ScriptEditorProps) {
   const [editedScript, setEditedScript] = useState(script);
   const [activeTab, setActiveTab] = useState<'editor' | 'ai' | 'docs' | 'fields'>('editor');
 
@@ -218,7 +254,17 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
   useEffect(() => {
     setEditedScript(script);
   }, [script]);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    message: string;
+    details?: {
+      fields?: Record<string, unknown>;
+      tags?: string[];
+      status?: string | null;
+      executionTimeMs?: number;
+    };
+  } | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -241,63 +287,54 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
     setEditedScript(EXAMPLE_SCRIPT);
   };
 
-  const handleTest = () => {
-    // Basic structure validation without executing code
-    // We avoid new Function() as it evaluates user code which is a security risk
+  const handleTest = async () => {
+    setTestResult(null);
+
+    // Quick client-side structure check for instant feedback before the server run.
+    if (!editedScript.includes('function onSubmit')) {
+      setTestResult({ success: false, message: 'Script must contain a function named "onSubmit"' });
+      return;
+    }
+    const balanced = (open: RegExp, close: RegExp) =>
+      (editedScript.match(open) || []).length === (editedScript.match(close) || []).length;
+    if (!balanced(/\{/g, /\}/g)) { setTestResult({ success: false, message: 'Mismatched braces: check your { and }' }); return; }
+    if (!balanced(/\(/g, /\)/g)) { setTestResult({ success: false, message: 'Mismatched parentheses: check your ( and )' }); return; }
+    if (!balanced(/\[/g, /\]/g)) { setTestResult({ success: false, message: 'Mismatched brackets: check your [ and ]' }); return; }
+
+    // The run endpoint is form-scoped; without a saved form, structure-check only.
+    if (!formId) {
+      setTestResult({ success: true, message: 'Structure looks valid. Save the form to run a full test.' });
+      return;
+    }
+
+    // Actually RUN the script server-side against sample answers (nothing is persisted).
+    setIsTesting(true);
     try {
-      // Check if it has onSubmit function
-      if (!editedScript.includes('function onSubmit')) {
-        setTestResult({ success: false, message: 'Script must contain a function named "onSubmit"' });
+      const res = await api.testScript(formId, editedScript, buildSampleAnswers(formFields));
+      if (res.error || !res.data?.result) {
+        setTestResult({ success: false, message: res.error || 'Failed to run the script test' });
         return;
       }
-
-      // Check for basic syntax issues using pattern matching
-      // Note: Real validation happens server-side in the FormLogic runtime
-
-      // Check for unmatched braces
-      const openBraces = (editedScript.match(/\{/g) || []).length;
-      const closeBraces = (editedScript.match(/\}/g) || []).length;
-      if (openBraces !== closeBraces) {
-        setTestResult({ success: false, message: 'Mismatched braces: check your { and }' });
-        return;
+      const r = res.data.result;
+      if (r.rejected) {
+        setTestResult({
+          success: false,
+          message: `Script rejected the submission: ${r.rejectionMessage || '(no message)'}`,
+          details: { executionTimeMs: r.executionTimeMs },
+        });
+      } else if (!r.success) {
+        setTestResult({ success: false, message: r.error || 'Script error', details: { executionTimeMs: r.executionTimeMs } });
+      } else {
+        setTestResult({
+          success: true,
+          message: `Ran successfully in ${r.executionTimeMs}ms`,
+          details: { fields: r.fields, tags: r.tags, status: r.status, executionTimeMs: r.executionTimeMs },
+        });
       }
-
-      // Check for unmatched parentheses
-      const openParens = (editedScript.match(/\(/g) || []).length;
-      const closeParens = (editedScript.match(/\)/g) || []).length;
-      if (openParens !== closeParens) {
-        setTestResult({ success: false, message: 'Mismatched parentheses: check your ( and )' });
-        return;
-      }
-
-      // Check for unmatched brackets
-      const openBrackets = (editedScript.match(/\[/g) || []).length;
-      const closeBrackets = (editedScript.match(/\]/g) || []).length;
-      if (openBrackets !== closeBrackets) {
-        setTestResult({ success: false, message: 'Mismatched brackets: check your [ and ]' });
-        return;
-      }
-
-      // Check for unterminated strings (basic check)
-      const singleQuotes = (editedScript.match(/(?<!\\)'/g) || []).length;
-      const doubleQuotes = (editedScript.match(/(?<!\\)"/g) || []).length;
-      if (singleQuotes % 2 !== 0) {
-        setTestResult({ success: false, message: 'Unterminated string: check your single quotes' });
-        return;
-      }
-      if (doubleQuotes % 2 !== 0) {
-        setTestResult({ success: false, message: 'Unterminated string: check your double quotes' });
-        return;
-      }
-
-      // Check for common syntax issues
-      if (/\bfunction\s*\(/.test(editedScript) && !/\bfunction\s+\w+\s*\(/.test(editedScript) && !/=\s*function\s*\(/.test(editedScript)) {
-        // Anonymous function not assigned - might be an error but could be valid in some contexts
-      }
-
-      setTestResult({ success: true, message: 'Basic structure looks valid! Full validation occurs when the script runs.' });
     } catch (e) {
-      setTestResult({ success: false, message: `Validation error: ${e instanceof Error ? e.message : 'Unknown error'}` });
+      setTestResult({ success: false, message: e instanceof Error ? e.message : 'Test failed' });
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -437,16 +474,33 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
 
               {/* Test Result */}
               {testResult && (
-                <div role="status" aria-live="polite" className={`mx-4 mb-2 p-3 rounded-lg flex items-center gap-2 ${testResult.success
+                <div role="status" aria-live="polite" className={`mx-4 mb-2 p-3 rounded-lg ${testResult.success
                     ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400'
                     : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'
                   }`}>
-                  {testResult.success ? (
-                    <CheckCircle className="h-4 w-4" />
-                  ) : (
-                    <AlertCircle className="h-4 w-4" />
+                  <div className="flex items-center gap-2">
+                    {testResult.success ? (
+                      <CheckCircle className="h-4 w-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                    )}
+                    <span className="text-sm">{testResult.message}</span>
+                  </div>
+                  {testResult.details && (
+                    <div className="mt-2 pl-6 text-xs font-mono space-y-0.5 opacity-90">
+                      {testResult.details.status && <div>status → {testResult.details.status}</div>}
+                      {testResult.details.tags && testResult.details.tags.length > 0 && (
+                        <div>tags → {testResult.details.tags.join(', ')}</div>
+                      )}
+                      {testResult.details.fields && Object.keys(testResult.details.fields).length > 0 && (
+                        <div>
+                          computed → {Object.entries(testResult.details.fields)
+                            .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+                            .join('   ')}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  <span className="text-sm">{testResult.message}</span>
                 </div>
               )}
 
@@ -662,8 +716,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields }: Sc
             <Button variant="outline" size="sm" onClick={handleInsertExample}>
               Insert Example
             </Button>
-            <Button variant="outline" size="sm" onClick={handleTest} leftIcon={<Play className="h-4 w-4" />}>
-              Validate Syntax
+            <Button variant="outline" size="sm" onClick={handleTest} disabled={isTesting} leftIcon={<Play className="h-4 w-4" />}>
+              {isTesting ? 'Running…' : 'Run Test'}
             </Button>
           </div>
           <div className="flex gap-2">

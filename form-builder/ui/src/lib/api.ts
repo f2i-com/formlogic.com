@@ -12,6 +12,20 @@ interface ApiResponse<T> {
   error?: string;
 }
 
+/** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
+export interface ScriptTestResult {
+  success: boolean;
+  error: string | null;
+  rejected: boolean;
+  rejectionMessage: string | null;
+  status: string | null;
+  fields: Record<string, unknown>;
+  tags: string[];
+  computed: unknown;
+  instructionCount: number;
+  executionTimeMs: number;
+}
+
 class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
@@ -461,6 +475,21 @@ class ApiClient {
     return this.request('/ai/improve-script', {
       method: 'POST',
       body: JSON.stringify({ script, prompt, fields }),
+    });
+  }
+
+  /**
+   * Run an onSubmit script against sample answers WITHOUT persisting (auth +
+   * form ownership required). Powers the ScriptEditor "Test" button.
+   */
+  async testScript(
+    formId: string,
+    script: string,
+    answers: Record<string, unknown>
+  ): Promise<ApiResponse<{ result: ScriptTestResult }>> {
+    return this.request(`/forms/${formId}/script/test`, {
+      method: 'POST',
+      body: JSON.stringify({ script, answers }),
     });
   }
 
