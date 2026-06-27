@@ -175,7 +175,7 @@ class AIService
         ];
 
         $ch = curl_init($this->apiUrl . '/chat/completions');
-        curl_setopt_array($ch, [
+        $aiCurlOpts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
             CURLOPT_HTTPHEADER => [
@@ -188,7 +188,13 @@ class AIService
             CURLOPT_PROTOCOLS => CURLPROTO_HTTPS | CURLPROTO_HTTP,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-        ]);
+        ];
+        // Vendored CA bundle so HTTPS verifies without php.ini curl.cainfo.
+        $caBundle = __DIR__ . '/../../resources/cacert.pem';
+        if (is_file($caBundle)) {
+            $aiCurlOpts[CURLOPT_CAINFO] = $caBundle;
+        }
+        curl_setopt_array($ch, $aiCurlOpts);
 
         try {
             $response = curl_exec($ch);
