@@ -84,9 +84,18 @@ export default function FormBuilder() {
     return () => window.removeEventListener('resize', checkMobile);
   }, [setIsMobile]);
 
-  // Load full form data (with fields) from API when entering the builder
+  // Load full form data (with fields) from API when entering the builder.
+  // Track completion so a fresh/direct navigation (empty store) shows a loader
+  // and only redirects on a genuine miss — not during the in-flight fetch.
+  const [loadFinished, setLoadFinished] = useState(false);
   useEffect(() => {
-    if (formId) loadFullForm(formId);
+    if (!formId) return;
+    let cancelled = false;
+    setLoadFinished(false);
+    loadFullForm(formId).finally(() => {
+      if (!cancelled) setLoadFinished(true);
+    });
+    return () => { cancelled = true; };
   }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
@@ -293,10 +302,13 @@ export default function FormBuilder() {
   }, [showMobileMenu]);
 
   useEffect(() => {
-    if (!form && formId) {
+    // Only redirect once the load attempt has finished and the form is genuinely
+    // absent (a real 404 / no access) — not while the fetch is still in flight,
+    // which previously bounced direct/bookmarked builder links to /forms.
+    if (loadFinished && !form && formId) {
       navigate('/forms');
     }
-  }, [form, formId, navigate]);
+  }, [loadFinished, form, formId, navigate]);
 
   // These must stay above the early return below so hook order is stable when
   // `form` transitions null -> loaded (or back, e.g. on delete). (Rules of Hooks)
@@ -313,7 +325,11 @@ export default function FormBuilder() {
   if (!form) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-slate-500">Form not found</p>
+        {loadFinished ? (
+          <p className="text-slate-500">Form not found</p>
+        ) : (
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400" aria-label="Loading form" />
+        )}
       </div>
     );
   }
