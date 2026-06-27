@@ -862,9 +862,9 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
 $apiRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'api_v1');
 $apiKeyService = $container->get(ApiKeyService::class);
 
-$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService) {
+$app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $getArgs, $apiKeyService, $rateLimiter) {
     // Forms (forms:read)
-    $formsReadAuth = new ApiKeyMiddleware($apiKeyService, ['forms:read']);
+    $formsReadAuth = new ApiKeyMiddleware($apiKeyService, ['forms:read'], $rateLimiter);
 
     $group->get('/forms', function ($request, $response) use ($container) {
         return $container->get(ExternalApiController::class)->listForms($request, $response);
@@ -879,7 +879,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($formsReadAuth);
 
     // Response submission (responses:write)
-    $responsesWriteAuth = new ApiKeyMiddleware($apiKeyService, ['responses:write']);
+    $responsesWriteAuth = new ApiKeyMiddleware($apiKeyService, ['responses:write'], $rateLimiter);
 
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->submitResponse($request, $response, $getArgs($request));
@@ -890,7 +890,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($responsesWriteAuth);
 
     // Response reading (responses:read)
-    $responsesReadAuth = new ApiKeyMiddleware($apiKeyService, ['responses:read']);
+    $responsesReadAuth = new ApiKeyMiddleware($apiKeyService, ['responses:read'], $rateLimiter);
 
     $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->listResponses($request, $response, $getArgs($request));
@@ -901,7 +901,7 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($responsesReadAuth);
 
     // Response management (responses:manage)
-    $responsesManageAuth = new ApiKeyMiddleware($apiKeyService, ['responses:manage']);
+    $responsesManageAuth = new ApiKeyMiddleware($apiKeyService, ['responses:manage'], $rateLimiter);
 
     $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->updateResponse($request, $response, $getArgs($request));
@@ -917,14 +917,14 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     })->add($responsesReadAuth);
 
     // Webhooks read (webhooks:read)
-    $webhooksReadAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:read']);
+    $webhooksReadAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:read'], $rateLimiter);
 
     $group->get('/forms/{formId}/webhooks', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->listWebhooks($request, $response, $getArgs($request));
     })->add($webhooksReadAuth);
 
     // Webhooks write (webhooks:write)
-    $webhooksWriteAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:write']);
+    $webhooksWriteAuth = new ApiKeyMiddleware($apiKeyService, ['webhooks:write'], $rateLimiter);
 
     $group->post('/forms/{formId}/webhooks', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->createWebhook($request, $response, $getArgs($request));

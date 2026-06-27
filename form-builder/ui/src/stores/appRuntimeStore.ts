@@ -161,41 +161,45 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         return result.data?.records ?? [];
       },
 
-      // Permission helpers check both app-level and form-level permissions
+      // Permission helpers check both app-level and form-level permissions.
+      // NOTE: manage_app is NOT a data-access wildcard — the server
+      // (AppUserService::hasPermission) only treats the real app owner as a
+      // wildcard, so enabling controls on manage_app alone would show actions the
+      // server then rejects (403). Gate each control on its specific permission.
       canSubmit: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('submit_responses') || (p.formLevel?.[formId]?.includes('submit_responses') ?? false);
+        return p.appLevel.includes('submit_responses') || (p.formLevel?.[formId]?.includes('submit_responses') ?? false);
       },
 
       canViewOwn: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('view_own_responses') || (p.formLevel?.[formId]?.includes('view_own_responses') ?? false);
+        return p.appLevel.includes('view_own_responses') || (p.formLevel?.[formId]?.includes('view_own_responses') ?? false);
       },
 
       canViewAll: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('view_all_responses') || (p.formLevel?.[formId]?.includes('view_all_responses') ?? false);
+        return p.appLevel.includes('view_all_responses') || (p.formLevel?.[formId]?.includes('view_all_responses') ?? false);
       },
 
       canEdit: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('edit_responses') || (p.formLevel?.[formId]?.includes('edit_responses') ?? false);
+        return p.appLevel.includes('edit_responses') || (p.formLevel?.[formId]?.includes('edit_responses') ?? false);
       },
 
       canDelete: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('delete_responses') || (p.formLevel?.[formId]?.includes('delete_responses') ?? false);
+        return p.appLevel.includes('delete_responses') || (p.formLevel?.[formId]?.includes('delete_responses') ?? false);
       },
 
       canExport: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;
-        return p.appLevel.includes('manage_app') || p.appLevel.includes('export_responses') || (p.formLevel?.[formId]?.includes('export_responses') ?? false);
+        return p.appLevel.includes('export_responses') || (p.formLevel?.[formId]?.includes('export_responses') ?? false);
       },
     }),
     {

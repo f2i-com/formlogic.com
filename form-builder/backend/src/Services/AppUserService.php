@@ -525,7 +525,17 @@ class AppUserService
         // Resolve the role to assign.
         $roleId = null;
         if ($defaultRoleId && $this->roleBelongsToApp($defaultRoleId, $appId)) {
-            $roleId = $defaultRoleId;
+            // Never let a self-registrant be assigned the protected Owner system role,
+            // even if the app's defaultRoleId is misconfigured to point at it (mirrors
+            // the guard in createInvitation/updateAppUser). Fall through to the
+            // least-privilege auto-pick below in that case.
+            $oCheck = $this->mysql->prepare("SELECT name, is_system FROM app_roles WHERE id = :id AND app_id = :app_id");
+            $oCheck->execute(['id' => $defaultRoleId, 'app_id' => $appId]);
+            $oRow = $oCheck->fetch();
+            $isOwnerRole = $oRow && (int)$oRow['is_system'] === 1 && $oRow['name'] === 'Owner';
+            if (!$isOwnerRole) {
+                $roleId = $defaultRoleId;
+            }
         }
         if (!$roleId) {
             // Pick the LEAST-privileged role (convention: Owner sort_order=0 is

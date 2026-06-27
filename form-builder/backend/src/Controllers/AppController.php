@@ -76,6 +76,14 @@ class AppController
         }
 
         $apps = $this->appService->getAllApps($userId);
+        // Don't expose the owner's platform UUID to non-owner members (mirrors the
+        // runtime AppPublicController::getApp stripping).
+        foreach ($apps as &$a) {
+            if (is_array($a) && ($a['ownerId'] ?? null) !== $userId) {
+                unset($a['ownerId']);
+            }
+        }
+        unset($a);
         return $this->jsonResponse($response, ['apps' => $apps, 'count' => count($apps)]);
     }
 
@@ -108,6 +116,13 @@ class AppController
         $app = $this->authorizeAppAccess($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        // Don't expose the owner's platform UUID to non-owner members (mirrors the
+        // runtime AppPublicController::getApp stripping).
+        $userId = $request->getAttribute('userId');
+        if (($app['ownerId'] ?? null) !== $userId) {
+            unset($app['ownerId']);
         }
 
         return $this->jsonResponse($response, ['app' => $app]);

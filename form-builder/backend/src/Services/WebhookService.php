@@ -289,7 +289,13 @@ class WebhookService
      */
     private function buildDeliveryHandle(array $webhook, string $event, string $body, string $deliveryId)
     {
-        $signature = 'sha256=' . hash_hmac('sha256', $body, $webhook['secret']);
+        // Sign timestamp + body (Stripe-style) and send the timestamp so receivers
+        // can verify integrity AND reject stale/replayed deliveries outside a
+        // tolerance window. Consumers compute
+        // hash_hmac('sha256', timestamp . '.' . rawBody, secret) and also check the
+        // timestamp is within an acceptable skew (e.g. 5 minutes).
+        $timestamp = (string) time();
+        $signature = 'sha256=' . hash_hmac('sha256', $timestamp . '.' . $body, $webhook['secret']);
 
         // SSRF protection: resolve hostname and block private/reserved IPs
         $parsedUrl = parse_url($webhook['url']);
@@ -338,6 +344,7 @@ class WebhookService
                 'Content-Type: application/json',
                 'X-FormLogic-Event: ' . $event,
                 'X-FormLogic-Signature: ' . $signature,
+                'X-FormLogic-Timestamp: ' . $timestamp,
                 'X-FormLogic-Delivery: ' . $deliveryId,
             ],
         ];

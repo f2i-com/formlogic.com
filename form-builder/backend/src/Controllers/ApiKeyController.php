@@ -84,6 +84,14 @@ class ApiKeyController
                 'error' => true,
                 'message' => $e->getMessage(),
             ], 400);
+        } catch (\PDOException $e) {
+            // Don't echo raw driver/SQL detail (PDOException extends RuntimeException,
+            // so it must be caught before the RuntimeException branch below).
+            error_log('API key creation failed (DB): ' . $e->getMessage());
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Failed to create API key',
+            ], 500);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,

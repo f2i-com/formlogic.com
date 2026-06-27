@@ -1153,7 +1153,9 @@ class ResponseService
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {
             $label = $field['label'] ?? $field['id'];
-            if (is_string($label) && preg_match('/^[=+\-@]/', $label)) {
+            // Same neutralization as the data rows below (leading whitespace/TAB/CR
+            // before a formula trigger) so the header can't smuggle a formula either.
+            if (is_string($label) && preg_match('/^\s*[=+\-@\t\r]/', $label)) {
                 $label = "'" . $label;
             }
             $headers[] = $label;
@@ -1263,13 +1265,19 @@ class ResponseService
         // Cross-tenant guard: only resolve target forms owned by the exporting
         // user. A linked_record pointing at another tenant's form is skipped
         // (its column shows the raw id rather than leaking that form's data).
-        if ($ownerId !== null && !empty($refsByForm)) {
-            $targetIds = array_keys($refsByForm);
-            $placeholders = implode(',', array_fill(0, count($targetIds), '?'));
-            $ownStmt = $this->mysql->prepare("SELECT id FROM forms WHERE id IN ($placeholders) AND user_id = ?");
-            $ownStmt->execute(array_merge($targetIds, [$ownerId]));
-            $allowed = array_flip($ownStmt->fetchAll(\PDO::FETCH_COLUMN));
-            $refsByForm = array_intersect_key($refsByForm, $allowed);
+        // Fail CLOSED: if the owner is unknown, resolve NOTHING rather than
+        // resolving every referenced form (which would leak other tenants' data).
+        if (!empty($refsByForm)) {
+            if ($ownerId === null) {
+                $refsByForm = [];
+            } else {
+                $targetIds = array_keys($refsByForm);
+                $placeholders = implode(',', array_fill(0, count($targetIds), '?'));
+                $ownStmt = $this->mysql->prepare("SELECT id FROM forms WHERE id IN ($placeholders) AND user_id = ?");
+                $ownStmt->execute(array_merge($targetIds, [$ownerId]));
+                $allowed = array_flip($ownStmt->fetchAll(\PDO::FETCH_COLUMN));
+                $refsByForm = array_intersect_key($refsByForm, $allowed);
+            }
         }
 
         // Batch-fetch and build display text

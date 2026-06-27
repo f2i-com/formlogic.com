@@ -391,8 +391,10 @@ function FormResponses() {
     );
     const escapeCell = (val: unknown) => {
       let str = String(val ?? '').replace(/"/g, '""');
-      // Prevent CSV formula injection — prefix with single quote if cell starts with =, +, -, or @
-      if (/^[=+\-@]/.test(str)) str = "'" + str;
+      // Prevent CSV formula injection. Match the hardened backend export
+      // (ResponseService::exportResponsesStreaming): also catch leading whitespace
+      // and TAB/CR before a formula trigger, which spreadsheets still evaluate.
+      if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
       return `"${str}"`;
     };
     const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];

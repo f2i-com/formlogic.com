@@ -71,6 +71,13 @@ class AIController
             ], 400);
         }
 
+        if (!is_string($prompt) || strlen($prompt) > 50000) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Prompt must be text no longer than 50000 characters',
+            ], 400);
+        }
+
         try {
             $result = $this->aiService->generateFormFromPrompt($prompt);
 
@@ -78,7 +85,7 @@ class AIController
                 'success' => true,
                 'data' => $result,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->logger->error('AI form generation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -130,12 +137,11 @@ class AIController
         $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($clientFilename));
         $tempPath = $tempDir . '/' . bin2hex(random_bytes(16)) . '_' . $safeFilename;
 
-        // Create an empty file with restrictive permissions first
-        touch($tempPath);
-        chmod($tempPath, 0600);
-
-        // Move the uploaded file to our prepared location
+        // Move the uploaded file into place, THEN restrict permissions: moveTo()
+        // (move_uploaded_file/rename) replaces the destination inode, so a chmod
+        // applied before the move is discarded.
         $file->moveTo($tempPath);
+        chmod($tempPath, 0600);
 
         // Validate file type using server-side detection (not client-supplied header)
         $allowedTypes = $this->uploadSettings['allowedTypes'];
@@ -171,7 +177,7 @@ class AIController
                 'data' => $result,
                 'pagesProcessed' => count($images),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->logger->error('AI file generation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -212,6 +218,17 @@ class AIController
             ], 400);
         }
 
+        // Each image must be a string (avoids a TypeError in the service) and is
+        // size-capped (~11MB of base64) to bound token cost.
+        foreach ($images as $img) {
+            if (!is_string($img)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Each image must be a base64 string'], 400);
+            }
+            if (strlen($img) > 15000000) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'An image exceeds the maximum size'], 400);
+            }
+        }
+
         try {
             $result = $this->aiService->generateFormFromImages($images, $additionalPrompt);
 
@@ -219,7 +236,7 @@ class AIController
                 'success' => true,
                 'data' => $result,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->logger->error('AI image generation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -254,6 +271,13 @@ class AIController
             ], 400);
         }
 
+        if (!is_string($prompt) || strlen($prompt) > 50000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt must be text no longer than 50000 characters'], 400);
+        }
+        if (!$this->isValidFieldsArray($fields)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Each field must be an object with id, label and type'], 400);
+        }
+
         try {
             $result = $this->aiService->generateScript($prompt, $fields);
 
@@ -261,7 +285,7 @@ class AIController
                 'success' => true,
                 'data' => $result,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->logger->error('AI script generation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -297,6 +321,16 @@ class AIController
             ], 400);
         }
 
+        if (!is_string($prompt) || strlen($prompt) > 50000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt must be text no longer than 50000 characters'], 400);
+        }
+        if (!is_string($currentScript) || strlen($currentScript) > 120000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Script is too long'], 400);
+        }
+        if (!$this->isValidFieldsArray($fields)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Each field must be an object with id, label and type'], 400);
+        }
+
         try {
             $result = $this->aiService->improveScript($currentScript, $prompt, $fields);
 
@@ -304,13 +338,30 @@ class AIController
                 'success' => true,
                 'data' => $result,
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->logger->error('AI script improvement error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
             ], 500);
         }
+    }
+
+    /**
+     * Each fields entry must be an object with id/label/type — guards the AI
+     * service against a TypeError on type-confused input (e.g. ["x"]).
+     */
+    private function isValidFieldsArray(mixed $fields): bool
+    {
+        if (!is_array($fields)) {
+            return false;
+        }
+        foreach ($fields as $f) {
+            if (!is_array($f) || !isset($f['id'], $f['label'], $f['type'])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

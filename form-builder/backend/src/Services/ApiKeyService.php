@@ -68,6 +68,10 @@ class ApiKeyService
             if ($ts === false || $ts <= time()) {
                 throw new \InvalidArgumentException('Expiration date must be in the future');
             }
+            // Normalize to a MySQL-valid datetime so a relative/ambiguous but
+            // strtotime-parseable value (e.g. "+30 days", "tomorrow") can't reach
+            // the TIMESTAMP column and throw a strict-mode PDOException.
+            $expiresAt = date('Y-m-d H:i:s', $ts);
         }
 
         // Use transaction to prevent race condition on key count check
@@ -77,7 +81,6 @@ class ApiKeyService
             $stmt = $pdo->prepare('SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1');
             $stmt->execute([$userId]);
             if ((int) $stmt->fetchColumn() >= self::MAX_KEYS_PER_USER) {
-                $pdo->rollBack();
                 throw new \RuntimeException('Maximum number of API keys reached (' . self::MAX_KEYS_PER_USER . ')');
             }
 
@@ -105,10 +108,13 @@ class ApiKeyService
             ]);
 
             $pdo->commit();
-        } catch (\RuntimeException $e) {
-            throw $e;
-        } catch (\Exception $e) {
-            $pdo->rollBack();
+        } catch (\Throwable $e) {
+            // Roll back on ANY failure. PDOException extends RuntimeException, so the
+            // previous RuntimeException-first catch rethrew DB errors WITHOUT a
+            // rollback, leaving the transaction open.
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             throw $e;
         }
 
