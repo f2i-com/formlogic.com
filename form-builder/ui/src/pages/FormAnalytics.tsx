@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox } from 'lucide-react';
-import { Spinner } from '../components/ui/Spinner';
+import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
@@ -616,8 +616,8 @@ export default function FormAnalytics() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Spinner />
+              <div className="space-y-3" aria-busy="true" aria-label="Loading responses">
+                {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
               </div>
             ) : responses.length === 0 ? (
               <EmptyState

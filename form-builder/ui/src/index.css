@@ -304,6 +304,7 @@
     .animate-slide-out,
     .animate-scale-in,
     .animate-shake,
+    .animate-pulse,
     .fade-in-up,
     .shimmer {
       animation: none !important;

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
+import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useFormStore } from '../stores/formStore';
@@ -484,25 +485,25 @@ export function Dashboard() {
             icon={FileText}
             iconBg="bg-primary-50 dark:bg-primary-500/10"
             iconColor="text-primary-600 dark:text-primary-400"
-            value={totalForms}
+            value={formsLoading ? '—' : totalForms}
             label="Total Forms"
-            subtext={totalForms === 1 ? '1 form created' : `${totalForms} forms created`}
+            subtext={formsLoading ? 'Loading…' : totalForms === 1 ? '1 form created' : `${totalForms} forms created`}
           />
           <StatCard
             className="fade-in-up stagger-2"
             icon={Globe}
             iconBg="bg-green-50 dark:bg-green-500/10"
             iconColor="text-green-600 dark:text-green-400"
-            value={publishedForms}
+            value={formsLoading ? '—' : publishedForms}
             label="Published"
-            subtext={totalForms > 0 ? `${Math.round((publishedForms / totalForms) * 100)}% of forms` : 'No forms yet'}
+            subtext={formsLoading ? 'Loading…' : totalForms > 0 ? `${Math.round((publishedForms / totalForms) * 100)}% of forms` : 'No forms yet'}
           />
           <StatCard
             className="fade-in-up stagger-3"
             icon={Inbox}
             iconBg="bg-blue-50 dark:bg-blue-500/10"
             iconColor="text-blue-600 dark:text-blue-400"
-            value={totalResponses}
+            value={formsLoading ? '—' : totalResponses}
             label="Total Responses"
             subtext="Across all forms"
           />
@@ -511,9 +512,9 @@ export function Dashboard() {
             icon={TrendingUp}
             iconBg="bg-amber-50 dark:bg-amber-500/10"
             iconColor="text-amber-600 dark:text-amber-400"
-            value={totalForms > 0 ? `${avgCompletionRate}%` : '—'}
+            value={formsLoading ? '—' : totalForms > 0 ? `${avgCompletionRate}%` : '—'}
             label="Completion Rate"
-            subtext={totalForms > 0 ? 'Average across forms' : 'No forms yet'}
+            subtext={formsLoading ? 'Loading…' : totalForms > 0 ? 'Average across forms' : 'No forms yet'}
           />
         </div>
 
@@ -611,7 +612,11 @@ export function Dashboard() {
               )}
             </div>
 
-            {recentForms.length === 0 ? (
+            {formsLoading && recentForms.length === 0 ? (
+              <div className="space-y-3" aria-busy="true" aria-label="Loading recent forms">
+                {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
+              </div>
+            ) : recentForms.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
                   <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">

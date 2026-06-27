@@ -24,7 +24,7 @@ import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
-import { Spinner } from '../components/ui/Spinner';
+import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
@@ -480,8 +480,22 @@ function FormResponses() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center transition-colors">
-        <Spinner size="lg" />
+      <div className="min-h-screen transition-colors">
+        <Header title="Responses" />
+        <div className="flex-1 w-full p-4 sm:p-6 lg:p-8" aria-busy="true" aria-label="Loading responses">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-4 flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-lg flex-shrink-0" />
+                <div className="space-y-2 flex-1"><Skeleton className="h-5 w-12" /><Skeleton className="h-3 w-20" /></div>
+              </div>
+            ))}
+          </div>
+          <Skeleton className="h-11 w-full rounded-lg mb-6" />
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => <ListRowSkeleton key={i} />)}
+          </div>
+        </div>
       </div>
     );
   }
