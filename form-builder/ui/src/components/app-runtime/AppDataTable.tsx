@@ -314,7 +314,9 @@ export function AppDataTable() {
   const submittedAtCol: Column<Record<string, unknown>> = {
     key: 'submittedAt', label: 'Submitted', sortable: true, render: (r) => {
       const date = r.submittedAt as string;
-      return date ? new Date(date).toLocaleString() : '-';
+      // parseServerDate normalizes the offset-less UTC string; raw new Date() would
+      // parse it in the viewer's local zone and show the wrong time (cf. line 57).
+      return date ? parseServerDate(date).toLocaleString() : '-';
     },
   };
 

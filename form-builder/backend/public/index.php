@@ -744,10 +744,14 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
         $container->get(\FormLogic\Services\ResponseService::class)->recordView($args['id']);
     } catch (\Throwable $e) { /* analytics is non-critical */ }
 
-    // Return form without sensitive data
+    // Return form without sensitive data (incl. the owner's private notification
+    // settings, e.g. notificationEmail).
     unset($form['userId']);
     unset($form['logicScript']);
     unset($form['logicPrompt']);
+    if (isset($form['settings']) && is_array($form['settings'])) {
+        unset($form['settings']['notifications']);
+    }
     $response->getBody()->write(json_encode(['form' => $form]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);

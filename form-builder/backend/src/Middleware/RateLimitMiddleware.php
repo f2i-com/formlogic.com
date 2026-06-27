@@ -57,8 +57,13 @@ class RateLimitMiddleware implements MiddlewareInterface
     {
         $key = $this->getClientKey($request);
 
-        // Block if already at/over the limit for the current window.
-        if ($this->limiter->count($key, $this->windowSeconds) >= $this->maxRequests) {
+        // Atomically increment and gate on the post-increment count. Gating on a
+        // separate count() before hit() let K concurrent requests all observe
+        // count < max and overshoot the limit. hit() returns 0 on storage error
+        // (fail open). Incrementing a blocked request is harmless: the counter is
+        // keyed to a fixed window bucket, so it never extends the lockout.
+        $count = $this->limiter->hit($key, $this->windowSeconds);
+        if ($count > $this->maxRequests) {
             $retryAfter = $this->limiter->secondsUntilReset($this->windowSeconds);
 
             $response = new SlimResponse();
@@ -77,8 +82,6 @@ class RateLimitMiddleware implements MiddlewareInterface
                 ->withHeader('X-RateLimit-Reset', (string)(time() + $retryAfter));
         }
 
-        // Count this request, then continue.
-        $count = $this->limiter->hit($key, $this->windowSeconds);
         $remaining = max(0, $this->maxRequests - $count);
 
         $response = $handler->handle($request);

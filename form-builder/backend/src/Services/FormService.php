@@ -316,8 +316,13 @@ class FormService
             throw $e;
         }
 
-        // Only delete SQLite after MySQL succeeds
-        $this->sqlite->deleteFormDatabase($formId);
+        // Only delete SQLite after MySQL succeeds. Log (don't throw) on failure so an
+        // orphaned per-form .sqlite — a held handle/WAL on Windows, or a crash in
+        // this window — is visible for reconciliation instead of silently leaving
+        // deleted-form responses (PII) on disk. (Returns true when no file exists.)
+        if (!$this->sqlite->deleteFormDatabase($formId)) {
+            error_log("FormService::deleteForm — failed to delete SQLite DB for form {$formId}; orphaned file may remain");
+        }
 
         // Clean up uploaded files for this form
         if ($this->fileStorageService !== null) {
@@ -325,6 +330,7 @@ class FormService
                 $this->fileStorageService->deleteFormFiles($formId);
             } catch (\Exception $e) {
                 // Don't fail form deletion if file cleanup fails
+                error_log("FormService::deleteForm — file cleanup failed for form {$formId}: " . $e->getMessage());
             }
         }
 

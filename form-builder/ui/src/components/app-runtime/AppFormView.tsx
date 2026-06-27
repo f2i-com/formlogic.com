@@ -731,7 +731,16 @@ export function AppFormView() {
       await createResponse(formId, submissionData);
       setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit');
+      // Mirror the public-form path: a failure only means "not submitted" when we
+      // are ONLINE (a real server rejection). When offline, the service worker's
+      // backgroundSync queue has captured the POST and will replay it on reconnect,
+      // so show the success screen — a hard error here would be wrong and would
+      // prompt a retry that double-submits once connectivity returns.
+      if (navigator.onLine) {
+        setError(err instanceof Error ? err.message : 'Failed to submit');
+      } else {
+        setSubmitted(true);
+      }
     }
     setSubmitting(false);
     submittingRef.current = false;

@@ -379,6 +379,23 @@ class ResponseService
         return $this->formatResponse($db, $row);
     }
 
+    /** Whether a form still exists in MySQL (the source of truth for form lifecycle). */
+    private function formExists(string $formId): bool
+    {
+        try {
+            $stmt = $this->mysql->prepare('SELECT 1 FROM forms WHERE id = :id LIMIT 1');
+            $stmt->execute(['id' => $formId]);
+            return (bool) $stmt->fetchColumn();
+        } catch (\Throwable $e) {
+            // Don't block submissions on a metadata-store error — the MySQL FK on
+            // the metadata insert still enforces existence. Fail open.
+            $this->logger->error('formExists check failed (allowing submission)', [
+                'formId' => $formId, 'error' => $e->getMessage(),
+            ]);
+            return true;
+        }
+    }
+
     /**
      * Create a new response (form submission)
      *
@@ -389,6 +406,13 @@ class ResponseService
      */
     public function createResponse(string $formId, array $data, ?string $script = null): array|ScriptRejection
     {
+        // Guard against a form deleted between the controller's existence check and
+        // now: getFormDatabase() would otherwise resurrect a per-form SQLite DB for
+        // a form that no longer exists (orphaned file + a guaranteed MySQL FK 500).
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
+        }
+
         $db = $this->sqlite->getFormDatabase($formId);
 
         // Run migrations to ensure new tables exist
@@ -429,29 +453,44 @@ class ResponseService
             VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
         ");
 
-        $stmt->execute([
-            'id' => $id,
-            'answers' => json_encode($data['answers'] ?? []),
-            'metadata' => json_encode([
-                'userAgent' => $data['userAgent'] ?? null,
-                'referrer' => $data['referrer'] ?? null,
-                'completionTime' => $data['completionTime'] ?? null,
-                'ipAddress' => $data['ipAddress'] ?? null,
-                'submittedByUserId' => $data['submittedByUserId'] ?? null,
-            ]),
-            'status' => $status,
-            'submitted_at' => $now,
-            'updated_at' => $now,
-        ]);
+        // Steps 3-5 atomically: insert the response, then apply script results and
+        // log the execution in ONE SQLite transaction. Previously these ran in
+        // autocommit, so a throw in applyScriptResult/logScriptExecution left a
+        // committed response row with no MySQL metadata (dual-DB divergence) and a
+        // 500. Now any failure rolls the whole response back.
+        $db->beginTransaction();
+        try {
+            $stmt->execute([
+                'id' => $id,
+                'answers' => json_encode($data['answers'] ?? []),
+                'metadata' => json_encode([
+                    'userAgent' => $data['userAgent'] ?? null,
+                    'referrer' => $data['referrer'] ?? null,
+                    'completionTime' => $data['completionTime'] ?? null,
+                    'ipAddress' => $data['ipAddress'] ?? null,
+                    'submittedByUserId' => $data['submittedByUserId'] ?? null,
+                ]),
+                'status' => $status,
+                'submitted_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        // 4. Apply script results (computed fields, tags)
-        if ($scriptResult !== null && $scriptResult->success) {
-            $this->applyScriptResult($db, $id, $scriptResult);
-        }
+            // 4. Apply script results (computed fields, tags)
+            if ($scriptResult !== null && $scriptResult->success) {
+                $this->applyScriptResult($db, $id, $scriptResult);
+            }
 
-        // 5. Log script execution
-        if ($scriptResult !== null) {
-            $this->logScriptExecution($db, $id, $scriptResult);
+            // 5. Log script execution
+            if ($scriptResult !== null) {
+                $this->logScriptExecution($db, $id, $scriptResult);
+            }
+
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
         }
 
         // 6. Also insert metadata into MySQL for global querying
@@ -488,16 +527,34 @@ class ResponseService
             ]);
         }
 
-        $createdResponse = $this->getResponse($formId, $id);
+        // 8. Read back + dispatch webhook, best-effort: the response is durably
+        // saved in both stores by now, so a read/format/delivery error must NOT
+        // bubble up and turn a saved submission into a 500 (the submitter would
+        // retry and create a duplicate).
+        $createdResponse = null;
+        try {
+            $createdResponse = $this->getResponse($formId, $id);
 
-        // 8. Dispatch webhook (strip sensitive metadata from payload)
-        if ($this->webhookService !== null && $createdResponse) {
-            $webhookPayload = $createdResponse;
-            unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
-            $this->webhookService->dispatch($formId, 'response.created', $webhookPayload);
+            if ($this->webhookService !== null && $createdResponse) {
+                $webhookPayload = $createdResponse;
+                unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+                $this->webhookService->dispatch($formId, 'response.created', $webhookPayload);
+            }
+        } catch (\Throwable $postErr) {
+            $this->logger->error('Post-persist read/webhook failed after response create', [
+                'formId' => $formId,
+                'responseId' => $id,
+                'error' => $postErr->getMessage(),
+            ]);
         }
 
-        return $createdResponse;
+        return $createdResponse ?? [
+            'id' => $id,
+            'status' => $status,
+            'submittedAt' => $now,
+            'updatedAt' => $now,
+            'answers' => $data['answers'] ?? [],
+        ];
     }
 
     /**
@@ -767,19 +824,36 @@ class ResponseService
         // would leave MySQL showing the new status while SQLite kept the old one,
         // permanently desyncing the global index from the per-form record.
         if (isset($data['status'])) {
-            $mysqlStmt = $this->mysql->prepare("
-                UPDATE response_metadata SET status = :status WHERE id = :id
-            ");
-            $mysqlStmt->execute(['status' => $data['status'], 'id' => $responseId]);
+            // Best-effort mirror: the authoritative SQLite update already succeeded,
+            // so a metadata-index failure must not 500 the caller. Status updates
+            // are idempotent, so a retry/reconciliation is safe.
+            try {
+                $mysqlStmt = $this->mysql->prepare("
+                    UPDATE response_metadata SET status = :status WHERE id = :id
+                ");
+                $mysqlStmt->execute(['status' => $data['status'], 'id' => $responseId]);
+            } catch (\Throwable $mirrorErr) {
+                $this->logger->error('Failed to mirror response status to response_metadata', [
+                    'responseId' => $responseId,
+                    'error' => $mirrorErr->getMessage(),
+                ]);
+            }
         }
 
         $updatedResponse = $this->getResponse($formId, $responseId);
 
-        // Dispatch webhook (strip sensitive metadata from payload)
+        // Dispatch webhook (strip sensitive metadata from payload); best-effort so a
+        // delivery failure doesn't 500 a successful update.
         if ($this->webhookService !== null && $updatedResponse) {
-            $webhookPayload = $updatedResponse;
-            unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
-            $this->webhookService->dispatch($formId, 'response.updated', $webhookPayload);
+            try {
+                $webhookPayload = $updatedResponse;
+                unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+                $this->webhookService->dispatch($formId, 'response.updated', $webhookPayload);
+            } catch (\Throwable $hookErr) {
+                $this->logger->error('Webhook dispatch failed after response update', [
+                    'formId' => $formId, 'responseId' => $responseId, 'error' => $hookErr->getMessage(),
+                ]);
+            }
         }
 
         return $updatedResponse;
@@ -796,38 +870,67 @@ class ResponseService
 
         $db = $this->sqlite->getFormDatabase($formId);
 
-        // Fetch response answers before deleting so we can clean up uploaded files
+        // Read answers up front (to locate uploaded files) but DON'T delete the
+        // files yet: files are unrecoverable, so we remove them only AFTER the
+        // authoritative record is gone. Deleting them first risked a surviving
+        // response row pointing at already-deleted files on a later failure.
+        $answers = null;
         if ($this->fileStorageService !== null) {
             $fetchStmt = $db->prepare("SELECT answers FROM responses WHERE id = :id");
             $fetchStmt->execute(['id' => $responseId]);
             $row = $fetchStmt->fetch(PDO::FETCH_ASSOC);
             if ($row && !empty($row['answers'])) {
-                $answers = json_decode($row['answers'], true);
-                if (is_array($answers)) {
-                    $this->fileStorageService->deleteResponseFiles($formId, $answers);
+                $decoded = json_decode($row['answers'], true);
+                if (is_array($decoded)) {
+                    $answers = $decoded;
                 }
             }
         }
 
-        // Delete from SQLite
+        // Delete the authoritative SQLite row first (source of truth).
         $stmt = $db->prepare("DELETE FROM responses WHERE id = :id");
         $stmt->execute(['id' => $responseId]);
         $deleted = $stmt->rowCount() > 0;
 
-        // Delete from MySQL metadata and clean up response_links
         if ($deleted) {
-            $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id");
-            $mysqlStmt->execute(['id' => $responseId]);
+            // Cross-store cleanup is best-effort: the source-of-truth row is already
+            // gone, so a MySQL hiccup must not abort the method (it would only leave
+            // a reconcilable orphan metadata/link row, not corrupt data).
+            try {
+                $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id");
+                $mysqlStmt->execute(['id' => $responseId]);
 
-            // Clean up response_links referencing this response
-            $linkStmt = $this->mysql->prepare(
-                "DELETE FROM response_links WHERE source_response_id = :id1 OR target_response_id = :id2"
-            );
-            $linkStmt->execute(['id1' => $responseId, 'id2' => $responseId]);
+                $linkStmt = $this->mysql->prepare(
+                    "DELETE FROM response_links WHERE source_response_id = :id1 OR target_response_id = :id2"
+                );
+                $linkStmt->execute(['id1' => $responseId, 'id2' => $responseId]);
+            } catch (\Throwable $metaErr) {
+                $this->logger->error('Cross-store cleanup failed after response delete', [
+                    'formId' => $formId, 'responseId' => $responseId, 'error' => $metaErr->getMessage(),
+                ]);
+            }
 
-            // Dispatch webhook
+            // Now remove the (unrecoverable) uploaded files — last, after the record
+            // is gone.
+            if ($this->fileStorageService !== null && is_array($answers)) {
+                try {
+                    $this->fileStorageService->deleteResponseFiles($formId, $answers);
+                } catch (\Throwable $fileErr) {
+                    $this->logger->error('File cleanup failed after response delete', [
+                        'formId' => $formId, 'responseId' => $responseId, 'error' => $fileErr->getMessage(),
+                    ]);
+                }
+            }
+
+            // Dispatch webhook (best-effort).
             if ($this->webhookService !== null) {
-                $this->webhookService->dispatch($formId, 'response.deleted', ['id' => $responseId]);
+                try {
+                    $this->webhookService->dispatch($formId, 'response.deleted', ['id' => $responseId]);
+                } catch (\Throwable $hookErr) {
+                    $this->logger->error('Webhook dispatch failed after response delete', [
+                        'formId' => $formId, 'responseId' => $responseId, 'error' => $hookErr->getMessage(),
+                    ]);
+                }
             }
         }
 
@@ -1394,6 +1497,11 @@ class ResponseService
             if (isset($field['id']) && isset($field['type'])) {
                 $fieldTypeMap[$field['id']] = $field['type'];
             }
+        }
+
+        // Don't resurrect a per-form SQLite DB for a form that no longer exists.
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
         }
 
         $db = $this->sqlite->getFormDatabase($formId);

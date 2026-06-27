@@ -16,9 +16,11 @@ use Psr\Http\Message\ServerRequestInterface as Request;
  *   1. APP_URL env var (the canonical, explicit choice).
  *   2. The request Origin — only if it exactly matches the CORS allowlist
  *      (CORS_ORIGIN / CORS_ALLOWED_ORIGINS).
- *   3. CORS_ORIGIN (the configured primary frontend origin; defaults to the dev
- *      origin in config).
- *   4. The request's own scheme+host as a last resort.
+ *   3. CORS_ORIGIN (the configured primary frontend origin).
+ *   4. The first configured CORS_ALLOWED_ORIGINS entry.
+ *   5. None of the above → throw (fail CLOSED). The request Host header is NEVER
+ *      used as a fallback: it is attacker-controllable and would let a spoofed
+ *      Host funnel a victim's reset/invite token to an attacker domain.
  */
 final class AppUrl
 {
@@ -39,10 +41,19 @@ final class AppUrl
             return rtrim($corsOrigin, '/');
         }
 
-        $uri = $request->getUri();
-        $port = $uri->getPort();
-        $authority = $uri->getHost() . ($port && !in_array($port, [80, 443], true) ? ':' . $port : '');
-        return $uri->getScheme() . '://' . $authority;
+        // Last server-trusted source: the first configured CORS allowlist entry.
+        $allowed = self::allowedOrigins();
+        if (!empty($allowed)) {
+            return rtrim($allowed[0], '/');
+        }
+
+        // No server-trusted base configured. Fail CLOSED rather than derive the host
+        // from the (attacker-controllable) request Host header. Both callers wrap
+        // this in try/catch (best-effort email), so a reset/invite link is simply
+        // not sent until APP_URL (or CORS_ORIGIN / CORS_ALLOWED_ORIGINS) is set.
+        throw new \RuntimeException(
+            'No trusted frontend base URL configured; set APP_URL (or CORS_ORIGIN / CORS_ALLOWED_ORIGINS) to enable emailed links.'
+        );
     }
 
     /** @return string[] */

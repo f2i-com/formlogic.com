@@ -143,7 +143,15 @@ export function AppResponseDetail() {
     setResponse({ ...response, status: newStatus }); // optimistic
     try {
       const updated = await updateResponse(formId, responseId, { status: newStatus });
-      if (updated) setResponse(updated as Record<string, unknown>);
+      // A status change doesn't touch answers and the PUT result isn't resolved
+      // (no _resolved), so carry the prior resolved linked-record data forward —
+      // otherwise linked-record chips revert to raw ids until a refetch.
+      if (updated) {
+        setResponse({
+          ...(updated as Record<string, unknown>),
+          _resolved: (prev as Record<string, unknown> | null)?._resolved,
+        });
+      }
     } catch (err) {
       setResponse(prev); // rollback
       setSaveError(err instanceof Error ? err.message : 'Failed to update status');

@@ -87,6 +87,11 @@ class AppPublicController
             }
             $formData = $this->formService->getForm($form['formId']);
             if ($formData) {
+                // Don't leak the owner's private notification settings (e.g.
+                // notificationEmail) to app members.
+                if (isset($formData['settings']) && is_array($formData['settings'])) {
+                    unset($formData['settings']['notifications']);
+                }
                 $runtimeForms[] = [
                     'formId' => $form['formId'],
                     'displayName' => $form['displayName'],
@@ -245,8 +250,12 @@ class AppPublicController
         // Record a view for analytics (best-effort; never blocks form serving).
         $this->responseService->recordView($formId);
 
-        // Strip sensitive fields from runtime response
+        // Strip sensitive fields from runtime response (incl. the owner's private
+        // notification settings, e.g. notificationEmail).
         unset($form['logicScript'], $form['logicPrompt'], $form['userId']);
+        if (isset($form['settings']) && is_array($form['settings'])) {
+            unset($form['settings']['notifications']);
+        }
 
         return $this->jsonResponse($response, ['form' => $form]);
     }

@@ -168,8 +168,12 @@ class DocumentConverter
         } elseif ($hasGhostscript) {
             // Use Ghostscript directly
             $outputPattern = $this->randomTempBase('pdf_') . '_%03d.png';
+            // -dSAFER disables file/pipe/URL PostScript operators so a malicious
+            // embedded-PostScript PDF can't read/write files or make requests
+            // (CVE-2018-16509 class). Harmless no-op on modern gs (default on);
+            // protective on old (<9.50) gs.
             $command = sprintf(
-                'gs -dNOPAUSE -dBATCH -sDEVICE=png16m -r%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
+                'gs -dSAFER -dNOPAUSE -dBATCH -sDEVICE=png16m -r%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
                 $this->imageDpi,
                 $this->maxPages,
                 escapeshellarg($outputPattern),

@@ -570,6 +570,11 @@ class ExternalApiController
         unset($form['logicScript']);
         unset($form['logicPrompt']);
         unset($form['userId']);
+        // The owner's private notification settings (e.g. notificationEmail) are
+        // not for external consumers.
+        if (isset($form['settings']) && is_array($form['settings'])) {
+            unset($form['settings']['notifications']);
+        }
         return $form;
     }
 
