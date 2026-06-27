@@ -63,11 +63,29 @@ class AppUserService
     {
         $stmt = $this->mysql->prepare("SELECT * FROM app_roles WHERE app_id = :app_id ORDER BY sort_order ASC");
         $stmt->execute(['app_id' => $appId]);
+        $rows = $stmt->fetchAll();
+
+        // Batch-fetch permissions for all roles in one query (was 1 query per role).
+        $permsByRole = [];
+        $roleIds = array_column($rows, 'id');
+        if (!empty($roleIds)) {
+            $ph = implode(',', array_fill(0, count($roleIds), '?'));
+            $permStmt = $this->mysql->prepare("SELECT id, role_id, form_id, permission FROM app_role_permissions WHERE role_id IN ($ph)");
+            $permStmt->execute($roleIds);
+            while ($pr = $permStmt->fetch()) {
+                $permsByRole[$pr['role_id']][] = [
+                    'id' => $pr['id'],
+                    'roleId' => $pr['role_id'],
+                    'formId' => $pr['form_id'],
+                    'permission' => $pr['permission'],
+                ];
+            }
+        }
 
         $roles = [];
-        while ($row = $stmt->fetch()) {
+        foreach ($rows as $row) {
             $role = AppRole::fromArray($row)->toArray();
-            $role['permissions'] = $this->getRolePermissions($row['id']);
+            $role['permissions'] = $permsByRole[$row['id']] ?? [];
             $roles[] = $role;
         }
         return $roles;

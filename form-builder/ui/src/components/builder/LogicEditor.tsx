@@ -138,11 +138,13 @@ export function LogicEditor({
     }
   }, [field, idToVar]);
 
-  // Update expression when simple conditions change
+  // Update expression when simple conditions change. Must also handle the empty
+  // case: when the last condition is removed, clear the expression — otherwise the
+  // stale generated string persists and handleSave writes a phantom rule the author
+  // believed they had cleared.
   useEffect(() => {
-    if (mode === 'simple' && conditions.length > 0) {
-      const expr = simpleConditionToExpression(conditions, combinator, idToVar);
-      setExpression(expr);
+    if (mode === 'simple') {
+      setExpression(conditions.length > 0 ? simpleConditionToExpression(conditions, combinator, idToVar) : '');
     }
   }, [conditions, combinator, mode, idToVar]);
 

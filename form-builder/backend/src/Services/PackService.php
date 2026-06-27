@@ -78,13 +78,22 @@ class PackService
                 // Remap @pack: references in linked_record fields
                 $fields = $this->remapFieldReferences($packForm['fields'] ?? [], $formIdMap);
 
+                // Strip the pack author's private notification settings (e.g.
+                // notificationEmail) so installs don't silently route the installer's
+                // response notifications to the author. (Mirrors the output-side
+                // stripping; this is the untrusted-input vector.)
+                $importSettings = $packForm['settings'] ?? [];
+                if (is_array($importSettings)) {
+                    unset($importSettings['notifications']);
+                }
+
                 $formData = [
                     'id' => $newFormId,
                     'userId' => $userId,
                     'title' => $packForm['title'],
                     'description' => $packForm['description'] ?? null,
                     'status' => 'draft',
-                    'settings' => $packForm['settings'] ?? [],
+                    'settings' => $importSettings,
                     'theme' => $packForm['theme'] ?? [],
                     'logicScript' => $packForm['logicScript'] ?? null,
                     'icon' => $packForm['icon'] ?? null,

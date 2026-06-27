@@ -37,6 +37,14 @@ class AppService
         return $apps;
     }
 
+    /** Cheap boolean membership check — avoids the getAppForms JOIN + settings decode. */
+    public function formBelongsToApp(string $appId, string $formId): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM app_forms WHERE app_id = :app_id AND form_id = :form_id LIMIT 1");
+        $stmt->execute(['app_id' => $appId, 'form_id' => $formId]);
+        return (bool) $stmt->fetchColumn();
+    }
+
     public function getApp(string $appId): ?array
     {
         $stmt = $this->mysql->prepare("SELECT * FROM apps WHERE id = :id");

@@ -396,6 +396,12 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
 
   const formCount = uploadedPack?.forms?.length ?? 0;
   const appCount = uploadedPack?.apps?.length ?? 0;
+  // Surface that a pack bundles server-side logic (runs on submit, can make
+  // outbound requests) so the installer can review/consent before importing.
+  const hasLogicScript = (uploadedPack?.forms ?? []).some((f) => {
+    const s = (f as Record<string, unknown>).logicScript;
+    return typeof s === 'string' && s.trim() !== '';
+  });
 
   return (
     <>
@@ -839,6 +845,15 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   {uploadedPack.packMeta.description && (
                     <div className="px-4 pb-3">
                       <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">{uploadedPack.packMeta.description}</p>
+                    </div>
+                  )}
+
+                  {hasLogicScript && (
+                    <div className="px-4 pb-3">
+                      <div className="flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
+                        <span>This pack includes <strong>backend logic scripts</strong> that run on your server when a form is submitted and can make outbound network requests. Only import packs you trust, and review each form's Backend Logic Script before publishing.</span>
+                      </div>
                     </div>
                   )}
 

@@ -358,6 +358,7 @@ function FieldInput({
             role="radio"
             aria-checked={currentRating === i + 1}
             aria-label={`${i + 1} out of ${maxStars} stars`}
+            tabIndex={currentRating === i + 1 || (!currentRating && i === 0) ? 0 : -1}
             onClick={() => onChange(i + 1)}
             onKeyDown={(e) => {
               if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
@@ -397,6 +398,7 @@ function FieldInput({
                 role="radio"
                 aria-checked={selected}
                 aria-label={`${num} out of ${max}`}
+                tabIndex={selected || (value == null && i === 0) ? 0 : -1}
                 onClick={() => onChange(num)}
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {

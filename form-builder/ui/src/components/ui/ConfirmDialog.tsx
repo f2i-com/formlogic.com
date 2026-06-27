@@ -26,7 +26,7 @@ export function ConfirmDialog({
   isLoading = false,
 }: ConfirmDialogProps) {
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false}>
+    <Modal isOpen={isOpen} onClose={onClose} size="sm" showCloseButton={false} ariaLabel={title}>
       <div className="p-6">
         <div className="flex gap-4">
           {variant === 'danger' ? (

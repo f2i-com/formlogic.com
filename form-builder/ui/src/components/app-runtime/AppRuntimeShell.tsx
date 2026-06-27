@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { cn } from '../../lib/utils';
 
 interface AppRuntimeShellProps {
@@ -29,17 +30,11 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     }
   }, [location.pathname, config, setActiveForm]);
 
-  // Close drawer on Escape key
-  useEffect(() => {
-    if (!mobileMenuOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setMobileMenuOpen(false);
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [mobileMenuOpen]);
+  // Focus trap + Escape + focus restore for the mobile drawer. The drawer is
+  // aria-modal, but previously only handled Escape — keyboard/SR users could Tab
+  // out onto the page behind it. (Replaces the manual Escape-only handler.)
+  const drawerRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(drawerRef, mobileMenuOpen, () => setMobileMenuOpen(false));
 
   // Prevent body scroll when drawer is open
   useEffect(() => {
@@ -211,7 +206,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} aria-hidden="true" />
-          <div className="absolute left-0 top-0 bottom-0 w-64 sm:w-72 bg-white dark:bg-slate-900 shadow-2xl shadow-black/20 flex flex-col">
+          <div ref={drawerRef} tabIndex={-1} className="absolute left-0 top-0 bottom-0 w-64 sm:w-72 bg-white dark:bg-slate-900 shadow-2xl shadow-black/20 flex flex-col">
             <div className="h-14 flex items-center justify-between px-4 border-b border-gray-100 dark:border-slate-800/80 flex-shrink-0">
               <h2 className="font-semibold app-text-primary text-sm tracking-tight">{config.app.name}</h2>
               <button

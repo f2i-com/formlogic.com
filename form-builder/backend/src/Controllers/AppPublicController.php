@@ -966,13 +966,9 @@ class AppPublicController
 
     private function verifyFormBelongsToApp(string $appId, string $formId): bool
     {
-        $forms = $this->appService->getAppForms($appId);
-        foreach ($forms as $form) {
-            if ($form['formId'] === $formId) {
-                return true;
-            }
-        }
-        return false;
+        // Cheap boolean check (indexed) instead of fetching + scanning the full
+        // getAppForms JOIN just to test membership.
+        return $this->appService->formBelongsToApp($appId, $formId);
     }
 
     /**

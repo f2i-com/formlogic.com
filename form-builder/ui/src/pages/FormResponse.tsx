@@ -284,6 +284,7 @@ function FieldResponse({
                 role="radio"
                 aria-checked={currentRating === i + 1}
                 aria-label={`${i + 1} star${i === 0 ? '' : 's'}`}
+                tabIndex={currentRating === i + 1 || (!currentRating && i === 0) ? 0 : -1}
                 onClick={() => onChange(i + 1)}
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
@@ -332,6 +333,7 @@ function FieldResponse({
                     role="radio"
                     aria-checked={scaleValue === num}
                     aria-label={`${num} out of ${end}`}
+                    tabIndex={scaleValue === num || (scaleValue == null && i === 0) ? 0 : -1}
                     onClick={() => onChange(num)}
                     onKeyDown={(e) => {
                       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {

@@ -241,8 +241,11 @@ function FormResponses() {
       let bVal: number;
 
       if (sortField === 'submittedAt') {
-        aVal = new Date(a.submittedAt).getTime() || 0;
-        bVal = new Date(b.submittedAt).getTime() || 0;
+        // Use parseServerDate (not raw new Date): the backend's offset-less
+        // 'YYYY-MM-DD HH:MM:SS' is Invalid Date in Safari/iOS, which would collapse
+        // every row to 0 and make the Date sort a no-op there.
+        aVal = parseServerDate(a.submittedAt).getTime() || 0;
+        bVal = parseServerDate(b.submittedAt).getTime() || 0;
       } else {
         aVal = a.completionTime || 0;
         bVal = b.completionTime || 0;

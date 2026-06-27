@@ -15,6 +15,9 @@ interface ModalProps {
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
   showCloseButton?: boolean;
+  // Accessible name for dialogs that render their own heading (so no visible
+  // header is shown) — e.g. ConfirmDialog. Ignored when `title` is set.
+  ariaLabel?: string;
 }
 
 const FOCUSABLE_SELECTORS = [
@@ -34,6 +37,7 @@ export function Modal({
   children,
   size = 'md',
   showCloseButton = true,
+  ariaLabel,
 }: ModalProps) {
   const uniqueId = useId();
   const titleId = `modal-title-${uniqueId}`;
@@ -146,6 +150,7 @@ export function Modal({
             aria-modal="true"
             onMouseDown={(e) => e.stopPropagation()}
             aria-labelledby={title ? titleId : undefined}
+            aria-label={!title ? ariaLabel : undefined}
             aria-describedby={description ? descId : undefined}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}

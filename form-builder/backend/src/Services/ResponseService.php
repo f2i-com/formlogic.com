@@ -1037,19 +1037,19 @@ class ResponseService
 
             $db = $this->sqlite->getFormDatabase($formId);
 
-            // Average completion time - use simpler query without json_extract for compatibility
+            // Average completion time: a single DB-side aggregate over ALL rows.
+            // Previously fetched up to 1000 full rows via getFormResponses (which
+            // also ran computed/tags batch queries + decoded answers/computed for
+            // every row) just to average one metadata field — and only over the
+            // most-recent 1000. json_extract is used throughout this service.
             $avgTime = 0;
             try {
-                $responses = $this->getFormResponses($formId, ['limit' => 1000]);
-                $totalTime = 0;
-                $timeCount = 0;
-                foreach ($responses as $r) {
-                    if (!empty($r['metadata']['completionTime'])) {
-                        $totalTime += (float)$r['metadata']['completionTime'];
-                        $timeCount++;
-                    }
-                }
-                $avgTime = $timeCount > 0 ? $totalTime / $timeCount : 0;
+                $stmt = $db->query(
+                    "SELECT AVG(CAST(json_extract(metadata, '$.completionTime') AS REAL))
+                     FROM responses
+                     WHERE json_extract(metadata, '$.completionTime') IS NOT NULL"
+                );
+                $avgTime = (float)($stmt->fetchColumn() ?: 0);
             } catch (\Exception $e) {
                 // Log but continue - avgTime will remain 0
                 $this->logger->warning('Analytics avgTime calculation error', ['formId' => $formId, 'exception' => $e->getMessage()]);

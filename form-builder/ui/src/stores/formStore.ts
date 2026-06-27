@@ -168,8 +168,20 @@ export const useFormStore = create<FormState>()(
           try {
             const form = get().forms.find((f) => f.id === formId);
             if (form) {
-              await api.updateForm(formId, { [field]: form[field] });
+              // api.updateForm returns { error } as a VALUE on HTTP/network/quota
+              // failure (it doesn't throw), so a failed save must be checked here —
+              // otherwise it was silent and the indicator falsely flipped to "saved"
+              // while the optimistic edit (not persisted; dropped on reload in API
+              // mode) was lost.
+              const result = await api.updateForm(formId, { [field]: form[field] });
+              if (result.error) {
+                logger.error('Failed to sync form field to server:', result.error);
+                toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
+              }
             }
+          } catch (error) {
+            logger.error('Failed to sync form field to server:', error);
+            toast.error('Failed to save changes', 'Your changes may not be saved. Please try again.');
           } finally {
             markSaving(formId, false);
           }
@@ -361,7 +373,14 @@ export const useFormStore = create<FormState>()(
                 // them server-side (data loss + false "saved" toast). `fields` are synced
                 // separately via the `-fields` debounce, so they are intentionally excluded.
                 const { title, description, status, icon, theme, settings, logicScript, logicPrompt } = currentForm;
-                await api.updateForm(id, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
+                // Errors come back as a VALUE (request() never throws on HTTP/
+                // network failure), so the old catch-only handling was dead code for
+                // real failures — check result.error explicitly.
+                const result = await api.updateForm(id, { title, description, status, icon, theme, settings, logicScript, logicPrompt });
+                if (result.error) {
+                  logger.error('Failed to update form on server:', result.error);
+                  toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
+                }
               }
             } catch (error) {
               logger.error('Failed to update form on server:', error);
