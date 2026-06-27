@@ -798,16 +798,23 @@ class ResponseController
 
         $answers = (isset($data['answers']) && is_array($data['answers'])) ? $data['answers'] : [];
 
+        $scriptHash = hash('sha256', $script);
         try {
             $result = $this->responseService->testScript($script, $answers, [
                 'ipAddress' => $this->getClientIp($request),
                 'userAgent' => substr($request->getHeaderLine('User-Agent'), 0, 500),
                 'formId' => $formId,
             ]);
-            $this->audit($request, 'script.test', 'form', $formId);
+            $this->audit($request, 'script.test', 'form', $formId, [
+                'scriptSha256' => $scriptHash,
+                'scriptBytes' => strlen($script),
+                'outcome' => $result->success ? ($result->isRejected() ? 'rejected' : 'ok') : 'error',
+            ]);
             return $this->jsonResponse($response, ['result' => $result->toArray()]);
         } catch (\Throwable $e) {
             $this->logger->error('Script test error', ['formId' => $formId, 'exception' => $e->getMessage()]);
+            // Audit the failed run too so aborted/error attempts are attributable.
+            $this->audit($request, 'script.test', 'form', $formId, ['scriptSha256' => $scriptHash, 'outcome' => 'exception']);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run script test'], 500);
         }
     }

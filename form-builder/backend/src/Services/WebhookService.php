@@ -345,9 +345,10 @@ class WebhookService
         if ($resolvedIp !== null) {
             $curlOpts[CURLOPT_RESOLVE] = ["{$host}:{$port}:{$resolvedIp}"];
         }
-        // Vendored CA bundle so outbound HTTPS verifies without php.ini curl.cainfo.
+        // Vendored CA bundle fallback (only when the operator hasn't configured
+        // their own curl.cainfo / CURL_CA_BUNDLE — don't override a private CA).
         $caBundle = __DIR__ . '/../../resources/cacert.pem';
-        if (is_file($caBundle)) {
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
             $curlOpts[CURLOPT_CAINFO] = $caBundle;
         }
         curl_setopt_array($ch, $curlOpts);

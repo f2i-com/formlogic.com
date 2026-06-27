@@ -639,8 +639,12 @@ $app->group('/api/forms/{id}/versions', function (RouteCollectorProxy $group) us
 // Create rate limiter for public endpoints (30 submissions per minute per IP)
 $submissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'submission');
 
+// Running sandboxed user scripts (script test / recompute) spawns a qjs
+// subprocess and can make ctx.http calls, so cap it per user like the AI endpoints.
+$scriptTestRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'script_test', true);
+
 // Response routes (protected - require authentication)
-$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired) {
+$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $scriptTestRateLimiter) {
     // List responses (requires auth)
     $group->get('', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->index($request, $response, $getArgs($request));
@@ -667,10 +671,10 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
         return $container->get(ResponseController::class)->delete($request, $response, $getArgs($request));
     })->add($authRequired);
 
-    // Re-run script on a response (requires auth)
+    // Re-run script on a response (requires auth; rate-limited — runs user code)
     $group->post('/{id}/recompute', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->recompute($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($scriptTestRateLimiter)->add($authRequired);
 });
 
 // Public form submission endpoint (rate limited, no auth required)
@@ -695,10 +699,11 @@ $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($
     return $container->get(ResponseController::class)->analytics($request, $response, $getArgs($request));
 })->add($authRequired);
 
-// Test an onSubmit script against sample answers without persisting (protected)
+// Test an onSubmit script against sample answers without persisting (protected,
+// rate-limited per user — runs sandboxed user code + may make ctx.http calls)
 $app->post('/api/forms/{formId}/script/test', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->testScript($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($scriptTestRateLimiter)->add($authRequired);
 
 // Export routes (protected)
 $app->get('/api/forms/{formId}/export/sqlite', function ($request, $response) use ($container, $getArgs) {

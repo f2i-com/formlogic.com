@@ -49,7 +49,10 @@ export function useConditionalLogic(
     // before its trigger has been answered (visible in classic/all-on-page mode).
     const ctx: Record<string, unknown> = {};
     for (const f of fields) ctx[f.id] = null;
-    Object.assign(ctx, formData);
+    // Coerce explicit-undefined answers (e.g. a cleared number field) to null so
+    // they don't revert to the throw->fail-open path (undefined is dropped by
+    // JSON.stringify in the worker), keeping client parity with the server.
+    for (const [k, v] of Object.entries(formData)) ctx[k] = v === undefined ? null : v;
 
     for (const field of fields) {
       // If no conditional logic, field is visible

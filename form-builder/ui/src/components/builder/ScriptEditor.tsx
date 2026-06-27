@@ -310,11 +310,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
       setTestResult({ success: false, message: 'Script must contain a function named "onSubmit"' });
       return;
     }
-    const balanced = (open: RegExp, close: RegExp) =>
-      (editedScript.match(open) || []).length === (editedScript.match(close) || []).length;
-    if (!balanced(/\{/g, /\}/g)) { setTestResult({ success: false, message: 'Mismatched braces: check your { and }' }); return; }
-    if (!balanced(/\(/g, /\)/g)) { setTestResult({ success: false, message: 'Mismatched parentheses: check your ( and )' }); return; }
-    if (!balanced(/\[/g, /\]/g)) { setTestResult({ success: false, message: 'Mismatched brackets: check your [ and ]' }); return; }
+    // (No naive brace/paren/bracket counting — it false-positives on delimiters
+    // inside strings/regex; the server run below reports real syntax errors.)
 
     // The run endpoint is form-scoped; without a saved form, structure-check only.
     if (!formId) {
@@ -339,6 +336,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
       const parsed = sampleAnswers.trim() ? JSON.parse(sampleAnswers) : {};
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         setTestResult({ success: false, message: 'Sample answers must be a JSON object' });
+        setShowSample(true);
         return;
       }
       answers = parsed as Record<string, unknown>;

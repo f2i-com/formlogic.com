@@ -73,7 +73,10 @@ function simpleConditionToExpression(
       case '<=':
         return `${fieldRef} <= ${Number(value) || 0}`;
       case 'contains':
-        return `${fieldRef}.includes("${escaped}")`;
+        // Guard against a null/unanswered trigger (null.includes throws -> the
+        // condition fails OPEN, inconsistent with ===/notEmpty). isNotEmpty keeps
+        // both string-substring and array-membership semantics of .includes.
+        return `isNotEmpty(${fieldRef}) && ${fieldRef}.includes("${escaped}")`;
       case 'notEmpty':
         return `isNotEmpty(${fieldRef})`;
       case 'empty':

@@ -96,7 +96,9 @@ class ScriptResult
             'rejected' => $this->rejected,
             'rejectionMessage' => $this->rejectionMessage,
             'status' => $this->status,
-            'fields' => $this->fields,
+            // Cast so an empty field set serializes as {} (object), not [] — keeps
+            // a stable object shape for JSON consumers (e.g. the script-test client).
+            'fields' => (object) $this->fields,
             'tags' => $this->tags,
             'computed' => $this->computed,
             'instructionCount' => $this->instructionCount,

@@ -189,9 +189,10 @@ class AIService
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
         ];
-        // Vendored CA bundle so HTTPS verifies without php.ini curl.cainfo.
+        // Vendored CA bundle fallback (only when the operator hasn't configured
+        // their own curl.cainfo / CURL_CA_BUNDLE — don't override a private CA).
         $caBundle = __DIR__ . '/../../resources/cacert.pem';
-        if (is_file($caBundle)) {
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
             $aiCurlOpts[CURLOPT_CAINFO] = $caBundle;
         }
         curl_setopt_array($ch, $aiCurlOpts);

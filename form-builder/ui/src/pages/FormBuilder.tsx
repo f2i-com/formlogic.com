@@ -87,16 +87,20 @@ export default function FormBuilder() {
   // Load full form data (with fields) from API when entering the builder.
   // Track completion so a fresh/direct navigation (empty store) shows a loader
   // and only redirects on a genuine miss — not during the in-flight fetch.
-  const [loadFinished, setLoadFinished] = useState(false);
+  // Track WHICH formId finished loading, not a bare boolean: a boolean stays true
+  // across a formId change and is wrongly read as "finished" for the new id,
+  // bouncing a valid still-loading form to /forms. Gating on the id makes
+  // loadFinished false for any id whose load hasn't resolved yet.
+  const [loadedFor, setLoadedFor] = useState<string>();
   useEffect(() => {
     if (!formId) return;
     let cancelled = false;
-    setLoadFinished(false);
     loadFullForm(formId).finally(() => {
-      if (!cancelled) setLoadFinished(true);
+      if (!cancelled) setLoadedFor(formId);
     });
     return () => { cancelled = true; };
   }, [formId, loadFullForm]);
+  const loadFinished = loadedFor === formId;
 
   const form = formId ? getForm(formId) : undefined;
   useDocumentTitle(form ? `${form.title} — Builder` : 'Form Builder');
