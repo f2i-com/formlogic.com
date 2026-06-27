@@ -5,6 +5,7 @@ import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
 import { toast } from '../../stores/toastStore';
+import { useFormStore } from '../../stores/formStore';
 
 interface ScriptEditorProps {
   isOpen: boolean;
@@ -265,6 +266,9 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
     };
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+  // onSubmit scripts run server-side, so a real test run requires the form to
+  // exist on the server (cloud storage mode).
+  const storageMode = useFormStore((s) => s.storageMode);
   const [sampleAnswers, setSampleAnswers] = useState('');
   const [showSample, setShowSample] = useState(false);
 
@@ -315,6 +319,17 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
     // The run endpoint is form-scoped; without a saved form, structure-check only.
     if (!formId) {
       setTestResult({ success: true, message: 'Structure looks valid. Save the form to run a full test.' });
+      return;
+    }
+
+    // onSubmit runs server-side; in local storage mode the form isn't on the
+    // server, so a real run isn't possible. Tell the author instead of letting
+    // the request fail with a confusing 404.
+    if (storageMode !== 'api') {
+      setTestResult({
+        success: true,
+        message: 'Structure looks valid. Backend scripts run on the server — switch to Cloud storage (User menu) to run a full test.',
+      });
       return;
     }
 
