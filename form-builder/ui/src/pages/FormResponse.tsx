@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw } from 'lucide-react';
@@ -32,6 +32,7 @@ function FieldResponse({
   allFieldIds,
   onCalculated,
   formId,
+  error,
 }: {
   field: FormField;
   value: unknown;
@@ -43,6 +44,7 @@ function FieldResponse({
   allFieldIds?: string[];
   onCalculated?: (fieldId: string, value: unknown) => void;
   formId?: string;
+  error?: string;
 }) {
   const required = isRequired ?? field.required;
 
@@ -627,6 +629,16 @@ function FieldResponse({
     }
   };
 
+  // Associate a validation error with the rendered control so screen readers
+  // announce it as part of the field (aria-invalid + aria-describedby). cloneElement
+  // targets the top element each case returns — the input for simple fields, or the
+  // role="radiogroup" wrapper for rating/scale/choice.
+  const errorId = error ? `field-error-${field.id}` : undefined;
+  const rendered = renderField();
+  const fieldEl = error && isValidElement(rendered)
+    ? cloneElement(rendered as ReactElement<Record<string, unknown>>, { 'aria-invalid': true, 'aria-describedby': errorId })
+    : rendered;
+
   return (
     <div className="w-full max-w-xl mx-auto">
       <div className="mb-8">
@@ -641,7 +653,7 @@ function FieldResponse({
           <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
         )}
       </div>
-      {renderField()}
+      {fieldEl}
     </div>
   );
 }
@@ -1236,11 +1248,12 @@ export default function FormResponse() {
               allFieldIds={form.fields.map(f => f.id)}
               onCalculated={handleCalculated}
               formId={formId}
+              error={fieldError || undefined}
             />
 
             {/* Inline validation error */}
             {fieldError && (
-              <p role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
+              <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
             )}
 
             {/* OK Button */}

@@ -65,9 +65,10 @@ function ToastItem({ toast }: { toast: ToastType }) {
     };
   }, [handleClose, toast.duration]);
 
-  // Errors/warnings interrupt (assertive alert); success/info wait politely so
-  // they don't talk over the user.
-  const urgent = toast.type === 'error' || toast.type === 'warning';
+  // Presentational only: announcements are made by the persistent live regions in
+  // ToastContainer. A live region mounted together with its content is frequently
+  // not announced by screen readers (esp. for polite), so the visual toast must NOT
+  // also be a live region (that would double-announce).
   return (
     <div
       className={cn(
@@ -76,8 +77,6 @@ function ToastItem({ toast }: { toast: ToastType }) {
         style.container,
         isExiting ? 'animate-slide-out' : 'animate-slide-in'
       )}
-      role={urgent ? 'alert' : 'status'}
-      aria-live={urgent ? 'assertive' : 'polite'}
     >
       <div className={cn('p-1.5 rounded-lg flex-shrink-0', style.iconBg)}>
         <Icon className={cn('h-4 w-4', style.icon)} />
@@ -102,13 +101,29 @@ function ToastItem({ toast }: { toast: ToastType }) {
 export function ToastContainer() {
   const toasts = useToastStore((state) => state.toasts);
 
-  if (toasts.length === 0) return null;
+  // Persistent, always-mounted live regions (even when there are no toasts) so a
+  // screen reader announces text added LATER. Errors/warnings are assertive
+  // (interrupt); success/info are polite (wait). The visual toasts below are
+  // presentational only.
+  const announce = (t: ToastType) => [t.title, t.message].filter(Boolean).join('. ');
+  const polite = toasts.filter((t) => t.type !== 'error' && t.type !== 'warning');
+  const assertive = toasts.filter((t) => t.type === 'error' || t.type === 'warning');
 
   return (
-    <div className="fixed bottom-20 right-4 md:bottom-4 z-[100] flex flex-col gap-3 max-h-[calc(100vh-6rem)] overflow-y-auto">
-      {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} />
-      ))}
-    </div>
+    <>
+      <div className="sr-only" role="status" aria-live="polite">
+        {polite.map((t) => <div key={t.id}>{announce(t)}</div>)}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive">
+        {assertive.map((t) => <div key={t.id}>{announce(t)}</div>)}
+      </div>
+      {toasts.length > 0 && (
+        <div className="fixed bottom-20 right-4 md:bottom-4 z-[100] flex flex-col gap-3 max-h-[calc(100vh-6rem)] overflow-y-auto">
+          {toasts.map((toast) => (
+            <ToastItem key={toast.id} toast={toast} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }

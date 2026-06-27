@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
@@ -145,6 +145,7 @@ function FieldInput({
   allAnswers,
   allFieldIds,
   onCalculated,
+  error,
 }: {
   field: FormField;
   value: unknown;
@@ -155,7 +156,13 @@ function FieldInput({
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
   onCalculated?: (fieldId: string, value: unknown) => void;
+  error?: string;
 }) {
+  // Associate a validation error with the rendered control (aria-invalid +
+  // aria-describedby) so screen readers announce it as part of the field. The body
+  // uses early returns, so render first then clone the top element (input, or the
+  // role="radiogroup" wrapper for rating/scale/choice).
+  const renderInput = () => {
   const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
@@ -527,6 +534,13 @@ function FieldInput({
       autoFocus
     />
   );
+  };
+
+  const el = renderInput();
+  const errorId = error ? `field-error-${field.id}` : undefined;
+  return error && isValidElement(el)
+    ? cloneElement(el as ReactElement<Record<string, unknown>>, { 'aria-invalid': true, 'aria-describedby': errorId })
+    : el;
 }
 
 /**
@@ -1003,11 +1017,13 @@ export function AppFormView() {
                 allAnswers={allFormData}
                 allFieldIds={fields.map(f => f.id)}
                 onCalculated={handleCalculated}
+                error={error || undefined}
               />
 
               {/* Error */}
               {error && (
                 <motion.p
+                  id={`field-error-${currentField.id}`}
                   role="alert"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
