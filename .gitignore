@@ -1,3 +1,4 @@
-formlogic-rust/
-formlogic-php/
-
+# Root repo tracks form-builder/. Build artifacts and dependencies are ignored by
+# form-builder/.gitignore. (The old engine source repos formlogic-php and
+# formlogic-rust were removed — the scripting engine is now the vendored QuickJS
+# runtime under form-builder/.)

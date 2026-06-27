@@ -43,7 +43,7 @@
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
-- **Scripting**: Custom DSL runtime (`formlogic/formlogic-lang`) — sandboxed bytecode VM with both TypeScript (frontend) and PHP (backend) implementations
+- **Scripting**: QuickJS sandbox running real JavaScript — `quickjs-emscripten` in a Web Worker (frontend) and a vendored static `qjs` binary (backend, no Node.js), sharing one standard-library prelude
 - **Audit**: Hash-chained audit log with SHA256 integrity verification
 - **RBAC**: Role-based access control with per-form permission granularity (Owner role always bypasses checks)
 - **Webhooks**: HMAC-SHA256 signed deliveries with SSRF protection
@@ -123,7 +123,7 @@ formlogic-app/
 ### `composer.json`
 
 - **PSR-4 Autoload**: `FormLogic\` => `src/`
-- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.0, `firebase/php-jwt` ^6.0, `vlucas/phpdotenv` ^5.5, `respect/validation` ^2.2, `formlogic/formlogic-lang` (local path repository at `../../formlogic-php`)
+- **Dependencies**: `slim/slim` ^4.12, `php-di/slim-bridge`, `slim/psr7`, `monolog/monolog` ^3.5, `firebase/php-jwt` ^7.0, `vlucas/phpdotenv` ^5.6, `respect/validation` ^2.3. FormLogic expressions and `onSubmit` scripts run via the bundled QuickJS runtime (vendored `qjs` binary under `backend/bin/qjs`, invoked by `QuickJsRunner`), not a Composer package.
 - **Minimum PHP**: 8.1
 
 ### `.env.example`
@@ -625,13 +625,18 @@ Returns boolean. Tracks `navigator.onLine` via events.
 ## FormLogic Scripting Engine
 
 ### `engine.ts`
-Wraps the `formlogic-lang` package. Singleton via `getEngine()`.
+Thin client over a QuickJS sandbox: each evaluation is dispatched to a dedicated
+Web Worker (`formlogic.worker.ts` → `quickjs-host.ts`, using `quickjs-emscripten`)
+with memory/stack/interrupt limits and a terminate watchdog. The standard library
+below is the shared prelude (`prelude.js`), which also runs server-side via the
+vendored `qjs` binary, so results match. (No more `getEngine()`/bytecode VM.)
 
-**Registered modules**:
+**Standard-library modules** (from `prelude.js`):
 - `validators`: email, phone, url, minLength, maxLength, pattern (ReDoS-limited 500 chars), required, min, max
 - `format`: currency, number, date, uppercase, lowercase
-- `compliance`: regBICheck, suitabilityScore, amlFlag, kycComplete, nigoCheck, accreditedInvestor
-- `finance`: compoundInterest, aumFee, riskScore, portfolioAllocation, transferFee
+- `compliance`: regBICheck, suitabilityScore, amlFlag, kycComplete, nigoCheck, accreditedInvestor, wholesaleClient, austracFlag, tfnValid
+- `finance`: compoundInterest, aumFee, riskScore, portfolioAllocation, transferFee, auAumFee, auTransferFee
+- `safety`: riskMatrix, riskLevel, controlEffectiveness, residualRisk
 
 **Builtins**: isEmpty, isNotEmpty, contains, sum, avg, count
 

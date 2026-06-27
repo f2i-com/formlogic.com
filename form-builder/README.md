@@ -62,12 +62,12 @@ chmod +x install.sh
 
 The install script will:
 1. Verify all prerequisites are installed
-2. Install PHP dependencies via Composer (pulls [formlogic-php](https://github.com/f2i-com/formlogic-php) from GitHub)
+2. Install PHP dependencies via Composer
 3. Create `backend/.env` with auto-generated JWT secret and audit HMAC key
 4. Create the MySQL database and import the schema (if DB_PASSWORD is set)
 5. Install frontend npm dependencies
 6. Create `ui/.env` with the API URL
-7. Download the [formlogic-rust](https://github.com/f2i-com/formlogic-rust) WASM engine (if not already present)
+7. Make the vendored `qjs` sandbox binary executable (it's committed under `backend/bin/qjs/`)
 8. Build the frontend for production
 
 After the script completes, update `backend/.env` with your database password, then start the servers.
@@ -281,7 +281,7 @@ Then rebuild the frontend: `cd ui && npm run build`
 | Animation | Framer Motion |
 | Icons | Lucide React |
 | PWA | vite-plugin-pwa |
-| Scripting (browser) | [FormLogic Rust WASM](https://github.com/f2i-com/formlogic-rust) |
+| Scripting (browser) | QuickJS (`quickjs-emscripten`) in a Web Worker |
 
 ### Backend
 
@@ -292,16 +292,27 @@ Then rebuild the frontend: `cd ui && npm run build`
 | Database | MySQL (global metadata) + SQLite (per-form responses) |
 | Logging | Monolog |
 | DI | PHP-DI |
-| Scripting (server) | [FormLogic PHP](https://github.com/f2i-com/formlogic-php) |
+| Scripting (server) | QuickJS (vendored static `qjs` binary, no Node.js) |
 
 ### Scripting Engine
 
-FormLogic includes a custom scripting language with two implementations:
+FormLogic runs user expressions and `onSubmit` scripts as real JavaScript inside a
+**QuickJS** sandbox, using one engine and one shared standard-library prelude on both
+sides (so client and server results match by construction):
 
-- **[formlogic-rust](https://github.com/f2i-com/formlogic-rust)** -- Rust implementation compiled to WebAssembly, used in the browser for real-time validation, conditional logic, and calculated fields.
-- **[formlogic-php](https://github.com/f2i-com/formlogic-php)** -- PHP implementation used on the server for post-submission scripts. Runs in a sandboxed bytecode VM with execution limits.
+- **Browser** -- [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten)
+  runs in a dedicated Web Worker for real-time validation, conditional logic, and
+  calculated fields, with memory/stack/interrupt limits and a terminate watchdog.
+- **Server** -- a vendored static [`qjs`](https://github.com/quickjs-ng/quickjs)
+  binary (under `backend/bin/qjs/`, selected per-OS) invoked by `QuickJsRunner` via
+  `proc_open` — **no Node.js required**. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils`
+  calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning
+  guards on the trusted side.
 
-Both engines share the same JavaScript-like syntax with built-in modules for compliance, finance, safety, and formatting.
+The shared prelude (`ui/src/lib/formlogic/prelude.js`, synced into the backend at
+build time) provides built-in modules for validation, formatting, compliance,
+finance, and safety. Untrusted code runs with an empty global and zero host
+bindings; runaway scripts are killed by the watchdog.
 
 ---
 
@@ -535,10 +546,13 @@ sudo apt install php8.1-mysql php8.1-sqlite3 php8.1-mbstring php8.1-xml
 
 ---
 
-## Related Repositories
+## Scripting Runtime (upstream)
 
-- **[formlogic-rust](https://github.com/f2i-com/formlogic-rust)** -- Rust/WASM scripting engine (browser)
-- **[formlogic-php](https://github.com/f2i-com/formlogic-php)** -- PHP scripting engine (server)
+The scripting engine is **QuickJS** on both sides (the previous custom Rust/WASM +
+PHP engines were retired):
+
+- **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** -- QuickJS compiled to WASM, used in the browser (vendored via npm)
+- **[quickjs-ng](https://github.com/quickjs-ng/quickjs)** -- source of the vendored static `qjs` binary used on the server
 
 ## License
 

@@ -87,15 +87,18 @@ formlogic-app/
 │           ├── stores/                # 6 Zustand stores (auth, form, app, response, runtime, ui)
 │           ├── hooks/                 # Custom hooks (keyboard shortcuts, NIGO, online status)
 │           ├── lib/
-│           │   └── formlogic/         # Engine wrapper + compliance/finance modules
+│           │   └── formlogic/         # QuickJS engine wrapper, Web Worker + shared prelude
 │           ├── types/                 # TypeScript interfaces (form, app)
 │           └── data/
 │               ├── formTemplates.ts   # Built-in form templates
 │               └── packs/             # Pre-built pack bundles (Finance OS)
-│
-├── formlogic-typescript/              # Scripting engine (TypeScript/browser)
-└── formlogic-php/                     # Scripting engine (PHP/server)
 ```
+
+> The FormLogic scripting engine is embedded in `form-builder/`: the browser side in
+> `ui/src/lib/formlogic/` (QuickJS via `quickjs-emscripten`, run in a Web Worker) and
+> the server side in `backend/bin/qjs/` + `backend/resources/` (a vendored static
+> `qjs` binary). Both run the same JavaScript and share one prelude — no Node.js on
+> the server.
 
 ---
 

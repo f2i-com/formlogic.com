@@ -2,8 +2,8 @@
 # =============================================================================
 # FormLogic Installer
 # =============================================================================
-# Sets up the FormLogic application: backend API, frontend UI, and
-# scripting engine dependencies (formlogic-php, formlogic-rust WASM).
+# Sets up the FormLogic application: backend API, frontend UI, and the QuickJS
+# scripting runtime (vendored qjs binary + quickjs-emscripten via npm).
 #
 # Usage:
 #   chmod +x install.sh
@@ -79,7 +79,7 @@ cd "$BACKEND_DIR"
 # Create storage directories
 mkdir -p storage/forms storage/packs storage/uploads logs
 
-# Install PHP dependencies (pulls formlogic-php from GitHub)
+# Install PHP dependencies
 info "Installing Composer dependencies..."
 composer install --no-interaction --prefer-dist
 
