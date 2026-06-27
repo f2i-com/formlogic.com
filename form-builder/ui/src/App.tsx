@@ -120,12 +120,33 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
     if (user) {
       // User is authenticated — load their data
       const mode = useFormStore.getState().storageMode;
-      if (mode === 'api') {
+      let explicitMode: string | null = null;
+      try { explicitMode = localStorage.getItem('formlogic_storage_mode'); } catch { /* private browsing */ }
+
+      if (mode !== 'api' && !explicitMode) {
+        // Default signed-in users to CLOUD storage so server-backed features
+        // (onSubmit scripts, responses, analytics) work without a manual toggle.
+        // Logout clears the mode preference, so a fresh login lands here; an
+        // explicit in-session choice (explicitMode set) is respected and skips
+        // this. Sync any local forms to the account FIRST — switching to 'api'
+        // zeroes the local snapshot — then switch (setStorageMode re-initializes
+        // from the server). On sync failure, stay local so nothing is lost.
+        void (async () => {
+          try {
+            const result = await useFormStore.getState().syncToApi();
+            if (result.success) {
+              useFormStore.getState().setStorageMode('api');
+              return;
+            }
+          } catch { /* fall through to local init */ }
+          if (!useFormStore.getState().isInitialized) initializeForms();
+        })();
+      } else if (mode === 'api') {
         // Cloud mode: always re-fetch from the server
         useFormStore.setState({ isInitialized: false });
         initializeForms();
       } else if (!useFormStore.getState().isInitialized) {
-        // Local mode: initialize from localStorage (loaded by persist middleware)
+        // Local mode (explicit choice): initialize from localStorage
         initializeForms();
       }
       // Apps are always server-backed — refresh after login
