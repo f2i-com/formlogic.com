@@ -265,6 +265,17 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
     };
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+  const [sampleAnswers, setSampleAnswers] = useState('');
+  const [showSample, setShowSample] = useState(false);
+
+  // Seed the editable sample answers from the form's fields each time the editor
+  // opens (fresh, type-aware defaults the author can then tweak).
+  useEffect(() => {
+    if (isOpen) {
+      setSampleAnswers(JSON.stringify(buildSampleAnswers(formFields), null, 2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -307,10 +318,25 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
       return;
     }
 
-    // Actually RUN the script server-side against sample answers (nothing is persisted).
+    // Parse the (editable) sample answers.
+    let answers: Record<string, unknown>;
+    try {
+      const parsed = sampleAnswers.trim() ? JSON.parse(sampleAnswers) : {};
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setTestResult({ success: false, message: 'Sample answers must be a JSON object' });
+        return;
+      }
+      answers = parsed as Record<string, unknown>;
+    } catch {
+      setTestResult({ success: false, message: 'Sample answers are not valid JSON' });
+      setShowSample(true);
+      return;
+    }
+
+    // Actually RUN the script server-side against the sample answers (nothing is persisted).
     setIsTesting(true);
     try {
-      const res = await api.testScript(formId, editedScript, buildSampleAnswers(formFields));
+      const res = await api.testScript(formId, editedScript, answers);
       if (res.error || !res.data?.result) {
         setTestResult({ success: false, message: res.error || 'Failed to run the script test' });
         return;
@@ -471,6 +497,32 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                   spellCheck={false}
                 />
               </div>
+
+              {/* Editable sample answers used by Run Test */}
+              {showSample && (
+                <div className="mx-4 mb-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="fl-sample-answers" className="text-xs font-medium text-gray-500 dark:text-slate-400">
+                      Sample answers (JSON) — passed as <code>ctx.answers</code> to Run Test
+                    </label>
+                    <button
+                      type="button"
+                      className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                      onClick={() => setSampleAnswers(JSON.stringify(buildSampleAnswers(formFields), null, 2))}
+                    >
+                      Reset to defaults
+                    </button>
+                  </div>
+                  <textarea
+                    id="fl-sample-answers"
+                    value={sampleAnswers}
+                    onChange={(e) => setSampleAnswers(e.target.value)}
+                    aria-label="Sample answers JSON"
+                    spellCheck={false}
+                    className="w-full h-28 font-mono text-xs bg-gray-900 text-gray-100 p-3 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 border border-gray-800"
+                  />
+                </div>
+              )}
 
               {/* Test Result */}
               {testResult && (
@@ -718,6 +770,9 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
             </Button>
             <Button variant="outline" size="sm" onClick={handleTest} disabled={isTesting} leftIcon={<Play className="h-4 w-4" />}>
               {isTesting ? 'Running…' : 'Run Test'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowSample((s) => !s)}>
+              {showSample ? 'Hide sample data' : 'Sample data'}
             </Button>
           </div>
           <div className="flex gap-2">
