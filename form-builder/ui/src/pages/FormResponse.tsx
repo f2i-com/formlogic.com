@@ -207,7 +207,7 @@ export function FieldResponse({
                 >
                   {String.fromCharCode(65 + index)}
                 </span>
-                <span className="flex-1 text-lg">{option.label}</span>
+                <span className="flex-1 text-lg">{option.label?.trim() || option.value}</span>
                 {value === option.value && (
                   <Check className="h-5 w-5" style={{ color: primaryColor }} />
                 )}
@@ -252,7 +252,7 @@ export function FieldResponse({
                 >
                   {selectedValues.includes(option.value) && <Check className="h-4 w-4" />}
                 </span>
-                <span className="flex-1 text-lg">{option.label}</span>
+                <span className="flex-1 text-lg">{option.label?.trim() || option.value}</span>
               </button>
             ))}
           </div>
@@ -275,7 +275,7 @@ export function FieldResponse({
             <option value="">{field.placeholder || 'Select an option...'}</option>
             {field.properties.options?.map((option) => (
               <option key={option.id} value={option.value}>
-                {option.label}
+                {option.label?.trim() || option.value}
               </option>
             ))}
           </select>

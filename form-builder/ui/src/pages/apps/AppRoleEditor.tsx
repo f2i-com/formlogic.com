@@ -10,11 +10,13 @@ import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import type { AppRole, AppForm, PermissionAction } from '../../types/app';
+import { useAuthStore } from '../../stores/authStore';
 
 export function AppRoleEditor() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms } = useAppStore();
+  const { fetchRoles, createRole, deleteRole, updateRole, fetchAppForms, getApp } = useAppStore();
+  const userId = useAuthStore((s) => s.user?.id);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
@@ -26,6 +28,8 @@ export function AppRoleEditor() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!appId) return;
@@ -51,6 +55,7 @@ export function AppRoleEditor() {
   useEffect(() => {
     if (!appId || !selectedRoleId) return;
     setPermissions([]); // Clear previous role's permissions immediately
+    setDirty(false); // fresh role load is not a user edit
     let cancelled = false;
     api.getAppRolePermissions(appId, selectedRoleId).then((result) => {
       if (cancelled) return;
@@ -74,6 +79,11 @@ export function AppRoleEditor() {
   // not the display string alone — a custom role literally named "Owner" must
   // remain editable.
   const isOwnerRole = !!selectedRole?.isSystem && selectedRole?.name === 'Owner';
+  // App-level permission grants are owner-only on the backend; disable those toggles
+  // only when we're SURE the actor isn't the owner (app loaded + ids differ), so an
+  // owner is never wrongly locked out (e.g. on a direct nav before apps load).
+  const app = appId ? getApp(appId) : undefined;
+  const isActorOwner = !app || !userId || app.ownerId === userId;
 
   const startRenameRole = (role: AppRole) => {
     setEditingRoleId(role.id);
@@ -105,6 +115,7 @@ export function AppRoleEditor() {
         toast.error('Save failed', result.error);
       } else {
         setSaveSuccess(true);
+        setDirty(false);
         setTimeout(() => setSaveSuccess(false), 2000);
       }
     } catch {
@@ -182,7 +193,7 @@ export function AppRoleEditor() {
                     className="flex-1 min-w-0 text-sm px-2 py-1 rounded-md border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none"
                   />
                 ) : (
-                  <button onClick={() => setSelectedRoleId(role.id)} className="flex items-center gap-2 flex-1 text-left text-sm min-w-0">
+                  <button onClick={() => { if (dirty && role.id !== selectedRoleId) setPendingRoleId(role.id); else setSelectedRoleId(role.id); }} className="flex items-center gap-2 flex-1 text-left text-sm min-w-0">
                     <Shield className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{role.name}</span>
                     {role.isSystem && <span className="text-xs text-gray-400 flex-shrink-0">(system)</span>}
@@ -228,7 +239,8 @@ export function AppRoleEditor() {
                 <PermissionMatrix
                   permissions={permissions}
                   forms={appForms.map((f) => ({ formId: f.formId, displayName: f.displayName }))}
-                  onChange={setPermissions}
+                  onChange={(p) => { setPermissions(p); setDirty(true); }}
+                  appLevelDisabled={!isActorOwner}
                 />
               )}
             </>
@@ -247,6 +259,15 @@ export function AppRoleEditor() {
         title="Delete Role"
         message={`Are you sure you want to delete the role "${roles.find((r) => r.id === deleteRoleId)?.name}"? Users with this role will need to be reassigned.`}
         confirmLabel="Delete Role"
+        variant="danger"
+      />
+      <ConfirmDialog
+        isOpen={pendingRoleId !== null}
+        onClose={() => setPendingRoleId(null)}
+        onConfirm={() => { if (pendingRoleId) { setSelectedRoleId(pendingRoleId); setDirty(false); } setPendingRoleId(null); }}
+        title="Discard unsaved changes?"
+        message="You have unsaved permission changes for this role. Switch roles and discard them?"
+        confirmLabel="Discard changes"
         variant="danger"
       />
     </div>

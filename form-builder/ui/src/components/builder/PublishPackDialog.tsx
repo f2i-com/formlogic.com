@@ -24,7 +24,7 @@ interface PublishPackDialogProps {
   initialPack?: PackData | null;
   // When set, the dialog publishes a NEW VERSION of an existing pack (upload new
   // content + version + changelog) instead of creating a brand-new catalog entry.
-  versionTarget?: { slug: string; name: string } | null;
+  versionTarget?: { slug: string; name: string; latestVersion?: string | null } | null;
 }
 
 type Step = 'upload' | 'metadata' | 'preview' | 'publish';
@@ -107,12 +107,14 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
     wasOpenRef.current = isOpen;
   }, [isOpen, resetState]);
 
+  const [uploading, setUploading] = useState(false);
   const parseFile = useCallback((file: File) => {
     setUploadError('');
 
     if (file.name.endsWith('.zip')) {
       // Upload to server for processing
       (async () => {
+        setUploading(true);
         try {
           const result = await api.uploadPackZip(file);
           if (result.data?.pack) {
@@ -126,6 +128,8 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
           }
         } catch {
           setUploadError('Failed to upload file');
+        } finally {
+          setUploading(false);
         }
       })();
       return;
@@ -273,8 +277,8 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
               onDrop={handleDrop}
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-              onClick={() => fileInputRef.current?.click()}
-              className={`relative flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+              onClick={() => !uploading && fileInputRef.current?.click()}
+              className={`relative flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg transition-colors ${uploading ? 'cursor-wait opacity-70' : 'cursor-pointer'} ${
                 isDragging
                   ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                   : packData
@@ -289,7 +293,12 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                 className="hidden"
               />
-              {packData ? (
+              {uploading ? (
+                <>
+                  <Loader2 className="h-8 w-8 text-primary-500 mb-2 animate-spin" />
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">Uploading…</p>
+                </>
+              ) : packData ? (
                 <>
                   <FileJson className="h-8 w-8 text-green-500 mb-2" />
                   <p className="text-sm font-medium text-gray-900 dark:text-white">{uploadFileName}</p>
@@ -500,6 +509,9 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
                       placeholder="1.1.0"
                       className="w-full rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-1 focus:ring-primary-500"
                     />
+                    {versionTarget?.latestVersion && (
+                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-1 text-left">Current latest: v{versionTarget.latestVersion} — choose a higher version.</p>
+                    )}
                   </div>
                 )}
                 <div>

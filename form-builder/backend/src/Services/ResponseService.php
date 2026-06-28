@@ -1525,11 +1525,14 @@ class ResponseService
             throw new \RuntimeException('Maximum 1000 rows allowed per import');
         }
 
-        // Build field type map from fields array
+        // Build field type + label maps from fields array (label used in errors so
+        // they name the field the user recognizes, not the internal id).
         $fieldTypeMap = [];
+        $fieldLabelMap = [];
         foreach ($fields as $field) {
             if (isset($field['id']) && isset($field['type'])) {
                 $fieldTypeMap[$field['id']] = $field['type'];
+                $fieldLabelMap[$field['id']] = $field['label'] ?? $field['id'];
             }
         }
 
@@ -1567,7 +1570,7 @@ class ResponseService
                     switch ($fieldType) {
                         case 'number':
                             if ($value !== '' && !is_numeric($value)) {
-                                $rowErrors[] = "Field '{$fieldId}': non-numeric value '{$value}'";
+                                $rowErrors[] = "Field '" . ($fieldLabelMap[$fieldId] ?? $fieldId) . "': non-numeric value '{$value}'";
                                 continue 2; // skip this field, process remaining fields
                             }
                             $value = $value !== '' ? floatval($value) : null;
@@ -1578,7 +1581,7 @@ class ResponseService
                         case 'rating':
                         case 'scale':
                             if ($value !== '' && !is_numeric($value)) {
-                                $rowErrors[] = "Field '{$fieldId}': non-numeric value '{$value}'";
+                                $rowErrors[] = "Field '" . ($fieldLabelMap[$fieldId] ?? $fieldId) . "': non-numeric value '{$value}'";
                                 continue 2;
                             }
                             $value = $value !== '' ? intval($value) : null;

@@ -50,6 +50,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
 
   // Upload state
   const [uploadedPack, setUploadedPack] = useState<PackData | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadError, setUploadError] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -78,7 +79,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
   // Publish dialog
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishInitialPack, setPublishInitialPack] = useState<PackData | null>(null);
-  const [versionTarget, setVersionTarget] = useState<{ slug: string; name: string } | null>(null);
+  const [versionTarget, setVersionTarget] = useState<{ slug: string; name: string; latestVersion?: string | null } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -263,6 +264,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
 
     if (file.name.endsWith('.zip')) {
       (async () => {
+        setUploading(true);
         try {
           const result = await api.uploadPackZip(file);
           if (result.data?.pack) {
@@ -273,6 +275,8 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           }
         } catch {
           setUploadError('Failed to upload file');
+        } finally {
+          setUploading(false);
         }
       })();
       return;
@@ -465,8 +469,17 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
               ) : catalogPacks.length === 0 ? (
                 <div className="text-center py-16 text-gray-400 dark:text-slate-500">
                   <Package className="h-10 w-10 mx-auto mb-3 opacity-40" />
-                  <p className="text-sm font-medium">No packs found</p>
-                  <p className="text-xs mt-1">Try a different search term.</p>
+                  {storageMode !== 'api' ? (
+                    <>
+                      <p className="text-sm font-medium">Packs require cloud storage</p>
+                      <p className="text-xs mt-1">Switch to Cloud from your account menu to browse and install packs.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium">No packs found</p>
+                      <p className="text-xs mt-1">Try a different search term.</p>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[calc(60vh-8rem)] overflow-y-auto pr-1 -mr-1">
@@ -728,7 +741,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                               <button onClick={() => openEditPack(pack)} aria-label={`Edit ${pack.name}`} title="Edit pack metadata"
                                 className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"><Pencil className="h-4 w-4" /></button>
                               {pack.status !== 'archived' && (
-                                <button onClick={() => { setPublishInitialPack(null); setVersionTarget({ slug: pack.slug, name: pack.name }); setShowPublishDialog(true); }} aria-label={`Publish update to ${pack.name}`} title="Publish a new version"
+                                <button onClick={() => { setPublishInitialPack(null); setVersionTarget({ slug: pack.slug, name: pack.name, latestVersion: pack.latestVersion }); setShowPublishDialog(true); }} aria-label={`Publish update to ${pack.name}`} title="Publish a new version"
                                   className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer"><Upload className="h-4 w-4" /></button>
                               )}
                               {pack.status !== 'archived' && (
@@ -754,7 +767,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                 onDrop={handleDrop}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                onClick={() => !uploadedPack && fileInputRef.current?.click()}
+                onClick={() => !uploadedPack && !uploading && fileInputRef.current?.click()}
                 className={`relative rounded-xl transition-all ${
                   isDragging
                     ? 'border-2 border-dashed border-primary-500 bg-primary-50/60 dark:bg-primary-500/10 dark:border-primary-400 shadow-lg shadow-primary-500/10'
@@ -784,7 +797,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                        onClick={(e) => { e.stopPropagation(); if (!uploading) fileInputRef.current?.click(); }}
                         className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 font-medium cursor-pointer"
                       >
                         Replace
@@ -797,6 +810,11 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                         <X className="h-4 w-4" />
                       </button>
                     </div>
+                  </div>
+                ) : uploading ? (
+                  <div className="flex flex-col items-center justify-center py-10 px-6">
+                    <Loader2 className="h-7 w-7 text-primary-500 mb-3 animate-spin" />
+                    <p className="text-sm font-medium text-gray-700 dark:text-slate-300">Uploading…</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-10 px-6">

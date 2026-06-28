@@ -284,7 +284,7 @@ function FieldInput({
               >
                 {String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label}</span>
+              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label?.trim() || option.value}</span>
               {selected && <Check className="h-5 w-5 flex-shrink-0" style={{ color: primaryColor }} />}
             </button>
           );
@@ -326,7 +326,7 @@ function FieldInput({
               type="button"
               role="checkbox"
               aria-checked={checked}
-              aria-label={option.label}
+              aria-label={option.label?.trim() || option.value}
               tabIndex={index === 0 ? 0 : -1}
               onKeyDown={(e) => handleRovingKeys(e, options, false)}
               onClick={() => {
@@ -347,7 +347,7 @@ function FieldInput({
               >
                 {checked ? <Check className="h-4 w-4" /> : String.fromCharCode(65 + index)}
               </span>
-              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label}</span>
+              <span className="flex-1 text-base sm:text-lg text-gray-900 dark:text-white">{option.label?.trim() || option.value}</span>
             </button>
           );
         })}

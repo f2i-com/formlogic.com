@@ -26,9 +26,14 @@ export function AppCreateWizard() {
   }, [refreshForms]);
   const [isCreating, setIsCreating] = useState(false);
 
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [selectedFormIds, setSelectedFormIds] = useState<string[]>([]);
+  // Restore an in-progress draft (saved when the user bounced to the form builder
+  // via "Create a Form") via lazy initializers — no setState-on-mount.
+  const [draft] = useState<{ name?: string; description?: string; selectedFormIds?: string[] }>(() => {
+    try { return JSON.parse(sessionStorage.getItem('appWizardDraft') || '{}'); } catch { return {}; }
+  });
+  const [name, setName] = useState<string>(typeof draft.name === 'string' ? draft.name : '');
+  const [description, setDescription] = useState<string>(typeof draft.description === 'string' ? draft.description : '');
+  const [selectedFormIds, setSelectedFormIds] = useState<string[]>(Array.isArray(draft.selectedFormIds) ? draft.selectedFormIds : []);
   const [nameError, setNameError] = useState<string | null>(null);
 
   const canNext = step === 0 ? name.trim().length > 0 : true;
@@ -59,6 +64,7 @@ export function AppCreateWizard() {
         if (failedCount > 0) {
           toast.warning('Partial success', `App created but ${failedCount} form(s) could not be added.`);
         }
+        try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
         navigate(`/apps/${app.id}/settings`);
         return; // Skip setIsCreating after navigate
       } else {
@@ -143,6 +149,8 @@ export function AppCreateWizard() {
                   size="sm"
                   variant="outline"
                   onClick={async () => {
+                    // Stash the wizard draft so it's restored when the user returns.
+                    try { sessionStorage.setItem('appWizardDraft', JSON.stringify({ name, description, selectedFormIds })); } catch { /* ignore */ }
                     const form = await createForm('Untitled Form');
                     if (!form) return;
                     setActiveForm(form.id);

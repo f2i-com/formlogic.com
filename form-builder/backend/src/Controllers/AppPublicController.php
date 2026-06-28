@@ -617,6 +617,11 @@ class AppPublicController
         $theme = $app['theme'] ?? [];
         $settings = $app['settings'] ?? [];
 
+        // Defense-in-depth: a malformed stored hex would produce an invalid manifest
+        // (browsers reject it). Fall back to a safe default if it isn't a valid hex.
+        $hex = static fn(?string $v, string $default): string =>
+            (is_string($v) && preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $v)) ? $v : $default;
+
         $manifest = [
             'name' => $app['name'],
             'short_name' => $settings['pwaShortName'] ?? substr($app['name'], 0, 12),
@@ -624,8 +629,8 @@ class AppPublicController
             'start_url' => '/app/' . $slug,
             'scope' => '/app/' . $slug,
             'display' => 'standalone',
-            'background_color' => $theme['backgroundColor'] ?? '#ffffff',
-            'theme_color' => $settings['pwaThemeColor'] ?? $theme['primaryColor'] ?? '#6366f1',
+            'background_color' => $hex($theme['backgroundColor'] ?? null, '#ffffff'),
+            'theme_color' => $hex($settings['pwaThemeColor'] ?? $theme['primaryColor'] ?? null, '#6366f1'),
             'icons' => [],
         ];
 

@@ -21,10 +21,18 @@ import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } fro
 import { toast } from '../stores/toastStore';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
+import { useAuthStore } from '../stores/authStore';
 
 export default function PackDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
+  const user = useAuthStore((s) => s.user);
+  // Send anonymous visitors to sign in (preserving where they were) instead of
+  // letting install/rate dead-end on an auth error.
+  const goSignIn = useCallback(
+    () => navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`),
+    [navigate]
+  );
 
   const [pack, setPack] = useState<(CatalogPack & { versions: PackVersionInfo[] }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,6 +113,7 @@ export default function PackDetailPage() {
   }, [pack, checkInstalled]);
 
   const handleInstall = useCallback(async (versionId?: string) => {
+    if (!user) { goSignIn(); return; }
     if (!slug || installing) return;
     setInstalling(true);
     try {
@@ -132,9 +141,10 @@ export default function PackDetailPage() {
     } finally {
       setInstalling(false);
     }
-  }, [slug, installing, refreshForms, fetchApps]);
+  }, [slug, installing, refreshForms, fetchApps, user, goSignIn]);
 
   const handleSubmitRating = useCallback(async () => {
+    if (!user) { goSignIn(); return; }
     if (!slug || !ratingInput || submittingRating) return;
     setSubmittingRating(true);
     try {
@@ -153,7 +163,7 @@ export default function PackDetailPage() {
     } finally {
       setSubmittingRating(false);
     }
-  }, [slug, ratingInput, reviewInput, submittingRating, loadPackDetail, loadRatings]);
+  }, [slug, ratingInput, reviewInput, submittingRating, loadPackDetail, loadRatings, user, goSignIn]);
 
   const renderStars = (rating: number, size = 'h-4 w-4') => (
     <div className="flex items-center gap-0.5">
@@ -254,7 +264,7 @@ export default function PackDetailPage() {
           ) : (
             <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
               {!installing && <Package className="h-4 w-4 mr-1.5" />}
-              {installing ? 'Installing...' : 'Install Pack'}
+              {installing ? 'Installing...' : (user ? 'Install Pack' : 'Sign in to install')}
             </Button>
           )}
         </div>

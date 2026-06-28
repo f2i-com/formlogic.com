@@ -7,9 +7,12 @@ interface PermissionMatrixProps {
   forms: Array<{ formId: string; displayName: string }>;
   onChange: (permissions: Array<{ formId: string | null; permission: PermissionAction }>) => void;
   disabled?: boolean;
+  /** Disable only the app-level (not per-form) toggles — e.g. for non-owners,
+      whose app-level grants the backend rejects. */
+  appLevelDisabled?: boolean;
 }
 
-export function PermissionMatrix({ permissions, forms, onChange, disabled = false }: PermissionMatrixProps) {
+export function PermissionMatrix({ permissions, forms, onChange, disabled = false, appLevelDisabled = false }: PermissionMatrixProps) {
   const hasPermission = (formId: string | null, permission: PermissionAction): boolean => {
     return permissions.some((p) => p.formId === formId && p.permission === permission);
   };
@@ -28,22 +31,26 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
     <div className="space-y-6">
       {/* App-level permissions */}
       <div>
-        <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">App-Level Permissions</h4>
+        <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
+          App-Level Permissions
+          {appLevelDisabled && <span className="ml-2 text-xs font-normal text-gray-400 dark:text-slate-500">(Owner only)</span>}
+        </h4>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {APP_LEVEL_PERMISSIONS.map((perm) => (
             <label
               key={perm}
               className={cn(
                 'flex items-center gap-2 p-2.5 rounded-xl border border-gray-200/80 dark:border-slate-700/60 text-sm transition-all duration-200',
-                !disabled && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800',
+                !disabled && !appLevelDisabled && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800',
+                appLevelDisabled && 'opacity-60',
                 hasPermission(null, perm) && 'bg-primary-50 dark:bg-primary-500/10 border-primary-300 dark:border-primary-500/30'
               )}
             >
               <input
                 type="checkbox"
                 checked={hasPermission(null, perm)}
-                onChange={() => togglePermission(null, perm)}
-                disabled={disabled}
+                onChange={() => { if (!appLevelDisabled) togglePermission(null, perm); }}
+                disabled={disabled || appLevelDisabled}
                 aria-label={APP_PERMISSION_LABELS[perm]}
                 className="rounded border-gray-300 text-primary-600 accent-primary-600 focus:ring-primary-500"
               />
