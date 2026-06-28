@@ -146,6 +146,7 @@ function FieldInput({
   allFieldIds,
   onCalculated,
   error,
+  autoFocus = true,
 }: {
   field: FormField;
   value: unknown;
@@ -157,6 +158,7 @@ function FieldInput({
   allFieldIds?: string[];
   onCalculated?: (fieldId: string, value: unknown) => void;
   error?: string;
+  autoFocus?: boolean;
 }) {
   // Associate a validation error with the rendered control (aria-invalid +
   // aria-describedby) so screen readers announce it as part of the field. The body
@@ -172,7 +174,7 @@ function FieldInput({
         value={(value as string) || ''}
         onChange={(val) => onChange(val)}
         primaryColor={primaryColor}
-        autoFocus
+        autoFocus={autoFocus}
       />
     );
   }
@@ -190,7 +192,7 @@ function FieldInput({
         placeholder={field.placeholder || 'Type your answer here...'}
         className={inputClass}
         style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
-        autoFocus
+        autoFocus={autoFocus}
       />
     );
   }
@@ -206,7 +208,7 @@ function FieldInput({
         rows={4}
         className={cn(inputClass, 'resize-none')}
         style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
-        autoFocus
+        autoFocus={autoFocus}
       />
     );
   }
@@ -229,7 +231,7 @@ function FieldInput({
         placeholder={field.placeholder || 'Type a number...'}
         className={inputClass}
         style={{ ...focusStyle, borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
-        autoFocus
+        autoFocus={autoFocus}
       />
     );
   }
@@ -245,7 +247,7 @@ function FieldInput({
         onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
         className={cn(inputClass, 'max-w-full sm:max-w-xs cursor-pointer')}
         style={{ ...focusStyle, borderColor: value ? primaryColor : undefined }}
-        autoFocus
+        autoFocus={autoFocus}
       />
     );
   }
@@ -533,7 +535,7 @@ function FieldInput({
       placeholder={field.placeholder || 'Type your answer here...'}
       className={inputClass}
       style={focusStyle}
-      autoFocus
+      autoFocus={autoFocus}
     />
   );
   };
@@ -1164,6 +1166,7 @@ export function AppFormView() {
                     allAnswers={allFormData}
                     onCalculated={handleCalculated}
                     allFieldIds={fields.map(f => f.id)}
+                    autoFocus={false}
                   />
                 </div>
               ))}

@@ -40,7 +40,7 @@ export function ConfirmDialog({
           )}
           <div className="flex-1 min-w-0">
             <h3 className="text-base font-semibold text-gray-900 dark:text-white tracking-tight">{title}</h3>
-            <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400">{message}</p>
+            <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400 whitespace-pre-line">{message}</p>
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-6">

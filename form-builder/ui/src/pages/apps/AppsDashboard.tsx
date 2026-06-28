@@ -7,6 +7,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
 import { cn, parseServerDate } from '../../lib/utils';
@@ -130,8 +131,8 @@ export function AppsDashboard() {
         )}
 
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading apps" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" aria-busy="true" aria-label="Loading apps">
+            {Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)}
           </div>
         ) : filteredApps.length === 0 && apps.length === 0 ? (
           <div className="text-center py-20 bg-white dark:bg-slate-900/30 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">

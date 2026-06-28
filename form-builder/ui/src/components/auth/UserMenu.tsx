@@ -158,7 +158,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
       </button>
 
       {isOpen && (
-        <div role="menu" aria-label="User menu" className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
+        <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-xl shadow-lg border border-gray-200/80 dark:border-slate-800 py-1 z-50 animate-scale-in">
           {/* User info */}
           <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-800">
             <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">

@@ -142,6 +142,7 @@ export function AppDataTable() {
   const [responses, setResponses] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [colDropdownOpen, setColDropdownOpen] = useState(false);
@@ -247,7 +248,7 @@ export function AppDataTable() {
       });
       return () => { cancelled = true; };
     }
-  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses]);
+  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, reloadKey]);
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;
@@ -428,6 +429,13 @@ export function AppDataTable() {
       {error ? (
         <div className="text-center py-12" role="alert">
           <p className="text-red-600 dark:text-red-400">{error}</p>
+          <button
+            type="button"
+            onClick={() => { setError(null); setLoading(true); setReloadKey((k) => k + 1); }}
+            className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium app-text-primary hover:opacity-80 cursor-pointer"
+          >
+            Try again
+          </button>
         </div>
       ) : loading ? (
         <div className="flex items-center justify-center py-12">

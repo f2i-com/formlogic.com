@@ -64,6 +64,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
     setName('');
     setConfirmPassword('');
     setLocalError(null);
+    setMode(initialMode);
     clearError();
     onClose();
   };

@@ -228,7 +228,7 @@ export function AppResponseDetail() {
         <div className="flex items-center gap-2">
           <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0',
             status === 'approved' ? 'text-green-500' : status === 'rejected' ? 'text-red-500' : status === 'submitted' ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500')} />
-          {formId && canViewAll(formId) ? (
+          {formId && canViewAll(formId) && canEdit(formId) ? (
             <select
               value={status}
               onChange={(e) => handleStatusChange(e.target.value)}

@@ -144,7 +144,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
             type="button"
             onClick={loadMore}
             disabled={loadingMore}
-            className="w-full text-center text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 disabled:opacity-50 cursor-pointer"
+            className="w-full text-center text-sm font-medium app-text-primary hover:opacity-80 disabled:opacity-50 cursor-pointer"
           >
             {loadingMore ? (
               <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</span>

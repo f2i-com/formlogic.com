@@ -535,7 +535,9 @@ export function FormsList() {
 
           <TabsContent value="published">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {publishedForms.length === 0 ? (
+              {formsLoading && publishedForms.length === 0 ? (
+                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+              ) : publishedForms.length === 0 ? (
                 <div className="col-span-full">
                   <EmptyState
                     icon={Globe}
@@ -551,7 +553,9 @@ export function FormsList() {
 
           <TabsContent value="draft">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {draftForms.length === 0 ? (
+              {formsLoading && draftForms.length === 0 ? (
+                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+              ) : draftForms.length === 0 ? (
                 <div className="col-span-full">
                   <EmptyState
                     icon={FileText}
@@ -567,7 +571,9 @@ export function FormsList() {
 
           <TabsContent value="archived">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              {archivedForms.length === 0 ? (
+              {formsLoading && archivedForms.length === 0 ? (
+                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+              ) : archivedForms.length === 0 ? (
                 <div className="col-span-full">
                   <EmptyState
                     icon={Archive}

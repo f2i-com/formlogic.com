@@ -17,6 +17,7 @@ export function AcceptInvite() {
   const token = searchParams.get('token') || '';
   const user = useAuthStore((s) => s.user);
   const authLoading = useAuthStore((s) => s.isLoading);
+  const logout = useAuthStore((s) => s.logout);
   const acceptInvitation = useAppUserStore((s) => s.acceptInvitation);
 
   const [status, setStatus] = useState<'idle' | 'accepting' | 'success' | 'error'>('idle');
@@ -89,6 +90,9 @@ export function AcceptInvite() {
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{errorMsg}</p>
               <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Make sure you're signed in with the email the invite was sent to ({user.email}).</p>
               <div className="flex flex-col gap-2 mt-6">
+                <Button onClick={async () => { await logout(); navigate(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`); }}>
+                  Sign out & use a different account
+                </Button>
                 <Button variant="outline" onClick={() => navigate('/apps')}>Go to my apps</Button>
               </div>
             </>

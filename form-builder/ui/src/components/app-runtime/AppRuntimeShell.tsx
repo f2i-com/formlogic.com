@@ -18,6 +18,11 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const { config, activeFormId, setActiveForm, sidebarCollapsed, toggleSidebar } = useAppRuntimeStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isOnline = useOnlineStatus();
+  const mainRef = useRef<HTMLElement>(null);
+
+  // Move focus to the main region on navigation so keyboard / screen-reader users
+  // land on the new content instead of staying on the nav.
+  useEffect(() => { mainRef.current?.focus(); }, [location.pathname]);
 
   // Sync activeFormId from URL on location change (deep links, browser back/forward)
   useEffect(() => {
@@ -81,9 +86,17 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const maxBottomItems = navItems.length > 4 ? 3 : 4;
   const bottomNavItems = navItems.slice(0, maxBottomItems);
   const hasMoreItems = navItems.length > maxBottomItems;
+  // Highlight "More" when the current section lives in the overflow menu.
+  const activeInOverflow = hasMoreItems && navItems.slice(maxBottomItems).some((i) => isActive(i.id));
 
   return (
     <div className="min-h-screen flex bg-gray-50 dark:bg-slate-950">
+      <a
+        href="#app-main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-white dark:focus:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-primary-500"
+      >
+        Skip to content
+      </a>
       {/* Desktop Sidebar */}
       <aside className={cn(
         'hidden md:flex flex-col border-r border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/80 transition-all duration-300 flex-shrink-0',
@@ -106,6 +119,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             <button
               key={item.id}
               onClick={() => handleNav(item)}
+              aria-current={isActive(item.id) ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
@@ -169,7 +183,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         )}
 
         {/* Page content */}
-        <main className="flex-1 p-4 md:p-6 overflow-auto bg-gray-50 dark:bg-slate-950">
+        <main id="app-main-content" ref={mainRef} tabIndex={-1} className="flex-1 p-4 md:p-6 overflow-auto bg-gray-50 dark:bg-slate-950 outline-none">
           {children}
         </main>
 
@@ -179,6 +193,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             <button
               key={item.id}
               onClick={() => handleNav(item)}
+              aria-current={isActive(item.id) ? 'page' : undefined}
               className={cn(
                 'flex-1 flex flex-col items-center py-3 text-[11px] transition-all duration-200 cursor-pointer',
                 isActive(item.id)
@@ -193,7 +208,11 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           {hasMoreItems && (
             <button
               onClick={() => setMobileMenuOpen(true)}
-              className="flex-1 flex flex-col items-center py-3 text-[11px] text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+              aria-current={activeInOverflow ? 'page' : undefined}
+              className={cn(
+                'flex-1 flex flex-col items-center py-3 text-[11px] transition-colors cursor-pointer',
+                activeInOverflow ? 'app-text-primary font-semibold' : 'text-gray-400 dark:text-slate-500'
+              )}
             >
               <MoreHorizontal className="h-5 w-5 mb-0.5" />
               <span>More</span>
@@ -222,6 +241,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                 <button
                   key={item.id}
                   onClick={() => handleNav(item)}
+                  aria-current={isActive(item.id) ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',

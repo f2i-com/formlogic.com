@@ -25,9 +25,16 @@ export function AppDashboard() {
     if (target) {
       redirectedRef.current = true;
       sessionStorage.setItem(key, '1');
-      navigate(`/app/${appSlug}/form/${landingPage}`, { replace: true });
+      // Send the user where they can actually act: the fill route if they can
+      // submit, otherwise the data view if they can read. If they can do neither,
+      // stay on the dashboard rather than bounce them to a "no permission" wall.
+      if (canSubmit(landingPage)) {
+        navigate(`/app/${appSlug}/form/${landingPage}`, { replace: true });
+      } else if (canViewOwn(landingPage) || canViewAll(landingPage)) {
+        navigate(`/app/${appSlug}/form/${landingPage}/responses`, { replace: true });
+      }
     }
-  }, [landingPage, appSlug, forms, navigate]);
+  }, [landingPage, appSlug, forms, navigate, canSubmit, canViewOwn, canViewAll]);
 
   if (!config) return null;
 

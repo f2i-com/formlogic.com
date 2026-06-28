@@ -6,6 +6,7 @@ import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import type { Webhook, WebhookDelivery } from '../../lib/api';
 import { cn, parseServerDate } from '../../lib/utils';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface WebhookManagerProps {
   formId: string;
@@ -30,6 +31,8 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
   const [expandedWebhook, setExpandedWebhook] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<Record<string, WebhookDelivery[]>>({});
   const [newSecret, setNewSecret] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadWebhooks = useCallback(async () => {
     const result = await api.getWebhooks(formId);
@@ -290,7 +293,7 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
                 <button type="button" onClick={() => openEdit(webhook)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-slate-700 rounded text-gray-500 cursor-pointer" title="Edit" aria-label="Edit webhook">
                   <Pencil className="h-4 w-4" />
                 </button>
-                <button type="button" onClick={() => handleDelete(webhook.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 cursor-pointer" title="Delete" aria-label="Delete webhook">
+                <button type="button" onClick={() => setConfirmDeleteId(webhook.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-500/10 rounded text-red-500 cursor-pointer" title="Delete" aria-label="Delete webhook">
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
@@ -327,6 +330,21 @@ export function WebhookManager({ formId }: WebhookManagerProps) {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        isOpen={!!confirmDeleteId}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={async () => {
+          if (!confirmDeleteId) return;
+          setDeleting(true);
+          try { await handleDelete(confirmDeleteId); setConfirmDeleteId(null); }
+          finally { setDeleting(false); }
+        }}
+        title="Delete webhook?"
+        message="This permanently deletes the webhook and its signing secret. This can't be undone."
+        confirmLabel="Delete"
+        variant="danger"
+        isLoading={deleting}
+      />
     </div>
   );
 }

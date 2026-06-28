@@ -640,7 +640,7 @@ function FormResponses() {
                 icon={Inbox}
                 title="No responses yet"
                 description="Share your form to start collecting responses"
-                action={<Button onClick={() => navigate(`/builder/${formId}`)}>Go to Builder</Button>}
+                action={<Button onClick={() => setShowEmbedModal(true)}>Share form</Button>}
               />
             </CardContent>
           </Card>

@@ -30,7 +30,8 @@ export function AppUserManager() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<{ type: 'removeUser' | 'deleteGroup'; id: string; label: string } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'removeUser' | 'deleteGroup' | 'revokeInvitation'; id: string; label: string } | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [editRoleId, setEditRoleId] = useState('');
   const [editStatus, setEditStatus] = useState<'active' | 'suspended'>('active');
@@ -225,9 +226,10 @@ export function AppUserManager() {
             ] as Column<Record<string, unknown>>[]}
             searchable
             isLoading={loading}
+            emptyMessage="No invitations yet — invite a user to get started."
             actions={(inv) => (
               (inv as unknown as AppInvitation).status === 'pending' ? (
-                <button onClick={() => revokeInvitation(appId!, String(inv.id))} className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
+                <button onClick={() => setConfirmAction({ type: 'revokeInvitation', id: String(inv.id), label: String((inv as unknown as AppInvitation).email) })} className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
               ) : null
             )}
           />
@@ -247,6 +249,7 @@ export function AppUserManager() {
               { key: 'memberCount', label: 'Members', sortable: true },
             ] as Column<Record<string, unknown>>[]}
             isLoading={loading}
+            emptyMessage="No groups yet — create one above to organize members."
             actions={(group) => (
               <div className="flex items-center justify-end gap-1">
                 <button onClick={() => openManageMembers(group as unknown as AppUserGroup)}
@@ -382,25 +385,34 @@ export function AppUserManager() {
 
       <ConfirmDialog
         isOpen={confirmAction !== null}
-        onClose={() => setConfirmAction(null)}
+        onClose={() => { if (!confirmLoading) setConfirmAction(null); }}
         onConfirm={async () => {
-          if (!confirmAction || !appId) return;
-          let success = false;
-          if (confirmAction.type === 'removeUser') {
-            success = await removeUser(appId, confirmAction.id);
-            if (!success) toast.error('Remove failed', 'Could not remove the user. Please try again.');
-          } else if (confirmAction.type === 'deleteGroup') {
-            success = await deleteGroup(appId, confirmAction.id);
-            if (!success) toast.error('Delete failed', 'Could not delete the group. Please try again.');
+          if (!confirmAction || !appId || confirmLoading) return;
+          setConfirmLoading(true);
+          try {
+            // The store surfaces a specific error toast on failure, so don't add a
+            // second generic one here.
+            if (confirmAction.type === 'removeUser') {
+              await removeUser(appId, confirmAction.id);
+            } else if (confirmAction.type === 'deleteGroup') {
+              await deleteGroup(appId, confirmAction.id);
+            } else if (confirmAction.type === 'revokeInvitation') {
+              await revokeInvitation(appId, confirmAction.id);
+            }
+          } finally {
+            setConfirmLoading(false);
+            setConfirmAction(null);
           }
-          setConfirmAction(null);
         }}
-        title={confirmAction?.type === 'removeUser' ? 'Remove User' : 'Delete Group'}
+        title={confirmAction?.type === 'removeUser' ? 'Remove user' : confirmAction?.type === 'deleteGroup' ? 'Delete group' : 'Revoke invitation'}
         message={confirmAction?.type === 'removeUser'
-          ? `Are you sure you want to remove "${confirmAction?.label}" from this app?`
-          : `Are you sure you want to delete the group "${confirmAction?.label}"?`}
-        confirmLabel={confirmAction?.type === 'removeUser' ? 'Remove' : 'Delete'}
+          ? `Remove "${confirmAction?.label}" from this app? They'll lose access immediately.`
+          : confirmAction?.type === 'deleteGroup'
+            ? `Delete the group "${confirmAction?.label}"? This can't be undone.`
+            : `Revoke the invitation for "${confirmAction?.label}"? The invite link will stop working.`}
+        confirmLabel={confirmAction?.type === 'removeUser' ? 'Remove' : confirmAction?.type === 'deleteGroup' ? 'Delete' : 'Revoke'}
         variant="danger"
+        isLoading={confirmLoading}
       />
     </div>
   );
