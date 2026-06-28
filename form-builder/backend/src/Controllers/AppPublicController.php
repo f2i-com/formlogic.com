@@ -295,10 +295,17 @@ class AppPublicController
         $script = $form ? ($form['logicScript'] ?? null) : null;
 
         if ($form) {
-            // Only accept submissions to published forms (not draft/archived),
-            // matching the standalone and external-API submission paths.
-            if (($form['status'] ?? '') !== 'published') {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form is not accepting responses.'], 403);
+            // In an app the APP is the unit of publication: the form is reachable
+            // only through the published app (checked above) and gated by the user's
+            // SUBMIT permission. So — unlike the standalone/public + external-API
+            // paths — we do NOT require the form's own status to be 'published';
+            // app forms are commonly drafts that are never shared standalone, and
+            // requiring per-form publishing silently rejected every submission with
+            // "This form is not accepting responses." Only an explicitly archived
+            // (retired) form is refused; use the form's isClosed setting (below) to
+            // stop collecting without archiving.
+            if (($form['status'] ?? '') === 'archived') {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form is no longer accepting responses.'], 403);
             }
 
             // Drop answers for non-input/unknown fields (e.g. forged calculated
