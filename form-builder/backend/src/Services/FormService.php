@@ -127,15 +127,17 @@ class FormService
             $forms[] = $form->toArray();
         }
 
-        // Persist backfilled counts so this only happens once per form
+        // Persist backfilled counts so this only happens once per form. Preserve
+        // updated_at (forms.updated_at is ON UPDATE CURRENT_TIMESTAMP) — a one-time
+        // count backfill must NOT rewrite every form's "Last Modified" time.
         if (!empty($backfillIds)) {
-            $updateStmt = $this->mysql->prepare("UPDATE forms SET field_count = :cnt WHERE id = :id");
+            $updateStmt = $this->mysql->prepare("UPDATE forms SET field_count = :cnt, updated_at = updated_at WHERE id = :id");
             foreach ($backfillIds as $id => $count) {
                 $updateStmt->execute(['cnt' => $count, 'id' => $id]);
             }
         }
         if (!empty($respBackfillIds)) {
-            $respUpdateStmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt WHERE id = :id");
+            $respUpdateStmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt, updated_at = updated_at WHERE id = :id");
             foreach ($respBackfillIds as $id => $count) {
                 $respUpdateStmt->execute(['cnt' => $count, 'id' => $id]);
             }

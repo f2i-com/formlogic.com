@@ -953,7 +953,10 @@ class ResponseService
     {
         try {
             $count = $this->getResponseCount($formId);
-            $stmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt WHERE id = :id");
+            // Preserve updated_at: submitting/deleting a response is not a form edit,
+            // and forms.updated_at is ON UPDATE CURRENT_TIMESTAMP (would otherwise
+            // bump the form's "Last Modified" on every submission).
+            $stmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt, updated_at = updated_at WHERE id = :id");
             $stmt->execute(['cnt' => $count, 'id' => $formId]);
         } catch (\Throwable $e) {
             $this->logger->error('Failed to sync response_count', ['formId' => $formId, 'error' => $e->getMessage()]);
