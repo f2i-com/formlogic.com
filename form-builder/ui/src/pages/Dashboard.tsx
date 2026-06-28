@@ -338,6 +338,11 @@ export function Dashboard() {
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
   const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
+  // Cloud (API) mode keeps responses on the server, not in the local store, so
+  // per-form counts + Recent Activity must come from the API (else the cards show
+  // 0 / "No submissions yet" while the Total Responses stat shows the real number).
+  const [responseCounts, setResponseCounts] = useState<Record<string, number>>({});
+  const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -416,6 +421,33 @@ export function Dashboard() {
             totalResponses,
             avgCompletionRate: formsWithAnalytics > 0 ? Math.round(totalCompletionRate / formsWithAnalytics) : 0,
           });
+
+          // Per-form counts for the cards (reuse the analytics we just fetched).
+          const counts: Record<string, number> = {};
+          analyticsResults.forEach((result, i) => {
+            if (result.data?.analytics) counts[forms[i].id] = result.data.analytics.totalResponses;
+          });
+          if (cancelled) return;
+          setResponseCounts(counts);
+
+          // Recent Activity: pull a few recent rows from the forms that have responses.
+          const formsWithResponses = forms
+            .filter((f) => (counts[f.id] ?? 0) > 0)
+            .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
+            .slice(0, 5);
+          const recentResults = await Promise.all(
+            formsWithResponses.map((f) =>
+              api.getResponses(f.id, { limit: 5 }).then((res) => ({ f, res })).catch(() => null)
+            )
+          );
+          if (cancelled) return;
+          const merged = recentResults.flatMap((r) =>
+            r && r.res.data?.responses
+              ? r.res.data.responses.map((resp) => ({ id: resp.id, formId: r.f.id, formTitle: r.f.title, submittedAt: resp.submittedAt }))
+              : []
+          );
+          merged.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
+          setApiRecent(merged.slice(0, 5));
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
@@ -439,8 +471,8 @@ export function Dashboard() {
     .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
     .slice(0, 5);
 
-  // Get recent responses across all forms
-  const recentResponses = useMemo(() => {
+  // Get recent responses across all forms (local store — cloud mode uses apiRecent)
+  const localRecentResponses = useMemo(() => {
     const allResponses = forms.flatMap(form => {
       const formResponses = getResponsesByFormId(form.id);
       return formResponses.map(r => ({
@@ -450,9 +482,10 @@ export function Dashboard() {
       }));
     });
     return allResponses
-      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+      .sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime())
       .slice(0, 5);
   }, [forms, responses, getResponsesByFormId]);
+  const recentResponses = storageMode === 'api' ? apiRecent : localRecentResponses;
 
   // Format date for welcome message
   const today = new Date().toLocaleDateString(undefined, {
@@ -666,7 +699,7 @@ export function Dashboard() {
                                 <span className="hidden sm:inline">•</span>
                                 <span className="hidden sm:inline">{fieldCount} fields</span>
                                 <span>•</span>
-                                <span>{formResponses.length} responses</span>
+                                <span>{(storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length)} responses</span>
                               </div>
                             </div>
                           </div>
