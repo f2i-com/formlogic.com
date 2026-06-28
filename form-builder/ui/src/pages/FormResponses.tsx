@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -19,6 +19,7 @@ import {
   CalendarDays,
   Timer,
   Upload,
+  RefreshCw,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
@@ -192,6 +193,35 @@ function FormResponses() {
     loadData();
     return () => { cancelled = true; };
   }, [formId, storageMode, getForm, localResponses]);
+
+  // Keep the list fresh: silently refetch responses when the tab regains focus or
+  // becomes visible, so a response submitted while this page was open (or in another
+  // tab) appears without a manual reload. API mode only; no loading skeleton.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const reloadResponses = useCallback(async () => {
+    if (!formId || storageMode !== 'api') return;
+    setIsRefreshing(true);
+    try {
+      const { responses: all } = await fetchAllApiResponses(formId);
+      setResponses(all);
+    } catch {
+      // Keep the current data on a transient refresh failure.
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [formId, storageMode]);
+
+  useEffect(() => {
+    if (storageMode !== 'api') return;
+    const onFocus = () => reloadResponses();
+    const onVisible = () => { if (document.visibilityState === 'visible') reloadResponses(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [storageMode, reloadResponses]);
 
   // Get display fields (first few meaningful fields)
   const displayFields = useMemo(() => {
@@ -523,6 +553,12 @@ function FormResponses() {
               <ArrowLeft className="h-4 w-4" />
               <span className="hidden md:inline ml-2">Analytics</span>
             </Button>
+            {storageMode === 'api' && (
+              <Button variant="outline" size="sm" onClick={reloadResponses} disabled={isRefreshing} title="Refresh responses">
+                <RefreshCw className={`h-4 w-4${isRefreshing ? ' animate-spin' : ''}`} />
+                <span className="hidden md:inline ml-2">Refresh</span>
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
               <Share2 className="h-4 w-4" />
               <span className="hidden md:inline ml-2">Share</span>
