@@ -21,7 +21,8 @@ class Form
         public ?string $createdAt = null,
         public ?string $updatedAt = null,
         public ?string $publishedAt = null,
-        public int $fieldCount = 0
+        public int $fieldCount = 0,
+        public ?int $responseCount = null
     ) {}
 
     public static function fromArray(array $data): self
@@ -47,7 +48,10 @@ class Form
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null,
             publishedAt: $data['published_at'] ?? $data['publishedAt'] ?? null,
-            fieldCount: (int)($data['field_count'] ?? $data['fieldCount'] ?? 0)
+            fieldCount: (int)($data['field_count'] ?? $data['fieldCount'] ?? 0),
+            responseCount: isset($data['response_count'])
+                ? (int)$data['response_count']
+                : ($data['responseCount'] ?? null)
         );
     }
 
@@ -69,6 +73,7 @@ class Form
             'updatedAt' => $this->updatedAt,
             'publishedAt' => $this->publishedAt,
             'fieldCount' => $this->fieldCount,
+            'responseCount' => $this->responseCount,
         ];
     }
 

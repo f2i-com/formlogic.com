@@ -527,6 +527,9 @@ class ResponseService
             ]);
         }
 
+        // Keep the denormalized MySQL response_count in sync for list views.
+        $this->syncResponseCount($formId);
+
         // 8. Read back + dispatch webhook, best-effort: the response is durably
         // saved in both stores by now, so a read/format/delivery error must NOT
         // bubble up and turn a saved submission into a 500 (the submitter would
@@ -932,9 +935,29 @@ class ResponseService
                     ]);
                 }
             }
+
+            // Keep the denormalized MySQL response_count in sync for list views.
+            $this->syncResponseCount($formId);
         }
 
         return $deleted;
+    }
+
+    /**
+     * Recompute the per-form response count from the source-of-truth SQLite table
+     * and store it on the MySQL forms row (denormalized for list views). Recompute
+     * (not increment) so the count can't drift; best-effort so a sync failure never
+     * breaks the response create/delete it follows.
+     */
+    private function syncResponseCount(string $formId): void
+    {
+        try {
+            $count = $this->getResponseCount($formId);
+            $stmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt WHERE id = :id");
+            $stmt->execute(['cnt' => $count, 'id' => $formId]);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to sync response_count', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
     }
 
     /**

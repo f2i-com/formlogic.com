@@ -530,6 +530,16 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE forms ADD COLUMN field_count INT UNSIGNED DEFAULT 0 AFTER status");
         }
 
+        // Add response_count for list views (cards + "Most Responses" sort). NULL =
+        // not yet computed (distinguishes "unknown" from a genuine 0 responses);
+        // backfilled lazily on first list read, then kept in sync on every
+        // response create/delete. Responses live in per-form SQLite, so this is a
+        // denormalized mirror — see ResponseService::syncResponseCount().
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'response_count'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN response_count INT UNSIGNED DEFAULT NULL AFTER field_count");
+        }
+
         // Webhook delivery retry columns (durable retry queue)
         $hasWebhookDeliveries = $pdo->query("SHOW TABLES LIKE 'webhook_deliveries'")->rowCount() > 0;
         if ($hasWebhookDeliveries) {

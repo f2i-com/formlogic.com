@@ -88,6 +88,7 @@ class FormService
 
         $forms = [];
         $backfillIds = [];
+        $respBackfillIds = [];
         while ($row = $stmt->fetch()) {
             $form = Form::fromArray($row);
             // Only load fields from SQLite when explicitly requested (avoids N+1 for list views)
@@ -108,6 +109,21 @@ class FormService
                     // SQLite DB may not exist yet for empty forms
                 }
             }
+            // Backfill response_count once for forms that predate the column (NULL =
+            // not yet computed; 0 is a valid computed value). Only opens a per-form
+            // SQLite DB that already exists (never resurrects one), and persists the
+            // result so it runs at most once per form.
+            if ($form->responseCount === null) {
+                try {
+                    $rcnt = $this->sqlite->formDatabaseExists($form->id)
+                        ? (int)$this->sqlite->getFormDatabase($form->id)->query("SELECT COUNT(*) FROM responses")->fetchColumn()
+                        : 0;
+                    $form->responseCount = $rcnt;
+                    $respBackfillIds[$form->id] = $rcnt;
+                } catch (\Throwable $e) {
+                    // Leave NULL; retry on the next list load.
+                }
+            }
             $forms[] = $form->toArray();
         }
 
@@ -116,6 +132,12 @@ class FormService
             $updateStmt = $this->mysql->prepare("UPDATE forms SET field_count = :cnt WHERE id = :id");
             foreach ($backfillIds as $id => $count) {
                 $updateStmt->execute(['cnt' => $count, 'id' => $id]);
+            }
+        }
+        if (!empty($respBackfillIds)) {
+            $respUpdateStmt = $this->mysql->prepare("UPDATE forms SET response_count = :cnt WHERE id = :id");
+            foreach ($respBackfillIds as $id => $count) {
+                $respUpdateStmt->execute(['cnt' => $count, 'id' => $id]);
             }
         }
 

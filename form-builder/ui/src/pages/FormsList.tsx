@@ -264,7 +264,12 @@ export function FormsList() {
   const navigate = useNavigate();
   const { forms, createForm, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
+  const storageMode = useFormStore((s) => s.storageMode);
   const { getResponsesByFormId } = useResponseStore();
+  // Cloud mode keeps responses on the server, so the local store is empty — use the
+  // server-provided per-form count there (falls back to the local store offline/local).
+  const responseCountOf = (form: Form) =>
+    storageMode === 'api' ? (form.responseCount ?? 0) : getResponsesByFormId(form.id).length;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
@@ -403,14 +408,17 @@ export function FormsList() {
         switch (sortBy) {
           case 'name':
             return a.title.localeCompare(b.title);
-          case 'responses':
-            return getResponsesByFormId(b.id).length - getResponsesByFormId(a.id).length;
+          case 'responses': {
+            const ca = storageMode === 'api' ? (a.responseCount ?? 0) : getResponsesByFormId(a.id).length;
+            const cb = storageMode === 'api' ? (b.responseCount ?? 0) : getResponsesByFormId(b.id).length;
+            return cb - ca;
+          }
           case 'modified':
           default:
             return parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime();
         }
       }),
-    [forms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap]
+    [forms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap, storageMode]
   );
 
   const draftForms = useMemo(() => filteredForms.filter((f) => f.status === 'draft'), [filteredForms]);
@@ -421,7 +429,7 @@ export function FormsList() {
     <FormCard
       key={form.id}
       form={form}
-      responseCount={getResponsesByFormId(form.id).length}
+      responseCount={responseCountOf(form)}
       packName={formPackMap[form.id] ?? null}
       activeMenuId={activeMenu?.id ?? null}
       activeMenuRect={activeMenu?.id === form.id ? activeMenu.rect : null}
