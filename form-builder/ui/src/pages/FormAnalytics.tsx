@@ -419,15 +419,15 @@ export default function FormAnalytics() {
           <div className="flex gap-1 sm:gap-2">
             <Button variant="outline" size="sm" onClick={() => navigate(`/builder/${form.id}`)} title="Back to Builder">
               <ArrowLeft className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Builder</span>
+              <span className="hidden lg:inline ml-2">Builder</span>
             </Button>
             <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)} title="View Data">
               <Table className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Data</span>
+              <span className="hidden lg:inline ml-2">Data</span>
             </Button>
             <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
               <Share2 className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Share</span>
+              <span className="hidden lg:inline ml-2">Share</span>
             </Button>
             <div className="relative" ref={exportRef}>
               <Button
@@ -475,7 +475,7 @@ export default function FormAnalytics() {
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <Card>
             <CardContent className="flex items-center gap-3">
               <div className="p-2 sm:p-3 bg-blue-500/10 rounded-lg flex-shrink-0">

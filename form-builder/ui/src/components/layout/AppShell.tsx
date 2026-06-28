@@ -64,7 +64,11 @@ export function AppShell() {
         ref={mainRef}
         tabIndex={-1}
         className={cn(
-          'min-h-screen transition-all duration-300 focus:outline-none',
+          // overflow-x-clip is a safety net so the page can NEVER scroll horizontally
+          // (wide widgets like tables use their own contained overflow-x-auto). clip,
+          // not hidden, so it doesn't create a scroll container — the sticky header
+          // and dropdowns keep working.
+          'min-h-screen transition-all duration-300 focus:outline-none overflow-x-clip',
           !isMobile && (sidebarCollapsed ? 'ml-16' : 'ml-64'),
           isMobile && 'pb-20',
           !isOnline && 'pt-8'

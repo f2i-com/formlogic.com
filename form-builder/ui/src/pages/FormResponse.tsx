@@ -207,7 +207,7 @@ export function FieldResponse({
                 >
                   {String.fromCharCode(65 + index)}
                 </span>
-                <span className="flex-1 text-lg">{option.label?.trim() || option.value}</span>
+                <span className="flex-1 min-w-0 break-words text-lg">{option.label?.trim() || option.value}</span>
                 {value === option.value && (
                   <Check className="h-5 w-5" style={{ color: primaryColor }} />
                 )}
@@ -252,7 +252,7 @@ export function FieldResponse({
                 >
                   {selectedValues.includes(option.value) && <Check className="h-4 w-4" />}
                 </span>
-                <span className="flex-1 text-lg">{option.label?.trim() || option.value}</span>
+                <span className="flex-1 min-w-0 break-words text-lg">{option.label?.trim() || option.value}</span>
               </button>
             ))}
           </div>
@@ -649,7 +649,7 @@ export function FieldResponse({
     <div className="w-full max-w-xl mx-auto">
       <div className="mb-8">
         <h2
-          className="text-3xl font-bold mb-3 tracking-tight"
+          className="text-3xl font-bold mb-3 tracking-tight break-words"
           style={{ color: textColor }}
         >
           {field.label}

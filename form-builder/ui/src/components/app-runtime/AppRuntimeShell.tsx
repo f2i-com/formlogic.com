@@ -151,8 +151,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      {/* Main content — min-w-0 so a wide data table / long string can't widen the
+          flex row and scroll the whole page (the table + main scroll internally). */}
+      <div className="flex-1 flex flex-col min-h-screen min-w-0">
         {/* Mobile header */}
         <header className="md:hidden h-14 flex items-center px-4 border-b border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/80 sticky top-0 z-30 backdrop-blur-xl">
           <button
@@ -183,7 +184,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         )}
 
         {/* Page content */}
-        <main id="app-main-content" ref={mainRef} tabIndex={-1} className="flex-1 p-4 md:p-6 overflow-auto bg-gray-50 dark:bg-slate-950 outline-none">
+        <main id="app-main-content" ref={mainRef} tabIndex={-1} className="flex-1 p-4 md:p-6 overflow-y-auto overflow-x-clip bg-gray-50 dark:bg-slate-950 outline-none">
           {children}
         </main>
 

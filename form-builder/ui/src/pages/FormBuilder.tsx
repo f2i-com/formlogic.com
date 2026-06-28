@@ -405,7 +405,7 @@ export default function FormBuilder() {
             onBlur={flushTitle}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
             aria-label="Form title"
-            className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 w-32 sm:w-48 md:w-auto"
+            className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 min-w-0 w-full sm:w-48 md:w-auto"
           />
           {/* Save indicator — reflects the real storage mode (cloud vs local) and
               is announced to screen readers. */}

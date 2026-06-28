@@ -522,7 +522,7 @@ function FormResponses() {
       <div className="min-h-screen transition-colors">
         <Header title="Responses" />
         <div className="flex-1 w-full p-4 sm:p-6 lg:p-8" aria-busy="true" aria-label="Loading responses">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-4 flex items-center gap-3">
                 <Skeleton className="h-10 w-10 rounded-lg flex-shrink-0" />
@@ -560,25 +560,25 @@ function FormResponses() {
           <div className="flex flex-wrap gap-1.5 sm:gap-2">
             <Button variant="outline" size="sm" onClick={() => navigate(`/analytics/${formId}`)} title="Back to Analytics">
               <ArrowLeft className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Analytics</span>
+              <span className="hidden lg:inline ml-2">Analytics</span>
             </Button>
             {storageMode === 'api' && (
               <Button variant="outline" size="sm" onClick={reloadResponses} disabled={isRefreshing} title="Refresh responses">
                 <RefreshCw className={`h-4 w-4${isRefreshing ? ' animate-spin' : ''}`} />
-                <span className="hidden md:inline ml-2">Refresh</span>
+                <span className="hidden lg:inline ml-2">Refresh</span>
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => setShowEmbedModal(true)} title="Share & Embed" className="hidden sm:flex">
               <Share2 className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Share</span>
+              <span className="hidden lg:inline ml-2">Share</span>
             </Button>
             <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV">
               <Upload className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Import</span>
+              <span className="hidden lg:inline ml-2">Import</span>
             </Button>
             <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={responses.length === 0} title="Export CSV">
               <Download className="h-4 w-4" />
-              <span className="hidden md:inline ml-2">Export</span>
+              <span className="hidden lg:inline ml-2">Export</span>
             </Button>
           </div>
         }
@@ -586,7 +586,7 @@ function FormResponses() {
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard
             icon={Users}
             label="Total Responses"

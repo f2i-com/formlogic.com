@@ -148,7 +148,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         <div className="h-8 w-8 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-primary-foreground text-sm font-medium shadow-sm">
           {user.name?.[0]?.toUpperCase() || user.email[0].toUpperCase()}
         </div>
-        <span className="max-w-[120px] truncate hidden sm:block font-medium text-gray-700 dark:text-slate-300">
+        <span className="max-w-[120px] truncate hidden lg:block font-medium text-gray-700 dark:text-slate-300">
           {user.name || user.email.split('@')[0]}
         </span>
         <ChevronDown className={cn(

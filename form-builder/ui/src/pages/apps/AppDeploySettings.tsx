@@ -124,7 +124,7 @@ export function AppDeploySettings() {
               value={appUrl}
               aria-label="App share URL"
               onFocus={(e) => e.target.select()}
-              className="flex-1 px-3.5 py-2.5 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200/80 dark:border-slate-700/60 text-sm text-gray-700 dark:text-slate-300 font-mono overflow-hidden text-ellipsis focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+              className="flex-1 min-w-0 px-3.5 py-2.5 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200/80 dark:border-slate-700/60 text-sm text-gray-700 dark:text-slate-300 font-mono overflow-hidden text-ellipsis focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             />
             <Button variant="outline" size="sm" onClick={handleCopy} leftIcon={copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
               {copied ? 'Copied' : 'Copy'}

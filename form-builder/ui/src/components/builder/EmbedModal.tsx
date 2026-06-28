@@ -294,7 +294,7 @@ function closeFormPopup() {
                     type="text"
                     readOnly
                     value={formUrl}
-                    className="flex-1 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
+                    className="flex-1 min-w-0 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
                   />
                   <Button
                     variant="outline"

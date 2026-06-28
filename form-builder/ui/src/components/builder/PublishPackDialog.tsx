@@ -246,9 +246,9 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
     <Modal isOpen={isOpen} onClose={handleClose} title={isVersionMode ? 'Publish Update' : 'Publish Pack'} size="lg">
       <div className="p-4 sm:p-6 space-y-4">
         {/* Step indicator */}
-        <div className="flex items-center gap-2 justify-center">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2 justify-center">
           {steps.map((s, i) => (
-            <div key={s} className="flex items-center gap-2">
+            <div key={s} className="flex items-center gap-1 sm:gap-2">
               <div
                 className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors ${
                   i <= stepIndex
@@ -258,13 +258,13 @@ export function PublishPackDialog({ isOpen, onClose, onPublished, initialPack, v
               >
                 {i + 1}
               </div>
-              <span className={`text-xs font-medium ${
+              <span className={`text-xs font-medium hidden sm:inline ${
                 i <= stepIndex ? 'text-gray-900 dark:text-white' : 'text-gray-400 dark:text-slate-500'
               }`}>
                 {stepLabels[s]}
               </span>
               {i < steps.length - 1 && (
-                <div className={`w-8 h-0.5 ${i < stepIndex ? 'bg-primary-600' : 'bg-gray-200 dark:bg-slate-700'}`} />
+                <div className={`w-4 sm:w-8 h-0.5 ${i < stepIndex ? 'bg-primary-600' : 'bg-gray-200 dark:bg-slate-700'}`} />
               )}
             </div>
           ))}
