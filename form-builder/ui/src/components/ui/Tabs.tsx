@@ -89,7 +89,12 @@ export function TabsList({ children, className, variant = 'pills', 'aria-label':
   return (
     <div
       className={cn(
-        'flex items-center overflow-x-auto',
+        // scrollbar-hide: a tab strip scrolls horizontally for overflow, but
+        // `overflow-x:auto` forces `overflow-y` to compute to `auto` too, so a 1px
+        // vertical overflow (the underline border) produced a phantom vertical
+        // scrollbar — and Windows showed the horizontal one. Hide both tracks while
+        // keeping scroll for genuinely-overflowing tab sets.
+        'flex items-center overflow-x-auto scrollbar-hide',
         variant === 'pills' && 'gap-1 p-1 bg-gray-100/80 dark:bg-slate-800/80 rounded-lg',
         variant === 'underline' && 'gap-0 border-b border-gray-200 dark:border-slate-800',
         className

@@ -171,9 +171,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   };
 
   const tabs: { key: TabType; label: string; icon: React.ElementType }[] = [
-    { key: 'prompt', label: 'Text Prompt', icon: Wand2 },
-    { key: 'document', label: 'Upload Document', icon: FileText },
-    { key: 'image', label: 'Upload Photo', icon: Image },
+    { key: 'prompt', label: 'Prompt', icon: Wand2 },
+    { key: 'document', label: 'Document', icon: FileText },
+    { key: 'image', label: 'Photo', icon: Image },
   ];
 
   return (
