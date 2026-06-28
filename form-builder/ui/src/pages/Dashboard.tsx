@@ -424,8 +424,18 @@ export function Dashboard() {
 
           // Per-form counts for the cards (reuse the analytics we just fetched).
           const counts: Record<string, number> = {};
+          // Last submission time per form, derived from the analytics we already have,
+          // so Recent Activity ranks by submission recency. Submissions no longer bump
+          // forms.updatedAt, so updatedAt alone would miss the newest activity.
+          const lastActivity: Record<string, number> = {};
           analyticsResults.forEach((result, i) => {
-            if (result.data?.analytics) counts[forms[i].id] = result.data.analytics.totalResponses;
+            if (result.data?.analytics) {
+              counts[forms[i].id] = result.data.analytics.totalResponses;
+              const dated = (result.data.analytics.responsesByDate || []).filter((d) => d.count > 0);
+              if (dated.length) {
+                lastActivity[forms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
+              }
+            }
           });
           if (cancelled) return;
           setResponseCounts(counts);
@@ -433,7 +443,13 @@ export function Dashboard() {
           // Recent Activity: pull a few recent rows from the forms that have responses.
           const formsWithResponses = forms
             .filter((f) => (counts[f.id] ?? 0) > 0)
-            .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
+            .sort((a, b) => {
+              // Rank by most-recent submission; fall back to updatedAt when a form has
+              // no dated activity in the analytics window.
+              const la = lastActivity[a.id] ?? parseServerDate(a.updatedAt).getTime();
+              const lb = lastActivity[b.id] ?? parseServerDate(b.updatedAt).getTime();
+              return lb - la;
+            })
             .slice(0, 5);
           const recentResults = await Promise.all(
             formsWithResponses.map((f) =>

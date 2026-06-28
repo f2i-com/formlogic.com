@@ -205,6 +205,30 @@ class FileStorageService
     }
 
     /**
+     * Collect the stored file IDs referenced in a response's answers (a file_upload
+     * answer holds an array of {id, storedFilename, ...} objects). Used to delete
+     * only the files that an update dropped/replaced.
+     *
+     * @param array<string, mixed> $answers
+     * @return string[]
+     */
+    public function extractFileIds(array $answers): array
+    {
+        $ids = [];
+        foreach ($answers as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+            foreach ($value as $item) {
+                if (is_array($item) && isset($item['id'], $item['storedFilename']) && is_string($item['id'])) {
+                    $ids[] = $item['id'];
+                }
+            }
+        }
+        return $ids;
+    }
+
+    /**
      * Get the MIME type for a file.
      */
     public function getMimeType(string $filePath): string

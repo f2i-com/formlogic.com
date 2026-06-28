@@ -96,14 +96,18 @@ class FormService
                 $form->fields = $this->getFormFields($form->id);
                 $form->fieldCount = count($form->fields);
             } elseif ($form->fieldCount === 0) {
-                // Backfill field_count for forms migrated before the column existed
+                // Backfill field_count for forms migrated before the column existed.
+                // Only open a DB that already exists — don't materialize an empty
+                // SQLite file for a field-less draft on this read path (mirrors the
+                // response_count backfill below).
                 try {
-                    $db = $this->sqlite->getFormDatabase($form->id);
-                    $countResult = $db->query("SELECT COUNT(*) FROM fields");
-                    $count = (int)$countResult->fetchColumn();
-                    if ($count > 0) {
-                        $form->fieldCount = $count;
-                        $backfillIds[$form->id] = $count;
+                    if ($this->sqlite->formDatabaseExists($form->id)) {
+                        $count = (int)$this->sqlite->getFormDatabase($form->id)
+                            ->query("SELECT COUNT(*) FROM fields")->fetchColumn();
+                        if ($count > 0) {
+                            $form->fieldCount = $count;
+                            $backfillIds[$form->id] = $count;
+                        }
                     }
                 } catch (\Throwable $e) {
                     // SQLite DB may not exist yet for empty forms

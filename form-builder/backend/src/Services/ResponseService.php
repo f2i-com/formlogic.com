@@ -683,19 +683,27 @@ class ResponseService
             // Run migrations to ensure new tables exist
             $this->sqlite->migrateFormDatabase($db);
 
-            // Clear existing computed fields and tags
-            $this->clearComputedData($db, $responseId);
+            // Persist computed data atomically: clear + re-apply + log in one SQLite
+            // transaction so a mid-apply failure can't leave the response with
+            // partially-cleared / partially-rewritten computed fields or tags.
+            $db->beginTransaction();
+            try {
+                $this->clearComputedData($db, $responseId);
+                $this->applyScriptResult($db, $responseId, $result);
+                $this->logScriptExecution($db, $responseId, $result);
+                $db->commit();
+            } catch (\Throwable $e) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                throw $e;
+            }
 
-            // Apply new results
-            $this->applyScriptResult($db, $responseId, $result);
-
-            // Update status if changed
+            // Update status if changed — does its own MySQL mirror + webhook, so keep
+            // it outside the SQLite transaction.
             if ($result->status !== null) {
                 $this->updateResponse($formId, $responseId, ['status' => $result->status]);
             }
-
-            // Log execution
-            $this->logScriptExecution($db, $responseId, $result);
         }
 
         return $result;
@@ -794,6 +802,22 @@ class ResponseService
 
         $db = $this->sqlite->getFormDatabase($formId);
 
+        // If the answers are being replaced and uploads are in play, snapshot the
+        // existing answers BEFORE the UPDATE so we can delete any files this update
+        // drops/replaces — nothing else garbage-collects them.
+        $oldAnswersForFiles = null;
+        if (isset($data['answers']) && $this->fileStorageService !== null) {
+            $fetchAns = $db->prepare("SELECT answers FROM responses WHERE id = :id");
+            $fetchAns->execute(['id' => $responseId]);
+            $ansRow = $fetchAns->fetch(PDO::FETCH_ASSOC);
+            if ($ansRow && !empty($ansRow['answers'])) {
+                $decodedOld = json_decode($ansRow['answers'], true);
+                if (is_array($decodedOld)) {
+                    $oldAnswersForFiles = $decodedOld;
+                }
+            }
+        }
+
         $updates = [];
         $params = ['id' => $responseId];
 
@@ -821,6 +845,26 @@ class ResponseService
         $sql = "UPDATE responses SET " . implode(', ', $updates) . " WHERE id = :id";
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
+
+        // Delete files removed/replaced by this update (best-effort; the authoritative
+        // row is already updated, and files are unrecoverable so we only remove ones
+        // no longer referenced).
+        if ($oldAnswersForFiles !== null && $this->fileStorageService !== null) {
+            try {
+                $newAnswers = is_array($data['answers'] ?? null) ? $data['answers'] : [];
+                $orphaned = array_diff(
+                    $this->fileStorageService->extractFileIds($oldAnswersForFiles),
+                    $this->fileStorageService->extractFileIds($newAnswers)
+                );
+                foreach ($orphaned as $orphanId) {
+                    $this->fileStorageService->deleteFile($formId, $orphanId);
+                }
+            } catch (\Throwable $fileErr) {
+                $this->logger->error('Failed to clean up orphaned files after response update', [
+                    'formId' => $formId, 'responseId' => $responseId, 'error' => $fileErr->getMessage(),
+                ]);
+            }
+        }
 
         // Mirror the status into the MySQL metadata index AFTER the authoritative
         // SQLite row is updated. Doing MySQL first meant a failed SQLite UPDATE

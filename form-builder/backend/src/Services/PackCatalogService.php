@@ -69,9 +69,9 @@ class PackCatalogService
                    pv.app_count
             FROM pack_catalog pc
             JOIN users u ON u.id = pc.publisher_id
-            LEFT JOIN pack_versions pv ON pv.catalog_id = pc.id
-                AND pv.created_at = (
-                    SELECT MAX(pv2.created_at) FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+            LEFT JOIN pack_versions pv ON pv.id = (
+                    SELECT pv2.id FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+                    ORDER BY pv2.created_at DESC, pv2.id DESC LIMIT 1
                 )
             WHERE {$whereClause}
             ORDER BY {$orderBy}
@@ -112,9 +112,9 @@ class PackCatalogService
                    pv.app_count
             FROM pack_catalog pc
             JOIN users u ON u.id = pc.publisher_id
-            LEFT JOIN pack_versions pv ON pv.catalog_id = pc.id
-                AND pv.created_at = (
-                    SELECT MAX(pv2.created_at) FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+            LEFT JOIN pack_versions pv ON pv.id = (
+                    SELECT pv2.id FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+                    ORDER BY pv2.created_at DESC, pv2.id DESC LIMIT 1
                 )
             WHERE pc.slug = :slug AND pc.status != 'archived'
               AND (pc.visibility IS NULL OR pc.visibility <> 'private' OR pc.publisher_id = :viewer)
@@ -328,9 +328,9 @@ class PackCatalogService
                    pv.app_count
             FROM pack_catalog pc
             JOIN users u ON u.id = pc.publisher_id
-            LEFT JOIN pack_versions pv ON pv.catalog_id = pc.id
-                AND pv.created_at = (
-                    SELECT MAX(pv2.created_at) FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+            LEFT JOIN pack_versions pv ON pv.id = (
+                    SELECT pv2.id FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+                    ORDER BY pv2.created_at DESC, pv2.id DESC LIMIT 1
                 )
             WHERE pc.publisher_id = :user_id AND pc.status != 'archived'
             ORDER BY pc.updated_at DESC

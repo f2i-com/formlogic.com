@@ -223,6 +223,14 @@ class ExternalApiController
         }
 
         foreach ($items as $index => $item) {
+            // A non-object item (e.g. a bare string/number) would throw a TypeError on
+            // the array writes below — before the per-item try — and 500 the whole batch.
+            // Record it as a per-item failure so valid items still process.
+            if (!is_array($item)) {
+                $results[] = ['index' => $index, 'success' => false, 'message' => 'Each response must be an object'];
+                continue;
+            }
+
             // Enforce quota per-item to prevent batch from exceeding limit
             if ($quotaLimit > 0 && ($responseCount + $createdCount) >= $quotaLimit) {
                 $results[] = ['index' => $index, 'success' => false, 'message' => 'Quota limit reached'];
@@ -723,10 +731,47 @@ class ExternalApiController
                         $properties = $field['properties'] ?? [];
                         $options = $properties['options'] ?? [];
                         $allowedValues = array_column($options, 'value');
-                        foreach ($value as $selected) {
-                            if (!in_array($selected, $allowedValues, true)) {
-                                $errors[$fieldId] = 'Invalid selection';
-                                break;
+                        if (count($value) > max(count($allowedValues), 1)) {
+                            $errors[$fieldId] = 'Too many selections';
+                        } else {
+                            foreach ($value as $selected) {
+                                if (!in_array($selected, $allowedValues, true)) {
+                                    $errors[$fieldId] = 'Invalid selection';
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case 'location':
+                    if (!is_array($value)) {
+                        $errors[$fieldId] = 'Invalid location format';
+                    } elseif (!isset($value['latitude'], $value['longitude'])) {
+                        $errors[$fieldId] = 'Location must include latitude and longitude';
+                    } elseif (!is_numeric($value['latitude']) || !is_numeric($value['longitude'])) {
+                        $errors[$fieldId] = 'Latitude and longitude must be numbers';
+                    } elseif ($value['latitude'] < -90 || $value['latitude'] > 90) {
+                        $errors[$fieldId] = 'Latitude must be between -90 and 90';
+                    } elseif ($value['longitude'] < -180 || $value['longitude'] > 180) {
+                        $errors[$fieldId] = 'Longitude must be between -180 and 180';
+                    }
+                    break;
+                case 'file_upload':
+                    if (!is_array($value)) {
+                        $errors[$fieldId] = 'Invalid file upload format';
+                    } else {
+                        $props = $field['properties'] ?? [];
+                        $maxFiles = $props['maxFiles'] ?? 20;
+                        if (empty($props['allowMultiple']) && count($value) > 1) {
+                            $errors[$fieldId] = 'Only one file is allowed for this field';
+                        } elseif (count($value) > $maxFiles) {
+                            $errors[$fieldId] = "Maximum of {$maxFiles} files allowed";
+                        } else {
+                            foreach ($value as $item) {
+                                if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
+                                    $errors[$fieldId] = 'Invalid file metadata';
+                                    break;
+                                }
                             }
                         }
                     }

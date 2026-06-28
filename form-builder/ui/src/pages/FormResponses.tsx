@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -198,12 +198,18 @@ function FormResponses() {
   // becomes visible, so a response submitted while this page was open (or in another
   // tab) appears without a manual reload. API mode only; no loading skeleton.
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // Track the form currently shown so a slow refetch started for a previous form
+  // can't clobber the new form's data when it resolves late — /responses/:formId
+  // has no route key, so this component instance is reused across formId changes.
+  const formIdRef = useRef(formId);
+  formIdRef.current = formId;
   const reloadResponses = useCallback(async () => {
     if (!formId || storageMode !== 'api') return;
+    const fid = formId;
     setIsRefreshing(true);
     try {
-      const { responses: all } = await fetchAllApiResponses(formId);
-      setResponses(all);
+      const { responses: all } = await fetchAllApiResponses(fid);
+      if (formIdRef.current === fid) setResponses(all); // drop stale result if navigated away
     } catch {
       // Keep the current data on a transient refresh failure.
     } finally {
