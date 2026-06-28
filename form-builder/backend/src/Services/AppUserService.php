@@ -222,13 +222,16 @@ class AppUserService
 
     public function setRolePermissions(string $roleId, array $permissions, bool $actorIsOwner = false): void
     {
-        // Prevent modifying system role permissions (Owner, Admin)
+        // Only the Owner role is immutable (it implicitly has every permission).
+        // The other system roles (Admin/Member) are configurable — the role editor
+        // UI already presents them as editable, so rejecting the save here produced
+        // a dead-end "Save failed".
         $role = $this->getRole($roleId);
         if (!$role) {
             throw new \RuntimeException('Role not found');
         }
-        if ($role['isSystem']) {
-            throw new \RuntimeException('Cannot modify system role permissions');
+        if (($role['isSystem'] ?? false) && ($role['name'] ?? '') === 'Owner') {
+            throw new \RuntimeException('The Owner role cannot be modified');
         }
 
         // Build set of valid form IDs for this app (to validate formId in permissions)

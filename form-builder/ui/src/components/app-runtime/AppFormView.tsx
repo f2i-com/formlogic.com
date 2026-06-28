@@ -304,7 +304,7 @@ function FieldInput({
         className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white transition-colors"
         style={{ borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
       >
-        <option value="">Select...</option>
+        <option value="">{field.placeholder || 'Select...'}</option>
         {options.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
@@ -1078,7 +1078,7 @@ export function AppFormView() {
             className={cn(
               'absolute bottom-14 left-4 p-2 rounded-lg shadow-md border transition-colors z-10',
               showNigo
-                ? 'bg-primary-600 text-primary-foreground border-primary-500'
+                ? 'app-btn-primary app-border-primary'
                 : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white border-gray-100 dark:border-slate-700'
             )}
             aria-label="Toggle NIGO Dashboard"

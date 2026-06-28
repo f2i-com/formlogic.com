@@ -416,7 +416,8 @@ function FormResponses() {
 
   // Handle export
   const handleExportCsv = () => {
-    if (!form || responses.length === 0) return;
+    // Export exactly what's shown (the search + status filter), not the full set.
+    if (!form || filteredResponses.length === 0) return;
 
     // Export all fields, not just displayFields (which is limited to 6 for the table UI)
     const allExportFields = form.fields.filter(
@@ -430,16 +431,18 @@ function FormResponses() {
       if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
       return `"${str}"`;
     };
-    const headers = ['ID', 'Submitted At', ...allExportFields.map((f) => f.label)];
-    const rows = responses.map((r) => [
+    const headers = ['ID', 'Submitted At', 'Status', ...allExportFields.map((f) => f.label)];
+    const rows = filteredResponses.map((r) => [
       r.id,
       parseServerDate(r.submittedAt).toLocaleString(),
+      r.status ?? 'submitted',
       ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type)),
     ]);
 
     const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+    // Prepend a UTF-8 BOM so Excel reads non-ASCII correctly (matches backend export).
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

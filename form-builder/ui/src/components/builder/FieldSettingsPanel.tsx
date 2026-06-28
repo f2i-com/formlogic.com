@@ -243,7 +243,12 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   value={field.properties.min ?? ''}
                   onChange={(e) => {
                     const v = e.target.value;
-                    onUpdate({ properties: { ...field.properties, min: v === '' ? undefined : Number(v) } });
+                    const min = v === '' ? undefined : Number(v);
+                    const max = field.properties.max;
+                    // Keep min <= max (self-correct like the Scale editor) so the
+                    // field can't be made unsubmittable with min > max.
+                    const nextMax = (min !== undefined && max !== undefined && min > max) ? min : max;
+                    onUpdate({ properties: { ...field.properties, min, max: nextMax } });
                   }}
                   placeholder="—"
                 />
@@ -253,7 +258,10 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                   value={field.properties.max ?? ''}
                   onChange={(e) => {
                     const v = e.target.value;
-                    onUpdate({ properties: { ...field.properties, max: v === '' ? undefined : Number(v) } });
+                    const max = v === '' ? undefined : Number(v);
+                    const min = field.properties.min;
+                    const nextMin = (min !== undefined && max !== undefined && max < min) ? max : min;
+                    onUpdate({ properties: { ...field.properties, max, min: nextMin } });
                   }}
                   placeholder="—"
                 />

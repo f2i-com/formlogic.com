@@ -350,7 +350,9 @@ export default function FormAnalytics() {
 
       const escapeCell = (val: unknown) => {
         let str = String(val ?? '').replace(/"/g, '""');
-        if (/^[=+\-@]/.test(str)) str = "'" + str;
+        // Match the hardened guard used elsewhere: also catch leading whitespace
+        // and TAB/CR before a formula trigger (spreadsheets still evaluate those).
+        if (/^\s*[=+\-@\t\r]/.test(str)) str = "'" + str;
         return `"${str}"`;
       };
       const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));

@@ -45,7 +45,7 @@ export function PermissionMatrix({ permissions, forms, onChange, disabled = fals
                 onChange={() => togglePermission(null, perm)}
                 disabled={disabled}
                 aria-label={APP_PERMISSION_LABELS[perm]}
-                className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                className="rounded border-gray-300 text-primary-600 accent-primary-600 focus:ring-primary-500"
               />
               <span className="text-gray-700 dark:text-slate-300">{APP_PERMISSION_LABELS[perm]}</span>
             </label>

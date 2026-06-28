@@ -129,11 +129,9 @@ export function AppFormManager() {
       }
     }
 
-    if (affectedFields.length > 0) {
-      setRemoveConfirm({ formId, formName, affectedFields });
-    } else {
-      handleRemoveConfirmed(formId);
-    }
+    // Always confirm — removing a form from an app is a meaningful action even
+    // when nothing links to it (it stops collecting in the app + can lose relations).
+    setRemoveConfirm({ formId, formName, affectedFields });
   };
 
   const handleRemoveConfirmed = async (formId: string) => {
@@ -312,11 +310,13 @@ export function AppFormManager() {
         isOpen={!!removeConfirm}
         onClose={() => setRemoveConfirm(null)}
         onConfirm={() => removeConfirm && handleRemoveConfirmed(removeConfirm.formId)}
-        title="Linked Record Dependencies"
+        title={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Linked Record Dependencies' : 'Remove form from app?'}
         message={removeConfirm
-          ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\nAre you sure you want to remove this form?`
+          ? (removeConfirm.affectedFields.length > 0
+              ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\nAre you sure you want to remove this form?`
+              : `Remove "${removeConfirm.formName}" from this app? It will stop appearing in the app. The form and its responses are kept.`)
           : ''}
-        confirmLabel="Remove Anyway"
+        confirmLabel={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Remove Anyway' : 'Remove'}
         variant="danger"
       />
     </div>

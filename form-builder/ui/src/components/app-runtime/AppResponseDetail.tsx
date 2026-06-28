@@ -410,7 +410,7 @@ export function AppResponseDetail() {
                           key={item.id}
                           type="button"
                           onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm app-bg-primary-light app-text-primary hover:opacity-80 transition-colors cursor-pointer"
                         >
                           <Link2 className="h-3 w-3" />
                           {item.display}

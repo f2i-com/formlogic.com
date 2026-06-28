@@ -1591,7 +1591,14 @@ class ResponseService
                     $answers[$fieldId] = $value;
                 }
 
-                if (empty($answers)) {
+                // Skip rows where every mapped field is blank. $answers always has
+                // the mapped keys (with possibly-empty values), so empty($answers)
+                // never catches a blank row — check the VALUES instead.
+                $hasValue = false;
+                foreach ($answers as $v) {
+                    if ($v !== '' && $v !== null && $v !== []) { $hasValue = true; break; }
+                }
+                if (!$hasValue) {
                     $skipped++;
                     $rowErrors[] = 'No mapped fields had values';
                     $errors[] = ['row' => $rowIndex + 1, 'errors' => $rowErrors];

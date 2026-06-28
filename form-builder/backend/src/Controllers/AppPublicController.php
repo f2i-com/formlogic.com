@@ -1140,19 +1140,33 @@ class AppPublicController
     {
         $errors = [];
 
+        // Resolve conditional visibility from the submitted answers so we don't
+        // enforce required (or type validation) on fields the user couldn't see —
+        // and so 'require' actions are honored. Parity with the standalone + external
+        // API paths; without it a conditionally-hidden required field makes an
+        // app form permanently unsubmittable.
+        $visibility = $this->responseService->computeFieldVisibility($fields, $answers);
+
         foreach ($fields as $field) {
             $fieldId = $field['id'] ?? null;
             if (!$fieldId) {
                 continue;
             }
 
-            $isRequired = $field['required'] ?? false;
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
             if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
                 continue;
             }
+
+            // Skip fields hidden by conditional logic (can't be filled -> dead-end);
+            // use the logic-derived effective-required (honors 'require' actions).
+            $fieldVis = $visibility[$fieldId] ?? ['visible' => true, 'required' => (bool)($field['required'] ?? false)];
+            if (!$fieldVis['visible']) {
+                continue;
+            }
+            $isRequired = $fieldVis['required'];
 
             $value = $answers[$fieldId] ?? null;
 

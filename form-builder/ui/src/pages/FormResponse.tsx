@@ -272,7 +272,7 @@ export function FieldResponse({
             style={{ borderColor: value ? primaryColor : undefined }}
             autoFocus={autoFocus}
           >
-            <option value="">Select an option...</option>
+            <option value="">{field.placeholder || 'Select an option...'}</option>
             {field.properties.options?.map((option) => (
               <option key={option.id} value={option.value}>
                 {option.label}

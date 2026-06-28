@@ -177,14 +177,14 @@ export function LinkedRecordInput({
           {selectedIds.map((id) => (
             <span
               key={id}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 border border-primary-200 dark:border-primary-500/30"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium app-bg-primary-light app-text-primary border app-border-primary"
             >
               {resolvedLabels[id] || 'Loading...'}
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handleRemove(id); }}
                 aria-label="Remove selection"
-                className="text-primary-400 hover:text-primary-600 dark:hover:text-primary-200 cursor-pointer"
+                className="app-text-primary hover:opacity-70 cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -278,7 +278,7 @@ export function LinkedRecordInput({
                 className={cn(
                   'w-full text-left px-4 py-3 text-sm transition-colors cursor-pointer',
                   index === highlightIndex
-                    ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-900 dark:text-primary-100'
+                    ? 'app-bg-primary-light app-text-primary'
                     : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700/50'
                 )}
               >
