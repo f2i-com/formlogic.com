@@ -119,8 +119,9 @@ export default function FormPreview() {
 
   const handleNext = () => {
     if (isLastStep) {
-      // Submit form
-      toast.success('Preview Submitted', 'Form submitted! (This is a preview)');
+      // Preview is a design preview — it does NOT save a response. Be explicit so
+      // it isn't mistaken for a real submission that should appear in the data list.
+      toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.");
     } else {
       setCurrentStep((s) => Math.min(s + 1, visibleFields.length - 1));
     }
@@ -356,7 +357,7 @@ export default function FormPreview() {
                   <Button
                     className="w-full"
                     size="lg"
-                    onClick={() => toast.success('Preview Submitted', 'Form submitted! (This is a preview)')}
+                    onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
                     style={{ backgroundColor: form.theme.primaryColor }}
                   >
                     {form.settings.submitButtonText || 'Submit'}
