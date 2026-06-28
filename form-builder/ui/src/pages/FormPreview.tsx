@@ -757,7 +757,7 @@ export default function FormPreview() {
             <div className="h-full flex flex-col">
               {/* Progress */}
               <div className="p-4">
-                <ProgressBar value={progress} size="sm" />
+                <ProgressBar value={progress} size="sm" barColor={form.theme.primaryColor} />
                 <p className="text-sm opacity-50 mt-2 text-right">
                   {safeCurrentStep + 1} of {visibleFields.length}
                   {isEvaluating && <span className="ml-2 animate-pulse">...</span>}

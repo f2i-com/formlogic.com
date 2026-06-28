@@ -5,6 +5,8 @@ interface ProgressBarProps {
   max?: number;
   size?: 'sm' | 'md' | 'lg';
   color?: 'primary' | 'success' | 'warning' | 'error';
+  /** Explicit bar color (e.g. a form's theme primaryColor). Overrides the `color` preset. */
+  barColor?: string;
   showLabel?: boolean;
   animated?: boolean;
   className?: string;
@@ -15,6 +17,7 @@ export function ProgressBar({
   max = 100,
   size = 'md',
   color = 'primary',
+  barColor,
   showLabel = false,
   animated = true,
   className,
@@ -64,10 +67,10 @@ export function ProgressBar({
           className={cn(
             'h-full rounded-full',
             animated && 'transition-all duration-500 ease-out',
-            colors[color].bar,
-            percentage > 0 && colors[color].glow
+            !barColor && colors[color].bar,
+            !barColor && percentage > 0 && colors[color].glow
           )}
-          style={{ width: `${percentage}%` }}
+          style={barColor ? { width: `${percentage}%`, backgroundColor: barColor } : { width: `${percentage}%` }}
           role="progressbar"
           aria-valuenow={value}
           aria-valuemin={0}
