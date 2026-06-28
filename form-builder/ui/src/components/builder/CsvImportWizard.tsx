@@ -262,11 +262,15 @@ export function CsvImportWizard({
         {step === 'upload' && (
           <div>
             <div
+              role="button"
+              tabIndex={0}
+              aria-label="Upload a CSV file: drop one here or activate to browse"
               onDrop={handleDrop}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                 isDragOver
                   ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                   : 'border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500 hover:bg-gray-50 dark:hover:bg-slate-800/50'

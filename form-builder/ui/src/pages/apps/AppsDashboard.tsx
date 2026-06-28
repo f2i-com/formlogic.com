@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Globe, Trash2, ExternalLink, Search, Package } from 'lucide-react';
+import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -146,9 +147,16 @@ export function AppsDashboard() {
             </Button>
           </div>
         ) : filteredApps.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 dark:text-slate-400">
-            No apps match your filters.
-          </div>
+          <EmptyState
+            icon={Search}
+            title="No apps match your filters"
+            description="Try a different search term, or clear the filters to see all your apps."
+            action={
+              <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
+                Clear filters
+              </Button>
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {filteredApps.map((app) => (

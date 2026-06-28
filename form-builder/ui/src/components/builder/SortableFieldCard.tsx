@@ -50,7 +50,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
         isDragging && 'opacity-50 shadow-lg'
       )}
     >
-      <div className="flex items-start gap-3 p-4 cursor-pointer" onClick={handleSelect}>
+      <div className="flex items-start gap-3 p-4">
         <button
           {...attributes}
           {...listeners}
@@ -61,7 +61,15 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           <GripVertical className="h-4 w-4" />
         </button>
 
-        <div className="flex-1 min-w-0">
+        {/* The content block is the selection control so keyboard users can focus +
+            select a field (focus ring + pressed state), not just mouse users. */}
+        <button
+          type="button"
+          onClick={handleSelect}
+          aria-pressed={isSelected}
+          aria-label={`Edit field: ${field.label || fieldInfo.label}`}
+          className="flex-1 min-w-0 text-left cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        >
           <div className="flex items-center gap-2 mb-1">
             <IconComponent className="h-4 w-4 text-gray-400 dark:text-slate-500" />
             <span className="text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
@@ -73,7 +81,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           {field.description && (
             <p className="text-sm text-gray-500 dark:text-slate-500 truncate mt-1">{field.description}</p>
           )}
-        </div>
+        </button>
 
         <button
           onClick={handleDelete}

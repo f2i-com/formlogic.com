@@ -219,8 +219,13 @@ export function AppSettings() {
             {(() => {
               const primary = app.theme?.primaryColor || '#6366f1';
               const bg = app.theme?.backgroundColor || '#ffffff';
-              const ratio = hexContrast(primary, bg);
-              if (ratio === null) return null;
+              // The accent is painted as text/links on CARDS — white in light mode,
+              // slate-900 (#0f172a) in dark. Check both and report the WORST case, so
+              // the badge reflects dark mode too (not just the configured page bg).
+              const rBg = hexContrast(primary, bg);
+              const rDark = hexContrast(primary, '#0f172a');
+              if (rBg === null) return null;
+              const ratio = rDark === null ? rBg : Math.min(rBg, rDark);
               const level = contrastLevel(ratio);
               const ok = level !== 'fail';
               return (
@@ -235,10 +240,10 @@ export function AppSettings() {
                 >
                   <Shield className="h-4 w-4 flex-shrink-0 mt-0.5" />
                   <span>
-                    Accent vs background contrast: <strong className="font-semibold tabular-nums">{ratio.toFixed(1)}:1</strong>
+                    Accent contrast (worst of light/dark): <strong className="font-semibold tabular-nums">{ratio.toFixed(1)}:1</strong>
                     {ok
                       ? ` — meets WCAG ${level === 'aa-large' ? 'AA (large text)' : level.toUpperCase()}.`
-                      : ' — too low; accent text and links may be hard to read. Buttons stay legible (text auto-adjusts).'}
+                      : ' — too low on some surfaces; accent text/links may be hard to read (especially in dark mode). Buttons stay legible (text auto-adjusts).'}
                   </span>
                 </div>
               );

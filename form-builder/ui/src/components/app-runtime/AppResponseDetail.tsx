@@ -466,7 +466,7 @@ export function AppResponseDetail() {
                             <div className="flex flex-col gap-1">
                               {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
                                 f && f.url
-                                  ? <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
+                                  ? <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
                                   : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
                               ))}
                             </div>

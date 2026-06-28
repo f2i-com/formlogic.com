@@ -26,6 +26,7 @@ export function AppUserManager() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
+  const [creatingGroup, setCreatingGroup] = useState(false);
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -169,9 +170,14 @@ export function AppUserManager() {
   };
 
   const handleCreateGroup = async () => {
-    if (!appId || !newGroupName.trim()) return;
-    await createGroup(appId, { name: newGroupName.trim() });
-    setNewGroupName('');
+    if (!appId || !newGroupName.trim() || creatingGroup) return;
+    setCreatingGroup(true);
+    try {
+      await createGroup(appId, { name: newGroupName.trim() });
+      setNewGroupName('');
+    } finally {
+      setCreatingGroup(false);
+    }
   };
 
   return (
@@ -239,7 +245,7 @@ export function AppUserManager() {
           <div className="flex gap-2 mb-4">
             <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name"
               className="flex-1 max-w-xs px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
-            <Button size="sm" onClick={handleCreateGroup} disabled={!newGroupName.trim()}>Create Group</Button>
+            <Button size="sm" onClick={handleCreateGroup} isLoading={creatingGroup} disabled={!newGroupName.trim() || creatingGroup}>Create Group</Button>
           </div>
           <DataTable
             data={appGroups as unknown as Record<string, unknown>[]}

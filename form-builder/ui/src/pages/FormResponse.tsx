@@ -1019,7 +1019,9 @@ export default function FormResponse() {
 
       // Check required
       if (getFieldRequired(currentField)) {
-        if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
+        if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)
+          // An empty typed signature is the sentinel 'typed:' (non-empty string) — treat as blank.
+          || (typeof answer === 'string' && answer.startsWith('typed:') && answer.slice(6).trim() === '')) {
           setFieldError('This field is required');
           return;
         }
@@ -1094,6 +1096,8 @@ export default function FormResponse() {
     if (e.key === 'Enter' && !e.shiftKey) {
       // Allow newlines in long_text fields
       if (currentField?.type === 'long_text') return;
+      // Let Enter operate a native dropdown (open/select) instead of advancing.
+      if ((e.target as HTMLElement).tagName === 'SELECT') return;
       e.preventDefault();
       handleNext();
     }
@@ -1104,9 +1108,11 @@ export default function FormResponse() {
     setFieldError(null);
     const missingFields = visibleFields.filter(f => {
       if (!getFieldRequired(f)) return false;
-      if (['statement', 'calculated'].includes(f.type)) return false;
+      if (['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(f.type)) return false;
       const answer = currentAnswers[f.id];
-      return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
+      return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)
+        // An empty typed signature is the sentinel 'typed:' (a non-empty string) — treat as blank.
+        || (typeof answer === 'string' && answer.startsWith('typed:') && answer.slice(6).trim() === '');
     });
     if (missingFields.length > 0) {
       const names = missingFields.map(f => f.label).filter(Boolean);
@@ -1282,7 +1288,7 @@ export default function FormResponse() {
             <FieldResponse
               field={currentField}
               value={currentAnswers[currentField.id]}
-              onChange={(val) => setAnswer(currentField.id, val)}
+              onChange={(val) => { if (fieldError) setFieldError(null); setAnswer(currentField.id, val); }}
               primaryColor={form.theme.primaryColor}
               textColor={form.theme.textColor}
               isRequired={getFieldRequired(currentField)}

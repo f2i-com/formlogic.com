@@ -145,11 +145,14 @@ function FormActionsDropdown({
   useEffect(() => {
     if (!isOpen) return;
     const close = () => setIsOpen(false);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setIsOpen(false); buttonRef.current?.focus(); } };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
+    document.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
+      document.removeEventListener('keydown', onKey);
     };
   }, [isOpen]);
 

@@ -323,15 +323,18 @@ export function FormsList() {
     });
   }, []);
 
-  // Close dropdown menu on scroll or resize to prevent stale positioning
+  // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning
   useEffect(() => {
     if (!activeMenu) return;
     const close = () => setActiveMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActiveMenu(null); };
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
+    document.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('resize', close);
+      document.removeEventListener('keydown', onKey);
     };
   }, [activeMenu]);
 

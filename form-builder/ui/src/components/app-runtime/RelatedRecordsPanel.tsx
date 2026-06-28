@@ -99,7 +99,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   return (
     <div className="mt-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100 dark:border-slate-700/40 flex items-center gap-2">
-        <Link2 className="h-4 w-4 text-primary-500" />
+        <Link2 className="h-4 w-4 app-text-primary" />
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight">Related Records</h3>
       </div>
 

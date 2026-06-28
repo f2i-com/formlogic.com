@@ -3,7 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
+import { readableForegroundColor } from '../../lib/color';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+
+// Foreground for text/icons on a solid fill of `c`. When the form sets its own theme
+// color we derive contrast from THAT hex; otherwise fall back to the app's
+// runtime-provided --app-on-primary. (Using --app-on-primary over the form's own color
+// could put unreadable text on the button.)
+const onPrimaryFor = (c: string): string =>
+  (typeof c === 'string' && c.startsWith('#')) ? readableForegroundColor(c) : 'var(--app-on-primary)';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
@@ -422,7 +430,7 @@ function FieldInput({
                   'aspect-square min-h-[44px] rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
                   selected ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
-                style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor, color: 'var(--app-on-primary)' } : {}}
+                style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor, color: onPrimaryFor(primaryColor) } : {}}
               >
                 {num}
               </button>
@@ -731,6 +739,8 @@ export function AppFormView() {
 
   const handleSetAnswer = useCallback((fieldId: string, val: unknown) => {
     setAnswers((prev) => ({ ...prev, [fieldId]: val }));
+    // Clear a stale validation error once the user edits the field.
+    setError(null);
   }, []);
 
   // Use refs to avoid stale closure when handleSubmit is called from memoized handleNext
@@ -816,7 +826,12 @@ export function AppFormView() {
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
     });
     if (missingFields.length > 0) {
-      setError(`Please fill in all required fields (${missingFields.length} remaining)`);
+      // Name the missing fields + jump to the first one (parity with the public form),
+      // instead of an unhelpful "N remaining".
+      const names = missingFields.map(f => f.label).filter(Boolean);
+      const shown = names.slice(0, 3).join(', ');
+      setError(names.length <= 3 ? `Please fill in: ${shown}` : `Please fill in: ${shown} and ${names.length - 3} more`);
+      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
       return;
     }
     // Validate all fields against their validation rules
@@ -825,11 +840,12 @@ export function AppFormView() {
       const validationError = validateField(f, answer);
       if (validationError) {
         setError(`${f.label}: ${validationError}`);
+        document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
         return;
       }
     }
     handleSubmit();
-  }, [fields, handleSubmit, isFieldRequired]);
+  }, [fields, handleSubmit, isFieldRequired, reduceMotion]);
 
   if (!formId || !config) return null;
 
@@ -880,7 +896,7 @@ export function AppFormView() {
             const m = thankYouField?.properties?.mediaUrl as string | undefined;
             if (!m) return (
               <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6" style={{ backgroundColor: primaryColor }}>
-                <CheckCircle className="h-10 w-10" style={{ color: 'var(--app-on-primary)' }} />
+                <CheckCircle className="h-10 w-10" style={{ color: onPrimaryFor(primaryColor) }} />
               </div>
             );
             return (thankYouField?.properties?.mediaType as string | undefined) === 'video'
@@ -1044,7 +1060,7 @@ export function AppFormView() {
                   onClick={handleNext}
                   disabled={submitting}
                   className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
-                  style={{ backgroundColor: primaryColor, color: 'var(--app-on-primary)' }}
+                  style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
                 >
                   {submitting
                     ? 'Submitting...'
@@ -1144,7 +1160,7 @@ export function AppFormView() {
 
             <div className="space-y-8">
               {fields.map((field) => (
-                <div key={field.id} className="pb-6 border-b border-gray-100 dark:border-slate-800 last:border-0">
+                <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-gray-100 dark:border-slate-800 last:border-0 scroll-mt-24">
                   <div className="mb-6">
                     <h2 className="text-xl md:text-2xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
                       {field.label}
@@ -1189,7 +1205,7 @@ export function AppFormView() {
                 onClick={handleClassicSubmit}
                 disabled={submitting}
                 className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
-                style={{ backgroundColor: primaryColor, color: 'var(--app-on-primary)' }}
+                style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
               >
                 {submitting ? 'Submitting...' : (formSettings?.submitButtonText as string) || 'Submit'}
                 {!submitting && <Check className="h-4 w-4" />}

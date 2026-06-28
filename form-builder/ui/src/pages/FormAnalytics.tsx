@@ -26,6 +26,9 @@ export default function FormAnalytics() {
   const { getForm, loadFullForm, storageMode } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const user = useAuthStore((state) => state.user);
+  // True while the form store is still hydrating — so a deep-link/refresh shows a
+  // loading state instead of flashing "Form not found" before the form arrives.
+  const formsLoading = useFormStore((s) => !s.isInitialized || s.isLoading);
 
   const [analytics, setAnalytics] = useState<FormAnalyticsType | null>(null);
   // Real response rows for API/cloud mode (the local store is empty there).
@@ -277,6 +280,14 @@ export default function FormAnalytics() {
   }, [analytics, responses]);
 
   if (!form) {
+    // Still hydrating the store (e.g. a direct link / refresh) — don't flash not-found.
+    if (formsLoading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center transition-colors">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading" />
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen flex items-center justify-center transition-colors">
         <EmptyState

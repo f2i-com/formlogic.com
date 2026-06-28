@@ -21,10 +21,11 @@ interface RelationBadge {
 export function AppFormManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { fetchAppForms, addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms } = useAppStore();
+  const { addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms } = useAppStore();
   const { forms: allForms, refreshForms } = useFormStore();
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busyFormId, setBusyFormId] = useState<string | null>(null);
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
@@ -39,8 +40,17 @@ export function AppFormManager() {
     if (!appId) return;
     const token = ++loadTokenRef.current;
     setLoading(true);
-    const forms = await fetchAppForms(appId);
+    // Use the API directly so a fetch FAILURE is distinguishable from "no forms"
+    // (the store helper returns [] either way), letting us show error + retry.
+    const result = await api.getAppForms(appId);
     if (loadTokenRef.current !== token) return;
+    if (result.error) {
+      setLoadError(typeof result.error === 'string' ? result.error : 'Could not load the app’s forms.');
+      setLoading(false);
+      return;
+    }
+    setLoadError(null);
+    const forms = (result.data?.forms ?? []) as AppForm[];
     setAppForms(forms);
 
     // Build relation badges from linked_record fields
@@ -181,6 +191,15 @@ export function AppFormManager() {
 
   if (loading) {
     return <div className="flex items-center justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading forms" /></div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-16 text-center px-4">
+        <p className="text-sm text-gray-600 dark:text-slate-300">{loadError}</p>
+        <Button variant="outline" size="sm" onClick={() => loadForms()}>Try again</Button>
+      </div>
+    );
   }
 
   return (
