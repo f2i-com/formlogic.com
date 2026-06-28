@@ -633,11 +633,11 @@ export default function FormAnalytics() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-slate-800">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">ID</th>
+                      <th className="hidden sm:table-cell text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">ID</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Submitted</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Time</th>
-                      {previewFields.map((field) => (
-                        <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">
+                      <th className="hidden sm:table-cell text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Time</th>
+                      {previewFields.map((field, i) => (
+                        <th key={field.id} className={`${i >= 1 ? 'hidden sm:table-cell' : ''} text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500`}>
                           {field.label}
                         </th>
                       ))}
@@ -646,16 +646,16 @@ export default function FormAnalytics() {
                   <tbody>
                     {responses.slice(0, 10).map((response) => (
                       <tr key={response.id} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">
+                        <td className="hidden sm:table-cell py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">
                           #{response.id.slice(0, 8)}
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {formatDate(response.submittedAt)}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
+                        <td className="hidden sm:table-cell py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {Math.round((response.completionTime || 0) / 1000)}s
                         </td>
-                        {previewFields.map((field) => {
+                        {previewFields.map((field, i) => {
                           const val = response.answers[field.id];
                           let display = '-';
                           if (val !== null && val !== undefined && val !== '') {
@@ -673,7 +673,7 @@ export default function FormAnalytics() {
                             }
                           }
                           return (
-                            <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs">
+                            <td key={field.id} className={`${i >= 1 ? 'hidden sm:table-cell' : ''} py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs`}>
                               {display}
                             </td>
                           );

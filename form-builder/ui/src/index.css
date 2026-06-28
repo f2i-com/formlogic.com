@@ -59,6 +59,20 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* Remove the default grey tap-flash on custom controls (focus-visible + active
+       states still provide feedback). */
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* iOS Safari auto-zooms when a focused control's font-size is < 16px. Force >=16px
+     on small screens so focusing an input/select/textarea never zooms the page
+     (text-sm inputs would otherwise trigger it). Desktop sizing is unaffected. */
+  @media (max-width: 640px) {
+    input:not([type='checkbox']):not([type='radio']):not([type='color']):not([type='range']),
+    select,
+    textarea {
+      font-size: 16px;
+    }
   }
 
   /* Heading font */

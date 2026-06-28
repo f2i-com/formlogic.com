@@ -1110,7 +1110,7 @@ export function AppFormView() {
             onClick={handlePrev}
             disabled={safeStep === 0}
             aria-label="Previous field"
-            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
           >
             <ChevronUp className="h-4 w-4" />
           </button>
@@ -1119,7 +1119,7 @@ export function AppFormView() {
             onClick={handleNext}
             disabled={submitting}
             aria-label="Next field"
-            className="p-2 bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center bg-white dark:bg-slate-800 rounded-lg shadow-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 transition-all duration-200 border border-gray-200/80 dark:border-slate-700 hover:shadow-md cursor-pointer"
           >
             <ChevronDown className="h-4 w-4" />
           </button>

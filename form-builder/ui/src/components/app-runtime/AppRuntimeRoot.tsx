@@ -34,7 +34,20 @@ export function AppRuntimeRoot() {
 
     const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     const prevManifest = link?.getAttribute('href') ?? null;
-    if (link) link.setAttribute('href', manifestHref);
+    const prevCross = link?.getAttribute('crossorigin') ?? null;
+    if (link) {
+      link.setAttribute('href', manifestHref);
+      // The per-app manifest is cross-origin (API host) and the endpoint returns
+      // ACAO + Allow-Credentials, so fetch it credentialed — otherwise the browser
+      // can't read the cross-origin manifest and won't offer install.
+      link.setAttribute('crossorigin', 'use-credentials');
+    }
+
+    // White-label the iOS home-screen icon (iOS uses apple-touch-icon over the
+    // manifest icons), so an installed deployed app shows the app's own logo.
+    const touch = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+    const prevTouch = touch?.getAttribute('href') ?? null;
+    if (touch && config?.app?.logoUrl) touch.setAttribute('href', config.app.logoUrl);
 
     const themeColor = config?.app?.settings?.pwaThemeColor || config?.app?.theme?.primaryColor;
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -49,7 +62,12 @@ export function AppRuntimeRoot() {
     }
 
     return () => {
-      if (link && prevManifest) link.setAttribute('href', prevManifest);
+      if (link && prevManifest) {
+        link.setAttribute('href', prevManifest);
+        if (prevCross === null) link.removeAttribute('crossorigin');
+        else link.setAttribute('crossorigin', prevCross);
+      }
+      if (touch && prevTouch) touch.setAttribute('href', prevTouch);
       if (meta && prevTheme !== null) meta.setAttribute('content', prevTheme);
     };
   }, [appSlug, config]);

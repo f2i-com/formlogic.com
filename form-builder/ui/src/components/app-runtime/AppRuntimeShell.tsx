@@ -159,7 +159,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           <button
             onClick={() => setMobileMenuOpen(true)}
             aria-label="Open navigation menu"
-            className="p-1.5 -ml-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400 transition-colors cursor-pointer"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center -ml-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400 transition-colors cursor-pointer"
           >
             <Menu className="h-5 w-5" />
           </button>
@@ -167,7 +167,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           <button
             onClick={() => navigate(`${basePath}/profile`)}
             aria-label="Profile"
-            className="ml-auto p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+            className="ml-auto -mr-1.5 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
           >
             <User className="h-5 w-5" />
           </button>

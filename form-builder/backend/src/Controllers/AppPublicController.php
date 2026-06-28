@@ -622,32 +622,50 @@ class AppPublicController
         $hex = static fn(?string $v, string $default): string =>
             (is_string($v) && preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $v)) ? $v : $default;
 
+        // The manifest is served from the API origin, but the app runs on the FRONTEND
+        // origin. Per the manifest spec, relative start_url/scope/icons resolve against
+        // the manifest's (API) origin — which puts the installing document out of scope
+        // and makes Chrome refuse to install. Resolve everything to the frontend origin.
+        $base = null;
+        try { $base = rtrim(\FormLogic\Helpers\AppUrl::frontendBase($request), '/'); } catch (\Throwable $e) { $base = null; }
+        $appPath = '/app/' . $slug;
+
         $manifest = [
             'name' => $app['name'],
-            'short_name' => $settings['pwaShortName'] ?? substr($app['name'], 0, 12),
+            // mb_substr (not substr): a byte-cut multibyte name would be invalid UTF-8,
+            // which makes json_encode() return false -> an empty/broken manifest.
+            'short_name' => $settings['pwaShortName'] ?? mb_substr($app['name'], 0, 12),
             'description' => $app['description'] ?? '',
-            'start_url' => '/app/' . $slug,
-            'scope' => '/app/' . $slug,
+            'start_url' => ($base ?? '') . $appPath,
+            'scope' => ($base ?? '') . $appPath,
             'display' => 'standalone',
             'background_color' => $hex($theme['backgroundColor'] ?? null, '#ffffff'),
             'theme_color' => $hex($settings['pwaThemeColor'] ?? $theme['primaryColor'] ?? null, '#6366f1'),
             'icons' => [],
         ];
 
+        $icons = [];
+        // The app's own logo first (branding), when set.
         if (!empty($app['logoUrl'])) {
-            $manifest['icons'][] = [
-                'src' => $app['logoUrl'],
-                'sizes' => '192x192',
-                'type' => 'image/png',
-            ];
-            $manifest['icons'][] = [
-                'src' => $app['logoUrl'],
-                'sizes' => '512x512',
-                'type' => 'image/png',
-            ];
+            $icons[] = ['src' => $app['logoUrl'], 'sizes' => '192x192', 'type' => 'image/png'];
+            $icons[] = ['src' => $app['logoUrl'], 'sizes' => '512x512', 'type' => 'image/png'];
         }
+        // ALWAYS include the platform icons (absolute, frontend origin) so the manifest
+        // carries the 192 + 512 + maskable icons Chrome requires to be installable —
+        // without these an app with no logo is silently un-installable, even though the
+        // Deploy UI offers "Add to Home Screen".
+        if ($base !== null) {
+            $icons[] = ['src' => $base . '/pwa-192x192.png', 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any'];
+            $icons[] = ['src' => $base . '/pwa-512x512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'any'];
+            $icons[] = ['src' => $base . '/pwa-512x512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable'];
+        }
+        $manifest['icons'] = $icons;
 
-        $response->getBody()->write(json_encode($manifest));
+        $json = json_encode($manifest);
+        if ($json === false) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to build manifest'], 500);
+        }
+        $response->getBody()->write($json);
         return $response
             ->withStatus(200)
             ->withHeader('Content-Type', 'application/manifest+json');

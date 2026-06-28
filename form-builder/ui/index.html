@@ -7,6 +7,12 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="mask-icon" href="/mask-icon.svg" color="#6366f1" />
     <meta name="theme-color" content="#6366f1" />
+    <!-- iOS "Add to Home Screen" standalone support (status bar style + home-screen
+         title). Modern iOS (16.4+) also reads the web manifest; these cover older iOS. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="FormLogic" />
     <!-- viewport-fit=cover so env(safe-area-inset-*) resolves to real values on
          notched phones — the mobile nav/FAB safe-area padding relies on it. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />

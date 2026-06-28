@@ -395,10 +395,14 @@ export default function FormBuilder() {
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <IconPicker
-            value={form.icon}
-            onChange={(icon) => updateForm(form.id, { icon: icon ?? undefined })}
-          />
+          {/* Hidden on phones so the title input keeps usable width (the header is
+              a single tight row on mobile). */}
+          <div className="hidden sm:block flex-shrink-0">
+            <IconPicker
+              value={form.icon}
+              onChange={(icon) => updateForm(form.id, { icon: icon ?? undefined })}
+            />
+          </div>
           <Input
             value={localTitle}
             onChange={(e) => setLocalTitle(e.target.value)}

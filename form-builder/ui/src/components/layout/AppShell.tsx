@@ -70,7 +70,9 @@ export function AppShell() {
           // and dropdowns keep working.
           'min-h-screen transition-all duration-300 focus:outline-none overflow-x-clip',
           !isMobile && (sidebarCollapsed ? 'ml-16' : 'ml-64'),
-          isMobile && 'pb-20',
+          // Clear the fixed bottom nav PLUS the home-indicator safe-area inset on
+          // notched phones, so trailing content isn't hidden behind the nav.
+          isMobile && 'pb-[calc(5rem+env(safe-area-inset-bottom))]',
           !isOnline && 'pt-8'
         )}
       >
