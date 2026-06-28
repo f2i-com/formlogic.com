@@ -1655,6 +1655,11 @@ class ResponseService
             }
 
             $db->commit();
+            // Keep the denormalized forms.response_count current after a bulk import
+            // (the per-row insert path above bypasses createResponse's own sync).
+            if ($created > 0) {
+                $this->syncResponseCount($formId);
+            }
         } catch (\Exception $e) {
             $db->rollBack();
             // Clean up orphaned MySQL rows from successful inserts before the failure

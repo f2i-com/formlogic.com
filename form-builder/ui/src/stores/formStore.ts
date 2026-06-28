@@ -30,6 +30,13 @@ function generateFieldId(label: string, existingIds: string[]): string {
     baseId = 'field';
   }
 
+  // The id is used as a JS identifier in logic/calculated expressions AND as a
+  // sandbox context key (both require a non-digit first char), so a label like
+  // "401k" must not yield an id like "401k". Mirror labelToVariableName's guard.
+  if (/^\d/.test(baseId)) {
+    baseId = `_${baseId}`;
+  }
+
   // Check if ID already exists, if so append a number
   let finalId = baseId;
   let counter = 1;

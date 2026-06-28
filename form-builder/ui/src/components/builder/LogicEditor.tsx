@@ -48,7 +48,8 @@ const ACTIONS = [
 function simpleConditionToExpression(
   conditions: SimpleCondition[],
   combinator: 'and' | 'or',
-  idToVar: Record<string, string>
+  idToVar: Record<string, string>,
+  numericFieldIds: Set<string>
 ): string {
   if (conditions.length === 0) return 'true';
 
@@ -58,12 +59,16 @@ function simpleConditionToExpression(
     // Escape quotes in value to prevent expression injection
     const escaped = String(cond.value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const value = cond.value;
+    // number/rating/scale answers are stored as real JS numbers, so equality must
+    // compare against an unquoted numeric literal (0 === "0" is false under the
+    // strict equality QuickJS evaluates).
+    const isNumeric = numericFieldIds.has(cond.fieldId);
 
     switch (cond.operator) {
       case '===':
-        return `${fieldRef} === "${escaped}"`;
+        return isNumeric ? `${fieldRef} === ${Number(value) || 0}` : `${fieldRef} === "${escaped}"`;
       case '!==':
-        return `${fieldRef} !== "${escaped}"`;
+        return isNumeric ? `${fieldRef} !== ${Number(value) || 0}` : `${fieldRef} !== "${escaped}"`;
       case '>':
         return `${fieldRef} > ${Number(value) || 0}`;
       case '<':
@@ -75,8 +80,11 @@ function simpleConditionToExpression(
       case 'contains':
         // Guard against a null/unanswered trigger (null.includes throws -> the
         // condition fails OPEN, inconsistent with ===/notEmpty). isNotEmpty keeps
-        // both string-substring and array-membership semantics of .includes.
-        return `isNotEmpty(${fieldRef}) && ${fieldRef}.includes("${escaped}")`;
+        // both string-substring and array-membership semantics of .includes;
+        // numeric fields have no .includes, so substring-match their stringified value.
+        return isNumeric
+          ? `isNotEmpty(${fieldRef}) && String(${fieldRef}).includes("${escaped}")`
+          : `isNotEmpty(${fieldRef}) && ${fieldRef}.includes("${escaped}")`;
       case 'notEmpty':
         return `isNotEmpty(${fieldRef})`;
       case 'empty':
@@ -118,6 +126,12 @@ export function LogicEditor({
     [availableFields]
   );
 
+  // Fields whose answers are real numbers (so equality must not string-quote).
+  const numericFieldIds = useMemo(
+    () => new Set(availableFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
+    [availableFields]
+  );
+
   // Initialize from existing logic (convert IDs to variable names for display)
   useEffect(() => {
     if (field.conditionalLogic) {
@@ -138,15 +152,16 @@ export function LogicEditor({
     }
   }, [field, idToVar]);
 
-  // Update expression when simple conditions change. Must also handle the empty
-  // case: when the last condition is removed, clear the expression — otherwise the
-  // stale generated string persists and handleSave writes a phantom rule the author
-  // believed they had cleared.
+  // Regenerate the expression from simple conditions only when there ARE
+  // conditions — otherwise switching to Simple Mode on a field whose saved logic
+  // can't be represented as simple conditions (conditions stays []) would wipe the
+  // loaded expression and Save would delete the rule. Clearing the last condition
+  // is handled explicitly in handleRemoveCondition / handleClear.
   useEffect(() => {
-    if (mode === 'simple') {
-      setExpression(conditions.length > 0 ? simpleConditionToExpression(conditions, combinator, idToVar) : '');
+    if (mode === 'simple' && conditions.length > 0) {
+      setExpression(simpleConditionToExpression(conditions, combinator, idToVar, numericFieldIds));
     }
-  }, [conditions, combinator, mode, idToVar]);
+  }, [conditions, combinator, mode, idToVar, numericFieldIds]);
 
   const handleAddCondition = () => {
     if (availableFields.length === 0) return;
@@ -157,7 +172,11 @@ export function LogicEditor({
   };
 
   const handleRemoveCondition = (conditionId: string) => {
-    setConditions(conditions.filter((cond) => cond.id !== conditionId));
+    const next = conditions.filter((cond) => cond.id !== conditionId);
+    setConditions(next);
+    // Removing the last condition clears the rule (the effect above no longer
+    // regenerates from an empty set).
+    if (next.length === 0) setExpression('');
   };
 
   const handleConditionChange = (conditionId: string, updates: Partial<SimpleCondition>) => {

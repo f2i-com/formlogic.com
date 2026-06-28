@@ -33,6 +33,7 @@ export function FieldResponse({
   onCalculated,
   formId,
   error,
+  autoFocus = true,
 }: {
   field: FormField;
   value: unknown;
@@ -45,6 +46,7 @@ export function FieldResponse({
   onCalculated?: (fieldId: string, value: unknown) => void;
   formId?: string;
   error?: string;
+  autoFocus?: boolean;
 }) {
   const required = isRequired ?? field.required;
 
@@ -78,7 +80,7 @@ export function FieldResponse({
             onChange={(val) => onChange(val)}
             primaryColor={primaryColor}
             textColor={textColor}
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -97,7 +99,7 @@ export function FieldResponse({
             placeholder={field.placeholder || 'Type your answer here...'}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
             style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -111,7 +113,7 @@ export function FieldResponse({
             placeholder={field.placeholder || 'Type your answer here...'}
             rows={4}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl resize-none transition-colors"
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -132,7 +134,7 @@ export function FieldResponse({
             }}
             placeholder={field.placeholder || '0'}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -146,7 +148,7 @@ export function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors cursor-pointer"
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -159,7 +161,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -172,7 +174,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
-            autoFocus
+            autoFocus={autoFocus}
           />
         );
 
@@ -268,7 +270,7 @@ export function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
             style={{ borderColor: value ? primaryColor : undefined }}
-            autoFocus
+            autoFocus={autoFocus}
           >
             <option value="">Select an option...</option>
             {field.properties.options?.map((option) => (
@@ -1058,6 +1060,20 @@ export default function FormResponse() {
         }
       }
 
+      // Format check for email/url. The form submits via onClick handlers (not a
+      // native <form> submit), so native input validation is bypassed — mirror the
+      // server so the user sees the error inline instead of after a round-trip.
+      if (typeof answer === 'string' && answer !== '') {
+        if (currentField.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answer)) {
+          setFieldError('Please enter a valid email address');
+          return;
+        }
+        if (currentField.type === 'url' && !/^https?:\/\/.+\..+/.test(answer)) {
+          setFieldError('Please enter a valid URL (starting with http:// or https://)');
+          return;
+        }
+      }
+
       // Enforce builder-configured number min/max/step (stored on field.properties,
       // not the validation rules array — the loop above never checks them).
       const numErr = validateNumberConstraints(currentField, answer);
@@ -1141,6 +1157,20 @@ export default function FormResponse() {
               // Invalid regex pattern, skip
             }
           }
+        }
+      }
+
+      // Format check for email/url (parity with the server + focused mode).
+      if (typeof answer === 'string' && answer !== '') {
+        if (f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answer)) {
+          setSubmitError(`${f.label}: please enter a valid email address`);
+          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+        if (f.type === 'url' && !/^https?:\/\/.+\..+/.test(answer)) {
+          setSubmitError(`${f.label}: please enter a valid URL (starting with http:// or https://)`);
+          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
         }
       }
 
@@ -1350,6 +1380,7 @@ export default function FormResponse() {
                     allFieldIds={form.fields.map(f => f.id)}
                     onCalculated={handleCalculated}
                     formId={formId}
+                    autoFocus={false}
                   />
                 </div>
               ))}
