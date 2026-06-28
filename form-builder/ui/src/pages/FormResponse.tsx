@@ -21,7 +21,7 @@ import { handleRovingKeys } from '../lib/a11y';
 import { DEFAULT_FORM_SETTINGS, DEFAULT_FORM_THEME } from '../types/form';
 
 // Field Response Component
-function FieldResponse({
+export function FieldResponse({
   field,
   value,
   onChange,
