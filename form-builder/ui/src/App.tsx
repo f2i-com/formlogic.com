@@ -76,6 +76,7 @@ const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppR
 // Lazy load pack marketplace pages
 const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
 const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
+const Docs = lazyWithRetry(() => import('./pages/Docs').then(m => ({ default: m.Docs })));
 
 /** Error boundary that auto-resets when the user navigates to a different route */
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
@@ -237,6 +238,8 @@ function AppRoutes() {
         {/* Pack marketplace (public) */}
         <Route path="/packs" element={<PackGalleryPage />} />
         <Route path="/packs/:slug" element={<PackDetailPage />} />
+        {/* Docs (public) */}
+        <Route path="/docs" element={<Docs />} />
         {/* Legal (public) */}
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
@@ -287,6 +290,9 @@ function AppRoutes() {
       {/* Pack marketplace */}
       <Route path="/packs" element={<PackGalleryPage />} />
       <Route path="/packs/:slug" element={<PackDetailPage />} />
+
+      {/* Docs */}
+      <Route path="/docs" element={<Docs />} />
 
       {/* Legal (full screen) */}
       <Route path="/privacy" element={<LegalPage type="privacy" />} />

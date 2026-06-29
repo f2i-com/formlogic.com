@@ -224,6 +224,9 @@ export function Landing() {
               <a href="#pricing" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Pricing
               </a>
+              <Link to="/docs" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+                Docs
+              </Link>
             </div>
             <div className="hidden md:flex items-center gap-4">
               <Link to="/login" className="text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
@@ -269,6 +272,13 @@ export function Landing() {
             >
               Pricing
             </a>
+            <Link
+              to="/docs"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
+            >
+              Docs
+            </Link>
             <div className="pt-3 border-t border-gray-100 dark:border-slate-900 flex flex-col gap-2">
               <Link
                 to="/login"
@@ -749,6 +759,11 @@ export function Landing() {
                   <a href="#solutions" className="hover:text-gray-900 dark:hover:text-white transition-colors">
                     Solutions
                   </a>
+                </li>
+                <li>
+                  <Link to="/docs" className="hover:text-gray-900 dark:hover:text-white transition-colors">
+                    Docs
+                  </Link>
                 </li>
               </ul>
             </div>
