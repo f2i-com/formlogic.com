@@ -331,6 +331,19 @@ $container->set(ApiKeyController::class, function (Container $c) {
     );
 });
 
+// Billing: pay-as-you-go cloud months via PayPal (one-time captures, no subscription).
+$container->set(\FormLogic\Services\PayPalService::class, function () {
+    return new \FormLogic\Services\PayPalService();
+});
+$container->set(\FormLogic\Controllers\BillingController::class, function (Container $c) {
+    return new \FormLogic\Controllers\BillingController(
+        $c->get(\FormLogic\Services\PayPalService::class),
+        $c->get(MySQLConnection::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
 $container->set(ExternalApiController::class, function (Container $c) {
     return new ExternalApiController(
         $c->get(FormService::class),
@@ -871,6 +884,19 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
     });
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ApiKeyController::class)->revoke($request, $response, $getArgs($request));
+    });
+})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+
+// Billing (pay-as-you-go cloud months via PayPal) — authenticated.
+$app->group('/api/billing', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\BillingController::class)->status($request, $response);
+    });
+    $group->post('/orders', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\BillingController::class)->createOrder($request, $response);
+    });
+    $group->post('/orders/{orderId}/capture', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\BillingController::class)->captureOrder($request, $response, $getArgs($request));
     });
 })->add($authRequired)->add($apiKeyMgmtRateLimiter);
 

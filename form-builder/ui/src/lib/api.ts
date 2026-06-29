@@ -26,6 +26,16 @@ export interface ScriptTestResult {
   executionTimeMs: number;
 }
 
+export interface BillingStatus {
+  cloudUntil: string | null;
+  active: boolean;
+  pricePerMonthCents: number;
+  currency: string;
+  maxMonths: number;
+  paypalEnabled: boolean;
+  paypalClientId: string | null;
+}
+
 class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
@@ -318,6 +328,17 @@ class ApiClient {
     try {
       await fetch(`${this.baseUrl}/forms/${formId}/start`, { method: 'POST', credentials: 'include' });
     } catch { /* best-effort: never block the fill on an analytics ping */ }
+  }
+
+  // --- Billing (pay-as-you-go cloud months via PayPal) ---
+  async getBillingStatus(): Promise<ApiResponse<BillingStatus>> {
+    return this.request('/billing');
+  }
+  async createPaypalOrder(months: number): Promise<ApiResponse<{ orderId: string }>> {
+    return this.request('/billing/orders', { method: 'POST', body: JSON.stringify({ months }) });
+  }
+  async capturePaypalOrder(orderId: string): Promise<ApiResponse<{ cloudUntil: string | null; active: boolean; monthsAdded?: number; alreadyProcessed?: boolean }>> {
+    return this.request(`/billing/orders/${encodeURIComponent(orderId)}/capture`, { method: 'POST' });
   }
 
   async updateResponse(formId: string, responseId: string, data: Partial<FormResponse>): Promise<ApiResponse<{ response: FormResponse }>> {

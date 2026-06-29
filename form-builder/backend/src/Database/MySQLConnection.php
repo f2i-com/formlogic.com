@@ -684,5 +684,34 @@ class MySQLConnection
                 INDEX idx_window_start (window_start)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Pay-as-you-go cloud access: an expiry date on the user (NULL = free tier).
+        // Each paid month extends it; there is no recurring subscription.
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'cloud_until'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN cloud_until DATETIME NULL DEFAULT NULL");
+        }
+
+        // Payments ledger — one row per PayPal order (pay-as-you-go cloud months).
+        // order_id + capture_id are unique so an order/capture can only credit once.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS payments (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                provider VARCHAR(20) NOT NULL DEFAULT 'paypal',
+                order_id VARCHAR(64) NOT NULL,
+                capture_id VARCHAR(64) NULL,
+                amount_cents INT NOT NULL,
+                currency CHAR(3) NOT NULL DEFAULT 'USD',
+                months INT NOT NULL,
+                status ENUM('pending','completed','failed') NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_payments_order (order_id),
+                UNIQUE INDEX idx_payments_capture (capture_id),
+                INDEX idx_payments_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

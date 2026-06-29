@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
@@ -44,6 +44,7 @@ const SECTIONS = [
   { id: 'responses', title: 'Viewing responses', icon: Inbox },
   { id: 'exporting', title: 'Exporting data', icon: Download },
   { id: 'analytics', title: 'Analytics', icon: BarChart3 },
+  { id: 'cloud', title: 'Cloud & billing', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
   { id: 'packs', title: 'Packs & templates', icon: Package },
   { id: 'self-hosting', title: 'Self-hosting', icon: Server },
@@ -348,6 +349,23 @@ export function Docs() {
               <H2 id="analytics" icon={BarChart3}>Analytics</H2>
               <P>The analytics page shows the funnel for each form — <strong className="text-gray-900 dark:text-white">views → starts → responses</strong> — plus completion rate, average completion time, responses over time, and a per-field breakdown.</P>
               <Figure src="/screenshots/analytics.png" alt="Form analytics" caption="Built-in analytics — views, completion rate, trends, and field-level breakdowns." />
+            </section>
+
+            {/* Cloud & billing */}
+            <section className="mb-14">
+              <H2 id="cloud" icon={Cloud}>Cloud &amp; billing</H2>
+              <P>FormLogic is free to use — self-host it or run it locally and everything works. <strong className="text-gray-900 dark:text-white">Cloud</strong> is optional managed hosting (we run it for you, with backups) billed <strong className="text-gray-900 dark:text-white">pay-as-you-go</strong>: $5 buys one month, and that's it — <strong className="text-gray-900 dark:text-white">no subscription and nothing auto-renews</strong>.</P>
+              <Steps items={[
+                <>Open <strong className="text-gray-900 dark:text-white">Cloud &amp; billing</strong> from the account menu (top-right).</>,
+                <>Choose how many months you want — buying several at once just stacks them onto your expiry date.</>,
+                <>Pay with <strong className="text-gray-900 dark:text-white">PayPal</strong>. Your cloud access extends from the later of today or your current expiry, so months never overlap or get lost.</>,
+                <>When it lapses, nothing is deleted — you simply drop back to the free plan until you top up again.</>,
+              ]} />
+              <Bullets items={[
+                <>One-time PayPal payments — no card stored, no recurring charge.</>,
+                <>Each payment is verified on the server before any time is credited.</>,
+                <>Self-hosting? Set <C>PAYPAL_CLIENT_ID</C> / <C>PAYPAL_SECRET</C> (and optionally <C>CLOUD_PRICE_CENTS</C>) in the backend <C>.env</C> to enable purchases — leave them blank to hide billing entirely.</>,
+              ]} />
             </section>
 
             {/* Apps */}
