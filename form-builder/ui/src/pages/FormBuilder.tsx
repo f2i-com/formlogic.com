@@ -7,6 +7,7 @@ import {
   Plus,
   Code2,
   Share2,
+  Package,
   Sparkles,
   Palette,
   Keyboard,
@@ -45,6 +46,9 @@ import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } fro
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { AIFormGenerator } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
+import { PublishPackDialog } from '../components/builder/PublishPackDialog';
+import { type PackData } from '../lib/api';
+import { useAuthStore } from '../stores/authStore';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
 import { KeyboardShortcutsHelp } from '../components/builder/KeyboardShortcutsHelp';
@@ -55,13 +59,62 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
 import { FIELD_TYPE_INFO, type FormField, type FieldType } from '../types/form';
 
-type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | null;
+type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | null;
+
+/**
+ * Serialize the current form into a single-form PackData so it can be published to the
+ * marketplace via PublishPackDialog — resolving the "no way to author a pack from your own
+ * forms" gap. Per-form notification recipients are stripped so they aren't shared.
+ */
+function buildFormPack(
+  form: { title?: string; description?: string; icon?: string; settings?: unknown; theme?: unknown; logicScript?: string; fields?: FormField[] },
+  author: string,
+): PackData {
+  const slug = (form.title || 'form').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'form';
+  const settings: Record<string, unknown> = { ...((form.settings as Record<string, unknown>) || {}) };
+  delete settings.notifications;
+  return {
+    formatVersion: 1,
+    packMeta: {
+      name: form.title || 'Untitled Form',
+      description: form.description || '',
+      version: '1.0.0',
+      author: author || 'Unknown',
+      tags: [],
+    },
+    forms: [{
+      packFormId: slug,
+      title: form.title || 'Untitled Form',
+      description: form.description || '',
+      icon: form.icon,
+      settings,
+      theme: { ...((form.theme as Record<string, unknown>) || {}) },
+      logicScript: form.logicScript || undefined,
+      fields: (form.fields || []).map((f) => ({
+        id: f.id,
+        type: f.type,
+        label: f.label,
+        description: f.description,
+        placeholder: f.placeholder,
+        required: !!f.required,
+        properties: (f.properties || {}) as Record<string, unknown>,
+        conditionalLogic: f.conditionalLogic,
+        validation: f.validation,
+      })),
+    }],
+    apps: [],
+  };
+}
 
 // Main Form Builder Component
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
+  // it stays stable while the publish dialog is open rather than rebuilding on each edit).
+  const [packToPublish, setPackToPublish] = useState<PackData | null>(null);
+  const authorName = useAuthStore((s) => s.user?.name) || 'Unknown';
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
@@ -651,6 +704,21 @@ export default function FormBuilder() {
                     {item.badge && <span className="ml-auto h-2 w-2 rounded-full bg-green-500" />}
                   </button>
                 ))}
+                <button
+                  onClick={() => {
+                    if ((form.fields?.length ?? 0) === 0) {
+                      toast.warning('Add a field first', 'Build your form before publishing it as a pack.');
+                      return;
+                    }
+                    setPackToPublish(buildFormPack(form, authorName));
+                    setActiveModal('publishPack');
+                    setShowMobileMenu(false);
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Package className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+                  Publish as pack
+                </button>
               </div>
             )}
           </div>
@@ -937,6 +1005,14 @@ export default function FormBuilder() {
         onClose={closeModal}
         theme={form.theme}
         onSave={(theme) => updateForm(form.id, { theme })}
+      />
+
+      {/* Publish-as-pack: serialize this form into a pack and publish it to the marketplace */}
+      <PublishPackDialog
+        isOpen={activeModal === 'publishPack'}
+        onClose={closeModal}
+        initialPack={packToPublish}
+        onPublished={closeModal}
       />
 
       {/* Form Settings Modal */}
