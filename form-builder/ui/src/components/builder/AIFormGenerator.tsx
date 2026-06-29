@@ -204,8 +204,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           })}
         </TabsList>
 
-        {/* Content */}
-        <div className="p-6 overflow-y-auto max-h-[60vh]">
+        {/* Content — fixed height so the dialog doesn't jump between tabs (the Photo
+            tab is taller than Prompt/Document). */}
+        <div className="p-6 overflow-y-auto h-[460px] max-h-[60vh]">
           <TabsContent value="prompt">{activeTab === 'prompt' && (
           <div className="space-y-4">
             <div>

@@ -277,8 +277,8 @@ function closeFormPopup() {
           ))}
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        {/* Content — fixed height so the dialog doesn't jump between tabs. */}
+        <div className="h-[460px] max-h-[60vh] overflow-y-auto p-6">
           {/* Share Link Tab */}
           {activeTab === 'link' && (
             <div className="space-y-6">

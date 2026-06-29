@@ -111,7 +111,9 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
         </div>
 
         {/* Content */}
-        <div className="min-h-[250px] max-h-[60vh] overflow-y-auto p-6">
+        {/* Fixed-height body so switching tabs doesn't resize the dialog (the vh cap
+            keeps the header/footer visible on short viewports). */}
+        <div className="h-[460px] max-h-[60vh] overflow-y-auto p-6">
           {/* Presentation Tab */}
           {activeTab === 'presentation' && (
             <div className="space-y-6">
