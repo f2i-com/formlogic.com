@@ -380,6 +380,18 @@ export default function FormAnalytics() {
         Math.round(r.completionTime / 1000),
         ...inputFields.map((f) => {
           const v = r.answers[f.id];
+          if (f.type === 'file_upload' && Array.isArray(v)) {
+            return v.map((x: unknown) => (x && typeof x === 'object' && 'originalFilename' in x) ? (x as Record<string, unknown>).originalFilename : 'File').join(', ');
+          }
+          if (f.type === 'location' && v && typeof v === 'object' && 'latitude' in (v as object)) {
+            const loc = v as Record<string, number>;
+            return loc.latitude != null && loc.longitude != null ? `${loc.latitude}, ${loc.longitude}` : '';
+          }
+          if (['dropdown', 'multiple_choice', 'checkboxes'].includes(f.type)) {
+            const opts = (f.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+            const labelFor = (x: unknown) => opts.find((o) => o.value === x)?.label ?? String(x);
+            return Array.isArray(v) ? v.map(labelFor).join(', ') : (v != null ? labelFor(v) : '');
+          }
           return Array.isArray(v) ? v.map(item => typeof item === 'object' && item !== null ? JSON.stringify(item) : String(item)).join(', ') : (v ?? '');
         }),
       ]);
@@ -677,6 +689,10 @@ export default function FormAnalytics() {
                               display = `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
                             } else if (field.type === 'file_upload' && Array.isArray(val)) {
                               display = val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ');
+                            } else if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+                              const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+                              const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+                              display = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
                             } else if (Array.isArray(val)) {
                               display = val.join(', ');
                             } else if (typeof val === 'object') {
