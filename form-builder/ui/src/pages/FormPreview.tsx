@@ -249,11 +249,12 @@ export default function FormPreview() {
       <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
         <div
           className={cn(
-            'bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-300',
+            'bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 bg-cover bg-center',
             previewDevice === 'mobile' ? 'w-full max-w-[375px] h-[667px] max-h-[calc(100vh-8rem)]' : 'w-full max-w-4xl h-[600px] max-h-[calc(100vh-8rem)]'
           )}
           style={{
             backgroundColor: form.theme.backgroundColor,
+            backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
             color: form.theme.textColor,
             fontFamily: form.theme.fontFamily,
           }}

@@ -17,7 +17,6 @@ import {
   Bell,
   Settings2,
   Mail,
-  Calendar,
   LayoutGrid,
   ArrowLeft,
   Shield,
@@ -38,15 +37,11 @@ import type { AuditVerifyResult, ApiKey, ApiKeyCreated } from '../lib/api';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
-  emailNotifications: boolean;
-  weeklyDigest: boolean;
   showProgressBar: boolean;
   allowBackNavigation: boolean;
 }
 
 const DEFAULT_PREFERENCES: UserPreferences = {
-  emailNotifications: true,
-  weeklyDigest: false,
   showProgressBar: true,
   allowBackNavigation: true,
 };
@@ -423,36 +418,16 @@ export function Settings() {
               iconBg="bg-blue-50 dark:bg-blue-500/10"
               iconColor="text-blue-600 dark:text-blue-400"
             />
-            <div className="space-y-1 ml-0 sm:ml-14">
-              <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                    <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">Email notifications</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Receive email notifications for new form responses</p>
-                  </div>
+            <div className="ml-0 sm:ml-14">
+              <div className="flex items-start gap-3 py-3 text-sm">
+                <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg shrink-0">
+                  <Mail className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 </div>
-                <Switch
-                  checked={preferences.emailNotifications}
-                  onChange={(checked) => handlePreferenceChange('emailNotifications', checked)}
-                />
-              </div>
-              <div className="flex items-center justify-between py-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg">
-                    <Calendar className="h-4 w-4 text-gray-500 dark:text-slate-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 dark:text-white">Weekly digest</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Get a weekly summary of form activity</p>
-                  </div>
-                </div>
-                <Switch
-                  checked={preferences.weeklyDigest}
-                  onChange={(checked) => handlePreferenceChange('weeklyDigest', checked)}
-                />
+                <p className="text-gray-500 dark:text-slate-400">
+                  Response emails are configured per form. Open a form's{' '}
+                  <span className="font-medium text-gray-700 dark:text-slate-300">Settings → Notifications</span>{' '}
+                  tab to set the recipient address and turn emails on for that form.
+                </p>
               </div>
             </div>
           </CardContent>

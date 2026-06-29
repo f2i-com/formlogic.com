@@ -15,6 +15,11 @@ import { statusBadgeVariant, formatStatusLabel } from '../../lib/utils';
 import { Badge } from '../../components/ui/Badge';
 import type { AppUser, AppInvitation, AppRole, AppUserGroup } from '../../types/app';
 
+// User groups have full CRUD but group membership is not yet consumed by permission
+// resolution, so the tab is hidden until group-based authorization ships (flip to
+// re-enable). Keeps the UI honest without dropping the built-out group code.
+const GROUPS_ENABLED = false;
+
 export function AppUserManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
@@ -210,7 +215,7 @@ export function AppUserManager() {
         <TabsList variant="underline" aria-label="User management sections" className="mb-6">
           <TabsTrigger value="users" variant="underline">Users ({appUsers.length})</TabsTrigger>
           <TabsTrigger value="invitations" variant="underline">Invitations ({appInvitations.length})</TabsTrigger>
-          <TabsTrigger value="groups" variant="underline">Groups ({appGroups.length})</TabsTrigger>
+          {GROUPS_ENABLED && <TabsTrigger value="groups" variant="underline">Groups ({appGroups.length})</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="users">
@@ -255,7 +260,7 @@ export function AppUserManager() {
           />
         </TabsContent>
 
-        <TabsContent value="groups">
+        {GROUPS_ENABLED && <TabsContent value="groups">
           <div className="flex gap-2 mb-4">
             <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name"
               className="flex-1 max-w-xs px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
@@ -279,7 +284,7 @@ export function AppUserManager() {
               </div>
             )}
           />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
 
     </div>

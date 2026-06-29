@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw } from 'lucide-react';
+import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck } from 'lucide-react';
 import { Button } from '../components/ui/Button';
+import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
@@ -838,6 +839,16 @@ export default function FormResponse() {
     });
   }, [form, isFieldVisible]);
 
+  // NIGO ("not in good order") dashboard — same wiring as the builder preview/app runtime,
+  // gated on the form's showNigoDashboard setting.
+  const [showNigo, setShowNigo] = useState(false);
+  const nigoVisibleIds = useMemo(() => new Set(visibleFields.map((f) => f.id)), [visibleFields]);
+  const nigoRequiredIds = useMemo(() => {
+    const s = new Set<string>();
+    visibleFields.forEach((f) => { if (f.required || isFieldRequired(f.id)) s.add(f.id); });
+    return s;
+  }, [visibleFields, isFieldRequired]);
+
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
     if (visibleFields.length > 0 && currentStep >= visibleFields.length) {
@@ -1219,14 +1230,22 @@ export default function FormResponse() {
 
   return (
     <div
-      className="min-h-screen flex flex-col"
+      className="min-h-screen flex flex-col bg-cover bg-center bg-fixed"
       style={{
         backgroundColor: form.theme.backgroundColor,
+        backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
         color: form.theme.textColor,
         fontFamily: form.theme.fontFamily,
       }}
       onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
     >
+      {/* Brand logo */}
+      {form.theme.logo && (
+        <div className="pt-6 pb-1 flex justify-center shrink-0">
+          <img src={form.theme.logo} alt="" className="max-h-16 max-w-[60%] object-contain" />
+        </div>
+      )}
+
       {/* Mode Toggle */}
       {showModeToggle && (
         <div className="fixed top-3 right-4 z-20 flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }}>
@@ -1250,6 +1269,41 @@ export default function FormResponse() {
           >
             Classic
           </button>
+        </div>
+      )}
+
+      {/* NIGO dashboard toggle + panel (when enabled for this form) */}
+      {form.settings?.showNigoDashboard && (
+        <button
+          type="button"
+          onClick={() => setShowNigo((v) => !v)}
+          className="fixed top-3 left-4 z-20 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all cursor-pointer shadow-sm"
+          style={showNigo
+            ? { backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }
+            : { backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
+          aria-pressed={showNigo}
+          title="Completion checklist"
+        >
+          <ClipboardCheck className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Checklist</span>
+        </button>
+      )}
+      {showNigo && form.settings?.showNigoDashboard && (
+        <div className="fixed top-14 right-4 w-72 max-w-[calc(100vw-2rem)] z-20">
+          <NigoDashboard
+            fields={form.fields}
+            formData={allFormData}
+            visibleFields={nigoVisibleIds}
+            requiredFields={nigoRequiredIds}
+            onFieldClick={(fieldId) => {
+              const idx = visibleFields.findIndex((f) => f.id === fieldId);
+              if (idx >= 0) {
+                if (effectiveMode === 'focused') goToStep(idx);
+                const el = document.getElementById(`field-${fieldId}`);
+                if (el) el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+              }
+            }}
+          />
         </div>
       )}
 
