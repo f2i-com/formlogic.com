@@ -1369,10 +1369,18 @@ class AppPublicController
                 if (empty($field['properties']['allowMultiple']) && count($value) > 1) {
                     return 'Only one file is allowed for this field';
                 }
+                // Cap the file count (mirrors the standalone submission path).
+                $maxFiles = $field['properties']['maxFiles'] ?? 20;
+                if (count($value) > $maxFiles) {
+                    return "Maximum of {$maxFiles} files allowed";
+                }
                 // Validate each file metadata entry
                 foreach ($value as $item) {
                     if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
                         return 'Invalid file metadata';
+                    }
+                    if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                        return 'Invalid file name';
                     }
                 }
                 break;

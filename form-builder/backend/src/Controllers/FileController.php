@@ -117,32 +117,50 @@ class FileController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
         }
 
-        // Get uploaded file from $_FILES
-        $uploadedFiles = $request->getUploadedFiles();
-        $file = $uploadedFiles['file'] ?? null;
-
-        // Fall back to raw $_FILES if PSR-7 didn't parse it
-        if (!$file && !empty($_FILES['file'])) {
-            $rawFile = $_FILES['file'];
-        } elseif ($file) {
-            // Convert PSR-7 UploadedFile to the array format FileStorageService expects
-            $rawFile = [
-                'tmp_name' => $file->getStream()->getMetadata('uri'),
-                'name' => $file->getClientFilename(),
-                'size' => $file->getSize(),
-                'type' => $file->getClientMediaType(),
-                'error' => $file->getError(),
-            ];
-        } else {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'No file uploaded'], 400);
-        }
-
         try {
+            $rawFile = $this->resolveUploadedFile($request);
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
+    }
+
+    /**
+     * Resolve the uploaded file into the array FileStorageService expects. Maps a
+     * failed PHP upload (e.g. size beyond upload_max_filesize, where the PSR-7 file
+     * has no readable stream) to a clean RuntimeException instead of letting
+     * getStream() throw an unhandled 500.
+     */
+    private function resolveUploadedFile(Request $request): array
+    {
+        $uploadedFiles = $request->getUploadedFiles();
+        $file = $uploadedFiles['file'] ?? null;
+
+        // Fall back to raw $_FILES if PSR-7 didn't parse it.
+        if (!$file && !empty($_FILES['file'])) {
+            return $_FILES['file'];
+        }
+        if (!$file) {
+            throw new \RuntimeException('No file uploaded');
+        }
+
+        $err = $file->getError();
+        if ($err !== UPLOAD_ERR_OK) {
+            throw new \RuntimeException(
+                ($err === UPLOAD_ERR_INI_SIZE || $err === UPLOAD_ERR_FORM_SIZE)
+                    ? 'File is too large'
+                    : 'File upload failed'
+            );
+        }
+
+        return [
+            'tmp_name' => $file->getStream()->getMetadata('uri'),
+            'name' => $file->getClientFilename(),
+            'size' => $file->getSize(),
+            'type' => $file->getClientMediaType(),
+            'error' => $err,
+        ];
     }
 
     /**
@@ -199,24 +217,8 @@ class FileController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
         }
 
-        $uploadedFiles = $request->getUploadedFiles();
-        $file = $uploadedFiles['file'] ?? null;
-
-        if (!$file && !empty($_FILES['file'])) {
-            $rawFile = $_FILES['file'];
-        } elseif ($file) {
-            $rawFile = [
-                'tmp_name' => $file->getStream()->getMetadata('uri'),
-                'name' => $file->getClientFilename(),
-                'size' => $file->getSize(),
-                'type' => $file->getClientMediaType(),
-                'error' => $file->getError(),
-            ];
-        } else {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'No file uploaded'], 400);
-        }
-
         try {
+            $rawFile = $this->resolveUploadedFile($request);
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {

@@ -53,6 +53,7 @@ export interface FieldProperties {
   scaleEndLabel?: string;
   allowMultiple?: boolean;
   maxFileSize?: number;
+  maxFiles?: number;
   acceptedFileTypes?: string[];
   calculationExpression?: string;
   mediaUrl?: string;

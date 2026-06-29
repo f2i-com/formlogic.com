@@ -19,7 +19,7 @@ const MobileCardList = memo(function MobileCardList({
   navigate,
 }: {
   responses: Record<string, unknown>[];
-  fields: Array<{ id: string; label: string; type: string }>;
+  fields: Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }>;
   appSlug?: string;
   formId?: string;
   navigate: ReturnType<typeof useNavigate>;
@@ -91,6 +91,10 @@ const MobileCardList = memo(function MobileCardList({
                 display = `${Number(loc.latitude).toFixed(5)}, ${Number(loc.longitude).toFixed(5)}`;
               } else if (field.type === 'file_upload' && Array.isArray(val)) {
                 display = (val as Array<{ originalFilename?: string }>).map((f) => (f && f.originalFilename) || 'File').join(', ');
+              } else if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+                const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+                const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+                display = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
               } else if (Array.isArray(val)) {
                 display = val.join(', ');
               } else if (typeof val === 'object') {
@@ -150,7 +154,7 @@ export function AppDataTable() {
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = useMemo(() =>
-    ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string }>)
+    ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }>)
       .filter((f) => !EXCLUDED_FIELD_TYPES.has(f.type)),
     [runtimeForm?.fields]
   );
@@ -311,6 +315,12 @@ export function AppDataTable() {
       if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in val) {
         const loc = val as Record<string, number>;
         return `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
+      }
+      if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+        const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+        const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+        const out = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
+        return out.length > 50 ? out.substring(0, 50) + '\u2026' : out;
       }
       if (Array.isArray(val)) {
         const joined = val.map((v: unknown) => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');

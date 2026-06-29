@@ -5,7 +5,7 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { api } from '../../lib/api';
+import { api, resolveFileUrl } from '../../lib/api';
 import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
 import { Badge } from '../ui/Badge';
 
@@ -91,7 +91,7 @@ export function AppResponseDetail() {
     setSaving(true);
     setSaveError(null);
     try {
-      await updateResponse(formId, responseId, { answers: editedAnswers });
+      const updated = await updateResponse(formId, responseId, { answers: editedAnswers }) as Record<string, unknown> | undefined;
       // For linked-record fields the read-only view renders from `_resolved`, not
       // `answers`, so an optimistic answers-only patch would leave stale chips
       // (and links pointing at the old record). Refetch the resolved response.
@@ -104,6 +104,11 @@ export function AppResponseDetail() {
         } else {
           setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
         }
+      } else if (updated) {
+        // Use the server's response so recomputed calculated fields don't show stale
+        // (pre-edit) values from the optimistic editedAnswers.
+        setResponse(updated);
+        setEditedAnswers((updated.answers as Record<string, unknown>) ?? {});
       } else {
         setResponse((prev) => prev ? { ...prev, answers: editedAnswers } : prev);
       }
@@ -466,7 +471,7 @@ export function AppResponseDetail() {
                             <div className="flex flex-col gap-1">
                               {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
                                 f && f.url
-                                  ? <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
+                                  ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
                                   : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
                               ))}
                             </div>
@@ -480,6 +485,13 @@ export function AppResponseDetail() {
                         // Signature: render the image (was a raw base64 blob)
                         if (field.type === 'signature' && typeof val === 'string' && val.startsWith('data:image')) {
                           return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                        }
+                        // Choice fields: map stored option values (e.g. "option_2") to
+                        // their human labels.
+                        if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+                          const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+                          const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+                          return Array.isArray(val) ? (val as unknown[]).map(labelFor).join(', ') : labelFor(val);
                         }
                         // Arrays (checkboxes, etc.)
                         if (Array.isArray(val)) return (val as unknown[]).join(', ');

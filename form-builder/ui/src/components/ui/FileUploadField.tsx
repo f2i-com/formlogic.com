@@ -38,6 +38,13 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
   // concatenation (`${primaryColor}15`) produces invalid colors for var()/named colors.
   const tint = (pct: number) => `color-mix(in srgb, ${primaryColor} ${pct}%, transparent)`;
 
+  // Built-in templates and packs store maxFileSize in MEGABYTES (small ints like 5/10),
+  // while the builder stores BYTES. Mirror the server heuristic (FileController) so a
+  // template form's "5" isn't treated as 5 bytes and rejected before upload: a positive
+  // value under 1024 is megabytes.
+  const rawMax = field.properties.maxFileSize;
+  const maxBytes = rawMax && rawMax > 0 && rawMax < 1024 ? rawMax * 1024 * 1024 : (rawMax || 0);
+
   const handleFiles = async (files: File[]) => {
     if (!formId) {
       toast.error('Upload Error', 'Form ID is not available');
@@ -63,7 +70,7 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
       }
     }
 
-    const maxSize = field.properties.maxFileSize;
+    const maxSize = maxBytes;
 
     // Validate file sizes client-side
     if (maxSize) {
@@ -74,6 +81,18 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
           `${oversizedFiles[0].name} exceeds the maximum size of ${formatFileSize(maxSize)}`
         );
         files = files.filter(f => f.size <= maxSize);
+        if (files.length === 0) return;
+      }
+    }
+
+    // Cap the number of files so we don't upload extras the server/submit will reject
+    // (which would otherwise dead-end the submission and orphan the surplus files).
+    if (field.properties.allowMultiple) {
+      const maxFiles = field.properties.maxFiles ?? 20;
+      const remaining = Math.max(0, maxFiles - uploadedFiles.length);
+      if (files.length > remaining) {
+        toast.error('Too Many Files', `You can attach at most ${maxFiles} file${maxFiles === 1 ? '' : 's'}.`);
+        files = files.slice(0, remaining);
         if (files.length === 0) return;
       }
     }
@@ -152,7 +171,7 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
                 {field.properties.acceptedFileTypes?.length
                   ? field.properties.acceptedFileTypes.join(', ')
                   : 'Any file type'}
-                {field.properties.maxFileSize && ` • Max ${formatFileSize(field.properties.maxFileSize)}`}
+                {maxBytes > 0 && ` • Max ${formatFileSize(maxBytes)}`}
               </p>
             </>
           )}

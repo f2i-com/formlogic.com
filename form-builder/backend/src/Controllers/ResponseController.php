@@ -217,6 +217,10 @@ class ResponseController
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
 
+        // Re-derive file URLs server-side so a submitter can't store an attacker-chosen
+        // link that later renders as a clickable anchor to reviewers.
+        $data['answers'] = $this->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
+
         // Recompute calculated fields server-side and merge them in so they
         // round-trip into storage/export/analytics and are available to
         // conditional-logic evaluation during validation.
@@ -337,6 +341,42 @@ class ResponseController
         }
 
         return $sanitized;
+    }
+
+    /**
+     * Re-derive each file_upload item's `url` from trusted parts (form id + file id +
+     * filename). The client uploads via /upload (which returns the canonical url), but
+     * the submission could carry a tampered `url`; rebuilding it here ensures reviewers
+     * only ever see links that point at this form's own file-serving route — never an
+     * attacker-supplied phishing or `javascript:` link.
+     */
+    private function normalizeFileAnswers(array $fields, array $answers, string $formId): array
+    {
+        $fileFieldIds = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'file_upload' && isset($field['id'])) {
+                $fileFieldIds[$field['id']] = true;
+            }
+        }
+        if (empty($fileFieldIds)) {
+            return $answers;
+        }
+
+        foreach ($answers as $fieldId => $value) {
+            if (!isset($fileFieldIds[$fieldId]) || !is_array($value)) {
+                continue;
+            }
+            foreach ($value as $i => $item) {
+                if (!is_array($item) || !isset($item['id'], $item['originalFilename'])) {
+                    continue;
+                }
+                $answers[$fieldId][$i]['url'] = '/api/files/' . rawurlencode($formId)
+                    . '/' . rawurlencode((string) $item['id'])
+                    . '/' . rawurlencode((string) $item['originalFilename']);
+            }
+        }
+
+        return $answers;
     }
 
     /**

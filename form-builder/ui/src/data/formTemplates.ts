@@ -264,7 +264,7 @@ export const formTemplates: FormTemplate[] = [
         required: true,
         properties: {
           acceptedFileTypes: ['.pdf', '.doc', '.docx'],
-          maxFileSize: 5,
+          maxFileSize: 5 * 1024 * 1024,
         },
       },
       {
@@ -381,7 +381,7 @@ export const formTemplates: FormTemplate[] = [
         required: false,
         properties: {
           acceptedFileTypes: ['.png', '.jpg', '.jpeg', '.gif'],
-          maxFileSize: 10,
+          maxFileSize: 10 * 1024 * 1024,
           allowMultiple: true,
         },
       },

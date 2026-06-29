@@ -1207,6 +1207,23 @@ class ResponseService
             }
         }
 
+        // Pre-build value->label maps for choice fields so exports show readable labels
+        // (e.g. "Sales Question") instead of stored option values (e.g. "option_3").
+        $choiceLabelMaps = [];
+        foreach ($fields as $field) {
+            if (in_array($field['type'] ?? '', ['dropdown', 'multiple_choice', 'checkboxes'], true)) {
+                $map = [];
+                foreach ($field['properties']['options'] ?? [] as $opt) {
+                    if (isset($opt['value'])) {
+                        $map[(string) $opt['value']] = (string) ($opt['label'] ?? $opt['value']);
+                    }
+                }
+                if ($map) {
+                    $choiceLabelMaps[$field['id']] = $map;
+                }
+            }
+        }
+
         // Restrict linked-record resolution to forms owned by THIS form's owner,
         // so a crafted cross-tenant targetFormId can't leak another user's data.
         $exportOwnerId = null;
@@ -1277,6 +1294,17 @@ class ResponseService
                         $lat = $value['latitude'] ?? '';
                         $lng = $value['longitude'] ?? '';
                         $value = $lat !== '' && $lng !== '' ? "$lat, $lng" : '';
+                    } elseif (isset($choiceLabelMaps[$field['id']])) {
+                        $map = $choiceLabelMaps[$field['id']];
+                        $value = is_array($value)
+                            ? implode(', ', array_map(fn($v) => $map[(string) $v] ?? (string) $v, $value))
+                            : ($map[(string) $value] ?? (string) $value);
+                    } elseif ($field['type'] === 'signature' && is_string($value)) {
+                        if (str_starts_with($value, 'data:')) {
+                            $value = '[signature]';
+                        } elseif (str_starts_with($value, 'typed:')) {
+                            $value = substr($value, 6);
+                        }
                     } elseif (is_array($value)) {
                         $value = implode(', ', array_map(fn($v) => is_array($v) ? json_encode($v) : (string)$v, $value));
                     }

@@ -1361,5 +1361,17 @@ interface UploadedFileMetadata {
 // Export singleton instance
 export const api = new ApiClient(API_BASE_URL);
 
+/**
+ * Resolve a server-stored file URL (always root-relative `/api/files/...`) against the
+ * configured API base, so uploaded-file downloads work under split-origin deployments
+ * (including the dev default where VITE_API_URL points at another port).
+ */
+export function resolveFileUrl(url?: string | null): string {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith('/api/')) return API_BASE_URL.replace(/\/$/, '') + url.slice(4);
+  return url;
+}
+
 // Export types
 export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };

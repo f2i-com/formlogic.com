@@ -29,7 +29,7 @@ import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
-import { api } from '../lib/api';
+import { api, resolveFileUrl } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
 import { Badge } from '../components/ui/Badge';
@@ -442,7 +442,7 @@ function FormResponses() {
       r.id,
       parseServerDate(r.submittedAt).toLocaleString(),
       r.status ?? 'submitted',
-      ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type)),
+      ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type, f.properties?.options)),
     ]);
 
     const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
@@ -458,12 +458,17 @@ function FormResponses() {
   };
 
   // Format value for display
-  const formatValue = (value: unknown, fieldType?: string): string => {
+  const formatValue = (value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>): string => {
     if (value === null || value === undefined) return '-';
     if (typeof value === 'boolean') return value ? 'Yes' : 'No';
     // File upload: show filenames
     if (fieldType === 'file_upload' && Array.isArray(value)) {
       return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
+    }
+    // Choice fields: map stored option values (e.g. "option_2") to their human labels.
+    if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
+      const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
+      return Array.isArray(value) ? value.map(labelFor).join(', ') : labelFor(value);
     }
     // Location: show coordinates
     if (fieldType === 'location' && value && typeof value === 'object' && 'latitude' in (value as Record<string, unknown>)) {
@@ -717,7 +722,7 @@ function FormResponses() {
                       {displayFields.slice(0, 2).map((field) => (
                         <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                          {formatValue(response.answers[field.id], field.type)}
+                          {formatValue(response.answers[field.id], field.type, field.properties?.options)}
                         </p>
                       ))}
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
@@ -775,9 +780,9 @@ function FormResponses() {
                         <td
                           key={field.id}
                           className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 max-w-[200px] truncate hidden sm:table-cell"
-                          title={formatValue(response.answers[field.id], field.type)}
+                          title={formatValue(response.answers[field.id], field.type, field.properties?.options)}
                         >
-                          {formatValue(response.answers[field.id], field.type)}
+                          {formatValue(response.answers[field.id], field.type, field.properties?.options)}
                         </td>
                       ))}
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
@@ -875,11 +880,21 @@ function FormResponses() {
                 .map((field) => (
                   <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
                     <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
-                    <p className="text-gray-900 dark:text-white">
-                      {formatValue(selectedResponse.answers[field.id], field.type) || (
-                        <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
+                    <div className="text-gray-900 dark:text-white">
+                      {field.type === 'file_upload' && Array.isArray(selectedResponse.answers[field.id]) && (selectedResponse.answers[field.id] as unknown[]).length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                          {(selectedResponse.answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
+                            f && f.url
+                              ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
+                              : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
+                          ))}
+                        </div>
+                      ) : (
+                        formatValue(selectedResponse.answers[field.id], field.type, field.properties?.options) || (
+                          <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
+                        )
                       )}
-                    </p>
+                    </div>
                   </div>
                 ))}
               {/* Metadata */}
