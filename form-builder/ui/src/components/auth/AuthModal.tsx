@@ -109,6 +109,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
                 placeholder="Your name"
                 className="pl-10"
                 disabled={isLoading}
+                autoComplete="name"
               />
             </div>
           </div>
@@ -128,6 +129,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               placeholder="you@example.com"
               className="pl-10"
               disabled={isLoading}
+              autoComplete={mode === 'login' ? 'username' : 'email'}
               required
             />
           </div>
@@ -147,6 +149,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'}
               className="pl-10"
               disabled={isLoading}
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               required
             />
           </div>
@@ -167,6 +170,8 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
                 placeholder="Confirm your password"
                 className="pl-10"
                 disabled={isLoading}
+                autoComplete="new-password"
+                error={confirmPassword && password !== confirmPassword ? 'Passwords do not match' : undefined}
                 required
               />
             </div>
@@ -195,7 +200,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
+                className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
                 disabled={isLoading}
               >
                 Sign up
@@ -207,7 +212,7 @@ export function AuthModal({ isOpen, onClose, initialMode = 'login' }: AuthModalP
               <button
                 type="button"
                 onClick={toggleMode}
-                className="text-primary-600 hover:text-primary-700 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
+                className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 font-semibold transition-colors focus:outline-none focus-visible:underline cursor-pointer"
                 disabled={isLoading}
               >
                 Sign in

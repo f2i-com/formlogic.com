@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, User, AlertCircle, Check } from 'lucide-react';
 
@@ -153,9 +154,8 @@ export function Signup() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
@@ -165,15 +165,15 @@ export function Signup() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Confirm Password"
-              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Confirm your password"
               leftIcon={<Lock className="h-4 w-4" />}
               disabled={isLoading}
               autoComplete="new-password"
+              error={confirmPassword && password !== confirmPassword ? 'Passwords do not match' : undefined}
               required
             />
 

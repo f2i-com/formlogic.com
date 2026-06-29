@@ -44,6 +44,7 @@ interface PhoneInputProps {
   textColor?: string;
   className?: string;
   autoFocus?: boolean;
+  required?: boolean;
 }
 
 export function PhoneInput({
@@ -53,6 +54,7 @@ export function PhoneInput({
   textColor,
   className,
   autoFocus,
+  required,
 }: PhoneInputProps) {
   const [selectedCountry, setSelectedCountry] = useState<CountryData>(() => {
     // Try to parse existing value
@@ -213,7 +215,7 @@ export function PhoneInput({
           type="button"
           onClick={() => setIsOpen(!isOpen)}
           aria-label={`Country code: ${selectedCountry.name} (${selectedCountry.dialCode})`}
-          aria-haspopup="listbox"
+          aria-haspopup="true"
           aria-expanded={isOpen}
           className={`flex items-center gap-1 py-2 pr-2 border-b-2 text-lg transition-colors cursor-pointer whitespace-nowrap ${
             !hasPrimaryColor ? (nationalNumber ? 'border-current/60' : 'border-current/30') : ''
@@ -255,6 +257,7 @@ export function PhoneInput({
                   }
                 }}
                 placeholder="Search countries..."
+                aria-label="Search countries"
                 className="w-full px-3 py-2 text-sm bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-slate-600 rounded-md outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
             </div>
@@ -292,6 +295,7 @@ export function PhoneInput({
         type="tel"
         inputMode="tel"
         aria-label="Phone number"
+        aria-required={required || undefined}
         value={nationalNumber}
         onChange={(e) => handleNumberChange(e.target.value)}
         onPaste={handlePaste}

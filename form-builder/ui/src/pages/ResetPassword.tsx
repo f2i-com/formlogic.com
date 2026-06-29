@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
+import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo } from '../components/ui/Logo';
 import { Lock, AlertCircle, CheckCircle2 } from 'lucide-react';
 
@@ -29,9 +29,16 @@ export function ResetPassword() {
       setError(result.error);
     } else {
       setDone(true);
-      setTimeout(() => navigate('/login'), 2000);
     }
   };
+
+  // Redirect to login shortly after success — via an effect so it's cancelled if the
+  // user navigates away first (no setState/navigate on an unmounted component).
+  useEffect(() => {
+    if (!done) return;
+    const t = setTimeout(() => navigate('/login'), 2000);
+    return () => clearTimeout(t);
+  }, [done, navigate]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6">
@@ -66,9 +73,8 @@ export function ResetPassword() {
                     <span>{error}</span>
                   </div>
                 )}
-                <Input
+                <PasswordInput
                   label="New password"
-                  type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="At least 8 characters"
@@ -76,14 +82,14 @@ export function ResetPassword() {
                   autoComplete="new-password"
                   required
                 />
-                <Input
+                <PasswordInput
                   label="Confirm password"
-                  type="password"
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   placeholder="Re-enter your password"
                   leftIcon={<Lock className="h-4 w-4" />}
                   autoComplete="new-password"
+                  error={confirm && password !== confirm ? 'Passwords do not match' : undefined}
                   required
                 />
                 <Button type="submit" className="w-full" size="lg" isLoading={submitting}>Reset password</Button>

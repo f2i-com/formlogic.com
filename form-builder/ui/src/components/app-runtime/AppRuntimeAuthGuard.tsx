@@ -3,6 +3,8 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
+import { Input } from '../ui/Input';
+import { PasswordInput } from '../ui/PasswordInput';
 import { AlertCircle, Lock, Mail, UserPlus, Clock } from 'lucide-react';
 
 interface AppRuntimeAuthGuardProps {
@@ -17,18 +19,25 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean } | null>(null);
+  const [membershipChecked, setMembershipChecked] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
   // Logged in but the app didn't load (likely not a member): discover whether
-  // self-registration is allowed or we're awaiting approval.
+  // self-registration is allowed or we're awaiting approval. Track when the probe
+  // has resolved so we don't flash "Access Denied" before we know.
   useEffect(() => {
     if (user && !config && appSlug && !isLoading) {
       let cancelled = false;
-      api.getAppMembership(appSlug).then((r) => { if (!cancelled && r.data) setMembershipInfo(r.data); }).catch(() => {});
+      setMembershipChecked(false);
+      api.getAppMembership(appSlug)
+        .then((r) => { if (!cancelled && r.data) setMembershipInfo(r.data); })
+        .catch(() => {})
+        .finally(() => { if (!cancelled) setMembershipChecked(true); });
       return () => { cancelled = true; };
     }
     setMembershipInfo(null);
+    setMembershipChecked(false);
   }, [user, config, appSlug, isLoading]);
 
   if (isLoading) {
@@ -67,7 +76,9 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
           setLoginError('Login succeeded but failed to load the app. Please refresh.');
         }
       } else if (!result.success) {
-        setLoginError('Invalid email or password');
+        // Surface the real server message (rate-limit/lockout/network) instead of
+        // always blaming the credentials.
+        setLoginError(result.error || 'Invalid email or password');
       }
     };
 
@@ -91,37 +102,28 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    className="w-full pl-10 pr-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
-                    disabled={authLoading}
-                    required
-                  />
-                </div>
-              </div>
+              <Input
+                label="Email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                leftIcon={<Mail className="h-4 w-4" />}
+                autoComplete="username"
+                disabled={authLoading}
+                required
+              />
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Password</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Your password"
-                    className="w-full pl-10 pr-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
-                    disabled={authLoading}
-                    required
-                  />
-                </div>
-              </div>
+              <PasswordInput
+                label="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Your password"
+                leftIcon={<Lock className="h-4 w-4" />}
+                autoComplete="current-password"
+                disabled={authLoading}
+                required
+              />
 
               <Button type="submit" className="w-full" isLoading={authLoading}>
                 Sign In
@@ -179,7 +181,12 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
             </div>
             <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">Join {membershipInfo.appName}</h2>
             <p className="text-gray-500 dark:text-slate-400 mb-6">You're not a member yet. Join to start using this app.</p>
-            {joinError && <p className="text-sm text-red-600 dark:text-red-400 mb-3">{joinError}</p>}
+            {joinError && (
+              <div role="alert" className="flex items-center gap-2 p-3 mb-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20 text-left">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <span>{joinError}</span>
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               <Button onClick={handleJoin} isLoading={joining}>Join app</Button>
               <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
@@ -188,6 +195,16 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
         </div>
       );
     }
+  }
+
+  // Logged in, app not loaded, and the membership probe hasn't resolved yet — show a
+  // loader rather than flashing "Access Denied" before we know the user can join.
+  if (user && !config && !membershipChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading" />
+      </div>
+    );
   }
 
   if (error || !config) {

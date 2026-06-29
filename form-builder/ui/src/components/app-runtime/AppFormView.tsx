@@ -183,6 +183,7 @@ function FieldInput({
         onChange={(val) => onChange(val)}
         primaryColor={primaryColor}
         autoFocus={autoFocus}
+        required={field.required}
       />
     );
   }

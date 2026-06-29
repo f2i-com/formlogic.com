@@ -6,11 +6,14 @@ export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> 
   error?: string;
   hint?: string;
   leftIcon?: React.ReactNode;
+  /** Decorative (non-interactive) icon on the right. */
   rightIcon?: React.ReactNode;
+  /** Interactive control on the right (e.g. a show/hide-password button). */
+  rightElement?: React.ReactNode;
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, label, error, hint, leftIcon, rightIcon, id, ...props }, ref) => {
+  ({ className, label, error, hint, leftIcon, rightIcon, rightElement, id, ...props }, ref) => {
     const generatedId = React.useId();
     const inputId = id || generatedId;
     const errorId = error ? `${inputId}-error` : undefined;
@@ -47,14 +50,19 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               'disabled:bg-gray-100 dark:disabled:bg-slate-800/50 disabled:text-gray-500 dark:disabled:text-slate-600 disabled:cursor-not-allowed disabled:hover:border-gray-300 dark:disabled:hover:border-slate-800',
               error && 'border-red-400 focus:ring-red-500/20 focus:border-red-500 hover:border-red-400',
               leftIcon && 'pl-10',
-              rightIcon && 'pr-10',
+              (rightIcon || rightElement) && 'pr-10',
               className
             )}
             {...props}
           />
-          {rightIcon && (
+          {rightIcon && !rightElement && (
             <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-gray-400 dark:text-slate-500">
               {rightIcon}
+            </div>
+          )}
+          {rightElement && (
+            <div className="absolute inset-y-0 right-0 pr-2 flex items-center">
+              {rightElement}
             </div>
           )}
         </div>

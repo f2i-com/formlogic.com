@@ -81,6 +81,7 @@ export function FieldResponse({
             primaryColor={primaryColor}
             textColor={textColor}
             autoFocus={autoFocus}
+            required={required}
           />
         );
 
@@ -285,7 +286,7 @@ export function FieldResponse({
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
         return (
-          <div className="flex gap-3 justify-center" role="radiogroup" aria-label={`${field.label} rating`}>
+          <div className="flex gap-3 justify-center" role="radiogroup" aria-label={`${field.label} rating`} aria-required={required || undefined}>
             {Array.from({ length: maxStars }, (_, i) => (
               <button
                 key={i}
@@ -329,6 +330,7 @@ export function FieldResponse({
             <div
               role="radiogroup"
               aria-label={field.label}
+              aria-required={required || undefined}
               className={cn(
               "grid gap-2",
               scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
@@ -507,10 +509,11 @@ export function FieldResponse({
                     const onMouseMove = (moveEvent: MouseEvent) => {
                       ctx.lineTo((moveEvent.clientX - rect.left) * scaleX, (moveEvent.clientY - rect.top) * scaleY);
                       ctx.stroke();
-                      onChange(canvas.toDataURL());
                     };
 
                     const onMouseUp = () => {
+                      // Serialize once per completed stroke, not on every move event.
+                      onChange(canvas.toDataURL());
                       document.removeEventListener('mousemove', onMouseMove);
                       document.removeEventListener('mouseup', onMouseUp);
                     };
@@ -543,10 +546,11 @@ export function FieldResponse({
                       const moveTouch = moveEvent.touches[0];
                       ctx.lineTo((moveTouch.clientX - rect.left) * scaleX, (moveTouch.clientY - rect.top) * scaleY);
                       ctx.stroke();
-                      onChange(canvas.toDataURL());
                     };
 
                     const onTouchEnd = () => {
+                      // Serialize once per completed stroke, not on every move event.
+                      onChange(canvas.toDataURL());
                       document.removeEventListener('touchmove', onTouchMove);
                       document.removeEventListener('touchend', onTouchEnd);
                     };

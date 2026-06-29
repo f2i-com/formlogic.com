@@ -28,6 +28,17 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = () => {
+    // A stale-chunk error recurs if we only re-render the same lazy component — hard
+    // reload to fetch the new bundle (same checks as App.tsx's lazy-import retry).
+    const msg = this.state.error?.message || '';
+    if (
+      msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Loading chunk') ||
+      msg.includes('Loading CSS chunk')
+    ) {
+      window.location.reload();
+      return;
+    }
     this.setState({ hasError: false, error: null });
   };
 

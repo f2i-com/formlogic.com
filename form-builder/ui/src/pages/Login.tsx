@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, AlertCircle } from 'lucide-react';
 
@@ -115,9 +116,8 @@ export function Login() {
               required
             />
 
-            <Input
+            <PasswordInput
               label="Password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Your password"
