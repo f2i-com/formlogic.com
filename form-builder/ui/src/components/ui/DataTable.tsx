@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 export interface Column<T> {
@@ -115,23 +115,27 @@ export function DataTable<T extends Record<string, unknown>>({
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  onClick={() => col.sortable && handleSort(col.key)}
-                  onKeyDown={col.sortable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort(col.key); } } : undefined}
-                  tabIndex={col.sortable ? 0 : undefined}
-                  role={col.sortable ? 'button' : undefined}
-                  aria-sort={col.sortable && sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
-                  className={cn(
-                    'px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400',
-                    col.sortable && 'cursor-pointer hover:text-gray-900 dark:hover:text-slate-200 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50',
-                    col.className
-                  )}
+                  // Keep the columnheader role so aria-sort is honored; the sort
+                  // control is an inner <button> (so the header isn't a role=button).
+                  aria-sort={col.sortable ? (sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
+                  className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400', col.className)}
                 >
-                  <div className="flex items-center gap-1">
-                    {col.label}
-                    {col.sortable && sortKey === col.key && (
-                      sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
-                    )}
-                  </div>
+                  {col.sortable ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSort(col.key)}
+                      className="-mx-1 px-1 inline-flex items-center gap-1 rounded font-medium hover:text-gray-900 dark:hover:text-slate-200 select-none cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
+                    >
+                      {col.label}
+                      {sortKey === col.key ? (
+                        sortDir === 'asc' ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronsUpDown className="h-3 w-3 text-gray-300 dark:text-slate-600" aria-hidden="true" />
+                      )}
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1">{col.label}</div>
+                  )}
                 </th>
               ))}
               {actions && <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-slate-400">Actions</th>}
@@ -165,12 +169,13 @@ export function DataTable<T extends Record<string, unknown>>({
                 <tr
                   key={String(item[keyField])}
                   onClick={() => onRowClick?.(item)}
-                  role={onRowClick ? 'button' : undefined}
                   tabIndex={onRowClick ? 0 : undefined}
-                  onKeyDown={onRowClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(item); } } : undefined}
+                  // Only act when the row itself is the target — so Enter/Space on a
+                  // row-action button (Delete etc.) isn't hijacked into row navigation.
+                  onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(item); } } : undefined}
                   className={cn(
                     'border-b border-gray-100 dark:border-slate-700/40 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors duration-150',
-                    onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-500/10'
+                    onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50 focus-visible:bg-primary-50 dark:focus-visible:bg-primary-500/10'
                   )}
                 >
                   {columns.map((col) => (

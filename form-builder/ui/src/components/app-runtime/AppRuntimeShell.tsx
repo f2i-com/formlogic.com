@@ -122,7 +122,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               aria-current={isActive(item.id) ? 'page' : undefined}
               className={cn(
                 'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+                'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
                 isActive(item.id)
                   ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
                   : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80',
@@ -140,7 +140,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             onClick={() => navigate(`${basePath}/profile`)}
             className={cn(
               'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+              'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
               sidebarCollapsed && 'justify-center px-0'
             )}
             title={sidebarCollapsed ? 'Profile' : undefined}
@@ -245,7 +245,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                   aria-current={isActive(item.id) ? 'page' : undefined}
                   className={cn(
                     'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
+                    'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
                     isActive(item.id)
                       ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80'

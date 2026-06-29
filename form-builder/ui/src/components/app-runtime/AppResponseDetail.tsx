@@ -233,7 +233,7 @@ export function AppResponseDetail() {
               value={status}
               onChange={(e) => handleStatusChange(e.target.value)}
               aria-label="Response status"
-              className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-primary-500 focus:outline-none cursor-pointer"
+              className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-[color:var(--app-primary)] focus:outline-none cursor-pointer"
             >
               {STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
@@ -262,7 +262,7 @@ export function AppResponseDetail() {
               </label>
               {editing && !isLinked ? (
                 (() => {
-                  const editInputClass = "w-full px-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200";
+                  const editInputClass = "w-full px-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-[color:var(--app-primary)] focus:border-transparent transition-all duration-200";
                   const editVal = editedAnswers[field.id];
 
                   if (field.type === 'number') {
@@ -306,7 +306,7 @@ export function AppResponseDetail() {
                       <div className="space-y-1.5">
                         {options.map((o) => (
                           <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
-                            <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="accent-primary-500" />
+                            <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="app-accent" />
                             {o.label}
                           </label>
                         ))}
@@ -323,7 +323,7 @@ export function AppResponseDetail() {
                             <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => {
                               const newVals = e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value);
                               setEditedAnswers({ ...editedAnswers, [field.id]: newVals });
-                            }} className="accent-primary-500" />
+                            }} className="app-accent" />
                             {o.label}
                           </label>
                         ))}

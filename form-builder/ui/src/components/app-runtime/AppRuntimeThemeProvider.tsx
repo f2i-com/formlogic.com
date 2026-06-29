@@ -50,6 +50,11 @@ export function AppRuntimeThemeProvider({ theme, children }: AppRuntimeThemeProv
         [data-app-runtime] .app-bg-primary-light {
           background-color: color-mix(in srgb, var(--app-primary) 10%, transparent);
         }
+        /* Theme-aware focus ring so keyboard focus uses the app accent, not shell indigo. */
+        [data-app-runtime] .app-ring-primary {
+          --tw-ring-color: color-mix(in srgb, var(--app-primary) 55%, transparent);
+        }
+        [data-app-runtime] .app-accent { accent-color: var(--app-primary); }
       `}</style>
       {children}
     </div>

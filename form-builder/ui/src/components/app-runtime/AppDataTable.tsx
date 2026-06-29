@@ -379,17 +379,17 @@ export function AppDataTable() {
         <div className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
           {/* Fixed columns */}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" checked={visibleColumns.has('submittedAt')} onChange={() => toggleColumn('submittedAt')} className="accent-primary-500 rounded" />
+            <input type="checkbox" checked={visibleColumns.has('submittedAt')} onChange={() => toggleColumn('submittedAt')} className="app-accent rounded" />
             <span className="text-gray-700 dark:text-slate-300">Submitted</span>
           </label>
           {fields.map((f) => (
             <label key={f.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-              <input type="checkbox" checked={visibleColumns.has(f.id)} onChange={() => toggleColumn(f.id)} className="accent-primary-500 rounded" />
+              <input type="checkbox" checked={visibleColumns.has(f.id)} onChange={() => toggleColumn(f.id)} className="app-accent rounded" />
               <span className="text-gray-700 dark:text-slate-300 truncate">{f.label}</span>
             </label>
           ))}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
-            <input type="checkbox" checked={visibleColumns.has('status')} onChange={() => toggleColumn('status')} className="accent-primary-500 rounded" />
+            <input type="checkbox" checked={visibleColumns.has('status')} onChange={() => toggleColumn('status')} className="app-accent rounded" />
             <span className="text-gray-700 dark:text-slate-300">Status</span>
           </label>
         </div>
@@ -418,12 +418,14 @@ export function AppDataTable() {
         <div className="flex-1">
           <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Responses'}</h1>
         </div>
-        <span className={cn(
-          'text-xs font-medium px-2.5 py-1 rounded-full tabular-nums',
-          'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-        )}>
-          {responses.length} {responses.length === 1 ? 'response' : 'responses'}
-        </span>
+        {!loading && !error && (
+          <span className={cn(
+            'text-xs font-medium px-2.5 py-1 rounded-full tabular-nums',
+            'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+          )}>
+            {responses.length} {responses.length === 1 ? 'response' : 'responses'}
+          </span>
+        )}
       </div>
 
       {error ? (
@@ -451,6 +453,7 @@ export function AppDataTable() {
               searchable
               pageSize={15}
               totalCount={responses.length}
+              emptyMessage="No responses yet"
               searchBarExtra={columnVisibilityDropdown}
               onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
               actions={formId && canDelete(formId) ? (r) => (

@@ -119,7 +119,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
                 key={record.id}
                 type="button"
                 onClick={() => navigate(`/app/${appSlug}/form/${group.formId}/responses/${record.id}`)}
-                className="w-full text-left px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-all duration-200 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50"
+                className="w-full text-left px-5 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-all duration-200 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset app-ring-primary"
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-700 dark:text-slate-300 truncate">

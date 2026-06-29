@@ -73,7 +73,7 @@ const FormCard = memo(function FormCard({
   const isMenuOpen = activeMenuId === form.id;
 
   return (
-    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
+    <Card className="hover:shadow-md hover:shadow-gray-900/[0.04] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-300">
       <CardContent>
         <div className="flex items-start justify-between mb-3 gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -99,7 +99,7 @@ const FormCard = memo(function FormCard({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Actions for ${form.title}`}
+              aria-label={`Actions for ${form.title || 'Untitled Form'}`}
               aria-haspopup="menu"
               aria-expanded={isMenuOpen}
               onClick={(e) => {
@@ -125,7 +125,7 @@ const FormCard = memo(function FormCard({
                 />
                 <div
                   role="menu"
-                  aria-label={`Actions for ${form.title}`}
+                  aria-label={`Actions for ${form.title || 'Untitled Form'}`}
                   className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden max-h-[80vh] overflow-y-auto"
                   style={{
                     ...(activeMenuRect.bottom + 280 > window.innerHeight
@@ -227,13 +227,18 @@ const FormCard = memo(function FormCard({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs sm:text-sm">
+        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
           <span className="text-slate-500 truncate">
             {formatRelativeTime(form.updatedAt)}
           </span>
-          <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm">
-            {responseCount} responses
-          </Badge>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Status as its own badge; the count is neutral text so color no longer
+                stands in for lifecycle status. */}
+            <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm" className="capitalize">
+              {form.status}
+            </Badge>
+            <span className="text-slate-500">{`${responseCount} response${responseCount === 1 ? '' : 's'}`}</span>
+          </div>
         </div>
 
         <div className="flex gap-2 mt-3 sm:mt-4">
@@ -452,7 +457,7 @@ export function FormsList() {
         title="My Forms"
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} title="Manage Packs">
+            <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Manage Packs" title="Manage Packs">
               <span className="hidden sm:inline">Manage Packs</span>
             </Button>
             <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>

@@ -69,7 +69,7 @@ export function AppDashboard() {
                 className={cn(
                   'group bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5',
                   'hover:shadow-lg hover:shadow-gray-900/[0.04] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
-                  'focus-within:ring-2 focus-within:ring-primary-500/30 transition-all duration-300'
+                  'focus-within:ring-2 app-ring-primary transition-all duration-300'
                 )}
               >
                 <div className="flex items-start gap-3.5 mb-5">

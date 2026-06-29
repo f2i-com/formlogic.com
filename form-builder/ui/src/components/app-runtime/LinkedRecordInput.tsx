@@ -198,7 +198,7 @@ export function LinkedRecordInput({
         <div
           role="button"
           tabIndex={0}
-          className="w-full flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+          className="w-full flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
           style={{ borderColor: primaryColor, backgroundColor: `${primaryColor}08` }}
           onClick={() => { setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); }}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); } }}
