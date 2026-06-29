@@ -291,7 +291,7 @@ export function Docs() {
     return { reject: true, message: "Please use a work email." };
   }
 }`}</CodeBlock>
-              <p className="text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">What's available on <C>ctx</C></p>
+              <h3 id="ctx-api" className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">What's available on <C>ctx</C></h3>
               <Bullets items={[
                 <><C>ctx.answers.fieldId</C> — every submitted answer.</>,
                 <><C>ctx.db.setField(name, value)</C>, <C>ctx.db.setStatus(status)</C>, <C>ctx.db.addTag(tag)</C> — write computed data back to the response.</>,

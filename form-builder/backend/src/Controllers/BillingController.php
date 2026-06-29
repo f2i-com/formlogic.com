@@ -116,65 +116,146 @@ class BillingController
         }
         // Already credited (idempotent): just report the current status.
         if ($payment['status'] === 'completed') {
-            $cloudUntil = $this->getCloudUntil($userId);
-            return $this->jsonResponse($response, ['cloudUntil' => $cloudUntil, 'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(), 'alreadyProcessed' => true]);
+            return $this->cloudStatusResponse($response, $userId, ['alreadyProcessed' => true]);
         }
 
+        // Capture. A stable PayPal-Request-Id makes a replayed capture (after a lost
+        // response) return the ORIGINAL result instead of ORDER_ALREADY_CAPTURED.
         try {
-            $res = $this->paypal->captureOrder($orderId);
+            $res = $this->paypal->captureOrder($orderId, 'cap-' . $orderId);
         } catch (\Throwable $e) {
-            $this->logger->error('PayPal capture failed', ['order' => $orderId, 'error' => $e->getMessage()]);
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Could not confirm the payment. If you were charged, contact support.'], 502);
+            // Transport failure — money may or may not have moved. Leave the row 'pending'
+            // (recoverable) and let the user retry; never mark a terminal state here.
+            $this->logger->error('PayPal capture transport error', ['order' => $orderId, 'error' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'We could not confirm the payment. Please retry — if you were charged it will be credited.'], 502);
         }
 
-        // Verify the capture really completed for the exact amount we recorded.
+        // The capture response may lack a capture (e.g. ORDER_ALREADY_CAPTURED on retry);
+        // re-fetch the order to learn the authoritative state.
         $capture = $res['purchase_units'][0]['payments']['captures'][0] ?? null;
+        if (!$capture) {
+            try {
+                $order = $this->paypal->getOrder($orderId);
+                $capture = $order['purchase_units'][0]['payments']['captures'][0] ?? null;
+            } catch (\Throwable $e) { /* fall through to indeterminate handling */ }
+        }
+
+        $captureStatus = strtoupper((string) ($capture['status'] ?? ''));
         $captureId = $capture['id'] ?? null;
         $capturedCents = isset($capture['amount']['value']) ? (int) round(((float) $capture['amount']['value']) * 100) : -1;
-        $ok = ($res['status'] ?? '') === 'COMPLETED'
-            && ($capture['status'] ?? '') === 'COMPLETED'
-            && $captureId
-            && $capturedCents === (int) $payment['amount_cents'];
+        $captureCurrency = strtoupper((string) ($capture['amount']['currency_code'] ?? ''));
+        $amountOk = $captureId
+            && $capturedCents === (int) $payment['amount_cents']
+            && $captureCurrency === strtoupper((string) $payment['currency']);
 
-        if (!$ok) {
-            $pdo->prepare('UPDATE payments SET status = ? WHERE id = ? AND status = ?')->execute(['failed', $payment['id'], 'pending']);
-            $this->logger->warning('PayPal capture not completed/mismatched', ['order' => $orderId, 'status' => $res['status'] ?? null, 'capturedCents' => $capturedCents, 'expected' => $payment['amount_cents']]);
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Payment was not completed.'], 400);
+        if ($captureStatus === 'COMPLETED' && $amountOk) {
+            try {
+                $credited = $this->creditPayment($payment, (string) $captureId);
+            } catch (\Throwable $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Payment captured but crediting failed. Contact support with order ' . $orderId . '.'], 500);
+            }
+            return $this->cloudStatusResponse($response, $userId, $credited ? ['monthsAdded' => (int) $payment['months']] : ['alreadyProcessed' => true]);
         }
 
-        $months = (int) $payment['months'];
+        if ($captureStatus === 'PENDING' && $amountOk) {
+            // eCheck / risk-review hold: funds settle later. Keep it recoverable
+            // (non-terminal 'processing'); the webhook (or a retry) credits once it clears.
+            $pdo->prepare("UPDATE payments SET status = 'processing', capture_id = ? WHERE id = ? AND status IN ('pending','processing')")
+                ->execute([$captureId, $payment['id']]);
+            return $this->jsonResponse($response, ['processing' => true, 'message' => 'Your payment is processing — your cloud time will be added as soon as it clears.']);
+        }
+
+        if (in_array($captureStatus, ['DECLINED', 'FAILED', 'VOIDED'], true)) {
+            // Genuinely terminal and no money taken — safe to mark failed.
+            $pdo->prepare("UPDATE payments SET status = 'failed' WHERE id = ? AND status = 'pending'")->execute([$payment['id']]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The payment was declined.'], 400);
+        }
+
+        // Indeterminate (couldn't read the capture, or an amount/currency mismatch we can't
+        // confirm): DON'T mark terminal — leave 'pending' so a retry or webhook can credit.
+        $this->logger->warning('PayPal capture indeterminate', ['order' => $orderId, 'captureStatus' => $captureStatus, 'capturedCents' => $capturedCents, 'expected' => $payment['amount_cents']]);
+        return $this->jsonResponse($response, ['error' => true, 'message' => "We could not confirm the payment yet. If you were charged, it will be credited shortly — contact support with order $orderId."], 502);
+    }
+
+    /**
+     * POST /api/billing/webhook/paypal — credit/finalize payments asynchronously.
+     * Public (PayPal calls it); authenticated by verifying the webhook signature.
+     */
+    public function webhook(Request $request, Response $response): Response
+    {
+        $event = $request->getParsedBody();
+        if (!is_array($event) || empty($event['event_type'])) {
+            return $response->withStatus(400);
+        }
+        if (!$this->paypal->verifyWebhookSignature($request->getHeaders(), $event)) {
+            $this->logger->warning('PayPal webhook signature verification failed', ['type' => $event['event_type'] ?? null]);
+            return $response->withStatus(400);
+        }
+
+        $type = (string) $event['event_type'];
+        $resource = $event['resource'] ?? [];
+        $captureId = (string) ($resource['id'] ?? '');
+        // The capture's parent order id (custom_id was set to "userId:months" on create).
+        $pdo = $this->db->getConnection();
+
+        if ($type === 'PAYMENT.CAPTURE.COMPLETED' && $captureId !== '') {
+            // Find the payment by capture id (set when we recorded the PENDING/processing
+            // capture). Credit it idempotently.
+            $stmt = $pdo->prepare('SELECT * FROM payments WHERE capture_id = ?');
+            $stmt->execute([$captureId]);
+            $payment = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if ($payment && $payment['status'] !== 'completed') {
+                try { $this->creditPayment($payment, $captureId); } catch (\Throwable $e) {
+                    $this->logger->error('Webhook credit failed', ['capture' => $captureId, 'error' => $e->getMessage()]);
+                    return $response->withStatus(500);
+                }
+            }
+        } elseif (in_array($type, ['PAYMENT.CAPTURE.DENIED', 'PAYMENT.CAPTURE.REVERSED'], true) && $captureId !== '') {
+            $pdo->prepare("UPDATE payments SET status = 'failed' WHERE capture_id = ? AND status <> 'completed'")->execute([$captureId]);
+        }
+        return $response->withStatus(200);
+    }
+
+    /** Credit a verified-completed payment exactly once (idempotent). Returns true if THIS
+     *  call did the crediting, false if it was already credited. Shared by capture + webhook. */
+    private function creditPayment(array $payment, string $captureId): bool
+    {
+        $pdo = $this->db->getConnection();
         try {
             $pdo->beginTransaction();
-            // Mark completed only if still pending — wins the race against double-capture.
-            $upd = $pdo->prepare('UPDATE payments SET status = ?, capture_id = ? WHERE id = ? AND status = ?');
-            $upd->execute(['completed', $captureId, $payment['id'], 'pending']);
+            // Win the race: only credit while still pending/processing.
+            $upd = $pdo->prepare("UPDATE payments SET status = 'completed', capture_id = ? WHERE id = ? AND status IN ('pending','processing')");
+            $upd->execute([$captureId, $payment['id']]);
             if ($upd->rowCount() === 0) {
                 $pdo->rollBack();
-                $cloudUntil = $this->getCloudUntil($userId);
-                return $this->jsonResponse($response, ['cloudUntil' => $cloudUntil, 'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(), 'alreadyProcessed' => true]);
+                return false;
             }
             // Stack months from max(now, current expiry) — no subscription.
-            $credit = $pdo->prepare(
-                'UPDATE users SET cloud_until = DATE_ADD(GREATEST(COALESCE(cloud_until, NOW()), NOW()), INTERVAL ? MONTH) WHERE id = ?'
-            );
-            $credit->execute([$months, $userId]);
+            $pdo->prepare('UPDATE users SET cloud_until = DATE_ADD(GREATEST(COALESCE(cloud_until, NOW()), NOW()), INTERVAL ? MONTH) WHERE id = ?')
+                ->execute([(int) $payment['months'], $payment['user_id']]);
             $pdo->commit();
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
-            $this->logger->error('Crediting cloud months failed after capture', ['order' => $orderId, 'capture' => $captureId, 'error' => $e->getMessage()]);
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Payment captured but crediting failed. Contact support with order ' . $orderId . '.'], 500);
+            $this->logger->error('Crediting cloud months failed', ['payment' => $payment['id'], 'error' => $e->getMessage()]);
+            throw $e;
         }
-
         if ($this->auditService) {
             try {
-                $this->auditService->log('billing.capture', 'payment', $captureId, $userId, $this->ipResolver->getClientIp($request), ['months' => $months, 'amountCents' => (int) $payment['amount_cents']]);
+                $this->auditService->log('billing.credit', 'payment', $captureId, (string) $payment['user_id'], null, ['months' => (int) $payment['months'], 'amountCents' => (int) $payment['amount_cents']]);
             } catch (\Throwable $e) { /* audit is non-critical */ }
         }
+        return true;
+    }
 
+    private function cloudStatusResponse(Response $response, string $userId, array $extra = []): Response
+    {
         $cloudUntil = $this->getCloudUntil($userId);
-        return $this->jsonResponse($response, ['cloudUntil' => $cloudUntil, 'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(), 'monthsAdded' => $months]);
+        return $this->jsonResponse($response, array_merge([
+            'cloudUntil' => $cloudUntil,
+            'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(),
+        ], $extra));
     }
 
     private function getCloudUntil(string $userId): ?string

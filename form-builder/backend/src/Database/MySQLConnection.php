@@ -704,7 +704,7 @@ class MySQLConnection
                 amount_cents INT NOT NULL,
                 currency CHAR(3) NOT NULL DEFAULT 'USD',
                 months INT NOT NULL,
-                status ENUM('pending','completed','failed') NOT NULL DEFAULT 'pending',
+                status ENUM('pending','processing','completed','failed') NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -713,5 +713,12 @@ class MySQLConnection
                 INDEX idx_payments_user (user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Add the 'processing' state to existing payments tables (eCheck/review holds that
+        // settle asynchronously — must not be marked terminal 'failed').
+        $col = $pdo->query("SHOW COLUMNS FROM payments LIKE 'status'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && stripos($col['Type'], "'processing'") === false) {
+            $pdo->exec("ALTER TABLE payments MODIFY COLUMN status ENUM('pending','processing','completed','failed') NOT NULL DEFAULT 'pending'");
+        }
     }
 }

@@ -28,13 +28,38 @@ export function Billing() {
   const [months, setMonths] = useState(1);
   const monthsRef = useRef(1);
   const [paypalReady, setPaypalReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [paypalError, setPaypalError] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
   const buttonsRendered = useRef(false);
 
   const refresh = useCallback(async () => {
     const res = await api.getBillingStatus();
     if (res.data) setStatus(res.data);
-    setLoading(false);
   }, []);
+
+  // Used by the error-card retry button (not in an effect, so setState is fine here).
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    const res = await api.getBillingStatus();
+    if (res.data) setStatus(res.data);
+    else setError(typeof res.error === 'string' ? res.error : 'Could not load billing status');
+    setLoading(false);
+  };
+
+  // Re-confirm an approved-but-unconfirmed payment (capture is idempotent server-side).
+  const retryCapture = async () => {
+    if (!pendingOrderId || capturing) return;
+    setCapturing(true);
+    const res = await api.capturePaypalOrder(pendingOrderId);
+    setCapturing(false);
+    if (res.error) { toast.error('Still could not confirm', typeof res.error === 'string' ? res.error : undefined); return; }
+    setPendingOrderId(null);
+    toast.success(res.data?.processing ? 'Payment received' : 'Cloud time added', 'Your cloud status has been updated.');
+    refresh();
+  };
 
   useEffect(() => {
     let active = true;
@@ -42,6 +67,7 @@ export function Billing() {
       const res = await api.getBillingStatus();
       if (!active) return;
       if (res.data) setStatus(res.data);
+      else setError(typeof res.error === 'string' ? res.error : 'Could not load billing status');
       setLoading(false);
     })();
     return () => { active = false; };
@@ -57,7 +83,6 @@ export function Billing() {
       .then((paypal) => {
         if (cancelled || buttonsRendered.current || !document.getElementById('fl-paypal-buttons')) return;
         buttonsRendered.current = true;
-        setPaypalReady(true);
         paypal.Buttons({
           style: { layout: 'vertical', shape: 'pill', label: 'paypal', height: 44 },
           createOrder: async () => {
@@ -67,14 +92,27 @@ export function Billing() {
           },
           onApprove: async (data: { orderID: string }) => {
             const res = await api.capturePaypalOrder(data.orderID);
-            if (res.error) { toast.error('Payment not completed', typeof res.error === 'string' ? res.error : undefined); return; }
-            toast.success('Cloud time added', res.data?.monthsAdded ? `Added ${res.data.monthsAdded} month${res.data.monthsAdded === 1 ? '' : 's'}.` : 'Your cloud access has been extended.');
+            if (res.error) {
+              // Keep the approved order so the user can re-confirm (capture is idempotent)
+              // instead of paying again through a fresh order.
+              setPendingOrderId(data.orderID);
+              toast.error('Payment not confirmed', typeof res.error === 'string' ? res.error : 'We couldn’t confirm it — use "Confirm payment" to retry.');
+              return;
+            }
+            setPendingOrderId(null);
+            if (res.data?.processing) {
+              toast.success('Payment received', res.data.message || 'Your cloud time will be added once it clears.');
+            } else {
+              toast.success('Cloud time added', res.data?.monthsAdded ? `Added ${res.data.monthsAdded} month${res.data.monthsAdded === 1 ? '' : 's'}.` : 'Your cloud access has been extended.');
+            }
             refresh();
           },
           onError: (err: unknown) => { logger.error('PayPal error:', err); toast.error('Payment error', 'Something went wrong with PayPal. Please try again.'); },
-        }).render('#fl-paypal-buttons').catch((e) => logger.error('PayPal render failed:', e));
+        }).render('#fl-paypal-buttons')
+          .then(() => { if (!cancelled) setPaypalReady(true); })
+          .catch((e) => { logger.error('PayPal render failed:', e); if (!cancelled) setPaypalError(true); });
       })
-      .catch((e) => { if (!cancelled) logger.error('PayPal SDK load failed:', e); });
+      .catch((e) => { if (!cancelled) { logger.error('PayPal SDK load failed:', e); setPaypalError(true); } });
     return () => { cancelled = true; };
   }, [status, refresh]);
 
@@ -86,6 +124,19 @@ export function Billing() {
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center py-24"><Loader2 className="h-7 w-7 animate-spin text-primary-500" /></div>;
+  }
+
+  // Couldn't load billing status — show a real error + retry instead of a misleading
+  // "free plan / not configured" view derived from missing data.
+  if (error && !status) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center">
+        <Info className="h-8 w-8 mx-auto text-amber-500 mb-3" />
+        <p className="font-medium text-gray-900 dark:text-white">Couldn't load billing</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1 mb-5">{error}</p>
+        <button type="button" onClick={reload} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-primary-foreground text-sm font-medium cursor-pointer transition-colors">Try again</button>
+      </div>
+    );
   }
 
   const cloudActive = status?.active;
@@ -151,12 +202,30 @@ export function Billing() {
           <span className="text-xl font-bold text-gray-900 dark:text-white">{fmt(parseFloat(total))}</span>
         </div>
 
+        {/* An approved-but-unconfirmed payment — let the user re-confirm without paying again. */}
+        {pendingOrderId && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 p-4">
+            <p className="text-sm text-amber-800 dark:text-amber-300">A payment was approved but not confirmed. Re-confirm it — you won't be charged again.</p>
+            <button type="button" onClick={retryCapture} disabled={capturing}
+              className="shrink-0 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium disabled:opacity-60 cursor-pointer transition-colors">
+              {capturing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}Confirm payment
+            </button>
+          </div>
+        )}
+
         {/* Payment */}
         {status?.paypalEnabled ? (
+          paypalError ? (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 p-4">
+              <Info className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800 dark:text-amber-300">PayPal couldn't load — check your connection or any ad/script blocker, then refresh the page to try again.</p>
+            </div>
+          ) : (
           <>
             {!paypalReady && <div className="flex items-center justify-center py-4 text-sm text-gray-500 dark:text-slate-400"><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading PayPal…</div>}
             <div id="fl-paypal-buttons" />
           </>
+          )
         ) : (
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-900/20 p-4">
             <Info className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />

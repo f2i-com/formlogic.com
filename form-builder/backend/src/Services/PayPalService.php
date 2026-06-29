@@ -71,12 +71,56 @@ class PayPalService
      * Capture an approved order. Returns the parsed PayPal response so the caller can
      * verify status, captured amount, and the capture id before crediting.
      *
+     * A stable $requestId is sent as PayPal-Request-Id so a replayed capture (e.g. after a
+     * lost response) returns the ORIGINAL result instead of an ORDER_ALREADY_CAPTURED error.
+     *
      * @throws \RuntimeException on transport error (a non-2xx still returns the body so
      *         the caller can inspect e.g. ORDER_ALREADY_CAPTURED).
      */
-    public function captureOrder(string $orderId): array
+    public function captureOrder(string $orderId, ?string $requestId = null): array
     {
-        return $this->request('POST', '/v2/checkout/orders/' . rawurlencode($orderId) . '/capture', new \stdClass());
+        $headers = $requestId ? ['PayPal-Request-Id: ' . $requestId] : [];
+        return $this->request('POST', '/v2/checkout/orders/' . rawurlencode($orderId) . '/capture', new \stdClass(), $headers);
+    }
+
+    /** Fetch an order's authoritative state (used to recover after a lost/ambiguous capture). */
+    public function getOrder(string $orderId): array
+    {
+        return $this->request('GET', '/v2/checkout/orders/' . rawurlencode($orderId), null);
+    }
+
+    public function getWebhookId(): string
+    {
+        return (string) ($_ENV['PAYPAL_WEBHOOK_ID'] ?? '');
+    }
+
+    /**
+     * Verify an inbound webhook's signature with PayPal so we only act on genuine events.
+     * Returns false if no webhook id is configured or verification doesn't return SUCCESS.
+     */
+    public function verifyWebhookSignature(array $headers, array $event): bool
+    {
+        $webhookId = $this->getWebhookId();
+        if ($webhookId === '') {
+            return false;
+        }
+        $h = array_change_key_case($headers, CASE_LOWER);
+        $get = fn(string $k) => is_array($h[$k] ?? null) ? ($h[$k][0] ?? '') : ($h[$k] ?? '');
+        $payload = [
+            'transmission_id' => $get('paypal-transmission-id'),
+            'transmission_time' => $get('paypal-transmission-time'),
+            'cert_url' => $get('paypal-cert-url'),
+            'auth_algo' => $get('paypal-auth-algo'),
+            'transmission_sig' => $get('paypal-transmission-sig'),
+            'webhook_id' => $webhookId,
+            'webhook_event' => $event,
+        ];
+        try {
+            $res = $this->request('POST', '/v1/notifications/verify-webhook-signature', $payload);
+            return ($res['verification_status'] ?? '') === 'SUCCESS';
+        } catch (\Throwable $e) {
+            return false;
+        }
     }
 
     private function getAccessToken(): string
@@ -108,21 +152,24 @@ class PayPalService
         return $this->cachedToken = (string) $data['access_token'];
     }
 
-    private function request(string $method, string $path, mixed $payload): array
+    private function request(string $method, string $path, mixed $payload, array $extraHeaders = []): array
     {
         $token = $this->getAccessToken();
         $ch = curl_init($this->baseUrl . $path);
-        curl_setopt_array($ch, [
+        $opts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => [
+            CURLOPT_HTTPHEADER => array_merge([
                 'Content-Type: application/json',
                 'Authorization: Bearer ' . $token,
-            ],
-            CURLOPT_POSTFIELDS => json_encode($payload),
+            ], $extraHeaders),
             CURLOPT_TIMEOUT => 30,
             CURLOPT_SSL_VERIFYPEER => true,
-        ]);
+        ];
+        if ($payload !== null) {
+            $opts[CURLOPT_POSTFIELDS] = json_encode($payload);
+        }
+        curl_setopt_array($ch, $opts);
         $body = curl_exec($ch);
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err = curl_error($ch);

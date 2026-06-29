@@ -887,7 +887,8 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
     });
 })->add($authRequired)->add($apiKeyMgmtRateLimiter);
 
-// Billing (pay-as-you-go cloud months via PayPal) — authenticated.
+// Billing (pay-as-you-go cloud months via PayPal) — authenticated, own rate-limit bucket.
+$billingRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'billing');
 $app->group('/api/billing', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\BillingController::class)->status($request, $response);
@@ -898,7 +899,13 @@ $app->group('/api/billing', function (RouteCollectorProxy $group) use ($containe
     $group->post('/orders/{orderId}/capture', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\BillingController::class)->captureOrder($request, $response, $getArgs($request));
     });
-})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+})->add($authRequired)->add($billingRateLimiter);
+
+// PayPal webhook (public — PayPal calls it; authenticated by verifying the event signature
+// inside the handler). CSRF is skipped automatically for requests without an auth cookie.
+$app->post('/api/billing/webhook/paypal', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\BillingController::class)->webhook($request, $response);
+})->add(new RateLimitMiddleware($rateLimiter, 120, 60, 'paypal_webhook'));
 
 // External API v1 routes (API key auth)
 $apiRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'api_v1');

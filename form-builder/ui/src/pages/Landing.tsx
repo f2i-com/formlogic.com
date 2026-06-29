@@ -171,13 +171,14 @@ export function Landing() {
         'Backend scripts, API, AI & packs',
         'Community support',
       ],
-      cta: 'Get started',
+      cta: 'Read the docs',
+      ctaHref: '/docs#self-hosting',
       highlighted: false,
     },
     {
       name: 'Personal',
       price: '$5',
-      period: '/ 30 days',
+      period: '/ month',
       description: 'Managed cloud, prepaid',
       features: [
         '100 forms · 1 GB storage',
@@ -187,6 +188,7 @@ export function Landing() {
         'Prepaid — pay with PayPal, no subscription',
       ],
       cta: 'Get started',
+      ctaHref: '/signup',
       highlighted: true,
     },
     {
@@ -202,6 +204,8 @@ export function Landing() {
         'Custom deployment & security review',
       ],
       cta: 'Contact sales',
+      ctaHref: 'mailto:sales@formlogic.app?subject=FormLogic%20Enterprise',
+      ctaExternal: true,
       highlighted: false,
     },
   ];
@@ -703,11 +707,19 @@ export function Landing() {
                     </li>
                   ))}
                 </ul>
-                <Link to="/signup" className="block">
-                  <Button className={`w-full ${plan.highlighted ? 'bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
-                    {plan.cta}
-                  </Button>
-                </Link>
+                {('ctaExternal' in plan && plan.ctaExternal) ? (
+                  <a href={plan.ctaHref} className="block">
+                    <Button className={`w-full ${plan.highlighted ? 'bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
+                      {plan.cta}
+                    </Button>
+                  </a>
+                ) : (
+                  <Link to={plan.ctaHref ?? '/signup'} className="block">
+                    <Button className={`w-full ${plan.highlighted ? 'bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/20 border-0' : 'bg-gray-100 hover:bg-gray-200 text-gray-900 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-white border-0'}`} size="lg">
+                      {plan.cta}
+                    </Button>
+                  </Link>
+                )}
               </div>
             ))}
           </div>
@@ -716,13 +728,14 @@ export function Landing() {
           <div data-reveal className="fl-reveal mt-16 max-w-3xl mx-auto">
             <h3 className="fl-display text-center text-2xl text-gray-900 dark:text-white mb-7">Compare plans</h3>
             <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-950/40">
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50/80 dark:bg-slate-900/60 border-b border-gray-200/80 dark:border-slate-800">
                     <th className="text-left font-medium text-gray-500 dark:text-slate-400 px-4 sm:px-6 py-3.5">Feature</th>
                     <th className="text-right font-semibold text-gray-900 dark:text-white px-3 sm:px-6 py-3.5">
                       Personal
-                      <span className="block fl-mono text-[11px] font-normal text-gray-400 dark:text-slate-500">$5 / 30 days</span>
+                      <span className="block fl-mono text-[11px] font-normal text-gray-400 dark:text-slate-500">$5 / month</span>
                     </th>
                     <th className="text-right font-semibold text-gray-900 dark:text-white px-4 sm:px-6 py-3.5">Enterprise</th>
                   </tr>
@@ -737,6 +750,7 @@ export function Landing() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
             <p className="fl-mono text-center text-xs text-gray-400 dark:text-slate-500 mt-4">
               Self-hosting is always free. Personal is prepaid via PayPal — no subscription, no auto-renew.
@@ -839,18 +853,8 @@ export function Landing() {
           </div>
           <div className="border-t border-gray-200/80 dark:border-slate-900 pt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <p className="fl-mono text-gray-400 dark:text-slate-500 text-xs">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
-            <div className="flex items-center gap-6">
-              <a
-                href="https://twitter.com/formlogic"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-white transition-colors"
-                aria-label="Twitter"
-              >
-                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8.29 20.251c7.547 0 11.675-6.253 11.675-11.675 0-.178 0-.355-.012-.53A8.348 8.348 0 0022 5.92a8.19 8.19 0 01-2.357.646 4.118 4.118 0 001.804-2.27 8.224 8.224 0 01-2.605.996 4.107 4.107 0 00-6.993 3.743 11.65 11.65 0 01-8.457-4.287 4.106 4.106 0 001.27 5.477A4.072 4.072 0 012.8 9.713v.052a4.105 4.105 0 003.292 4.022 4.095 4.095 0 01-1.853.07 4.108 4.108 0 003.834 2.85A8.233 8.233 0 012 18.407a11.616 11.616 0 006.29 1.84" />
-                </svg>
-              </a>
+            <div className="flex items-center gap-6 fl-mono text-xs">
+              <Link to="/docs" className="text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-white transition-colors">Docs</Link>
             </div>
           </div>
         </div>

@@ -337,7 +337,7 @@ class ApiClient {
   async createPaypalOrder(months: number): Promise<ApiResponse<{ orderId: string }>> {
     return this.request('/billing/orders', { method: 'POST', body: JSON.stringify({ months }) });
   }
-  async capturePaypalOrder(orderId: string): Promise<ApiResponse<{ cloudUntil: string | null; active: boolean; monthsAdded?: number; alreadyProcessed?: boolean }>> {
+  async capturePaypalOrder(orderId: string): Promise<ApiResponse<{ cloudUntil: string | null; active: boolean; monthsAdded?: number; alreadyProcessed?: boolean; processing?: boolean; message?: string }>> {
     return this.request(`/billing/orders/${encodeURIComponent(orderId)}/capture`, { method: 'POST' });
   }
 
