@@ -23,6 +23,11 @@
             "FormLogic\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "FormLogic\\Tests\\": "tests/"
+        }
+    },
     "scripts": {
         "start": "php -S localhost:8080 -t public",
         "test": "phpunit"

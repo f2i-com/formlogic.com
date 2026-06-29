@@ -2,6 +2,10 @@
 node_modules/
 vendor/
 
+# PHPUnit cache
+.phpunit.cache/
+backend/.phpunit.cache/
+
 # Build outputs
 dist/
 dist-ssr/
