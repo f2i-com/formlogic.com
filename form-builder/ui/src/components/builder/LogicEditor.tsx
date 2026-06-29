@@ -38,6 +38,9 @@ const OPERATORS = [
   { value: 'empty', label: 'is empty' },
 ];
 
+// Screen-type fields hold no answer value, so they're never usable as variables.
+const SCREEN_TYPES = ['welcome_screen', 'thank_you', 'statement'];
+
 const ACTIONS = [
   { value: 'show', label: 'Show this field' },
   { value: 'hide', label: 'Hide this field' },
@@ -114,22 +117,32 @@ export function LogicEditor({
 
   const { result, isTesting, testExpression } = useExpressionTester();
 
-  // Available fields for conditions (excluding the current field)
-  const availableFields = useMemo(
-    () => allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type)),
+  // Fields usable as the SOURCE of a simple condition — excludes the current field so the
+  // guided builder can't create a circular "show this field when [this field]…" rule.
+  const conditionFields = useMemo(
+    () => allFields.filter((f) => f.id !== field.id && !SCREEN_TYPES.includes(f.type)),
     [allFields, field.id]
   );
 
-  // Create variable name mappings
+  // Fields referenceable as variables in an expression — INCLUDES the current field so its
+  // own variable is listed and resolves on save. The current field is appended LAST so every
+  // other field keeps the exact variable name it has today (createFieldVariableMap dedups in
+  // iteration order), keeping previously-saved expressions valid.
+  const referenceFields = useMemo(
+    () => (SCREEN_TYPES.includes(field.type) ? conditionFields : [...conditionFields, field]),
+    [conditionFields, field]
+  );
+
+  // Create variable name mappings (from all referenceable fields, incl. the current one)
   const { toId: varToId, toVar: idToVar } = useMemo(
-    () => createFieldVariableMap(availableFields),
-    [availableFields]
+    () => createFieldVariableMap(referenceFields),
+    [referenceFields]
   );
 
   // Fields whose answers are real numbers (so equality must not string-quote).
   const numericFieldIds = useMemo(
-    () => new Set(availableFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
-    [availableFields]
+    () => new Set(referenceFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
+    [referenceFields]
   );
 
   // Initialize from existing logic (convert IDs to variable names for display)
@@ -164,10 +177,10 @@ export function LogicEditor({
   }, [conditions, combinator, mode, idToVar, numericFieldIds]);
 
   const handleAddCondition = () => {
-    if (availableFields.length === 0) return;
+    if (conditionFields.length === 0) return;
     setConditions([
       ...conditions,
-      { id: uuidv4(), fieldId: availableFields[0].id, operator: '===', value: '' },
+      { id: uuidv4(), fieldId: conditionFields[0].id, operator: '===', value: '' },
     ]);
   };
 
@@ -234,7 +247,7 @@ export function LogicEditor({
     setAction('show');
   };
 
-  const fieldOptions = availableFields.map((f) => ({
+  const fieldOptions = conditionFields.map((f) => ({
     value: f.id,
     label: f.label || f.id,
   }));
@@ -242,12 +255,12 @@ export function LogicEditor({
   // Generate sample test context with variable names
   const sampleContext = useMemo(() => {
     const sample: Record<string, string> = {};
-    availableFields.slice(0, 2).forEach((f) => {
+    referenceFields.slice(0, 2).forEach((f) => {
       const varName = idToVar[f.id];
       sample[varName] = f.type === 'number' ? '0' : 'value';
     });
     return JSON.stringify(sample, null, 2);
-  }, [availableFields, idToVar]);
+  }, [referenceFields, idToVar]);
 
   return (
     <Modal
@@ -291,7 +304,7 @@ export function LogicEditor({
 
           {/* Simple Mode */}
           <TabsContent value="simple" className="mt-4">
-            {availableFields.length === 0 ? (
+            {conditionFields.length === 0 ? (
               <div className="text-center py-8 text-gray-500 dark:text-slate-500">
                 <HelpCircle className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                 <p>Add more fields to your form to create conditions.</p>
@@ -406,16 +419,22 @@ export function LogicEditor({
               <div className="mt-2">
                 <p className="text-xs text-gray-500 dark:text-slate-500 mb-1">Available variables:</p>
                 <div className="flex flex-wrap gap-1">
-                  {availableFields.map((f) => {
+                  {referenceFields.map((f) => {
                     const varName = idToVar[f.id];
+                    const isCurrent = f.id === field.id;
                     return (
                       <button
                         key={f.id}
                         onClick={() => setExpression((prev) => prev + (prev && !/\s$/.test(prev) ? ' ' : '') + varName)}
-                        className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer"
-                        title={f.label}
+                        className={cn(
+                          'px-2 py-0.5 text-xs rounded transition-colors font-mono cursor-pointer',
+                          isCurrent
+                            ? 'bg-primary-200/70 dark:bg-primary-500/30 text-primary-800 dark:text-primary-200 ring-1 ring-inset ring-primary-400/60 dark:ring-primary-400/40'
+                            : 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30'
+                        )}
+                        title={isCurrent ? `${f.label} (this field)` : f.label}
                       >
-                        {varName}
+                        {varName}{isCurrent ? ' (this field)' : ''}
                       </button>
                     );
                   })}
