@@ -271,6 +271,24 @@ class FileStorageService
     }
 
     /**
+     * Total bytes stored across the given forms' upload directories — used for the
+     * account-level storage quota. Sizes are read from disk (no central usage table).
+     *
+     * @param string[] $formIds
+     */
+    public function bytesForForms(array $formIds): int
+    {
+        $total = 0;
+        foreach ($formIds as $formId) {
+            $dir = $this->storagePath . '/' . $this->sanitizeId((string) $formId);
+            if (is_dir($dir)) {
+                $total += $this->formDirBytes($dir);
+            }
+        }
+        return $total;
+    }
+
+    /**
      * Total bytes currently stored in a form's upload directory.
      */
     private function formDirBytes(string $formDir): int

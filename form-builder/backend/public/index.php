@@ -213,7 +213,8 @@ $container->set(FormController::class, function (Container $c) {
         $c->get(FormService::class),
         $c->get(LoggerInterface::class),
         $c->get(FormVersionService::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -267,7 +268,8 @@ $container->set(PackService::class, function (Container $c) {
 $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -307,12 +309,22 @@ $container->set(FileStorageService::class, function (Container $c) {
     return new FileStorageService($uploadsConfig);
 });
 
+// Hosted-cloud plan limits (form count + storage) + cloud-access status.
+$container->set(\FormLogic\Services\PlanService::class, function (Container $c) {
+    return new \FormLogic\Services\PlanService(
+        $c->get(MySQLConnection::class),
+        $c->get(FileStorageService::class),
+        $c->get('settings')['cloud'] ?? []
+    );
+});
+
 $container->set(FileController::class, function (Container $c) {
     return new FileController(
         $c->get(FileStorageService::class),
         $c->get(FormService::class),
         $c->get(AppService::class),
-        $c->get(AppUserService::class)
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -340,7 +352,8 @@ $container->set(\FormLogic\Controllers\BillingController::class, function (Conta
         $c->get(\FormLogic\Services\PayPalService::class),
         $c->get(MySQLConnection::class),
         $c->get(AuditService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -591,6 +604,10 @@ $getArgs = function ($request) {
 // Rate limiter for form creation/duplication (20 per minute per IP)
 $formMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'form_mutation');
 
+// Blocks content-creating writes when the owning account's cloud access has lapsed
+// (no-op unless CLOUD_PLAN_ENFORCED=true). Reads/exports/deletes always pass.
+$cloudWriteGate = new \FormLogic\Middleware\CloudWriteGateMiddleware($container->get(\FormLogic\Services\PlanService::class));
+
 // Form routes (protected for management)
 $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container, $getArgs, $formMutationRateLimiter) {
     $group->get('', function ($request, $response) use ($container) {
@@ -611,7 +628,7 @@ $app->group('/api/forms', function (RouteCollectorProxy $group) use ($container,
     $group->post('/{id}/duplicate', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FormController::class)->duplicate($request, $response, $getArgs($request));
     })->add($formMutationRateLimiter);
-})->add($authRequired);  // Require authentication for form management
+})->add($cloudWriteGate)->add($authRequired);  // Require authentication for form management; block writes when cloud lapsed
 
 // Webhook routes (protected - require authentication + form ownership)
 $app->group('/api/forms/{id}/webhooks', function (RouteCollectorProxy $group) use ($container, $getArgs) {
@@ -686,10 +703,11 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     })->add($scriptTestRateLimiter)->add($authRequired);
 });
 
-// Public form submission endpoint (rate limited, no auth required)
+// Public form submission endpoint (rate limited, no auth required). Gated so a form
+// whose owner's cloud has lapsed stops accepting responses until they top up.
 $app->post('/api/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
-})->add($submissionRateLimiter);
+})->add($cloudWriteGate)->add($submissionRateLimiter);
 
 // Record a form "start" (first interaction) for the analytics funnel. Best-effort,
 // fire-and-forget; rate-limited like submissions.
@@ -700,10 +718,11 @@ $app->post('/api/forms/{formId}/start', function ($request, $response) use ($con
     return $response->withStatus(204);
 })->add($submissionRateLimiter);
 
-// File upload for standalone forms (no auth required since forms can be public)
+// File upload for standalone forms (no auth required since forms can be public).
+// Gated on the form owner's cloud access (storage is a hosted cost).
 $app->post('/api/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
     return $container->get(FileController::class)->upload($request, $response, $getArgs($request));
-})->add($submissionRateLimiter);
+})->add($cloudWriteGate)->add($submissionRateLimiter);
 
 // File serving. Public for standalone published forms; app-scoped/unpublished
 // forms are access-controlled inside serve(). authOptional populates userId when

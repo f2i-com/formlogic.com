@@ -692,6 +692,13 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE users ADD COLUMN cloud_until DATETIME NULL DEFAULT NULL");
         }
 
+        // Plan tier — 'personal' (default, subject to cloud limits) or 'enterprise'
+        // (unlimited). Only meaningful when CLOUD_PLAN_ENFORCED=true (hosted SaaS).
+        $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'plan'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE users ADD COLUMN plan VARCHAR(20) NOT NULL DEFAULT 'personal'");
+        }
+
         // Payments ledger — one row per PayPal order (pay-as-you-go cloud months).
         // order_id + capture_id are unique so an order/capture can only credit once.
         $pdo->exec("

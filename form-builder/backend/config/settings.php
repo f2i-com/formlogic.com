@@ -32,6 +32,23 @@ if ($isProduction && $dbPassword === 'password') {
     );
 }
 
+// Cloud plan enforcement (hosted SaaS only). OFF by default so self-hosters are
+// unlimited. If a hosted operator turns it on in production, PayPal must be configured
+// or users would hit limits with no way to pay to lift them.
+$cloudPlanEnforced = filter_var($_ENV['CLOUD_PLAN_ENFORCED'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+if ($isProduction && $cloudPlanEnforced) {
+    $missingPaypal = array_values(array_filter(
+        ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET'],
+        fn($k) => empty($_ENV[$k])
+    ));
+    if ($missingPaypal) {
+        throw new \RuntimeException(
+            'CONFIG ERROR: CLOUD_PLAN_ENFORCED=true requires PayPal billing to be configured (missing: ' .
+            implode(', ', $missingPaypal) . '). Otherwise users would hit plan limits with no way to pay to lift them.'
+        );
+    }
+}
+
 return [
     'settings' => [
         'displayErrorDetails' => !$isProduction && ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
@@ -109,6 +126,14 @@ return [
             'storagePath' => __DIR__ . '/../storage/packs',
             'maxZipSize' => 50 * 1024 * 1024, // 50MB
             'allowedFileTypes' => ['application/zip', 'application/x-zip-compressed'],
+        ],
+
+        // Hosted-cloud plan limits. Only enforced when planEnforced is true (hosted SaaS);
+        // self-hosted installs leave it false and stay unlimited.
+        'cloud' => [
+            'planEnforced' => $cloudPlanEnforced,
+            'maxForms' => (int)($_ENV['CLOUD_MAX_FORMS'] ?? 100),
+            'maxStorageBytes' => (int)($_ENV['CLOUD_MAX_STORAGE_BYTES'] ?? 1024 * 1024 * 1024), // 1 GB
         ],
     ],
 ];

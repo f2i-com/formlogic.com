@@ -422,6 +422,7 @@ CREATE TABLE `users` (
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `token_version` int NOT NULL DEFAULT '0',
   `cloud_until` datetime DEFAULT NULL,
+  `plan` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'personal',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\PlanService;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -28,18 +29,20 @@ class BillingController
     private MySQLConnection $db;
     private ?AuditService $auditService;
     private LoggerInterface $logger;
+    private ?PlanService $planService;
     private IpResolver $ipResolver;
 
     private int $pricePerMonthCents;
     private string $currency = 'USD';
     private const MAX_MONTHS = 12;
 
-    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null)
+    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null)
     {
         $this->paypal = $paypal;
         $this->db = $db;
         $this->auditService = $auditService;
         $this->logger = $logger ?? new NullLogger();
+        $this->planService = $planService;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->pricePerMonthCents = (int) ($_ENV['CLOUD_PRICE_CENTS'] ?? 500);
         if ($this->pricePerMonthCents < 1) {
@@ -60,6 +63,8 @@ class BillingController
             'maxMonths' => self::MAX_MONTHS,
             'paypalEnabled' => $this->paypal->isConfigured(),
             'paypalClientId' => $this->paypal->isConfigured() ? $this->paypal->getClientId() : null,
+            // Plan usage (forms/storage) — only meaningful when enforcement is on.
+            'usage' => $this->planService ? $this->planService->usage($userId) : null,
         ]);
     }
 

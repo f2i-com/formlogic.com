@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\PlanService;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -19,17 +20,37 @@ class FormController
     private LoggerInterface $logger;
     private ?FormVersionService $versionService;
     private ?AuditService $auditService;
+    private ?PlanService $planService;
 
     public function __construct(
         FormService $formService,
         ?LoggerInterface $logger = null,
         ?FormVersionService $versionService = null,
-        ?AuditService $auditService = null
+        ?AuditService $auditService = null,
+        ?PlanService $planService = null
     ) {
         $this->formService = $formService;
         $this->logger = $logger ?? new NullLogger();
         $this->versionService = $versionService;
         $this->auditService = $auditService;
+        $this->planService = $planService;
+    }
+
+    /**
+     * Enforce the account's form-count quota. Returns an error Response if the user is
+     * at their plan limit, else null. No-op unless plan enforcement is on.
+     */
+    private function checkFormQuota(Response $response, string $userId, int $additional = 1): ?Response
+    {
+        if ($this->planService && !$this->planService->canCreateForms($userId, $additional)) {
+            $limit = $this->planService->formLimit($userId);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'form_limit',
+                'message' => 'You\'ve reached your plan\'s limit of ' . $limit . ' forms. Delete a form or upgrade to add more.',
+            ], 402);
+        }
+        return null;
     }
 
     /**
@@ -209,6 +230,10 @@ class FormController
 
         $data['userId'] = $userId;
 
+        if ($overQuota = $this->checkFormQuota($response, $userId)) {
+            return $overQuota;
+        }
+
         try {
             $form = $this->formService->createForm($data);
             $this->audit($request, 'form.create', 'form', $form['id'] ?? '');
@@ -374,6 +399,10 @@ class FormController
                 'error' => true,
                 'message' => 'Form not found or access denied',
             ], 404);
+        }
+
+        if ($overQuota = $this->checkFormQuota($response, $userId)) {
+            return $overQuota;
         }
 
         try {

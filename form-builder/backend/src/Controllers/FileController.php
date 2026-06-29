@@ -8,6 +8,7 @@ use FormLogic\Services\FileStorageService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
+use FormLogic\Services\PlanService;
 use FormLogic\Constants\AppPermissions;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -18,13 +19,36 @@ class FileController
     private FormService $formService;
     private ?AppService $appService;
     private ?AppUserService $appUserService;
+    private ?PlanService $planService;
 
-    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null)
+    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null, ?PlanService $planService = null)
     {
         $this->fileStorage = $fileStorage;
         $this->formService = $formService;
         $this->appService = $appService;
         $this->appUserService = $appUserService;
+        $this->planService = $planService;
+    }
+
+    /**
+     * Enforce the account-level storage quota for a form's owner before storing a file.
+     * No-op unless plan enforcement is on. Returns an error Response if over quota, else null.
+     */
+    private function checkStorageQuota(Response $response, array $form, array $rawFile): ?Response
+    {
+        if (!$this->planService) {
+            return null;
+        }
+        $ownerId = (string) ($form['userId'] ?? '');
+        $incoming = (int) (@filesize($rawFile['tmp_name'] ?? '') ?: 0);
+        if ($ownerId !== '' && !$this->planService->canUpload($ownerId, $incoming)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'storage_limit',
+                'message' => 'Account storage limit reached. Free up space or add cloud storage to upload more.',
+            ], 402);
+        }
+        return null;
     }
 
     /**
@@ -119,6 +143,9 @@ class FileController
 
         try {
             $rawFile = $this->resolveUploadedFile($request);
+            if ($overQuota = $this->checkStorageQuota($response, $form, $rawFile)) {
+                return $overQuota;
+            }
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
@@ -219,6 +246,9 @@ class FileController
 
         try {
             $rawFile = $this->resolveUploadedFile($request);
+            if ($overQuota = $this->checkStorageQuota($response, $form, $rawFile)) {
+                return $overQuota;
+            }
             $metadata = $this->fileStorage->storeFile($formId, $rawFile, $constraints);
             return $this->jsonResponse($response, $metadata, 201);
         } catch (\RuntimeException $e) {
@@ -269,10 +299,15 @@ class FileController
         $isPublic = $form && !$appScoped && ($form['status'] ?? null) === 'published';
         $cacheControl = $isPublic ? 'public, max-age=31536000, immutable' : 'private, no-store';
 
+        // Render images inline (safe, expected), but force download for PDFs/Office/
+        // unknown binaries so the browser never executes active document content.
+        $disposition = in_array($mimeType, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true) ? 'inline' : 'attachment';
+        $safeName = preg_replace('/[\x00-\x1f\x7f"\\\\]/', '_', $filename);
+
         return $response
             ->withHeader('Content-Type', $mimeType)
             ->withHeader('Content-Length', (string) $fileSize)
-            ->withHeader('Content-Disposition', 'inline; filename="' . preg_replace('/[\x00-\x1f\x7f"\\\\]/', '_', $filename) . '"')
+            ->withHeader('Content-Disposition', $disposition . '; filename="' . $safeName . '"')
             // Prevent MIME sniffing of user-uploaded content (stored-XSS hardening)
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Cache-Control', $cacheControl)

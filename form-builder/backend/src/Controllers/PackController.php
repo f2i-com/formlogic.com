@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\PackService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\PlanService;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -14,12 +15,14 @@ class PackController
 {
     private PackService $packService;
     private ?AuditService $auditService;
+    private ?PlanService $planService;
     private IpResolver $ipResolver;
 
-    public function __construct(PackService $packService, ?AuditService $auditService = null)
+    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null)
     {
         $this->packService = $packService;
         $this->auditService = $auditService;
+        $this->planService = $planService;
         $this->ipResolver = IpResolver::fromEnvironment();
     }
 
@@ -44,6 +47,16 @@ class PackController
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+
+        // Enforce the form-count quota for the whole pack up front.
+        $incomingForms = is_array($packData['forms'] ?? null) ? count($packData['forms']) : 0;
+        if ($incomingForms > 0 && $this->planService && !$this->planService->canCreateForms($userId, $incomingForms)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'form_limit',
+                'message' => 'This pack would exceed your plan\'s form limit (' . $this->planService->formLimit($userId) . '). Free up space or upgrade first.',
+            ], 402);
         }
 
         try {
