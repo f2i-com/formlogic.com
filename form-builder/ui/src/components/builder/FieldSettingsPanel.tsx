@@ -5,6 +5,8 @@ import {
   Trash2,
   Zap,
   ShieldCheck,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -93,10 +95,18 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             <div>
               <h4 className="font-medium text-gray-900 dark:text-white mb-2">Options</h4>
               <div className="space-y-2">
-                {field.properties.options?.map((option, index) => (
-                  <div key={option.id} className="flex gap-2">
+                {field.properties.options?.map((option, index) => {
+                  const optionCount = field.properties.options?.length ?? 0;
+                  const moveOption = (to: number) => {
+                    const newOptions = [...(field.properties.options || [])];
+                    [newOptions[index], newOptions[to]] = [newOptions[to], newOptions[index]];
+                    onUpdate({ properties: { ...field.properties, options: newOptions } });
+                  };
+                  return (
+                  <div key={option.id} className="flex gap-1.5">
                     <Input
                       value={option.label}
+                      aria-label={`Option ${index + 1} label`}
                       onChange={(e) => {
                         const newOptions = [...(field.properties.options || [])];
                         newOptions[index] = { ...option, label: e.target.value };
@@ -104,6 +114,12 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                       }}
                       placeholder={`Option ${index + 1}`}
                     />
+                    <Button variant="ghost" size="sm" aria-label={`Move option ${index + 1} up`} disabled={index === 0} onClick={() => moveOption(index - 1)}>
+                      <ChevronUp className="h-4 w-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" aria-label={`Move option ${index + 1} down`} disabled={index === optionCount - 1} onClick={() => moveOption(index + 1)}>
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -116,7 +132,8 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
-                ))}
+                  );
+                })}
                 <Button
                   variant="outline"
                   size="sm"

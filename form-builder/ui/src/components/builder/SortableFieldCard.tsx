@@ -1,5 +1,5 @@
 import { memo, useCallback } from 'react';
-import { GripVertical, Trash2, HelpCircle } from 'lucide-react';
+import { GripVertical, Trash2, Copy, HelpCircle } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '../../lib/utils';
@@ -11,11 +11,13 @@ export const SortableFieldCard = memo(function SortableFieldCard({
   isSelected,
   onSelect,
   onDelete,
+  onDuplicate,
 }: {
   field: FormField;
   isSelected: boolean;
   onSelect: (fieldId: string) => void;
   onDelete: (fieldId: string) => void;
+  onDuplicate: (fieldId: string) => void;
 }) {
   const {
     attributes,
@@ -39,6 +41,10 @@ export const SortableFieldCard = memo(function SortableFieldCard({
     e.stopPropagation();
     onDelete(field.id);
   }, [onDelete, field.id]);
+  const handleDuplicate = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDuplicate(field.id);
+  }, [onDuplicate, field.id]);
 
   return (
     <div
@@ -55,7 +61,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
-          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none transition-colors"
+          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           aria-label="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
@@ -65,6 +71,7 @@ export const SortableFieldCard = memo(function SortableFieldCard({
             select a field (focus ring + pressed state), not just mouse users. */}
         <button
           type="button"
+          id={`field-select-${field.id}`}
           onClick={handleSelect}
           aria-pressed={isSelected}
           aria-label={`Edit field: ${field.label || fieldInfo.label}`}
@@ -84,13 +91,26 @@ export const SortableFieldCard = memo(function SortableFieldCard({
         </button>
 
         <button
+          onClick={handleDuplicate}
+          aria-label={`Duplicate ${field.label || 'field'}`}
+          className={cn(
+            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            isSelected
+              ? 'text-gray-400 dark:text-slate-500 opacity-100'
+              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'
+          )}
+        >
+          <Copy className="h-4 w-4" />
+        </button>
+
+        <button
           onClick={handleDelete}
           aria-label={`Delete ${field.label || 'field'}`}
           className={cn(
-            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer',
+            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
             isSelected
               ? 'text-gray-400 dark:text-slate-500 opacity-100'
-              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 sm:opacity-0 max-sm:opacity-60'
+              : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'
           )}
         >
           <Trash2 className="h-4 w-4" />

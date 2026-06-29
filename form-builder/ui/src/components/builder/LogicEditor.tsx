@@ -352,6 +352,7 @@ export function LogicEditor({
                           value={cond.value}
                           onChange={(e) => handleConditionChange(cond.id, { value: e.target.value })}
                           placeholder="Value"
+                          aria-label={`Value for condition ${index + 1}`}
                           className="w-full sm:w-32"
                         />
                       )}

@@ -37,6 +37,7 @@ import {
 } from '@dnd-kit/sortable';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconPicker } from '../components/ui/IconPicker';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
@@ -60,6 +61,7 @@ export default function FormBuilder() {
   const navigate = useNavigate();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
   // Toolbar dock toggles — focus returns here when a panel is collapsed via its X,
   // so keyboard/SR users land on the control that reopens it.
@@ -278,11 +280,12 @@ export default function FormBuilder() {
     navigate(`/preview/${form.id}`);
   }, [form, navigate]);
 
+  // Deletion is destructive (it also strips conditional logic / calculations on other
+  // fields that reference this one) and there's no in-session undo, so confirm first.
   const handleDeleteSelected = useCallback(() => {
     if (!form || !selectedFieldId) return;
-    deleteField(form.id, selectedFieldId);
-    toast.success('Deleted', 'Field deleted');
-  }, [form, selectedFieldId, deleteField]);
+    setPendingDeleteId(selectedFieldId);
+  }, [form, selectedFieldId]);
 
   const handleDuplicateSelected = useCallback(() => {
     if (!form || !selectedFieldId || !duplicateField) return;
@@ -295,16 +298,16 @@ export default function FormBuilder() {
 
     // Route through handleSelectField so keyboard navigation also opens the settings
     // dock (raw setSelectedField left it collapsed).
-    if (!selectedFieldId) {
-      handleSelectField(formFields[0].id);
-      return;
-    }
+    const targetId = !selectedFieldId
+      ? formFields[0].id
+      : formFields[direction === 'up'
+          ? Math.max(0, selectedFieldIndex - 1)
+          : Math.min(formFields.length - 1, selectedFieldIndex + 1)].id;
 
-    const newIndex = direction === 'up'
-      ? Math.max(0, selectedFieldIndex - 1)
-      : Math.min(formFields.length - 1, selectedFieldIndex + 1);
-
-    handleSelectField(formFields[newIndex].id);
+    handleSelectField(targetId);
+    // Move DOM focus with the selection so the focus ring tracks the highlight and
+    // screen readers announce the newly-selected field.
+    requestAnimationFrame(() => document.getElementById(`field-select-${targetId}`)?.focus());
   }, [formFields, selectedFieldId, selectedFieldIndex, handleSelectField]);
 
   const handleMoveField = useCallback((direction: 'up' | 'down') => {
@@ -325,7 +328,7 @@ export default function FormBuilder() {
     { key: 's', ctrl: true, description: 'Save form', action: handleSave },
     { key: 'p', ctrl: true, description: 'Preview form', action: handlePreview },
     { key: '/', ctrl: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
-    { key: '?', ctrl: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
+    { key: '?', ctrl: true, shift: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
     { key: 'Escape', description: 'Deselect field', action: () => setSelectedField(null) },
     { key: 'd', ctrl: true, description: 'Duplicate selected field', action: handleDuplicateSelected },
     { key: 'Delete', description: 'Delete selected field', action: handleDeleteSelected },
@@ -342,7 +345,7 @@ export default function FormBuilder() {
 
   useKeyboardShortcuts({ shortcuts });
 
-  // Close mobile menu on outside click
+  // Close mobile menu on outside click or Escape
   useEffect(() => {
     if (!showMobileMenu) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -350,8 +353,13 @@ export default function FormBuilder() {
         setShowMobileMenu(false);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowMobileMenu(false); };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [showMobileMenu]);
 
   useEffect(() => {
@@ -372,8 +380,15 @@ export default function FormBuilder() {
 
   const handleDeleteFieldById = useCallback((fieldId: string) => {
     if (!form) return;
-    deleteField(form.id, fieldId);
-  }, [form, deleteField]);
+    setPendingDeleteId(fieldId);
+  }, [form]);
+
+  const confirmDeleteField = useCallback(() => {
+    if (!form || !pendingDeleteId) return;
+    deleteField(form.id, pendingDeleteId);
+    setPendingDeleteId(null);
+    toast.success('Deleted', 'Field deleted');
+  }, [form, pendingDeleteId, deleteField]);
 
   if (!form) {
     return (
@@ -576,6 +591,8 @@ export default function FormBuilder() {
               size="sm"
               onClick={() => setShowMobileMenu(!showMobileMenu)}
               aria-label="More options"
+              aria-haspopup="menu"
+              aria-expanded={showMobileMenu}
             >
               <MoreVertical className="h-4 w-4" />
             </Button>
@@ -735,14 +752,14 @@ export default function FormBuilder() {
                     <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
                       Add your first field
                     </h3>
-                    <p className="text-gray-500 mb-4">
+                    <p className="text-gray-500 dark:text-slate-400 mb-4">
                       {isMobile ? 'Tap the Fields tab above to get started' : 'Click “Add Field” to choose a field type.'}
                     </p>
                     <div className="flex items-center justify-center gap-2 flex-wrap">
                       <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
                         Add Field
                       </Button>
-                      <span className="text-gray-400">or</span>
+                      <span className="text-gray-400 dark:text-slate-500">or</span>
                       <Button
                         onClick={() => setActiveModal('ai')}
                         className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
@@ -770,6 +787,7 @@ export default function FormBuilder() {
                             isSelected={field.id === selectedFieldId}
                             onSelect={handleSelectField}
                             onDelete={handleDeleteFieldById}
+                            onDuplicate={(id) => { duplicateField(form.id, id); toast.success('Duplicated', 'Field duplicated'); }}
                           />
                         ))}
                       </div>
@@ -887,6 +905,16 @@ export default function FormBuilder() {
       <KeyboardShortcutsHelp
         isOpen={activeModal === 'shortcuts'}
         onClose={closeModal}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingDeleteId !== null}
+        onClose={() => setPendingDeleteId(null)}
+        onConfirm={confirmDeleteField}
+        title="Delete this field?"
+        message={`Delete "${form.fields.find((f) => f.id === pendingDeleteId)?.label || 'this field'}"? Any conditional logic or calculations on other fields that reference it are removed too. This can't be undone.`}
+        confirmLabel="Delete field"
+        variant="danger"
       />
     </div>
   );

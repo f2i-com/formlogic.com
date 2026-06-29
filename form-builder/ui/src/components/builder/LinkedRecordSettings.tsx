@@ -92,7 +92,7 @@ export function LinkedRecordSettings({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 mb-1">
-        <Link2 className="h-4 w-4 text-indigo-500" />
+        <Link2 className="h-4 w-4 text-primary-500 dark:text-primary-400" />
         <h4 className="font-medium text-gray-900 dark:text-white">Linked Record Settings</h4>
       </div>
 
@@ -114,7 +114,7 @@ export function LinkedRecordSettings({
                 searchFieldIds: [],
               });
             }}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
           >
             <option value="">Select a form...</option>
             {appForms.map((form) => (
@@ -150,7 +150,7 @@ export function LinkedRecordSettings({
                       : displayFieldIds.filter((id) => id !== field.id);
                     onChange({ ...properties, displayFieldIds: newIds });
                   }}
-                  className="rounded border-gray-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500"
+                  className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
                 />
                 <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
                 <span className="text-xs text-gray-400 dark:text-slate-500">({field.type})</span>
@@ -184,7 +184,7 @@ export function LinkedRecordSettings({
                       : searchFieldIds.filter((id) => id !== field.id);
                     onChange({ ...properties, searchFieldIds: newIds });
                   }}
-                  className="rounded border-gray-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500"
+                  className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
                 />
                 <span className="text-gray-700 dark:text-slate-300">{field.label}</span>
               </label>

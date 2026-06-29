@@ -207,14 +207,20 @@ export function ValidationEditor({ rules, fieldType, onChange }: ValidationEdito
                     />
                   )}
 
-                  {rule.type === 'pattern' && (
-                    <Input
-                      label="Pattern (Regular Expression)"
-                      value={rule.value as string}
-                      onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                      placeholder="^[a-zA-Z]+$"
-                    />
-                  )}
+                  {rule.type === 'pattern' && (() => {
+                    let patternError: string | undefined;
+                    const raw = String(rule.value ?? '');
+                    if (raw) { try { new RegExp(raw); } catch { patternError = 'Not a valid regular expression'; } }
+                    return (
+                      <Input
+                        label="Pattern (Regular Expression)"
+                        value={rule.value as string}
+                        onChange={(e) => updateRule(rule.id, { value: e.target.value })}
+                        placeholder="^[a-zA-Z]+$"
+                        error={patternError}
+                      />
+                    );
+                  })()}
 
                   {rule.type === 'custom' && (
                     <div className="space-y-3">

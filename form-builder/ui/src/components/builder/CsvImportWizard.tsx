@@ -110,11 +110,14 @@ export function CsvImportWizard({
         if (result.data) {
           setParseResult(result.data);
 
-          // Auto-match columns by comparing header labels to field labels
+          // Auto-match columns by comparing header labels to field labels. Track
+          // claimed fields so two columns can't auto-map to the same field.
           const autoMapping: Record<string, string> = {};
+          const claimed = new Set<string>();
           for (const header of result.data.headers) {
             const headerLower = header.toLowerCase().trim();
             const match = inputFields.find((f) => {
+              if (claimed.has(f.id)) return false;
               const labelLower = f.label.toLowerCase().trim();
               return (
                 labelLower === headerLower ||
@@ -123,6 +126,7 @@ export function CsvImportWizard({
                 f.id.toLowerCase() === headerLower
               );
             });
+            if (match) claimed.add(match.id);
             autoMapping[header] = match ? match.id : 'skip';
           }
           setColumnMapping(autoMapping);
@@ -164,6 +168,8 @@ export function CsvImportWizard({
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFile = e.target.files?.[0];
+      // Reset the value so re-selecting the SAME file after an error still fires onChange.
+      e.target.value = '';
       if (selectedFile) {
         handleFileSelect(selectedFile);
       }
