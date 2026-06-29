@@ -55,10 +55,13 @@ function SignatureField({
   primaryColor: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isTyped = typeof value === 'string' && value.startsWith('typed:');
+  const typedName = isTyped ? (value as string).slice(6) : '';
   const getStrokeColor = () =>
     document.documentElement.classList.contains('dark') ? '#e2e8f0' : '#1f2937';
 
   useEffect(() => {
+    if (isTyped) return; // canvas isn't rendered in type mode
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -69,16 +72,54 @@ function SignatureField({
       img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       img.src = value;
     }
-  }, [value]);
+  }, [value, isTyped]);
 
   return (
     <div className="space-y-2">
+      {/* Draw / Type toggle — parity with the public form so keyboard / motor-impaired
+          users can complete a required signature by typing their name. */}
+      <div className="flex gap-2 text-sm">
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          className={cn('px-3 py-1.5 rounded-lg border transition-colors cursor-pointer', !isTyped ? 'font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400')}
+          style={!isTyped ? { borderColor: primaryColor, color: primaryColor } : undefined}
+        >
+          Draw
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const c = canvasRef.current;
+            c?.getContext('2d')?.clearRect(0, 0, c.width, c.height);
+            onChange('typed:');
+          }}
+          className={cn('px-3 py-1.5 rounded-lg border transition-colors cursor-pointer', isTyped ? 'font-medium' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400')}
+          style={isTyped ? { borderColor: primaryColor, color: primaryColor } : undefined}
+        >
+          Type
+        </button>
+      </div>
+
+      {isTyped ? (
+        <input
+          type="text"
+          value={typedName}
+          onChange={(e) => onChange(`typed:${e.target.value}`)}
+          placeholder="Type your full name"
+          aria-label="Type your signature"
+          className="w-full px-4 py-3 border-2 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white transition-colors focus:outline-none"
+          style={{ borderColor: typedName ? primaryColor : undefined, fontFamily: "'Dancing Script', 'Segoe Script', 'Comic Sans MS', cursive", fontSize: '1.5rem' }}
+        />
+      ) : (
       <div
         className={cn(
           'w-full h-36 border-2 rounded-lg cursor-crosshair relative overflow-hidden transition-colors',
           value ? 'border-gray-400 dark:border-slate-500' : 'border-gray-300 dark:border-slate-600'
         )}
         style={{ borderColor: value ? primaryColor : undefined }}
+        role="img"
+        aria-label="Signature drawing area"
         onMouseDown={(e) => {
           e.preventDefault();
           const canvas = canvasRef.current;
@@ -126,7 +167,8 @@ function SignatureField({
           </div>
         )}
       </div>
-      {Boolean(value) && (
+      )}
+      {Boolean(value) && !isTyped && (
         <button
           type="button"
           onClick={() => {
@@ -780,7 +822,8 @@ export function AppFormView() {
   const handleNext = useCallback(() => {
     if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
-      if (answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)) {
+      // `typed:` is an empty typed-signature (no name entered yet).
+      if (answer === undefined || answer === null || answer === '' || answer === 'typed:' || (Array.isArray(answer) && answer.length === 0)) {
         setError('Please fill in this field before continuing');
         return;
       }
@@ -824,7 +867,7 @@ export function AppFormView() {
       if (!isFieldRequired(f.id)) return false;
       if (['statement', 'calculated', 'welcome_screen'].includes(f.type)) return false;
       const answer = answersRef.current[f.id];
-      return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0);
+      return answer === undefined || answer === null || answer === '' || answer === 'typed:' || (Array.isArray(answer) && answer.length === 0);
     });
     if (missingFields.length > 0) {
       // Name the missing fields + jump to the first one (parity with the public form),
