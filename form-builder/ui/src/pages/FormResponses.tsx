@@ -30,6 +30,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { api, resolveFileUrl } from '../lib/api';
+import { useFittedColumns } from '../hooks/useFittedColumns';
 import { toast } from '../stores/toastStore';
 import { cn, sanitizeFilename, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../lib/utils';
 import { Badge } from '../components/ui/Badge';
@@ -234,8 +235,18 @@ function FormResponses() {
     if (!form) return [];
     return form.fields
       .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-      .slice(0, 6);
+      .slice(0, 12);
   }, [form]);
+
+  // Show as many field columns as actually fit the table's width (no horizontal scroll);
+  // collapse to stacked cards once it's phone-sized. Reserved px ≈ Date+Time+Status+Actions.
+  const { ref: tableRef, count: visibleFieldCount, cards: cardMode } = useFittedColumns<HTMLDivElement>({
+    itemCount: displayFields.length,
+    itemMinPx: 170,
+    reservedPx: 470,
+    cardBelowPx: 640,
+  });
+  const visibleFields = displayFields.slice(0, visibleFieldCount);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -707,9 +718,10 @@ function FormResponses() {
           </Card>
         ) : (
           <Card className="overflow-hidden bg-white dark:bg-slate-900/50 border-gray-200 dark:border-slate-800">
-            {/* Mobile card list (below sm) — the table hides field columns on phones,
-                so render a stacked card showing the date, first answers, and actions. */}
-            <ul className="sm:hidden divide-y divide-gray-200 dark:divide-slate-800">
+           <div ref={tableRef}>
+            {/* Stacked cards once the table is too narrow for even one field column. */}
+            {cardMode ? (
+            <ul className="divide-y divide-gray-200 dark:divide-slate-800">
               {paginatedResponses.map((response) => (
                 <li key={response.id} className="p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -718,8 +730,13 @@ function FormResponses() {
                       onClick={() => handleView(response)}
                       className="min-w-0 flex-1 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                     >
-                      <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(response.submittedAt)}</p>
-                      {displayFields.slice(0, 2).map((field) => (
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(response.submittedAt)}</p>
+                        <Badge variant={statusBadgeVariant(response.status || 'submitted')} className="rounded-full">
+                          {formatStatusLabel(response.status || 'submitted')}
+                        </Badge>
+                      </div>
+                      {displayFields.slice(0, 4).map((field) => (
                         <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
                           {formatValue(response.answers[field.id], field.type, field.properties?.options)}
@@ -742,30 +759,30 @@ function FormResponses() {
                 </li>
               ))}
             </ul>
-
-            <div className="overflow-x-auto hidden sm:block">
-              <table className="w-full">
+            ) : (
+            <div>
+              <table className="w-full table-fixed">
                 <thead className="bg-gray-50/50 dark:bg-slate-900/50 border-b border-gray-200 dark:border-slate-800">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-44">
                       Date
                     </th>
-                    {displayFields.map((field) => (
+                    {visibleFields.map((field) => (
                       <th
                         key={field.id}
-                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hidden sm:table-cell"
+                        className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider"
                         title={field.label}
                       >
-                        <span className="truncate block max-w-[150px]">{field.label}</span>
+                        <span className="truncate block">{field.label}</span>
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-20">
                       Time
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
                       Status
                     </th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
                       Actions
                     </th>
                   </tr>
@@ -776,10 +793,10 @@ function FormResponses() {
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {formatDate(response.submittedAt)}
                       </td>
-                      {displayFields.map((field) => (
+                      {visibleFields.map((field) => (
                         <td
                           key={field.id}
-                          className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 max-w-[200px] truncate hidden sm:table-cell"
+                          className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 truncate"
                           title={formatValue(response.answers[field.id], field.type, field.properties?.options)}
                         >
                           {formatValue(response.answers[field.id], field.type, field.properties?.options)}
@@ -826,6 +843,8 @@ function FormResponses() {
                 </tbody>
               </table>
             </div>
+            )}
+           </div>
 
             {/* Pagination */}
             {totalPages > 1 && (

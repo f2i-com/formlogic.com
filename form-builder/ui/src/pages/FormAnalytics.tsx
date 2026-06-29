@@ -14,6 +14,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
 import { formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
+import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
 
 interface DailyResponse {
@@ -329,7 +330,37 @@ export default function FormAnalytics() {
   // which have no answer and otherwise show as empty "-" columns).
   const previewFields = form.fields
     .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-    .slice(0, 3);
+    .slice(0, 8);
+
+  // Fit as many preview columns as the card width allows (no horizontal scroll);
+  // stack as cards on narrow screens. Reserved ≈ ID + Submitted + Time columns.
+  const { ref: previewRef, count: previewCount, cards: previewCards } = useFittedColumns<HTMLDivElement>({
+    itemCount: previewFields.length,
+    itemMinPx: 150,
+    reservedPx: 340,
+    cardBelowPx: 560,
+  });
+  const visiblePreview = previewFields.slice(0, previewCount);
+
+  // Shared value formatter for the recent-responses preview (table + card modes).
+  const formatPreviewValue = (field: { id: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }, val: unknown): string => {
+    if (val === null || val === undefined || val === '') return '-';
+    if (field.type === 'location' && typeof val === 'object' && 'latitude' in (val as Record<string, unknown>)) {
+      const loc = val as Record<string, number>;
+      return `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
+    }
+    if (field.type === 'file_upload' && Array.isArray(val)) {
+      return val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? String((f as Record<string, unknown>).originalFilename) : 'File').join(', ');
+    }
+    if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+      const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+      const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+      return Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
+    }
+    if (Array.isArray(val)) return val.join(', ');
+    if (typeof val === 'object') return JSON.stringify(val);
+    return String(val);
+  };
 
   const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
 
@@ -654,15 +685,30 @@ export default function FormAnalytics() {
                 className="py-8"
               />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div ref={previewRef}>
+                {previewCards ? (
+                  <ul className="space-y-2">
+                    {responses.slice(0, 10).map((response) => (
+                      <li key={response.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">{formatDate(response.submittedAt)}</p>
+                        {previewFields.map((field) => (
+                          <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
+                            <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                            {formatPreviewValue(field, response.answers[field.id])}
+                          </p>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                <table className="w-full table-fixed">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-slate-800">
-                      <th className="hidden sm:table-cell text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">ID</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Submitted</th>
-                      <th className="hidden sm:table-cell text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500">Time</th>
-                      {previewFields.map((field, i) => (
-                        <th key={field.id} className={`${i >= 1 ? 'hidden sm:table-cell' : ''} text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500`}>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-28">ID</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-44">Submitted</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 w-20">Time</th>
+                      {visiblePreview.map((field) => (
+                        <th key={field.id} className="text-left py-3 px-4 text-sm font-medium text-gray-500 dark:text-slate-500 truncate">
                           {field.label}
                         </th>
                       ))}
@@ -671,46 +717,25 @@ export default function FormAnalytics() {
                   <tbody>
                     {responses.slice(0, 10).map((response) => (
                       <tr key={response.id} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="hidden sm:table-cell py-3 px-4 text-sm text-gray-900 dark:text-white font-mono">
+                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono truncate">
                           #{response.id.slice(0, 8)}
                         </td>
-                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
+                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
                           {formatDate(response.submittedAt)}
                         </td>
-                        <td className="hidden sm:table-cell py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
+                        <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400">
                           {Math.round((response.completionTime || 0) / 1000)}s
                         </td>
-                        {previewFields.map((field, i) => {
-                          const val = response.answers[field.id];
-                          let display = '-';
-                          if (val !== null && val !== undefined && val !== '') {
-                            if (field.type === 'location' && typeof val === 'object' && 'latitude' in (val as Record<string, unknown>)) {
-                              const loc = val as Record<string, number>;
-                              display = `${loc.latitude?.toFixed(4)}, ${loc.longitude?.toFixed(4)}`;
-                            } else if (field.type === 'file_upload' && Array.isArray(val)) {
-                              display = val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ');
-                            } else if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
-                              const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
-                              const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
-                              display = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
-                            } else if (Array.isArray(val)) {
-                              display = val.join(', ');
-                            } else if (typeof val === 'object') {
-                              display = JSON.stringify(val);
-                            } else {
-                              display = String(val);
-                            }
-                          }
-                          return (
-                            <td key={field.id} className={`${i >= 1 ? 'hidden sm:table-cell' : ''} py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate max-w-xs`}>
-                              {display}
-                            </td>
-                          );
-                        })}
+                        {visiblePreview.map((field) => (
+                          <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
+                            {formatPreviewValue(field, response.answers[field.id])}
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                )}
               </div>
             )}
           </CardContent>

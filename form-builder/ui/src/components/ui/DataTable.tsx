@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useFittedColumns } from '../../hooks/useFittedColumns';
 
 export interface Column<T> {
   key: string;
@@ -25,6 +26,10 @@ interface DataTableProps<T> {
   searchBarExtra?: React.ReactNode;
   /** Render shimmer skeleton rows instead of the empty/data state while fetching. */
   isLoading?: boolean;
+  /** Min px each column needs before one is dropped (and added back when there's room). */
+  columnMinWidth?: number;
+  /** Container width below which rows render as stacked cards instead of a table. */
+  cardBreakpoint?: number;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -41,11 +46,24 @@ export function DataTable<T extends Record<string, unknown>>({
   totalCount,
   searchBarExtra,
   isLoading = false,
+  columnMinWidth = 160,
+  cardBreakpoint = 560,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+
+  // Show as many columns as fit the container's actual width (no horizontal scroll);
+  // drop the rightmost when cramped, add them back when there's room, and collapse to
+  // stacked cards once it's phone-sized. Reserve room for the actions column.
+  const { ref: fitRef, count: fitCount, cards } = useFittedColumns<HTMLDivElement>({
+    itemCount: columns.length,
+    itemMinPx: columnMinWidth,
+    reservedPx: actions ? 130 : 24,
+    cardBelowPx: cardBreakpoint,
+  });
+  const visibleColumns = cards ? columns : columns.slice(0, Math.max(1, fitCount));
 
   const filtered = useMemo(() => {
     if (!search) return data;
@@ -90,7 +108,7 @@ export function DataTable<T extends Record<string, unknown>>({
   };
 
   return (
-    <div className={cn('w-full', className)}>
+    <div ref={fitRef} className={cn('w-full', className)}>
       {searchable && (
         <div className="mb-4 flex items-center gap-2">
           <div className="relative flex-1 max-w-sm">
@@ -108,17 +126,64 @@ export function DataTable<T extends Record<string, unknown>>({
         </div>
       )}
 
+      {cards ? (
+        /* Stacked cards — too narrow for a table. Shows every column as a label/value. */
+        <div className="space-y-2">
+          {isLoading ? (
+            Array.from({ length: Math.min(pageSize, 4) }).map((_, i) => (
+              <div key={`sk-${i}`} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+                <div className="h-4 w-2/3 rounded bg-gray-100 dark:bg-slate-800 shimmer mb-2" />
+                <div className="h-4 w-1/2 rounded bg-gray-100 dark:bg-slate-800 shimmer" />
+              </div>
+            ))
+          ) : paged.length === 0 ? (
+            <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 px-4 py-12 text-center">
+              <Inbox className="h-8 w-8 mx-auto text-gray-300 dark:text-slate-600 mb-2" />
+              <p className="text-sm text-gray-500 dark:text-slate-400">{emptyMessage}</p>
+            </div>
+          ) : (
+            paged.map((item) => (
+              <div
+                key={String(item[keyField])}
+                onClick={() => onRowClick?.(item)}
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(item); } } : undefined}
+                className={cn(
+                  'rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4 flex items-start justify-between gap-3',
+                  onRowClick && 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50'
+                )}
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  {columns.map((col) => (
+                    <div key={col.key} className="flex gap-2 text-sm">
+                      <span className="text-gray-400 dark:text-slate-500 shrink-0">{col.label}:</span>
+                      <span className="text-gray-900 dark:text-slate-200 min-w-0 truncate">
+                        {col.render ? col.render(item) : String(item[col.key] ?? '')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {actions && (
+                  <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {actions(item)}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      ) : (
       <div className="overflow-x-auto rounded-xl border border-gray-200/80 dark:border-slate-700/60">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm table-fixed">
           <thead>
             <tr className="bg-gray-50/80 dark:bg-slate-800/80 border-b border-gray-200/80 dark:border-slate-700/60 sticky top-0 z-10">
-              {columns.map((col) => (
+              {visibleColumns.map((col) => (
                 <th
                   key={col.key}
                   // Keep the columnheader role so aria-sort is honored; the sort
                   // control is an inner <button> (so the header isn't a role=button).
                   aria-sort={col.sortable ? (sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
-                  className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400', col.className)}
+                  className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400 truncate', col.className)}
                 >
                   {col.sortable ? (
                     <button
@@ -138,14 +203,14 @@ export function DataTable<T extends Record<string, unknown>>({
                   )}
                 </th>
               ))}
-              {actions && <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-slate-400">Actions</th>}
+              {actions && <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-slate-400 w-28">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               Array.from({ length: Math.min(pageSize, 5) }).map((_, i) => (
                 <tr key={`skeleton-${i}`} className="border-b border-gray-100 dark:border-slate-700/40">
-                  {columns.map((col) => (
+                  {visibleColumns.map((col) => (
                     <td key={col.key} className="px-4 py-3">
                       <div className="h-4 rounded bg-gray-100 dark:bg-slate-800 shimmer" />
                     </td>
@@ -159,7 +224,7 @@ export function DataTable<T extends Record<string, unknown>>({
               ))
             ) : paged.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center">
+                <td colSpan={visibleColumns.length + (actions ? 1 : 0)} className="px-4 py-12 text-center">
                   <Inbox className="h-8 w-8 mx-auto text-gray-300 dark:text-slate-600 mb-2" />
                   <p className="text-sm text-gray-500 dark:text-slate-400">{emptyMessage}</p>
                 </td>
@@ -178,8 +243,8 @@ export function DataTable<T extends Record<string, unknown>>({
                     onRowClick && 'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50 focus-visible:bg-primary-50 dark:focus-visible:bg-primary-500/10'
                   )}
                 >
-                  {columns.map((col) => (
-                    <td key={col.key} className={cn('px-4 py-3 text-gray-900 dark:text-slate-200', col.className)}>
+                  {visibleColumns.map((col) => (
+                    <td key={col.key} className={cn('px-4 py-3 text-gray-900 dark:text-slate-200 truncate', col.className)}>
                       {col.render ? col.render(item) : String(item[col.key] ?? '')}
                     </td>
                   ))}
@@ -194,6 +259,7 @@ export function DataTable<T extends Record<string, unknown>>({
           </tbody>
         </table>
       </div>
+      )}
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-slate-400">

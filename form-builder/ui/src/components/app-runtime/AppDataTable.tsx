@@ -1,143 +1,13 @@
-import { useState, useEffect, useMemo, useRef, memo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2, ChevronRight, ChevronLeft, Inbox, Columns3 } from 'lucide-react';
+import { ArrowLeft, Trash2, Columns3 } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { cn, parseServerDate } from '../../lib/utils';
 
-const MOBILE_PAGE_SIZE = 15;
-
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
-
-const MobileCardList = memo(function MobileCardList({
-  responses,
-  fields,
-  appSlug,
-  formId,
-  navigate,
-}: {
-  responses: Record<string, unknown>[];
-  fields: Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }>;
-  appSlug?: string;
-  formId?: string;
-  navigate: ReturnType<typeof useNavigate>;
-}) {
-  const [page, setPage] = useState(1);
-  const totalPages = Math.max(1, Math.ceil(responses.length / MOBILE_PAGE_SIZE));
-  // Reset page when responses change (e.g., after delete)
-  useEffect(() => { setPage((p) => Math.min(p, Math.max(1, Math.ceil(responses.length / MOBILE_PAGE_SIZE)))); }, [responses.length]);
-  const paged = useMemo(() => {
-    const start = (page - 1) * MOBILE_PAGE_SIZE;
-    return responses.slice(start, start + MOBILE_PAGE_SIZE);
-  }, [responses, page]);
-
-  if (responses.length === 0) {
-    return (
-      <div className="md:hidden text-center py-16">
-        <Inbox className="h-10 w-10 mx-auto text-gray-400 dark:text-slate-500 mb-3" />
-        <p className="text-gray-500 dark:text-slate-400 text-sm">No responses yet</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="md:hidden space-y-2">
-      {paged.map((r) => {
-        const status = String(r.status ?? 'submitted');
-        return (
-          <button
-            key={String(r.id)}
-            onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
-            className="w-full text-left bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4 active:bg-gray-50 dark:active:bg-slate-800 cursor-pointer transition-all duration-200 hover:shadow-md hover:shadow-gray-900/[0.04] dark:hover:shadow-black/10 hover:border-gray-300 dark:hover:border-slate-600 group"
-          >
-            <div className="flex items-center justify-between mb-2.5">
-              <span className="text-xs text-gray-400 dark:text-slate-500">
-                {r.submittedAt ? parseServerDate(String(r.submittedAt)).toLocaleString() : '-'}
-              </span>
-              <div className="flex items-center gap-2">
-                <span className={cn(
-                  'text-xs px-2 py-0.5 rounded-full font-medium',
-                  status === 'submitted' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-                )}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </span>
-                <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-400 dark:group-hover:text-slate-500 transition-colors" />
-              </div>
-            </div>
-            {fields.slice(0, 3).map((field) => {
-              if (field.type === 'linked_record') {
-                const resolved = r._resolved as Record<string, unknown> | undefined;
-                const rv = resolved?.[field.id] as { display?: string } | Array<{ display?: string }> | undefined;
-                if (!rv) return null;
-                const displayText = Array.isArray(rv)
-                  ? rv.map((v) => v.display || '?').join(', ')
-                  : (rv as { display?: string }).display;
-                if (!displayText) return null;
-                return (
-                  <div key={field.id} className="text-sm mb-1 last:mb-0">
-                    <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                    <span className="text-gray-700 dark:text-slate-300">{displayText.length > 60 ? displayText.substring(0, 60) + '\u2026' : displayText}</span>
-                  </div>
-                );
-              }
-              const answers = r.answers as Record<string, unknown> | undefined;
-              const val = answers?.[field.id];
-              if (val == null) return null;
-              let display: string;
-              if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in (val as object)) {
-                const loc = val as { latitude: number; longitude: number };
-                display = `${Number(loc.latitude).toFixed(5)}, ${Number(loc.longitude).toFixed(5)}`;
-              } else if (field.type === 'file_upload' && Array.isArray(val)) {
-                display = (val as Array<{ originalFilename?: string }>).map((f) => (f && f.originalFilename) || 'File').join(', ');
-              } else if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
-                const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
-                const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
-                display = Array.isArray(val) ? val.map(labelFor).join(', ') : labelFor(val);
-              } else if (Array.isArray(val)) {
-                display = val.join(', ');
-              } else if (typeof val === 'object') {
-                display = JSON.stringify(val);
-              } else {
-                display = String(val);
-              }
-              return (
-                <div key={field.id} className="text-sm mb-1 last:mb-0">
-                  <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                  <span className="text-gray-700 dark:text-slate-300">{display.length > 60 ? display.substring(0, 60) + '\u2026' : display}</span>
-                </div>
-              );
-            })}
-          </button>
-        );
-      })}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-3">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="p-2.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            aria-label="Previous page"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="text-sm text-gray-500 dark:text-slate-400">
-            {page} / {totalPages}
-          </span>
-          <button
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            disabled={page === totalPages}
-            className="p-2.5 rounded-lg border border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-            aria-label="Next page"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-});
 
 export function AppDataTable() {
   const { appSlug, formId } = useParams();
@@ -368,11 +238,6 @@ export function AppDataTable() {
   ];
 
   // Visible fields for mobile cards
-  const mobileFields = useMemo(() =>
-    fields.filter((f) => visibleColumns.has(f.id)).slice(0, 3),
-    [fields, visibleColumns]
-  );
-
   const columnVisibilityDropdown = (
     <div className="relative" ref={colDropdownRef}>
       <button
@@ -454,39 +319,27 @@ export function AppDataTable() {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading responses" />
         </div>
       ) : (
-        <>
-          {/* Desktop table */}
-          <div className="hidden md:block">
-            <DataTable
-              data={responses}
-              columns={columns}
-              searchable
-              pageSize={15}
-              totalCount={responses.length}
-              emptyMessage="No responses yet"
-              searchBarExtra={columnVisibilityDropdown}
-              onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
-              actions={formId && canDelete(formId) ? (r) => (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setDeleteId(String(r.id)); }}
-                  aria-label="Delete response"
-                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              ) : undefined}
-            />
-          </div>
-
-          {/* Mobile card layout */}
-          <MobileCardList
-            responses={responses}
-            fields={mobileFields}
-            appSlug={appSlug}
-            formId={formId}
-            navigate={navigate}
-          />
-        </>
+        /* The shared DataTable fits columns to the available width and collapses to
+           stacked cards on narrow screens, so no separate mobile layout is needed. */
+        <DataTable
+          data={responses}
+          columns={columns}
+          searchable
+          pageSize={15}
+          totalCount={responses.length}
+          emptyMessage="No responses yet"
+          searchBarExtra={columnVisibilityDropdown}
+          onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
+          actions={formId && canDelete(formId) ? (r) => (
+            <button
+              onClick={(e) => { e.stopPropagation(); setDeleteId(String(r.id)); }}
+              aria-label="Delete response"
+              className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          ) : undefined}
+        />
       )}
 
       <ConfirmDialog
