@@ -83,8 +83,8 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-hidden flex">
+        {/* Content — stack on mobile (category tabs on top), side-by-side on desktop */}
+        <div className="flex-1 overflow-hidden flex flex-col md:flex-row min-h-0">
           {/* Sidebar - Categories */}
           <div className="w-48 border-r border-gray-200 dark:border-slate-800 p-4 hidden md:block bg-gray-50/50 dark:bg-slate-900/50">
             <nav className="space-y-1">
@@ -107,7 +107,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
           </div>
 
           {/* Mobile Category Tabs */}
-          <div className="md:hidden px-4 py-2 border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex gap-2">
+          <div className="md:hidden flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex gap-2">
             {templateCategories.map((category) => (
               <button
                 key={category.id}

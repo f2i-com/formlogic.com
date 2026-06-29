@@ -204,9 +204,10 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           })}
         </TabsList>
 
-        {/* Content — fixed height so the dialog doesn't jump between tabs (the Photo
-            tab is taller than Prompt/Document). */}
-        <div className="p-6 overflow-y-auto h-[460px] max-h-[60vh]">
+        {/* Content — no own scroll: the Modal already wraps children in one
+            scroll region, so a second one here caused a double scrollbar. A
+            min-height keeps short tabs from collapsing. */}
+        <div className="p-6 min-h-[280px]">
           <TabsContent value="prompt">{activeTab === 'prompt' && (
           <div className="space-y-4">
             <div>

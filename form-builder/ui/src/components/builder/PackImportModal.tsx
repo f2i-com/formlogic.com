@@ -380,7 +380,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     <button
       type="button"
       onClick={() => handleTabChange(tab)}
-      className={`px-3 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+      className={`px-2.5 sm:px-3 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
         activeTab === tab
           ? 'border-primary-600 text-primary-600 dark:text-primary-400 dark:border-primary-400'
           : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300'
@@ -411,8 +411,9 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     <>
       <Modal isOpen={isOpen} onClose={handleClose} title="Pack Marketplace" size="full">
         {/* Fixed-height flex column so the dialog stays one size across tabs:
-            tabs pinned, content scrolls in the middle, footer pinned. */}
-        <div className="p-4 sm:p-6 flex flex-col h-[70vh]">
+            tabs pinned, content scrolls in the middle, footer pinned. Taller on
+            mobile to use the available screen. */}
+        <div className="p-4 sm:p-6 flex flex-col h-[80vh] sm:h-[70vh]">
           {/* Tabs */}
           <div className="flex border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex-shrink-0">
             {tabButton('marketplace', <Package className="h-4 w-4" />, 'Marketplace')}

@@ -1,23 +1,33 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { LayoutDashboard, FileText, Plus, Globe, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
+import { TemplateSelector } from '../builder';
+import type { FormTemplate } from '../../data/formTemplates';
 
 export function MobileNav() {
   const navigate = useNavigate();
-  const { createForm, setActiveForm } = useFormStore();
+  const { createForm, addFields, setActiveForm } = useFormStore();
   const creatingRef = useRef(false);
+  // Tapping "Create" opens the New Form picker (template or blank) — parity with the
+  // desktop Dashboard, instead of jumping straight into a blank form.
+  const [showTemplate, setShowTemplate] = useState(false);
 
-  const handleCreateForm = async () => {
+  const handleSelectTemplate = async (template: FormTemplate | null) => {
     if (creatingRef.current) return; // guard against a double-tap creating two drafts
     creatingRef.current = true;
+    setShowTemplate(false);
     try {
-      const form = await createForm('Untitled Form');
+      const form = await createForm(template ? template.name : 'Untitled Form');
       if (!form) return;
+      if (template && template.fields.length > 0) {
+        addFields(form.id, template.fields);
+      }
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
+      if (template) toast.success('Form Created', `Started with "${template.name}" template`);
     } catch {
       toast.error('Creation failed', 'Could not create a new form. Please try again.');
     } finally {
@@ -28,12 +38,13 @@ export function MobileNav() {
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Home' },
     { path: '/forms', icon: FileText, label: 'Forms' },
-    { action: handleCreateForm, icon: Plus, label: 'Create', isAction: true },
+    { action: () => setShowTemplate(true), icon: Plus, label: 'Create', isAction: true },
     { path: '/apps', icon: Globe, label: 'Apps' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
   return (
+    <>
     <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/50 backdrop-blur-xl border-t border-gray-100 dark:border-white/10 z-50 md:hidden safe-area-bottom">
       <div className="flex items-center justify-around h-16 px-2">
         {navItems.map((item, index) => {
@@ -78,5 +89,11 @@ export function MobileNav() {
         })}
       </div>
     </nav>
+    <TemplateSelector
+      isOpen={showTemplate}
+      onClose={() => setShowTemplate(false)}
+      onSelectTemplate={handleSelectTemplate}
+    />
+    </>
   );
 }
