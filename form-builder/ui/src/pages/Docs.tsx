@@ -398,7 +398,7 @@ cd ../ui && npm install && npm run build`}</CodeBlock>
             <section className="mb-10">
               <H2 id="security" icon={Shield}>Security &amp; data ownership</H2>
               <Bullets items={[
-                <><strong className="text-gray-900 dark:text-white">Sandboxed scripts</strong> — user code runs with instruction, time, memory, and call-depth limits, and no filesystem, DOM, or arbitrary network access.</>,
+                <><strong className="text-gray-900 dark:text-white">Sandboxed scripts</strong> — user code runs with instruction, time, memory, and call-depth limits, and no filesystem or DOM access. Optional <C>ctx.http</C> calls are brokered by the server with SSRF and DNS-pinning protection plus timeout, redirect, and response-size limits.</>,
                 <><strong className="text-gray-900 dark:text-white">Server-enforced rules</strong> — validation and submission limits can't be tampered with from the browser.</>,
                 <><strong className="text-gray-900 dark:text-white">Sessions</strong> — HttpOnly + Secure cookies with CSRF protection; rate limiting on sensitive endpoints.</>,
                 <><strong className="text-gray-900 dark:text-white">Hash-chained audit log</strong> and a portable per-form database — your data stays yours.</>,

@@ -195,6 +195,7 @@ const PUBLIC_PATHS = [
   '/form/:formId',
   '/packs',
   '/packs/:slug',
+  '/docs',
   '/privacy',
   '/terms',
   '/app/:appSlug/*',

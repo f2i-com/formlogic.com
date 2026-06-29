@@ -14,8 +14,6 @@ import {
   BarChart3,
   Building2,
   Users,
-  Clock,
-  Lock,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
@@ -96,11 +94,12 @@ export function Landing() {
   useLandingChrome();
   useReveal();
 
+  // Capability highlights rather than (pre-launch, unverifiable) traction numbers.
   const stats = [
-    { value: '10K+', label: 'Forms Created' },
-    { value: '1M+', label: 'Submissions Processed' },
-    { value: '99.9%', label: 'Uptime' },
-    { value: '<50ms', label: 'Avg Response Time' },
+    { value: 'Self-host', label: 'Ready to deploy' },
+    { value: 'QuickJS', label: 'Sandboxed scripts' },
+    { value: 'SQLite', label: 'Per-form exports' },
+    { value: 'Yours', label: 'No vendor lock-in' },
   ];
 
   const features = [
@@ -121,8 +120,8 @@ export function Landing() {
     },
     {
       icon: Zap,
-      title: 'Lightning Fast',
-      description: 'Optimized infrastructure ensures sub-100ms response times globally. Built for scale from day one.',
+      title: 'Lightweight stack',
+      description: 'A lean PHP + SQLite backend with no heavy runtime to manage — quick to deploy and responsive by design.',
     },
     {
       icon: Globe,
@@ -346,7 +345,7 @@ export function Landing() {
           >
             <Link to="/signup" className="w-full sm:w-auto group">
               <Button size="lg" className="w-full sm:w-auto text-base px-8 bg-primary-600 hover:bg-primary-500 text-primary-foreground shadow-lg shadow-primary-600/25 border-0 font-semibold">
-                Start Free Trial
+                Get started free
                 <ArrowRight className="h-5 w-5 ml-2 group-hover:translate-x-0.5 transition-transform" />
               </Button>
             </Link>
@@ -399,19 +398,19 @@ export function Landing() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-14 fl-mono text-gray-400 dark:text-slate-500 text-xs uppercase tracking-wider">
             <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Shield className="h-4 w-4" />
-              <span>SOC 2 Compliant</span>
+              <span>Sandboxed scripting</span>
             </div>
             <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Lock className="h-4 w-4" />
-              <span>GDPR Ready</span>
+              <Database className="h-4 w-4" />
+              <span>Per-form database</span>
             </div>
             <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Clock className="h-4 w-4" />
-              <span>99.9% Uptime SLA</span>
+              <Download className="h-4 w-4" />
+              <span>Export your data</span>
             </div>
             <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
               <Globe className="h-4 w-4" />
-              <span>Global CDN</span>
+              <span>Self-host or cloud</span>
             </div>
           </div>
         </div>
