@@ -106,8 +106,8 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
             </nav>
           </div>
 
-          {/* Mobile Category Tabs */}
-          <div className="md:hidden flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex gap-2">
+          {/* Mobile Category Tabs — wrap onto multiple rows instead of scrolling */}
+          <div className="md:hidden flex-shrink-0 px-4 py-2 border-b border-gray-200 dark:border-slate-800 flex flex-wrap gap-2">
             {templateCategories.map((category) => (
               <button
                 key={category.id}

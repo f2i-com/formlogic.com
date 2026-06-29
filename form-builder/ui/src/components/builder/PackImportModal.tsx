@@ -414,8 +414,8 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
             tabs pinned, content scrolls in the middle, footer pinned. Taller on
             mobile to use the available screen. */}
         <div className="p-4 sm:p-6 flex flex-col h-[80vh] sm:h-[70vh]">
-          {/* Tabs */}
-          <div className="flex border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex-shrink-0">
+          {/* Tabs — wrap onto multiple rows on mobile instead of scrolling */}
+          <div className="flex flex-wrap border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
             {tabButton('marketplace', <Package className="h-4 w-4" />, 'Marketplace')}
             {tabButton('installed', <Box className="h-4 w-4" />, 'Installed', installations.length)}
             {tabButton('mypacks', <User className="h-4 w-4" />, 'My Packs')}
