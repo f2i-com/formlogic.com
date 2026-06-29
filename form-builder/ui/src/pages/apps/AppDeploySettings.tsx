@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
@@ -17,6 +18,8 @@ export function AppDeploySettings() {
   const [pwaShortName, setPwaShortName] = useState('');
   const [pwaThemeColor, setPwaThemeColor] = useState('#6366f1');
   const [savingPwa, setSavingPwa] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [showUnpublish, setShowUnpublish] = useState(false);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -76,15 +79,32 @@ export function AppDeploySettings() {
   };
 
   const handlePublish = async () => {
-    if (!appId) return;
+    if (!appId || publishing) return;
+    setPublishing(true);
     await updateApp(appId, { status: 'published' });
     // Re-read from store to verify the update succeeded
     const updated = useAppStore.getState().getApp(appId);
+    setPublishing(false);
     if (updated && (updated as App).status === 'published') {
       setApp(updated as App);
       toast.success('Published', 'Your app is now live');
     } else {
       toast.error('Publish failed', 'Could not publish the app. Please try again.');
+    }
+  };
+
+  const handleUnpublish = async () => {
+    if (!appId || publishing) return;
+    setShowUnpublish(false);
+    setPublishing(true);
+    await updateApp(appId, { status: 'draft' });
+    const updated = useAppStore.getState().getApp(appId);
+    setPublishing(false);
+    if (updated && (updated as App).status !== 'published') {
+      setApp(updated as App);
+      toast.success('Unpublished', 'Your app is now offline.');
+    } else {
+      toast.error('Unpublish failed', 'Could not take the app offline. Please try again.');
     }
   };
 
@@ -103,11 +123,22 @@ export function AppDeploySettings() {
 
       <div className="space-y-6">
         {/* Status */}
-        {app.status !== 'published' && (
+        {app.status === 'published' ? (
+          <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200/80 dark:border-emerald-500/20 rounded-2xl p-6">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-medium text-emerald-800 dark:text-emerald-400 tracking-tight">App is live</h3>
+                <p className="text-sm text-emerald-700 dark:text-emerald-300/70 mt-1 mb-4">Anyone with access can use this app at its share link below.</p>
+                <Button variant="outline" onClick={() => setShowUnpublish(true)} disabled={publishing} isLoading={publishing}>Unpublish</Button>
+              </div>
+            </div>
+          </div>
+        ) : (
           <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200/80 dark:border-yellow-500/20 rounded-2xl p-6">
             <h3 className="font-medium text-yellow-800 dark:text-yellow-400 mb-2 tracking-tight">App is not published</h3>
             <p className="text-sm text-yellow-700 dark:text-yellow-300/70 mb-4">Publish your app to make it accessible to users.</p>
-            <Button onClick={handlePublish}>Publish App</Button>
+            <Button onClick={handlePublish} disabled={publishing} isLoading={publishing}>Publish App</Button>
           </div>
         )}
 
@@ -182,6 +213,15 @@ export function AppDeploySettings() {
       </div>
     </div>
     </div>
+      <ConfirmDialog
+        isOpen={showUnpublish}
+        onClose={() => setShowUnpublish(false)}
+        onConfirm={handleUnpublish}
+        title="Take this app offline?"
+        message="Users will lose access until you republish. Existing data is kept."
+        confirmLabel="Unpublish"
+        variant="danger"
+      />
     </div>
   );
 }

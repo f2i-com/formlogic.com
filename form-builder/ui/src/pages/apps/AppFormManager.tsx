@@ -5,6 +5,7 @@ import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
@@ -220,7 +221,7 @@ export function AppFormManager() {
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available Forms</h3>
           {availableForms.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-slate-500 py-4 text-center">
+            <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">
               {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'All forms are already included.'}
             </p>
           ) : (
@@ -229,7 +230,7 @@ export function AppFormManager() {
                 <div key={form.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
                   <div>
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
-                    <span className="ml-2 text-xs text-gray-400 dark:text-slate-500">{form.status}</span>
+                    <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm" className="ml-2 capitalize">{form.status}</Badge>
                   </div>
                   <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="p-1.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
@@ -244,7 +245,7 @@ export function AppFormManager() {
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Included Forms ({appForms.length})</h3>
           {appForms.length === 0 ? (
-            <p className="text-sm text-gray-400 dark:text-slate-500 py-4 text-center">No forms included yet</p>
+            <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">No forms included yet</p>
           ) : (
             <div className="space-y-2">
               {appForms.map((af, index) => (

@@ -4,6 +4,7 @@ import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, R
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Switch } from '../../components/ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
@@ -25,8 +26,12 @@ export function AppSettings() {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
+  // Snapshot of the persisted state; anything diverging from it is unsaved.
+  const [initialSnapshot, setInitialSnapshot] = useState('');
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -35,11 +40,26 @@ export function AppSettings() {
         if (found) {
           const appData = found as App;
           // Ensure theme has defaults to prevent undefined spread
-          setApp({ ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } });
+          const merged = { ...appData, theme: { ...DEFAULT_APP_THEME, ...appData.theme } };
+          setApp(merged);
+          setInitialSnapshot(JSON.stringify(merged));
         }
       }
     }).finally(() => setLoaded(true));
   }, [appId, fetchApps]);
+
+  const dirty = !!app && JSON.stringify(app) !== initialSnapshot;
+
+  // Warn on tab close / refresh while there are unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  // Navigate, but confirm first if there are unsaved edits.
+  const navGuarded = (to: string) => { if (dirty) setPendingNav(to); else navigate(to); };
 
   // Roles + forms power the membership defaults (default role, landing page).
   useEffect(() => {
@@ -66,6 +86,11 @@ export function AppSettings() {
 
   const handleSave = async () => {
     if (!appId) return;
+    if (app.name.trim().length < 2) {
+      setNameError('Name must be at least 2 characters');
+      return;
+    }
+    setNameError(null);
     setSaving(true);
     setSaveSuccess(false);
     const ok = await updateApp(appId, app);
@@ -73,6 +98,7 @@ export function AppSettings() {
     // Only show the success state when the update actually persisted; updateApp
     // already surfaces an error toast on failure.
     if (ok) {
+      setInitialSnapshot(JSON.stringify(app)); // edits are now persisted
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     }
@@ -84,7 +110,7 @@ export function AppSettings() {
         title={app.name}
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navGuarded('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
             <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
@@ -113,24 +139,29 @@ export function AppSettings() {
           <TabsContent value="general">
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name</label>
-              <input type="text" value={app.name} onChange={(e) => setApp({ ...app, name: e.target.value })}
-                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
+              <label htmlFor="app-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name</label>
+              <input id="app-name" type="text" value={app.name}
+                onChange={(e) => { setApp({ ...app, name: e.target.value }); if (nameError) setNameError(null); }}
+                onBlur={(e) => setNameError(e.target.value.trim().length < 2 ? 'Name must be at least 2 characters' : null)}
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameError ? 'app-name-error' : undefined}
+                className={cn('w-full px-3.5 py-2.5 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200', nameError ? 'border-red-400 dark:border-red-500/60' : 'border-gray-300 dark:border-slate-600')} />
+              {nameError && <p id="app-name-error" className="mt-1 text-sm text-red-600 dark:text-red-400">{nameError}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Public URL slug</label>
-              <input type="text" value={app.slug} readOnly aria-readonly="true"
+              <label htmlFor="app-slug" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Public URL slug</label>
+              <input id="app-slug" type="text" value={app.slug} readOnly aria-readonly="true"
                 className="w-full px-3.5 py-2.5 border border-gray-200/80 dark:border-slate-700/60 rounded-xl bg-gray-50 dark:bg-slate-800/60 text-gray-500 dark:text-slate-400 font-mono text-sm cursor-default focus:outline-none" />
               <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Permanent — set when the app was created. Your app is served at <span className="font-mono">/app/{app.slug}</span>.</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
-              <textarea value={app.description || ''} onChange={(e) => setApp({ ...app, description: e.target.value })}
-                rows={3} className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none" />
+              <label htmlFor="app-description" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
+              <textarea id="app-description" value={app.description || ''} onChange={(e) => setApp({ ...app, description: e.target.value })}
+                rows={3} className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-none" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
-              <select value={app.status} onChange={(e) => setApp({ ...app, status: e.target.value as App['status'] })}
+              <label htmlFor="app-status" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+              <select id="app-status" value={app.status} onChange={(e) => setApp({ ...app, status: e.target.value as App['status'] })}
                 className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
                 <option value="draft">Draft</option>
                 <option value="published">Published</option>
@@ -138,8 +169,8 @@ export function AppSettings() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Logo URL</label>
-              <input type="text" value={app.logoUrl || ''} onChange={(e) => setApp({ ...app, logoUrl: e.target.value })}
+              <label htmlFor="app-logo" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Logo URL</label>
+              <input id="app-logo" type="text" value={app.logoUrl || ''} onChange={(e) => setApp({ ...app, logoUrl: e.target.value })}
                 placeholder="https://example.com/logo.png"
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
             </div>
@@ -162,8 +193,9 @@ export function AppSettings() {
                     description="New members start as 'pending' until an admin approves them"
                   />
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Default role for new members</label>
+                    <label htmlFor="app-default-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Default role for new members</label>
                     <select
+                      id="app-default-role"
                       value={(app.settings?.defaultRoleId as string) || ''}
                       onChange={(e) => updateSetting('defaultRoleId', e.target.value || undefined)}
                       className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -177,8 +209,9 @@ export function AppSettings() {
                 </>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Landing page</label>
+                <label htmlFor="app-landing-page" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Landing page</label>
                 <select
+                  id="app-landing-page"
                   value={(app.settings?.landingPage as string) || ''}
                   onChange={(e) => updateSetting('landingPage', e.target.value || undefined)}
                   className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
@@ -291,7 +324,7 @@ export function AppSettings() {
             ].map((item) => (
               <button
                 key={item.path}
-                onClick={() => navigate(`/apps/${appId}/${item.path}`)}
+                onClick={() => navGuarded(`/apps/${appId}/${item.path}`)}
                 className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
               >
                 <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
@@ -309,6 +342,15 @@ export function AppSettings() {
       </Tabs>
     </div>
     </div>
+      <ConfirmDialog
+        isOpen={pendingNav !== null}
+        onClose={() => setPendingNav(null)}
+        onConfirm={() => { const to = pendingNav; setPendingNav(null); if (to) navigate(to); }}
+        title="Discard unsaved changes?"
+        message="You have unsaved changes to this app. If you leave now, they'll be lost."
+        confirmLabel="Discard changes"
+        variant="danger"
+      />
     </div>
   );
 }

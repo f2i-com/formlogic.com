@@ -144,7 +144,7 @@ export function AppCreateWizard() {
             {forms.length === 0 ? (
               <div className="text-center py-8">
                 <FileText className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
-                <p className="text-gray-400 dark:text-slate-500 mb-4">No forms available yet.</p>
+                <p className="text-gray-400 dark:text-slate-400 mb-4">No forms available yet.</p>
                 <Button
                   size="sm"
                   variant="outline"
@@ -205,7 +205,7 @@ export function AppCreateWizard() {
             <div>
               <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Included Forms ({selectedFormIds.length})</h4>
               {selectedFormIds.length === 0 ? (
-                <p className="text-sm text-gray-400 dark:text-slate-500">No forms selected</p>
+                <p className="text-sm text-gray-400 dark:text-slate-400">No forms selected</p>
               ) : (
                 <ul className="space-y-1">
                   {selectedFormIds.map((id) => {
@@ -220,7 +220,7 @@ export function AppCreateWizard() {
                 </ul>
               )}
             </div>
-            <p className="text-xs text-gray-400 dark:text-slate-500">Default roles (Owner, Admin, Member) will be created automatically.</p>
+            <p className="text-xs text-gray-400 dark:text-slate-400">Default roles (Owner, Admin, Member) will be created automatically.</p>
           </div>
         )}
       </div>

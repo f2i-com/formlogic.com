@@ -91,6 +91,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
 
       await api.updateForm(sourceFormId, { fields: [...sourceForm.fields, newField] });
       setSaving(false);
+      toast.success('Relation created', `"${label.trim()}" was added.`);
       onSave();
     } catch {
       toast.error('Save failed', 'Could not create the relation. Please try again.');
@@ -105,8 +106,9 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
       <div className="p-6 space-y-5">
         {/* Source Form */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Source Form</label>
+          <label htmlFor="relation-source-form" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Source Form</label>
           <select
+            id="relation-source-form"
             value={sourceFormId}
             onChange={(e) => { setSourceFormId(e.target.value); setTargetFormId(''); }}
             className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900/50 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -120,8 +122,9 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
 
         {/* Target Form */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Target Form</label>
+          <label htmlFor="relation-target-form" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Target Form</label>
           <select
+            id="relation-target-form"
             value={targetFormId}
             onChange={(e) => { setTargetFormId(e.target.value); setDisplayFieldIds([]); }}
             disabled={!sourceFormId}

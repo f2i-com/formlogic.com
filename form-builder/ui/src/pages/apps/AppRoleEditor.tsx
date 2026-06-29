@@ -30,6 +30,9 @@ export function AppRoleEditor() {
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
+  const [pendingNav, setPendingNav] = useState<string | null>(null);
+
+  const navGuarded = (to: string) => { if (dirty) setPendingNav(to); else navigate(to); };
 
   const loadData = async () => {
     if (!appId) return;
@@ -156,7 +159,7 @@ export function AppRoleEditor() {
       <Header
         title="Roles & Permissions"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navGuarded(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -216,6 +219,7 @@ export function AppRoleEditor() {
           </div>
           <div className="flex gap-2">
             <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role"
+              onKeyDown={(e) => { if (e.key === 'Enter' && newRoleName.trim()) handleCreateRole(); }}
               className="flex-1 min-w-0 px-2.5 py-1.5 border border-gray-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
             <button onClick={handleCreateRole} disabled={!newRoleName.trim()} className="p-1.5 text-primary-600 hover:text-primary-700 disabled:opacity-50 cursor-pointer rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors" aria-label="Create role">
               <Plus className="h-4 w-4" />
@@ -229,7 +233,7 @@ export function AppRoleEditor() {
             <>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Permissions for "{selectedRole.name}"</h3>
-                <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole}>
+                <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole || !dirty}>
                   {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Permissions'}
                 </Button>
               </div>
@@ -267,6 +271,15 @@ export function AppRoleEditor() {
         onConfirm={() => { if (pendingRoleId) { setSelectedRoleId(pendingRoleId); setDirty(false); } setPendingRoleId(null); }}
         title="Discard unsaved changes?"
         message="You have unsaved permission changes for this role. Switch roles and discard them?"
+        confirmLabel="Discard changes"
+        variant="danger"
+      />
+      <ConfirmDialog
+        isOpen={pendingNav !== null}
+        onClose={() => setPendingNav(null)}
+        onConfirm={() => { const to = pendingNav; setPendingNav(null); setDirty(false); if (to) navigate(to); }}
+        title="Discard unsaved changes?"
+        message="You have unsaved permission changes. If you leave now, they'll be lost."
         confirmLabel="Discard changes"
         variant="danger"
       />

@@ -137,6 +137,12 @@ class AppController
 
         $data = $request->getParsedBody() ?? [];
 
+        // If the name is being changed, it must be non-blank (mirrors create + the
+        // client-side guard) so an app can't be saved with an empty title.
+        if (array_key_exists('name', $data) && trim((string)($data['name'] ?? '')) === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App name is required'], 400);
+        }
+
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             $this->audit($request, 'app.update', 'app', $args['id']);

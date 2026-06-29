@@ -137,8 +137,18 @@ export function AppUserManager() {
     setInviteRoleId('');
   };
 
+  const handleApprove = async (user: AppUser) => {
+    if (!appId) return;
+    const ok = await updateUser(appId, user.id, { status: 'active' });
+    if (ok) toast.success('Member approved', `${user.name || user.email} is now active.`);
+  };
+
   const handleInvite = async () => {
     if (!appId || !inviteEmail || !inviteRoleId) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim())) {
+      setInviteError('Please enter a valid email address.');
+      return;
+    }
     setInviteLoading(true);
     setInviteError(null);
     const invitation = await inviteUser(appId, inviteEmail, inviteRoleId);
@@ -212,6 +222,10 @@ export function AppUserManager() {
             searchPlaceholder="Search users..."
             actions={(user) => (
               <div className="flex items-center justify-end gap-1">
+                {(user as unknown as AppUser).status === 'pending' && (
+                  <button onClick={() => handleApprove(user as unknown as AppUser)}
+                    className="p-1.5 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer" aria-label="Approve member"><Check className="h-4 w-4" /></button>
+                )}
                 <button onClick={() => openEditUser(user as unknown as AppUser)}
                   className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Edit member role and status"><Pencil className="h-4 w-4" /></button>
                 <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
@@ -227,7 +241,7 @@ export function AppUserManager() {
             columns={[
               { key: 'email', label: 'Email', sortable: true },
               { key: 'roleName', label: 'Role', sortable: true },
-              { key: 'status', label: 'Status', sortable: true },
+              { key: 'status', label: 'Status', sortable: true, render: (inv) => { const s = String((inv as unknown as AppInvitation).status); return <Badge variant={statusBadgeVariant(s)} size="sm">{formatStatusLabel(s)}</Badge>; } },
               { key: 'expiresAt', label: 'Expires', sortable: true, render: (inv) => new Date(String((inv as unknown as AppInvitation).expiresAt)).toLocaleDateString() },
             ] as Column<Record<string, unknown>>[]}
             searchable
@@ -384,7 +398,9 @@ export function AppUserManager() {
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
-            <Button onClick={handleSaveUser} disabled={!editRoleId || editSaving} isLoading={editSaving}>Save</Button>
+            <Button onClick={handleSaveUser} disabled={!editRoleId || editSaving} isLoading={editSaving}>
+              {editingUser?.status === 'pending' && editStatus === 'active' ? 'Approve member' : 'Save'}
+            </Button>
           </div>
         </div>
       </Modal>

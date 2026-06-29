@@ -348,9 +348,14 @@ export default function FormAnalytics() {
           a.download = `${sanitizeFilename(form.title)}-responses.csv`;
           a.click();
           URL.revokeObjectURL(url);
+          toast.success('Export ready', 'Your CSV download has started.');
           return;
         } catch (error) {
-          logger.error('Failed to export from API, falling back to local:', error);
+          // In cloud mode there's no local data to fall back to, so surface the real
+          // failure instead of letting it fall through to a misleading "No Data".
+          logger.error('Failed to export from API:', error);
+          toast.error('Export Failed', error instanceof Error ? error.message : 'Could not export responses.');
+          return;
         }
       }
 
@@ -387,6 +392,7 @@ export default function FormAnalytics() {
       a.download = `${sanitizeFilename(form.title)}-responses.csv`;
       a.click();
       URL.revokeObjectURL(url);
+      toast.success('Export ready', 'Your CSV download has started.');
     } catch (error) {
       logger.error('Failed to export CSV:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export CSV');
@@ -401,6 +407,7 @@ export default function FormAnalytics() {
     setExportMenuOpen(false);
     try {
       await api.downloadSqlite(form.id, form.title);
+      toast.success('Export ready', 'Your SQLite download has started.');
     } catch (error) {
       logger.error('Failed to export SQLite:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
@@ -415,6 +422,7 @@ export default function FormAnalytics() {
     setExportMenuOpen(false);
     try {
       await api.downloadJson(form.id, form.title);
+      toast.success('Export ready', 'Your JSON download has started.');
     } catch (error) {
       logger.error('Failed to export JSON:', error);
       toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
@@ -445,7 +453,10 @@ export default function FormAnalytics() {
               <Button
                 size="sm"
                 onClick={() => setExportMenuOpen(!exportMenuOpen)}
-                disabled={isExporting}
+                disabled={isExporting || totalResponses === 0}
+                title={totalResponses === 0 ? 'No responses to export' : undefined}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
               >
                 {isExporting ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -456,8 +467,10 @@ export default function FormAnalytics() {
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
               {exportMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
+                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
                   <button
+                    role="menuitem"
+                    type="button"
                     onClick={handleExportCSV}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
@@ -465,6 +478,8 @@ export default function FormAnalytics() {
                     Export CSV
                   </button>
                   <button
+                    role="menuitem"
+                    type="button"
                     onClick={handleExportJson}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
@@ -472,6 +487,8 @@ export default function FormAnalytics() {
                     Export JSON
                   </button>
                   <button
+                    role="menuitem"
+                    type="button"
                     onClick={handleExportSqlite}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
                   >
@@ -528,7 +545,12 @@ export default function FormAnalytics() {
             <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Responses Over Time</h2>
           </CardHeader>
           <CardContent>
-            <div className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2">
+            {/* One labelled figure for AT — the per-bar div aria-labels aren't exposed. */}
+            <div
+              className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2"
+              role="img"
+              aria-label={`Responses over the last ${dailyResponses.length} days. ${dailyResponses.map((d) => `${d.day} ${d.count}`).join(', ')}.`}
+            >
               {dailyResponses.map((day) => (
                 <div key={day.day} className="flex-1 flex flex-col items-center gap-1 sm:gap-2">
                   <span className="text-xs text-gray-500 dark:text-slate-500 font-medium tabular-nums">
