@@ -8,6 +8,9 @@ export interface KeyboardShortcut {
   meta?: boolean;
   description: string;
   action: () => void;
+  // For ctrl/meta shortcuts that should NOT fire while typing in an input — e.g.
+  // Ctrl+Z must do native text-undo in a field, not undo a field operation.
+  suppressInInput?: boolean;
 }
 
 interface UseKeyboardShortcutsOptions {
@@ -46,8 +49,11 @@ export function useKeyboardShortcuts({ shortcuts, enabled = true }: UseKeyboardS
         const keyMatch = event.key.toLowerCase() === shortcut.key.toLowerCase();
 
         if (keyMatch && ctrlOrMeta && shiftMatch && altMatch) {
-          // Allow Ctrl+S and similar even in inputs
+          // Allow Ctrl+S and similar even in inputs — except ones flagged
+          // suppressInInput (e.g. Ctrl+Z), which must defer to the browser's
+          // native text editing when focus is in a field.
           if (shortcut.ctrl || shortcut.meta) {
+            if (shortcut.suppressInInput && isInput) continue;
             event.preventDefault();
             shortcut.action();
             return;

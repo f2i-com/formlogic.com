@@ -19,6 +19,8 @@ import {
   HardDrive,
   X,
   SlidersHorizontal,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import {
   DndContext,
@@ -78,15 +80,22 @@ export default function FormBuilder() {
     loadFullForm,
     updateForm,
     addField,
+    addFields,
     updateField,
     deleteField,
     reorderFields,
     selectedFieldId,
     setSelectedField,
     duplicateField,
+    undoFields,
+    redoFields,
   } = useFormStore();
   const isSaving = useFormStore((s) => formId ? !!s.savingFormIds[formId] : false);
   const storageMode = useFormStore((s) => s.storageMode);
+  // Subscribe to this form's history so the undo/redo buttons re-render as it changes.
+  const fieldHistory = useFormStore((s) => (formId ? s.fieldHistory[formId] : undefined));
+  const canUndo = (fieldHistory?.past.length ?? 0) > 0;
+  const canRedo = (fieldHistory?.future.length ?? 0) > 0;
 
   const { isMobile, setIsMobile, mobilePanel, setMobilePanel } = useUIStore();
 
@@ -293,6 +302,17 @@ export default function FormBuilder() {
     toast.success('Duplicated', 'Field duplicated');
   }, [form, selectedFieldId, duplicateField]);
 
+  // After undo/redo the focused field card may unmount — move focus to the (possibly
+  // new) selected card so keyboard focus isn't stranded on document.body.
+  const refocusSelection = useCallback(() => {
+    requestAnimationFrame(() => {
+      const sel = useFormStore.getState().selectedFieldId;
+      if (sel) document.getElementById(`field-select-${sel}`)?.focus();
+    });
+  }, []);
+  const handleUndo = useCallback(() => { if (form) { undoFields(form.id); refocusSelection(); } }, [form, undoFields, refocusSelection]);
+  const handleRedo = useCallback(() => { if (form) { redoFields(form.id); refocusSelection(); } }, [form, redoFields, refocusSelection]);
+
   const handleNavigateFields = useCallback((direction: 'up' | 'down') => {
     if (formFields.length === 0) return;
 
@@ -331,6 +351,9 @@ export default function FormBuilder() {
     { key: '?', ctrl: true, shift: true, description: 'Show keyboard shortcuts', action: () => setActiveModal('shortcuts') },
     { key: 'Escape', description: 'Deselect field', action: () => setSelectedField(null) },
     { key: 'd', ctrl: true, description: 'Duplicate selected field', action: handleDuplicateSelected },
+    { key: 'z', ctrl: true, description: 'Undo', action: handleUndo, suppressInInput: true },
+    { key: 'z', ctrl: true, shift: true, description: 'Redo', action: handleRedo, suppressInInput: true },
+    { key: 'y', ctrl: true, description: 'Redo', action: handleRedo, suppressInInput: true },
     { key: 'Delete', description: 'Delete selected field', action: handleDeleteSelected },
     { key: 'Backspace', description: 'Delete selected field', action: handleDeleteSelected },
     { key: 'ArrowUp', description: 'Select previous field', action: () => handleNavigateFields('up') },
@@ -341,7 +364,7 @@ export default function FormBuilder() {
     { key: 'e', description: 'Add email field', action: () => handleAddField('email') },
     { key: 'n', description: 'Add number field', action: () => handleAddField('number') },
     { key: 'r', description: 'Add rating field', action: () => handleAddField('rating') },
-  ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
+  ], [handleSave, handlePreview, handleDuplicateSelected, handleDeleteSelected, handleUndo, handleRedo, handleNavigateFields, handleMoveField, handleAddField, setSelectedField]);
 
   useKeyboardShortcuts({ shortcuts });
 
@@ -426,25 +449,19 @@ export default function FormBuilder() {
       logicPrompt: prompt,
     });
 
-    // Add generated fields
-    let firstFieldId: string | null = null;
-    fields.forEach((field) => {
-      const created = addField(form.id, {
-        type: field.type,
-        label: field.label,
-        description: field.description,
-        placeholder: field.placeholder,
-        required: field.required,
-        properties: field.properties || {},
-      });
-      if (!firstFieldId) {
-        firstFieldId = created.id;
-      }
-    });
+    // Add generated fields as ONE undo step (not one per field).
+    const created = addFields(form.id, fields.map((field) => ({
+      type: field.type,
+      label: field.label,
+      description: field.description,
+      placeholder: field.placeholder,
+      required: field.required,
+      properties: field.properties || {},
+    })));
 
     // Select the first generated field
-    if (firstFieldId) {
-      setSelectedField(firstFieldId);
+    if (created.length > 0) {
+      setSelectedField(created[0].id);
     }
   };
 
@@ -652,8 +669,8 @@ export default function FormBuilder() {
 
       {/* Mobile Tabs */}
       {isMobile && (
-        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-2 flex-shrink-0">
-          <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
+        <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 px-3 py-2 flex-shrink-0 flex items-center gap-2">
+          <div className="flex-1 flex bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
             {([
               { key: 'palette' as const, label: 'Fields', icon: Plus },
               { key: 'canvas' as const, label: 'Canvas', icon: Layers, badge: formFields.length || undefined },
@@ -682,6 +699,14 @@ export default function FormBuilder() {
                 )}
               </button>
             ))}
+          </div>
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            <button onClick={handleUndo} disabled={!canUndo} aria-label="Undo" className="inline-flex items-center justify-center min-h-10 min-w-10 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
+              <Undo2 className="h-4 w-4" />
+            </button>
+            <button onClick={handleRedo} disabled={!canRedo} aria-label="Redo" className="inline-flex items-center justify-center min-h-10 min-w-10 rounded-lg text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed">
+              <Redo2 className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}
@@ -715,16 +740,26 @@ export default function FormBuilder() {
           <div className="flex-1 flex flex-col overflow-hidden">
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
             <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
-              <Button
-                ref={addFieldToggleRef}
-                size="sm"
-                variant={paletteOpen ? 'secondary' : 'outline'}
-                onClick={() => toggleDock('palette')}
-                leftIcon={<Plus className="h-4 w-4" />}
-                aria-pressed={paletteOpen}
-              >
-                Add Field
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  ref={addFieldToggleRef}
+                  size="sm"
+                  variant={paletteOpen ? 'secondary' : 'outline'}
+                  onClick={() => toggleDock('palette')}
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  aria-pressed={paletteOpen}
+                >
+                  Add Field
+                </Button>
+                <div className="flex items-center gap-0.5 border-l border-gray-200 dark:border-slate-700 pl-2">
+                  <Button size="sm" variant="ghost" onClick={handleUndo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
+                    <Undo2 className="h-4 w-4" />
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={handleRedo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
+                    <Redo2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
               <span className="text-xs text-gray-400 dark:text-slate-500">
                 {formFields.length} field{formFields.length === 1 ? '' : 's'}
               </span>

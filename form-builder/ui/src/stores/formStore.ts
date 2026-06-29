@@ -61,6 +61,8 @@ interface FormState {
   isInitialized: boolean;
   // Per-form count of in-flight saves (field/settings/theme/meta can overlap)
   savingFormIds: Record<string, number>;
+  // Per-form undo/redo stacks of prior field-array states (ephemeral)
+  fieldHistory: Record<string, { past: FormField[][]; future: FormField[][] }>;
 
   // Initialization
   initialize: () => Promise<void>;
@@ -78,11 +80,16 @@ interface FormState {
 
   // Field actions
   addField: (formId: string, field: Omit<FormField, 'id' | 'order'>) => FormField;
+  // Append several fields as ONE undo step (e.g. AI generation / template apply)
+  addFields: (formId: string, fields: Omit<FormField, 'id' | 'order'>[]) => FormField[];
   updateField: (formId: string, fieldId: string, updates: Partial<FormField>) => void;
   deleteField: (formId: string, fieldId: string) => void;
   duplicateField: (formId: string, fieldId: string) => FormField | null;
   reorderFields: (formId: string, fieldIds: string[]) => void;
   setSelectedField: (fieldId: string | null) => void;
+  // In-builder undo/redo of field-array mutations (per form; not persisted)
+  undoFields: (formId: string) => void;
+  redoFields: (formId: string) => void;
 
   // Settings & Theme
   updateFormSettings: (formId: string, settings: Partial<FormSettings>) => void;
@@ -211,10 +218,29 @@ export const useFormStore = create<FormState>()(
       }
     };
 
+    // ---- In-builder undo/redo (per form; ephemeral — never persisted) ----
+    const HISTORY_CAP = 50;
+    // Consecutive edits to the SAME field coalesce into one undo entry so typing a
+    // label isn't one history step per keystroke. Structural ops + selection reset it.
+    let historyCoalesceKey: string | null = null;
+    const cloneFields = (fields: FormField[]): FormField[] => JSON.parse(JSON.stringify(fields));
+    // Snapshot the current field array before a mutation so it can be undone.
+    const pushHistory = (formId: string) => {
+      const form = get().forms.find((f) => f.id === formId);
+      if (!form) return;
+      set((state) => {
+        const h = state.fieldHistory[formId] ?? { past: [], future: [] };
+        const past = [...h.past, cloneFields(form.fields)];
+        if (past.length > HISTORY_CAP) past.shift();
+        return { fieldHistory: { ...state.fieldHistory, [formId]: { past, future: [] } } };
+      });
+    };
+
     return ({
       forms: [],
       activeFormId: null,
       selectedFieldId: null,
+      fieldHistory: {},
       isLoading: false,
       error: null,
       storageMode: 'local' as StorageMode,
@@ -409,11 +435,16 @@ export const useFormStore = create<FormState>()(
         clearDebounceTimer(`${id}-theme`);
         clearDebounceTimer(`${id}-meta`);
 
-        // Optimistic update
-        set((s) => ({
-          forms: s.forms.filter((form) => form.id !== id),
-          activeFormId: s.activeFormId === id ? null : s.activeFormId,
-        }));
+        // Optimistic update (also drop any in-session undo history for the form)
+        set((s) => {
+          const fieldHistory = { ...s.fieldHistory };
+          delete fieldHistory[id];
+          return {
+            forms: s.forms.filter((form) => form.id !== id),
+            activeFormId: s.activeFormId === id ? null : s.activeFormId,
+            fieldHistory,
+          };
+        });
 
         // If using API, also delete on server
         if (state.storageMode === 'api') {
@@ -523,9 +554,18 @@ export const useFormStore = create<FormState>()(
           const result = await api.getForm(id);
           if (!result.error && result.data?.form) {
             const fullForm = { ...(result.data.form as Form), _fieldsLoaded: true } as Form;
-            set((s) => ({
-              forms: s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f)),
-            }));
+            // Fields are wholesale-replaced from the server (incl. version restore), so
+            // any in-session undo history is now incoherent — drop it (else Ctrl+Z would
+            // restore pre-load fields and sync that stale state back to the server).
+            set((s) => {
+              const fieldHistory = { ...s.fieldHistory };
+              delete fieldHistory[id];
+              return {
+                forms: s.forms.map((f) => (f.id === id ? { ...f, ...fullForm } : f)),
+                fieldHistory,
+              };
+            });
+            historyCoalesceKey = null;
             return fullForm;
           }
         } catch (error) {
@@ -534,11 +574,14 @@ export const useFormStore = create<FormState>()(
         return existing;
       },
 
-      setActiveForm: (id) => set({ activeFormId: id, selectedFieldId: null }),
+      setActiveForm: (id) => { historyCoalesceKey = null; set({ activeFormId: id, selectedFieldId: null }); },
 
       addField: (formId, fieldData) => {
         const form = get().forms.find((f) => f.id === formId);
         if (!form) throw new Error('Form not found');
+
+        pushHistory(formId);
+        historyCoalesceKey = null;
 
         // Generate human-friendly ID from label
         const existingIds = form.fields.map((f) => f.id);
@@ -567,7 +610,43 @@ export const useFormStore = create<FormState>()(
         return field;
       },
 
+      addFields: (formId, fieldsData) => {
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) throw new Error('Form not found');
+        if (fieldsData.length === 0) return [];
+
+        // One history snapshot for the whole batch so it undoes as a single step.
+        pushHistory(formId);
+        historyCoalesceKey = null;
+
+        const existingIds = form.fields.map((f) => f.id);
+        let order = form.fields.length;
+        const newFields: FormField[] = fieldsData.map((fd) => {
+          const fieldId = generateFieldId(fd.label, existingIds);
+          existingIds.push(fieldId); // keep subsequent ids unique within the batch
+          return { ...fd, id: fieldId, order: order++ };
+        });
+
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId
+              ? { ...f, fields: [...f.fields, ...newFields], updatedAt: new Date().toISOString() }
+              : f
+          ),
+        }));
+
+        syncFormField(formId, 'fields');
+
+        return newFields;
+      },
+
       updateField: (formId, fieldId, updates) => {
+        // Coalesce consecutive edits to the same field into a single undo entry.
+        const key = `${formId}:${fieldId}`;
+        if (historyCoalesceKey !== key) {
+          pushHistory(formId);
+          historyCoalesceKey = key;
+        }
         set((state) => ({
           forms: state.forms.map((form) =>
             form.id === formId
@@ -586,6 +665,8 @@ export const useFormStore = create<FormState>()(
       },
 
       deleteField: (formId, fieldId) => {
+        pushHistory(formId);
+        historyCoalesceKey = null;
         // Match the deleted field as a whole token so deleting "email" doesn't also
         // wipe conditional/calc logic that references a sibling like "email_address"
         // (a plain substring `.includes` did exactly that).
@@ -628,6 +709,9 @@ export const useFormStore = create<FormState>()(
 
         const field = form.fields.find((f) => f.id === fieldId);
         if (!field) return null;
+
+        pushHistory(formId);
+        historyCoalesceKey = null;
 
         // Generate new ID for duplicated field
         const existingIds = form.fields.map((f) => f.id);
@@ -684,6 +768,8 @@ export const useFormStore = create<FormState>()(
       },
 
       reorderFields: (formId, fieldIds) => {
+        pushHistory(formId);
+        historyCoalesceKey = null;
         set((state) => ({
           forms: state.forms.map((form) => {
             if (form.id !== formId) return form;
@@ -715,7 +801,44 @@ export const useFormStore = create<FormState>()(
         syncFormField(formId, 'fields');
       },
 
-      setSelectedField: (fieldId) => set({ selectedFieldId: fieldId }),
+      setSelectedField: (fieldId) => { historyCoalesceKey = null; set({ selectedFieldId: fieldId }); },
+
+      undoFields: (formId) => {
+        const h = get().fieldHistory[formId];
+        if (!h || h.past.length === 0) return;
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) return;
+        historyCoalesceKey = null;
+        const current = cloneFields(form.fields);
+        const prev = h.past[h.past.length - 1];
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId ? { ...f, fields: cloneFields(prev), updatedAt: new Date().toISOString() } : f
+          ),
+          fieldHistory: { ...state.fieldHistory, [formId]: { past: h.past.slice(0, -1), future: [...h.future, current] } },
+          // Keep the selection only if the restored state still contains it.
+          selectedFieldId: prev.some((fl) => fl.id === state.selectedFieldId) ? state.selectedFieldId : null,
+        }));
+        syncFormField(formId, 'fields');
+      },
+
+      redoFields: (formId) => {
+        const h = get().fieldHistory[formId];
+        if (!h || h.future.length === 0) return;
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) return;
+        historyCoalesceKey = null;
+        const current = cloneFields(form.fields);
+        const next = h.future[h.future.length - 1];
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId ? { ...f, fields: cloneFields(next), updatedAt: new Date().toISOString() } : f
+          ),
+          fieldHistory: { ...state.fieldHistory, [formId]: { past: [...h.past, current], future: h.future.slice(0, -1) } },
+          selectedFieldId: next.some((fl) => fl.id === state.selectedFieldId) ? state.selectedFieldId : null,
+        }));
+        syncFormField(formId, 'fields');
+      },
 
       updateFormSettings: (formId, settings) => {
         set((state) => ({

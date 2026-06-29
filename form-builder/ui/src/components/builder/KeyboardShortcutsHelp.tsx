@@ -27,7 +27,7 @@ const shortcutSections: ShortcutSection[] = [
     shortcuts: [
       { keys: `${cmdKey}+S`, description: 'Save form' },
       { keys: `${cmdKey}+P`, description: 'Preview form' },
-      { keys: `${cmdKey}+?`, description: 'Show keyboard shortcuts' },
+      { keys: `${cmdKey}+Shift+?`, description: 'Show keyboard shortcuts' },
       { keys: 'Esc', description: 'Close modals / Deselect' },
     ],
   },
@@ -35,6 +35,8 @@ const shortcutSections: ShortcutSection[] = [
     title: 'Field Operations',
     shortcuts: [
       { keys: `${cmdKey}+D`, description: 'Duplicate selected field' },
+      { keys: `${cmdKey}+Z`, description: 'Undo' },
+      { keys: `${cmdKey}+Shift+Z`, description: 'Redo' },
       { keys: 'Delete / Backspace', description: 'Delete selected field' },
       { keys: '↑ / ↓', description: 'Navigate between fields' },
       { keys: `${cmdKey}+↑`, description: 'Move field up' },
