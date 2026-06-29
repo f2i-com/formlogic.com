@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
+use FormLogic\Services\AppService;
 use FormLogic\Services\EmailService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\AuditService;
@@ -18,6 +19,11 @@ use Psr\Log\NullLogger;
 
 class ResponseController
 {
+    // Hard ceiling on the serialized answers of a single submission, so an
+    // unauthenticated client can't write arbitrarily large blobs into the per-form
+    // SQLite store (disk-exhaustion DoS). Generous for any real form.
+    private const MAX_ANSWER_BYTES = 2_000_000; // ~2 MB
+
     private ResponseService $responseService;
     private FormService $formService;
     private SQLiteConnection $sqlite;
@@ -25,8 +31,9 @@ class ResponseController
     private LoggerInterface $logger;
     private ?AuditService $auditService;
     private ?EmailService $emailService;
+    private ?AppService $appService;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?EmailService $emailService = null)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?EmailService $emailService = null, ?AppService $appService = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
@@ -35,6 +42,7 @@ class ResponseController
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
         $this->emailService = $emailService;
+        $this->appService = $appService;
     }
 
     /**
@@ -179,6 +187,17 @@ class ResponseController
             ], 403);
         }
 
+        // App-scoped forms must be submitted through the authenticated app runtime
+        // (/api/app/{slug}/...), which enforces membership + the SUBMIT permission.
+        // Mirror FileController::serve so the standalone public path can't bypass app
+        // RBAC and poison app data anonymously.
+        if ($this->appService && $this->appService->isFormInAnyApp($formId)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found',
+            ], 404);
+        }
+
         // Check if form is closed
         $settings = $form['settings'] ?? [];
         if (!empty($settings['isClosed'])) {
@@ -202,6 +221,15 @@ class ResponseController
         // round-trip into storage/export/analytics and are available to
         // conditional-logic evaluation during validation.
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+
+        // Hard-cap the total serialized answer size before we persist it (defends the
+        // unauthenticated endpoint against disk-exhaustion via oversized answers).
+        if (strlen((string) json_encode($data['answers'])) > self::MAX_ANSWER_BYTES) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Submission is too large.',
+            ], 413);
+        }
 
         // Validate answers against form fields (honors conditional visibility)
         $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
@@ -396,8 +424,16 @@ class ResponseController
         // array/object for e.g. a phone field would otherwise reach preg_match()
         // and throw an uncaught TypeError (HTTP 500). Reject it cleanly as a 400.
         $scalarTypes = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'datetime', 'time'];
-        if (in_array($type, $scalarTypes, true) && !is_scalar($value)) {
-            return 'Invalid value';
+        if (in_array($type, $scalarTypes, true)) {
+            if (!is_scalar($value)) {
+                return 'Invalid value';
+            }
+            // Cap scalar size before the per-type validators run, so a giant value
+            // can't bloat per-form SQLite storage or feed ReDoS into the regex checks
+            // below. (short_text/long_text apply tighter caps further down.)
+            if (strlen((string) $value) > 100000) {
+                return 'Value is too long';
+            }
         }
 
         switch ($type) {
@@ -416,6 +452,10 @@ class ResponseController
             case 'number':
                 if (!is_numeric($value)) {
                     return 'Must be a number';
+                }
+                // A legitimate number is never thousands of digits long.
+                if (strlen((string) $value) > 64) {
+                    return 'Number is too long';
                 }
                 break;
 
@@ -535,6 +575,11 @@ class ResponseController
                 foreach ($value as $item) {
                     if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
                         return 'Invalid file metadata';
+                    }
+                    // Bound the filename so a client can't smuggle a multi-megabyte
+                    // string into storage via file metadata.
+                    if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                        return 'Invalid file name';
                     }
                 }
                 break;

@@ -231,7 +231,8 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(SQLiteConnection::class),
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
-        $c->get(\FormLogic\Services\EmailService::class)
+        $c->get(\FormLogic\Services\EmailService::class),
+        $c->get(\FormLogic\Services\AppService::class)
     );
 });
 
@@ -737,6 +738,17 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
             'message' => 'Form is not available',
         ]));
         return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
+
+    // App-scoped forms are served through the authenticated app runtime
+    // (/api/app/{slug}), which enforces membership — don't expose their structure
+    // anonymously via this standalone endpoint (mirrors FileController::serve).
+    if ($container->get(\FormLogic\Services\AppService::class)->isFormInAnyApp($args['id'])) {
+        $response->getBody()->write(json_encode([
+            'error' => true,
+            'message' => 'Form not found',
+        ]));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
 
     // Record a view for analytics (best-effort; never blocks form serving).

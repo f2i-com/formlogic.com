@@ -94,6 +94,14 @@ class FileController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
         }
 
+        // App-scoped forms upload through the authenticated app route
+        // (/api/app/{slug}/forms/{formId}/upload), which enforces membership + the
+        // SUBMIT permission. Refuse the standalone endpoint so it can't be used to
+        // push files into an app's storage anonymously (mirrors serve()).
+        if ($this->appService && $this->appService->isFormInAnyApp($formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+
         if ($form['status'] !== 'published') {
             // Allow upload if the user is the form owner (authenticated)
             $userId = $request->getAttribute('userId');
