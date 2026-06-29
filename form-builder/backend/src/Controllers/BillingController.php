@@ -81,7 +81,7 @@ class BillingController
             $orderId = $this->paypal->createOrder(
                 $amountCents,
                 $this->currency,
-                $months . ' month' . ($months === 1 ? '' : 's') . ' of FormLogic Cloud',
+                ($months * 30) . ' days of FormLogic Cloud',
                 $userId . ':' . $months
             );
             // Record the order as the server's source of truth for what was purchased.
@@ -230,9 +230,10 @@ class BillingController
                 $pdo->rollBack();
                 return false;
             }
-            // Stack months from max(now, current expiry) — no subscription.
-            $pdo->prepare('UPDATE users SET cloud_until = DATE_ADD(GREATEST(COALESCE(cloud_until, NOW()), NOW()), INTERVAL ? MONTH) WHERE id = ?')
-                ->execute([(int) $payment['months'], $payment['user_id']]);
+            // Stack 30-day periods from max(now, current expiry) — no subscription, no
+            // calendar-month variance: each purchased unit is exactly 30 days.
+            $pdo->prepare('UPDATE users SET cloud_until = DATE_ADD(GREATEST(COALESCE(cloud_until, NOW()), NOW()), INTERVAL ? DAY) WHERE id = ?')
+                ->execute([(int) $payment['months'] * 30, $payment['user_id']]);
             $pdo->commit();
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {

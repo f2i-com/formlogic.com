@@ -103,7 +103,7 @@ export function Billing() {
             if (res.data?.processing) {
               toast.success('Payment received', res.data.message || 'Your cloud time will be added once it clears.');
             } else {
-              toast.success('Cloud time added', res.data?.monthsAdded ? `Added ${res.data.monthsAdded} month${res.data.monthsAdded === 1 ? '' : 's'}.` : 'Your cloud access has been extended.');
+              toast.success('Cloud time added', res.data?.monthsAdded ? `Added ${res.data.monthsAdded * 30} days.` : 'Your cloud access has been extended.');
             }
             refresh();
           },
@@ -150,7 +150,7 @@ export function Billing() {
         </div>
         <h1 className="text-2xl font-semibold text-gray-900 dark:text-white tracking-tight">Cloud</h1>
       </div>
-      <p className="text-gray-500 dark:text-slate-400 mb-8">Pay only for the months you use — no subscription, no auto-renew.</p>
+      <p className="text-gray-500 dark:text-slate-400 mb-8">Pay only for the time you use — no subscription, no auto-renew.</p>
 
       {/* Current status */}
       <div className={`rounded-2xl border p-5 mb-6 ${cloudActive ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
@@ -159,13 +159,13 @@ export function Billing() {
             <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
             <div>
               <p className="font-medium text-gray-900 dark:text-white">Cloud is active</p>
-              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Your cloud access runs until <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>. Add more months anytime — they stack onto this date.</p>
+              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Your cloud access runs until <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>. Add more time anytime — it stacks onto this date.</p>
             </div>
           </div>
         ) : (
           <div>
             <p className="font-medium text-gray-900 dark:text-white">You're on the free plan</p>
-            <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Everything still works for free. Add cloud months below for managed hosting and backups.</p>
+            <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">Everything still works for free. Add cloud time below for managed hosting and backups.</p>
           </div>
         )}
       </div>
@@ -173,17 +173,17 @@ export function Billing() {
       {/* Buy cloud months */}
       <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-6">
         <div className="flex items-baseline justify-between mb-1">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Add cloud months</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Add cloud time</h2>
           <div className="text-right">
             <span className="text-2xl font-bold text-gray-900 dark:text-white">{fmt(price)}</span>
-            <span className="text-sm text-gray-400 dark:text-slate-500"> / month</span>
+            <span className="text-sm text-gray-400 dark:text-slate-500"> / 30 days</span>
           </div>
         </div>
-        <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">One-time payment via PayPal. Each {fmt(price)} adds one month.</p>
+        <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">One-time payment via PayPal. Each {fmt(price)} adds 30 days.</p>
 
         {/* Quantity stepper */}
         <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 dark:bg-slate-800/60 p-4 mb-5">
-          <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Months</span>
+          <span className="text-sm font-medium text-gray-700 dark:text-slate-300">30-day periods</span>
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => setMonths((m) => Math.max(1, m - 1))} disabled={months <= 1}
               className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" aria-label="Fewer months">
@@ -198,7 +198,7 @@ export function Billing() {
         </div>
 
         <div className="flex items-baseline justify-between mb-5">
-          <span className="text-sm text-gray-500 dark:text-slate-400">Total ({months} month{months === 1 ? '' : 's'})</span>
+          <span className="text-sm text-gray-500 dark:text-slate-400">Total ({months * 30} days)</span>
           <span className="text-xl font-bold text-gray-900 dark:text-white">{fmt(parseFloat(total))}</span>
         </div>
 

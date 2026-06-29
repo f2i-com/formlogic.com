@@ -354,11 +354,11 @@ export function Docs() {
             {/* Cloud & billing */}
             <section className="mb-14">
               <H2 id="cloud" icon={Cloud}>Cloud &amp; billing</H2>
-              <P>FormLogic is free to use — self-host it or run it locally and everything works. <strong className="text-gray-900 dark:text-white">Cloud</strong> is optional managed hosting (we run it for you, with backups) billed <strong className="text-gray-900 dark:text-white">pay-as-you-go</strong>: $5 buys one month, and that's it — <strong className="text-gray-900 dark:text-white">no subscription and nothing auto-renews</strong>.</P>
+              <P>FormLogic is free to use — self-host it or run it locally and everything works. <strong className="text-gray-900 dark:text-white">Cloud</strong> is optional managed hosting (we run it for you, with backups) billed <strong className="text-gray-900 dark:text-white">pay-as-you-go</strong>: every new account gets the <strong className="text-gray-900 dark:text-white">first 30 days of Cloud free</strong>, then $5 buys another 30 days — that's it, <strong className="text-gray-900 dark:text-white">no subscription and nothing auto-renews</strong>.</P>
               <Steps items={[
                 <>Open <strong className="text-gray-900 dark:text-white">Cloud &amp; billing</strong> from the account menu (top-right).</>,
-                <>Choose how many months you want — buying several at once just stacks them onto your expiry date.</>,
-                <>Pay with <strong className="text-gray-900 dark:text-white">PayPal</strong>. Your cloud access extends from the later of today or your current expiry, so months never overlap or get lost.</>,
+                <>Choose how many 30-day periods you want — buying several at once just stacks them onto your expiry date.</>,
+                <>Pay with <strong className="text-gray-900 dark:text-white">PayPal</strong>. Your cloud access extends from the later of today or your current expiry, so time never overlaps or gets lost.</>,
                 <>When it lapses, nothing is deleted — you simply drop back to the free plan until you top up again.</>,
               ]} />
               <Bullets items={[

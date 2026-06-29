@@ -178,13 +178,13 @@ export function Landing() {
     {
       name: 'Personal',
       price: '$5',
-      period: '/ month',
+      period: '/ 30 days',
       description: 'Managed cloud, prepaid',
       features: [
+        'First 30 days free',
         '100 forms · 1 GB storage',
         'Unlimited responses (fair use)',
         'Internal apps, scripts & API',
-        'Unlimited local AI',
         'Prepaid — pay with PayPal, no subscription',
       ],
       cta: 'Get started',
@@ -735,7 +735,7 @@ export function Landing() {
                     <th className="text-left font-medium text-gray-500 dark:text-slate-400 px-4 sm:px-6 py-3.5">Feature</th>
                     <th className="text-right font-semibold text-gray-900 dark:text-white px-3 sm:px-6 py-3.5">
                       Personal
-                      <span className="block fl-mono text-[11px] font-normal text-gray-400 dark:text-slate-500">$5 / month</span>
+                      <span className="block fl-mono text-[11px] font-normal text-gray-400 dark:text-slate-500">$5 / 30 days</span>
                     </th>
                     <th className="text-right font-semibold text-gray-900 dark:text-white px-4 sm:px-6 py-3.5">Enterprise</th>
                   </tr>
@@ -770,7 +770,7 @@ export function Landing() {
             Ready to build smarter forms?
           </h2>
           <p className="text-lg sm:text-xl text-primary-100/80 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Create a free account in minutes. No credit card required.
+            Create a free account — your first 30 days of Cloud are on us. No credit card required.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link to="/signup">

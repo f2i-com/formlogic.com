@@ -67,9 +67,10 @@ class AuthService
         $now = date('Y-m-d H:i:s');
 
         try {
+            // Every new account starts with 30 days of Cloud free (pay-as-you-go after).
             $stmt = $this->mysql->prepare("
-                INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
-                VALUES (:id, :email, :password_hash, :name, :created_at, :updated_at)
+                INSERT INTO users (id, email, password_hash, name, cloud_until, created_at, updated_at)
+                VALUES (:id, :email, :password_hash, :name, DATE_ADD(NOW(), INTERVAL 30 DAY), :created_at, :updated_at)
             ");
 
             $stmt->execute([
