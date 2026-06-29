@@ -410,15 +410,19 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
   return (
     <>
       <Modal isOpen={isOpen} onClose={handleClose} title="Pack Marketplace" size="full">
-        <div className="p-4 sm:p-6 space-y-4">
+        {/* Fixed-height flex column so the dialog stays one size across tabs:
+            tabs pinned, content scrolls in the middle, footer pinned. */}
+        <div className="p-4 sm:p-6 flex flex-col h-[70vh]">
           {/* Tabs */}
-          <div className="flex border-b border-gray-200 dark:border-slate-800 overflow-x-auto">
+          <div className="flex border-b border-gray-200 dark:border-slate-800 overflow-x-auto flex-shrink-0">
             {tabButton('marketplace', <Package className="h-4 w-4" />, 'Marketplace')}
             {tabButton('installed', <Box className="h-4 w-4" />, 'Installed', installations.length)}
             {tabButton('mypacks', <User className="h-4 w-4" />, 'My Packs')}
             {tabButton('upload', <Upload className="h-4 w-4" />, 'Upload')}
           </div>
 
+          {/* Scrollable content region */}
+          <div className="flex-1 overflow-y-auto min-h-0 py-4 space-y-4">
           {/* Import result overlay */}
           {importResult && (
             <div className="flex flex-col items-center justify-center py-8 space-y-3">
@@ -482,7 +486,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   )}
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[calc(60vh-8rem)] overflow-y-auto pr-1 -mr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {catalogPacks.map((pack) => {
                     const isInstalled = installedCatalogIds.has(pack.id);
                     return (
@@ -587,7 +591,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   <p className="text-xs mt-1">Browse the Marketplace tab to find packs to install.</p>
                 </div>
               ) : (
-                <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+                <div className="space-y-2">
                   {installations.map((inst) => (
                     <div
                       key={inst.id}
@@ -704,7 +708,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                   <p className="text-xs mt-1">Publish a pack to share with others.</p>
                 </div>
               ) : (
-                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                <div className="space-y-2">
                   {myPacks.map((pack) => (
                     <div
                       key={pack.id}
@@ -947,9 +951,12 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
             </div>
           )}
 
-          {/* ==================== ACTION BUTTONS ==================== */}
+          </div>
+          {/* end scrollable content region */}
+
+          {/* ==================== ACTION BUTTONS (pinned footer) ==================== */}
           {!importResult && activeTab === 'upload' && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-200 dark:border-slate-800 pt-4">
+            <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-2 border-t border-gray-200 dark:border-slate-800 pt-4 mt-4">
               <div>
                 {uploadedPack && (
                   <Button variant="outline" size="sm" onClick={handlePublishFromUpload}>
@@ -974,13 +981,13 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
           )}
 
           {!importResult && (activeTab === 'installed' || activeTab === 'mypacks') && (
-            <div className="flex items-center justify-end border-t border-gray-200 dark:border-slate-800 pt-4">
+            <div className="flex-shrink-0 flex items-center justify-end border-t border-gray-200 dark:border-slate-800 pt-4 mt-4">
               <Button variant="outline" onClick={handleClose}>Close</Button>
             </div>
           )}
 
           {!importResult && activeTab === 'marketplace' && !selectedSlug && (
-            <div className="flex items-center justify-end border-t border-gray-200 dark:border-slate-800 pt-4">
+            <div className="flex-shrink-0 flex items-center justify-end border-t border-gray-200 dark:border-slate-800 pt-4 mt-4">
               <Button variant="outline" onClick={handleClose}>Close</Button>
             </div>
           )}
