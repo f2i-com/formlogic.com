@@ -17,6 +17,8 @@ import {
   Check,
   Loader2,
   HardDrive,
+  X,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   DndContext,
@@ -59,6 +61,11 @@ export default function FormBuilder() {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
+  // Desktop dockable panels: the Fields palette is hidden until "Add Field"; the
+  // field-settings panel auto-opens when a field is selected (collapsible via X).
+  // The canvas takes the freed space when either is collapsed.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(false);
 
   const {
     getForm,
@@ -148,13 +155,25 @@ export default function FormBuilder() {
   const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
   const formFields = form?.fields ?? [];
 
-  // On mobile, switch to settings panel when a field is selected
+  // Selecting a field opens its settings: the settings tab on mobile, or the docked
+  // settings panel on desktop (un-collapse it).
   const handleSelectField = useCallback((fieldId: string) => {
     setSelectedField(fieldId);
     if (isMobile) {
       setMobilePanel('settings');
+    } else {
+      setSettingsCollapsed(false);
     }
   }, [setSelectedField, isMobile, setMobilePanel]);
+
+  // Open the Fields palette (the mobile tab, or the desktop dock).
+  const openPalette = useCallback(() => {
+    if (isMobile) {
+      setMobilePanel('palette');
+    } else {
+      setPaletteOpen(true);
+    }
+  }, [isMobile, setMobilePanel]);
 
   // Add field handler (defined first for use in shortcuts)
   const handleAddField = useCallback((type: FieldType) => {
@@ -214,9 +233,12 @@ export default function FormBuilder() {
 
     setSelectedField(field.id);
 
-    // On mobile, switch to canvas to show the newly added field
+    // On mobile, switch to canvas to show the newly added field; on desktop, open
+    // its settings (the new field is selected) so it's ready to edit.
     if (isMobile) {
       setMobilePanel('canvas');
+    } else {
+      setSettingsCollapsed(false);
     }
   }, [form, addField, setSelectedField, isMobile, setMobilePanel]);
 
@@ -623,94 +645,153 @@ export default function FormBuilder() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Field Palette - Desktop or Mobile when selected */}
-        {(!isMobile || mobilePanel === 'palette') && (
-          <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 overflow-y-auto flex-shrink-0">
-            <div className="p-4 border-b border-gray-200 dark:border-slate-800">
-              <h2 className="font-semibold text-gray-900 dark:text-white">Add Fields</h2>
+        {/* Field Palette — mobile tab, or desktop dock (opened via "Add Field").
+            Hidden by default on desktop so the canvas gets the room. */}
+        {(isMobile ? mobilePanel === 'palette' : paletteOpen) && (
+          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0">
+            <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
+              <h2 className="font-semibold text-gray-900 dark:text-white">Add a field</h2>
+              <button
+                onClick={() => setPaletteOpen(false)}
+                className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Collapse fields panel"
+                title="Collapse"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <FieldPalette onAddField={handleAddField} />
+            {/* Own scroll, independent of the canvas */}
+            <div className="flex-1 overflow-y-auto">
+              <FieldPalette onAddField={handleAddField} />
+            </div>
           </aside>
         )}
 
-        {/* Canvas - Desktop or Mobile when selected */}
-        {(!isMobile || mobilePanel === 'canvas') && (
-          <div className="flex-1 overflow-y-auto p-4 md:p-6">
-            <div className="max-w-2xl mx-auto">
-              {form.fields.length === 0 ? (
-                <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
-                  <Plus className="h-12 w-12 text-gray-300 dark:text-slate-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                    Add your first field
-                  </h3>
-                  <p className="text-gray-500 mb-4">
-                    {isMobile ? 'Tap the Fields tab above to get started' : 'Click a field type from the left panel to get started'}
-                  </p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-gray-400">or</span>
-                    <Button
-                      onClick={() => setActiveModal('ai')}
-                      className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      Generate with AI
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleDragEnd}
-                >
-                  <SortableContext
-                    items={form.fields.map((f) => f.id)}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="space-y-3">
-                      {form.fields.map((field) => (
-                        <SortableFieldCard
-                          key={field.id}
-                          field={field}
-                          isSelected={field.id === selectedFieldId}
-                          onSelect={handleSelectField}
-                          onDelete={handleDeleteFieldById}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
-              )}
+        {/* Canvas — always on desktop; the active tab on mobile */}
+        {(isMobile ? mobilePanel === 'canvas' : true) && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
+            <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
+              <Button
+                size="sm"
+                variant={paletteOpen ? 'secondary' : 'outline'}
+                onClick={() => setPaletteOpen((v) => !v)}
+                leftIcon={<Plus className="h-4 w-4" />}
+                aria-pressed={paletteOpen}
+              >
+                Add Field
+              </Button>
+              <span className="text-xs text-gray-400 dark:text-slate-500">
+                {formFields.length} field{formFields.length === 1 ? '' : 's'}
+              </span>
+              <Button
+                size="sm"
+                variant={selectedField && !settingsCollapsed ? 'secondary' : 'ghost'}
+                onClick={() => { if (selectedField) setSettingsCollapsed((v) => !v); }}
+                disabled={!selectedField}
+                aria-pressed={!!selectedField && !settingsCollapsed}
+                title={selectedField ? 'Toggle field settings' : 'Select a field to edit its settings'}
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+                <span className="hidden lg:inline ml-2">Settings</span>
+              </Button>
+            </div>
 
-              {form.fields.length > 0 && (
-                <button
-                  onClick={() => isMobile ? setMobilePanel('palette') : handleAddField('short_text')}
-                  className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Field
-                </button>
-              )}
+            {/* Own scroll, independent of the side panels */}
+            <div className="flex-1 overflow-y-auto p-4 md:p-6">
+              <div className="max-w-2xl mx-auto">
+                {form.fields.length === 0 ? (
+                  <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
+                    <Plus className="h-12 w-12 text-gray-300 dark:text-slate-600 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                      Add your first field
+                    </h3>
+                    <p className="text-gray-500 mb-4">
+                      {isMobile ? 'Tap the Fields tab above to get started' : 'Click “Add Field” to choose a field type.'}
+                    </p>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                      <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
+                        Add Field
+                      </Button>
+                      <span className="text-gray-400">or</span>
+                      <Button
+                        onClick={() => setActiveModal('ai')}
+                        className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
+                      >
+                        <Sparkles className="h-4 w-4 mr-2" />
+                        Generate with AI
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <SortableContext
+                      items={form.fields.map((f) => f.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="space-y-3">
+                        {form.fields.map((field) => (
+                          <SortableFieldCard
+                            key={field.id}
+                            field={field}
+                            isSelected={field.id === selectedFieldId}
+                            onSelect={handleSelectField}
+                            onDelete={handleDeleteFieldById}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                )}
+
+                {form.fields.length > 0 && (
+                  <button
+                    onClick={openPalette}
+                    className="mt-4 w-full py-3 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-xl text-gray-500 dark:text-slate-400 hover:border-primary-300 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Field
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Settings Panel - Desktop or Mobile when selected */}
-        {(!isMobile || mobilePanel === 'settings') && (
-          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 overflow-y-auto flex-shrink-0">
-            {selectedField ? (
-              <FieldSettingsPanel
-                key={selectedField.id}
-                field={selectedField}
-                allFields={form.fields}
-                onUpdate={handleUpdateField}
-              />
-            ) : (
-              <div className="p-6 text-center text-gray-500">
-                <Settings className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
-                <p>Select a field to edit its settings</p>
-              </div>
-            )}
+        {/* Settings Panel — mobile tab, or desktop dock (auto-opens on field select) */}
+        {(isMobile ? mobilePanel === 'settings' : (!!selectedField && !settingsCollapsed)) && (
+          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0">
+            <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
+              <h2 className="font-semibold text-gray-900 dark:text-white">Field settings</h2>
+              <button
+                onClick={() => setSettingsCollapsed(true)}
+                className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                aria-label="Collapse settings panel"
+                title="Collapse"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {/* Own scroll, independent of the canvas */}
+            <div className="flex-1 overflow-y-auto">
+              {selectedField ? (
+                <FieldSettingsPanel
+                  key={selectedField.id}
+                  field={selectedField}
+                  allFields={form.fields}
+                  onUpdate={handleUpdateField}
+                />
+              ) : (
+                <div className="p-6 text-center text-gray-500">
+                  <Settings className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
+                  <p>Select a field to edit its settings</p>
+                </div>
+              )}
+            </div>
           </aside>
         )}
       </div>
