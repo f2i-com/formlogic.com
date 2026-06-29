@@ -72,7 +72,11 @@ export default function FormBuilder() {
   // Desktop dockable panels: the Fields palette is hidden until "Add Field"; the
   // field-settings panel auto-opens when a field is selected (collapsible via X).
   // The canvas takes the freed space when either is collapsed.
-  const [paletteOpen, setPaletteOpen] = useState(false);
+  // On a wide screen there's room for the full 3-pane layout, so open the Fields
+  // palette by default (paired with auto-selecting the first field below, so the
+  // settings dock shows too). Both stay collapsible.
+  const WIDE_BUILDER = typeof window !== 'undefined' && window.innerWidth >= 1280;
+  const [paletteOpen, setPaletteOpen] = useState(WIDE_BUILDER);
   const [settingsCollapsed, setSettingsCollapsed] = useState(false);
 
   const {
@@ -124,6 +128,22 @@ export default function FormBuilder() {
     return () => { cancelled = true; };
   }, [formId, loadFullForm]);
   const loadFinished = loadedFor === formId;
+
+  // On a wide screen, open the builder with both docks: select the first editable
+  // field once the form loads so the settings dock appears alongside the (default-open)
+  // palette. Runs once per form; the user can still collapse/deselect freely.
+  const autoSelectedFor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!loadFinished || !formId || isMobile) return;
+    if (autoSelectedFor.current === formId) return;
+    autoSelectedFor.current = formId;
+    if (typeof window === 'undefined' || window.innerWidth < 1280) return;
+    const f = getForm(formId);
+    if (!f || f.fields.length === 0) return;
+    if (useFormStore.getState().selectedFieldId) return; // respect an existing selection
+    const first = f.fields.find((ff) => !['welcome_screen', 'thank_you', 'statement'].includes(ff.type)) || f.fields[0];
+    setSelectedField(first.id);
+  }, [loadFinished, formId, isMobile, getForm, setSelectedField]);
 
   const form = formId ? getForm(formId) : undefined;
   useDocumentTitle(form ? `${form.title} — Builder` : 'Form Builder');

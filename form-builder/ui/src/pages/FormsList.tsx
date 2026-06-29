@@ -514,7 +514,7 @@ export function FormsList() {
           </TabsList>
 
           <TabsContent value="all">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4" aria-busy={formsLoading && filteredForms.length === 0}>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4" aria-busy={formsLoading && filteredForms.length === 0}>
               {formsLoading && filteredForms.length === 0 && !searchQuery && packFilter === 'all' ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : filteredForms.length === 0 ? (
@@ -550,7 +550,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="published">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
               {formsLoading && publishedForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : publishedForms.length === 0 ? (
@@ -568,7 +568,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="draft">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
               {formsLoading && draftForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : draftForms.length === 0 ? (
@@ -586,7 +586,7 @@ export function FormsList() {
           </TabsContent>
 
           <TabsContent value="archived">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
               {formsLoading && archivedForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : archivedForms.length === 0 ? (
