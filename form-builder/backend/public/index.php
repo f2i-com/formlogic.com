@@ -1158,7 +1158,7 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
 $appSubmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'app_submission');
 
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $cloudWriteGate) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
@@ -1192,15 +1192,15 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->lookupRecords($request, $response, $getArgs($request));
     })->add($authRequired);
 
-    // File upload for app forms
+    // File upload for app forms — gated on the form owner's cloud access.
     $group->post('/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FileController::class)->appUpload($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($cloudWriteGate)->add($authRequired);
 
     // Response CRUD
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->createResponse($request, $response, $getArgs($request));
-    })->add($appSubmissionRateLimiter)->add($authRequired);
+    })->add($cloudWriteGate)->add($appSubmissionRateLimiter)->add($authRequired);
 
     $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->listResponses($request, $response, $getArgs($request));
@@ -1217,7 +1217,7 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
 
     $group->put('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->updateResponseById($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($cloudWriteGate)->add($authRequired);
 
     $group->delete('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->deleteResponseById($request, $response, $getArgs($request));

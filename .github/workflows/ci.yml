@@ -13,6 +13,23 @@ jobs:
     defaults:
       run:
         working-directory: form-builder/backend
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: formlogic_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: '3306'
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      DB_TEST_DATABASE: formlogic_test
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +50,7 @@ jobs:
         run: |
           find src public config -name '*.php' -print0 | xargs -0 -n1 -P4 php -l > /dev/null
 
-      - name: Unit tests
+      - name: Tests (unit + DB integration)
         run: composer test
 
       - name: Security audit (advisory)

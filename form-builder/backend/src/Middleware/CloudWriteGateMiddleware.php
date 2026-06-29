@@ -38,12 +38,17 @@ class CloudWriteGateMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
-        $ownerId = $request->getAttribute('userId');
+        // Attribute the write to the account that OWNS the resource. When the route targets
+        // a specific form (public submission/upload, or an app-runtime write by a member),
+        // the FORM OWNER's cloud is what's billed — not the acting member's. Fall back to the
+        // request user only for owner-scoped routes with no form id (e.g. creating a form).
+        $ownerId = null;
+        $formId = $this->routeFormId($request);
+        if ($formId !== null) {
+            $ownerId = $this->planService->ownerOfForm($formId);
+        }
         if (!$ownerId) {
-            $formId = $this->routeFormId($request);
-            if ($formId !== null) {
-                $ownerId = $this->planService->ownerOfForm($formId);
-            }
+            $ownerId = $request->getAttribute('userId');
         }
 
         // If we can't attribute the write to an owner, let it through (other layers
