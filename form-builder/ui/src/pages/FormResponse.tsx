@@ -1303,9 +1303,13 @@ export default function FormResponse() {
               error={fieldError || undefined}
             />
 
-            {/* Inline validation error */}
+            {/* Inline validation error — constrained to the same width as the field
+                (FieldResponse uses max-w-xl mx-auto) so it lines up under it on wide
+                screens instead of sitting at the far left. */}
             {fieldError && (
-              <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
+              <div className="w-full max-w-xl mx-auto">
+                <p id={`field-error-${currentField.id}`} role="alert" aria-live="polite" className="mt-3 text-red-500 text-sm">{fieldError}</p>
+              </div>
             )}
 
             {/* OK Button */}
