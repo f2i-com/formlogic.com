@@ -38,9 +38,6 @@ const OPERATORS = [
   { value: 'empty', label: 'is empty' },
 ];
 
-// Screen-type fields hold no answer value, so they're never usable as variables.
-const SCREEN_TYPES = ['welcome_screen', 'thank_you', 'statement'];
-
 const ACTIONS = [
   { value: 'show', label: 'Show this field' },
   { value: 'hide', label: 'Hide this field' },
@@ -113,36 +110,29 @@ export function LogicEditor({
   const [expression, setExpression] = useState('');
   const [conditions, setConditions] = useState<SimpleCondition[]>([]);
   const [combinator, setCombinator] = useState<'and' | 'or'>('and');
-  const [testContext, setTestContext] = useState('{}');
+  // The test context is pre-filled from the form's fields (see defaultTestContext); we only
+  // store the user's edits here, keyed by field so switching fields shows the right default
+  // without a state-resetting effect. null = untouched -> show the auto-filled default.
+  const [editedContext, setEditedContext] = useState<{ fieldId: string; value: string } | null>(null);
 
   const { result, isTesting, testExpression } = useExpressionTester();
 
-  // Fields usable as the SOURCE of a simple condition — excludes the current field so the
-  // guided builder can't create a circular "show this field when [this field]…" rule.
-  const conditionFields = useMemo(
-    () => allFields.filter((f) => f.id !== field.id && !SCREEN_TYPES.includes(f.type)),
+  // Available fields for conditions (excluding the current field)
+  const availableFields = useMemo(
+    () => allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type)),
     [allFields, field.id]
   );
 
-  // Fields referenceable as variables in an expression — INCLUDES the current field so its
-  // own variable is listed and resolves on save. The current field is appended LAST so every
-  // other field keeps the exact variable name it has today (createFieldVariableMap dedups in
-  // iteration order), keeping previously-saved expressions valid.
-  const referenceFields = useMemo(
-    () => (SCREEN_TYPES.includes(field.type) ? conditionFields : [...conditionFields, field]),
-    [conditionFields, field]
-  );
-
-  // Create variable name mappings (from all referenceable fields, incl. the current one)
+  // Create variable name mappings
   const { toId: varToId, toVar: idToVar } = useMemo(
-    () => createFieldVariableMap(referenceFields),
-    [referenceFields]
+    () => createFieldVariableMap(availableFields),
+    [availableFields]
   );
 
   // Fields whose answers are real numbers (so equality must not string-quote).
   const numericFieldIds = useMemo(
-    () => new Set(referenceFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
-    [referenceFields]
+    () => new Set(availableFields.filter((f) => ['number', 'rating', 'scale'].includes(f.type)).map((f) => f.id)),
+    [availableFields]
   );
 
   // Initialize from existing logic (convert IDs to variable names for display)
@@ -177,10 +167,10 @@ export function LogicEditor({
   }, [conditions, combinator, mode, idToVar, numericFieldIds]);
 
   const handleAddCondition = () => {
-    if (conditionFields.length === 0) return;
+    if (availableFields.length === 0) return;
     setConditions([
       ...conditions,
-      { id: uuidv4(), fieldId: conditionFields[0].id, operator: '===', value: '' },
+      { id: uuidv4(), fieldId: availableFields[0].id, operator: '===', value: '' },
     ]);
   };
 
@@ -247,20 +237,27 @@ export function LogicEditor({
     setAction('show');
   };
 
-  const fieldOptions = conditionFields.map((f) => ({
+  const fieldOptions = availableFields.map((f) => ({
     value: f.id,
     label: f.label || f.id,
   }));
 
-  // Generate sample test context with variable names
-  const sampleContext = useMemo(() => {
-    const sample: Record<string, string> = {};
-    referenceFields.slice(0, 2).forEach((f) => {
+  // Pre-fill the test context with every available field's variable as a key, with a
+  // sensible default by type, so the user only has to refine the values.
+  const defaultTestContext = useMemo(() => {
+    const ctx: Record<string, unknown> = {};
+    for (const f of availableFields) {
       const varName = idToVar[f.id];
-      sample[varName] = f.type === 'number' ? '0' : 'value';
-    });
-    return JSON.stringify(sample, null, 2);
-  }, [referenceFields, idToVar]);
+      if (!varName) continue;
+      if (['number', 'rating', 'scale'].includes(f.type)) ctx[varName] = 0;
+      else if (f.type === 'checkboxes') ctx[varName] = [];
+      else ctx[varName] = '';
+    }
+    return Object.keys(ctx).length ? JSON.stringify(ctx, null, 2) : '{}';
+  }, [availableFields, idToVar]);
+
+  // Show the user's edits for THIS field if any, otherwise the auto-filled default.
+  const testContext = editedContext && editedContext.fieldId === field.id ? editedContext.value : defaultTestContext;
 
   return (
     <Modal
@@ -304,7 +301,7 @@ export function LogicEditor({
 
           {/* Simple Mode */}
           <TabsContent value="simple" className="mt-4">
-            {conditionFields.length === 0 ? (
+            {availableFields.length === 0 ? (
               <div className="text-center py-8 text-gray-500 dark:text-slate-500">
                 <HelpCircle className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                 <p>Add more fields to your form to create conditions.</p>
@@ -419,22 +416,16 @@ export function LogicEditor({
               <div className="mt-2">
                 <p className="text-xs text-gray-500 dark:text-slate-500 mb-1">Available variables:</p>
                 <div className="flex flex-wrap gap-1">
-                  {referenceFields.map((f) => {
+                  {availableFields.map((f) => {
                     const varName = idToVar[f.id];
-                    const isCurrent = f.id === field.id;
                     return (
                       <button
                         key={f.id}
                         onClick={() => setExpression((prev) => prev + (prev && !/\s$/.test(prev) ? ' ' : '') + varName)}
-                        className={cn(
-                          'px-2 py-0.5 text-xs rounded transition-colors font-mono cursor-pointer',
-                          isCurrent
-                            ? 'bg-primary-200/70 dark:bg-primary-500/30 text-primary-800 dark:text-primary-200 ring-1 ring-inset ring-primary-400/60 dark:ring-primary-400/40'
-                            : 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30'
-                        )}
-                        title={isCurrent ? `${f.label} (this field)` : f.label}
+                        className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer"
+                        title={f.label}
                       >
-                        {varName}{isCurrent ? ' (this field)' : ''}
+                        {varName}
                       </button>
                     );
                   })}
@@ -462,14 +453,25 @@ export function LogicEditor({
               <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Test Expression</h4>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-xs text-gray-500 dark:text-slate-500 mb-1">
-                    Test Context (JSON) - use variable names as keys
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs text-gray-500 dark:text-slate-500">
+                      Test Context (JSON) — pre-filled from your fields; refine the values
+                    </label>
+                    {editedContext && editedContext.fieldId === field.id && (
+                      <button
+                        type="button"
+                        onClick={() => setEditedContext(null)}
+                        className="text-xs text-primary-600 dark:text-primary-400 hover:underline cursor-pointer"
+                      >
+                        Reset to fields
+                      </button>
+                    )}
+                  </div>
                   <Textarea
                     value={testContext}
-                    onChange={(e) => setTestContext(e.target.value)}
-                    placeholder={sampleContext}
-                    rows={2}
+                    onChange={(e) => setEditedContext({ fieldId: field.id, value: e.target.value })}
+                    placeholder="{}"
+                    rows={Math.min(10, Math.max(3, availableFields.length + 2))}
                     className="font-mono text-sm"
                   />
                 </div>
