@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -63,7 +64,10 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
     ? formTemplates
     : formTemplates.filter(t => t.category === selectedCategory);
 
-  return (
+  // Portal to <body> so the overlay covers the whole window — when rendered inside a
+  // sidebar/nav that has backdrop-filter (which creates a containing block), a bare
+  // `position: fixed` overlay would otherwise be trapped inside that element.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="template-selector-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
@@ -195,6 +199,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate }: Template
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
