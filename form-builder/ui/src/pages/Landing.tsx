@@ -160,31 +160,31 @@ export function Landing() {
 
   const pricingPlans = [
     {
-      name: 'Self-Hosted',
+      name: 'Self-hosted',
       price: '$0',
       period: 'forever',
-      description: 'Full control on your infrastructure',
+      description: 'Run it on your own infrastructure',
       features: [
         'Complete source access',
         'Unlimited forms & responses',
         'SQLite per-form databases',
-        'Backend scripting engine',
+        'Backend scripts, API, AI & packs',
         'Community support',
       ],
-      cta: 'Get Started',
+      cta: 'Get started',
       highlighted: false,
     },
     {
-      name: 'Cloud',
+      name: 'Personal',
       price: '$5',
-      period: '/month',
-      description: 'Managed hosting, pay as you go',
+      period: '/ 30 days',
+      description: 'Managed cloud, prepaid',
       features: [
-        'Everything in Self-Hosted',
-        'Managed hosting — nothing to run',
-        'Pay only for the months you use',
-        'No subscription, never auto-renews',
-        'Pay securely with PayPal',
+        '100 forms · 1 GB storage',
+        'Unlimited responses (fair use)',
+        'Internal apps, scripts & API',
+        'Unlimited local AI',
+        'Prepaid — pay with PayPal, no subscription',
       ],
       cta: 'Get started',
       highlighted: true,
@@ -193,17 +193,30 @@ export function Landing() {
       name: 'Enterprise',
       price: 'Custom',
       period: '',
-      description: 'For teams with advanced needs',
+      description: 'For teams & scale',
       features: [
-        'Everything in Cloud',
-        'Custom deployment options',
-        'SLA guarantee',
-        'Dedicated support',
-        'Security review & compliance',
+        'Everything in Personal',
+        'Unlimited forms',
+        'Configurable storage',
+        'Free self-hosting or commercial support',
+        'Custom deployment & security review',
       ],
-      cta: 'Contact Sales',
+      cta: 'Contact sales',
       highlighted: false,
     },
+  ];
+
+  // Detailed feature comparison shown under the plan cards.
+  const comparison: Array<{ feature: string; personal: string; enterprise: string }> = [
+    { feature: 'Forms', personal: '100', enterprise: 'Unlimited' },
+    { feature: 'Responses', personal: 'Unlimited (fair use)', enterprise: 'Unlimited' },
+    { feature: 'Storage', personal: '1 GB', enterprise: 'Configurable' },
+    { feature: 'Internal apps', personal: 'Included', enterprise: 'Included' },
+    { feature: 'Backend scripts', personal: '✅', enterprise: '✅' },
+    { feature: 'API', personal: '✅', enterprise: '✅' },
+    { feature: 'AI (local)', personal: 'Unlimited', enterprise: 'Unlimited' },
+    { feature: 'Packs', personal: '✅', enterprise: '✅' },
+    { feature: 'Self-hosting', personal: 'Free', enterprise: 'Free / Commercial support' },
   ];
 
   return (
@@ -698,6 +711,37 @@ export function Landing() {
               </div>
             ))}
           </div>
+
+          {/* Feature comparison */}
+          <div data-reveal className="fl-reveal mt-16 max-w-3xl mx-auto">
+            <h3 className="fl-display text-center text-2xl text-gray-900 dark:text-white mb-7">Compare plans</h3>
+            <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-950/40">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50/80 dark:bg-slate-900/60 border-b border-gray-200/80 dark:border-slate-800">
+                    <th className="text-left font-medium text-gray-500 dark:text-slate-400 px-4 sm:px-6 py-3.5">Feature</th>
+                    <th className="text-right font-semibold text-gray-900 dark:text-white px-3 sm:px-6 py-3.5">
+                      Personal
+                      <span className="block fl-mono text-[11px] font-normal text-gray-400 dark:text-slate-500">$5 / 30 days</span>
+                    </th>
+                    <th className="text-right font-semibold text-gray-900 dark:text-white px-4 sm:px-6 py-3.5">Enterprise</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.map((row, i) => (
+                    <tr key={row.feature} className={i > 0 ? 'border-t border-gray-100 dark:border-slate-800/60' : ''}>
+                      <td className="px-4 sm:px-6 py-3 text-gray-600 dark:text-slate-300">{row.feature}</td>
+                      <td className="px-3 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{row.personal}</td>
+                      <td className="px-4 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{row.enterprise}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="fl-mono text-center text-xs text-gray-400 dark:text-slate-500 mt-4">
+              Self-hosting is always free. Personal is prepaid via PayPal — no subscription, no auto-renew.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -712,7 +756,7 @@ export function Landing() {
             Ready to build smarter forms?
           </h2>
           <p className="text-lg sm:text-xl text-primary-100/80 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Start your free trial today. No credit card required.
+            Create a free account in minutes. No credit card required.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link to="/signup">
