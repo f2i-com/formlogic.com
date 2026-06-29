@@ -22,6 +22,26 @@ class AuthService
 
     /** Maximum length for a user-supplied display name (users.name is VARCHAR(255)). */
     private const MAX_NAME_LENGTH = 255;
+    public const MIN_PASSWORD_LENGTH = 10;
+
+    /**
+     * Validate password strength. Returns a human-readable error, or null if acceptable.
+     * Used at both registration and password reset so the rules stay in one place.
+     */
+    public static function passwordError(string $password): ?string
+    {
+        if (strlen($password) < self::MIN_PASSWORD_LENGTH) {
+            return 'Password must be at least ' . self::MIN_PASSWORD_LENGTH . ' characters';
+        }
+        $common = [
+            'password', 'password1', 'passw0rd', '1234567890', '12345678', '123456789',
+            'qwertyuiop', 'qwerty123', 'iloveyou', 'letmein123', 'changeme', 'admin123',
+        ];
+        if (in_array(strtolower($password), $common, true)) {
+            return 'That password is too common — please choose a less guessable one';
+        }
+        return null;
+    }
 
     private PDO $mysql;
     private array $jwtConfig;
@@ -354,6 +374,9 @@ class AuthService
         }
 
         if (isset($data['password'])) {
+            if (($pwError = self::passwordError($data['password'])) !== null) {
+                throw new \InvalidArgumentException($pwError);
+            }
             // Require current password verification before allowing change
             if (!isset($data['currentPassword'])) {
                 throw new \RuntimeException('Current password is required to set a new password');
@@ -483,8 +506,8 @@ class AuthService
      */
     public function resetPassword(string $token, string $newPassword): void
     {
-        if (strlen($newPassword) < 8) {
-            throw new \InvalidArgumentException('Password must be at least 8 characters');
+        if (($pwError = self::passwordError($newPassword)) !== null) {
+            throw new \InvalidArgumentException($pwError);
         }
         $tokenHash = hash('sha256', trim($token));
         $stmt = $this->mysql->prepare("

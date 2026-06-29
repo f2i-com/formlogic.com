@@ -21,6 +21,20 @@ class AIService
         $this->apiUrl = $_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1';
         $this->model = $_ENV['OPENAI_MODEL'] ?? 'gpt-4o';
         $this->visionModel = $_ENV['OPENAI_VISION_MODEL'] ?? 'gpt-4o';
+
+        // In production, never send the API key over plaintext HTTP. Allow http only for an
+        // explicitly-enabled loopback model (ALLOW_INSECURE_LOCAL_AI=1). Otherwise disable
+        // AI rather than leak credentials over an insecure channel.
+        $isProduction = (($_ENV['APP_ENV'] ?? 'production') !== 'development');
+        if ($isProduction && $this->apiKey !== '' && strtolower((string) parse_url($this->apiUrl, PHP_URL_SCHEME)) === 'http') {
+            $host = strtolower((string) parse_url($this->apiUrl, PHP_URL_HOST));
+            $allowInsecureLocal = in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true)
+                && in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
+            if (!$allowInsecureLocal) {
+                error_log('FormLogic AIService: refusing plaintext-HTTP OPENAI_API_URL in production; AI disabled. Use HTTPS, or set ALLOW_INSECURE_LOCAL_AI=1 for a loopback model.');
+                $this->apiKey = '';
+            }
+        }
     }
 
     /**

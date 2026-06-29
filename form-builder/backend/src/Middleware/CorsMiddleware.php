@@ -77,9 +77,9 @@ class CorsMiddleware implements MiddlewareInterface
                     return $requestOrigin;
                 }
             }
-            // Origin not in allowlist - still return default but won't match
-            // Browser will block the request due to origin mismatch
-            return $this->defaultOrigin;
+            // Origin not in the allowlist: send NO Access-Control-Allow-Origin header
+            // at all (cleaner + smaller surface than returning a mismatched default).
+            return null;
         }
 
         // Single-origin mode: strict match only
@@ -87,8 +87,8 @@ class CorsMiddleware implements MiddlewareInterface
             return $requestOrigin;
         }
 
-        // Origin doesn't match - return default (browser will block)
-        return $this->defaultOrigin;
+        // Origin doesn't match: omit the CORS header entirely.
+        return null;
     }
 
     /**

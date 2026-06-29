@@ -49,8 +49,8 @@ export function Signup() {
       return;
     }
 
-    if (password.length < 8) {
-      setLocalError('Password must be at least 8 characters');
+    if (password.length < 10) {
+      setLocalError('Password must be at least 10 characters');
       return;
     }
 
@@ -158,7 +158,7 @@ export function Signup() {
               label="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="At least 10 characters"
               leftIcon={<Lock className="h-4 w-4" />}
               disabled={isLoading}
               autoComplete="new-password"

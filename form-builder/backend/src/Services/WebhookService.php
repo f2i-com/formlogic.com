@@ -20,16 +20,53 @@ class WebhookService
         $this->logger = $logger ?? new NullLogger();
     }
 
-    public function createWebhook(string $formId, string $userId, string $url, array $events, ?string $description = null): array
+    // Hosts that must never be reached (cloud metadata + loopback, incl. IPv4-mapped IPv6).
+    private const SSRF_BLOCKED_HOSTS = [
+        'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
+        'metadata.azure.internal', '0.0.0.0', '::1', '::ffff:127.0.0.1',
+        '::ffff:0:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
+    ];
+
+    /**
+     * Full SSRF-safe validation of a webhook URL — scheme, blocked hosts, DNS resolution,
+     * and private/reserved-IP rejection. This is the single authority used identically at
+     * create, update, and delivery time, so a URL is vetted the same way everywhere
+     * (preventing store/deliver drift and TOCTOU gaps). Returns the resolved IP for
+     * DNS-pinning at delivery. Throws \InvalidArgumentException on any failure.
+     */
+    public function validateWebhookUrl(string $url): string
     {
-        // Validate URL before storing
         $parsed = parse_url($url);
-        if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+        if (!$parsed || empty($parsed['scheme']) || empty($parsed['host'])) {
             throw new \InvalidArgumentException('Invalid webhook URL');
         }
-        if (!in_array($parsed['scheme'], ['http', 'https'], true)) {
+        if (!in_array(strtolower($parsed['scheme']), ['http', 'https'], true)) {
             throw new \InvalidArgumentException('Webhook URL must use HTTP or HTTPS');
         }
+        $host = $parsed['host'];
+        if (in_array(strtolower($host), self::SSRF_BLOCKED_HOSTS, true)) {
+            throw new \InvalidArgumentException('Webhook URL host is not allowed');
+        }
+        $resolvedIps = gethostbynamel($host);
+        if ($resolvedIps === false || empty($resolvedIps)) {
+            throw new \InvalidArgumentException('Unable to resolve webhook URL hostname');
+        }
+        foreach ($resolvedIps as $ip) {
+            $checkIp = $ip;
+            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
+                $checkIp = $m[1];
+            }
+            if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                throw new \InvalidArgumentException('Webhook URL resolves to a private or reserved IP address');
+            }
+        }
+        return $resolvedIps[0];
+    }
+
+    public function createWebhook(string $formId, string $userId, string $url, array $events, ?string $description = null): array
+    {
+        // Vet the URL with the same SSRF guards used at delivery time, before storing.
+        $this->validateWebhookUrl($url);
 
         $id = $this->generateUuid();
         $secret = bin2hex(random_bytes(32));
@@ -76,15 +113,9 @@ class WebhookService
 
     public function updateWebhook(string $webhookId, array $data): ?array
     {
-        // Defense-in-depth: validate URL at service layer too
+        // Re-vet with the same full SSRF guards on update.
         if (isset($data['url'])) {
-            $parsed = parse_url($data['url']);
-            if (!$parsed || !isset($parsed['scheme']) || !isset($parsed['host'])) {
-                throw new \InvalidArgumentException('Invalid webhook URL');
-            }
-            if (!in_array($parsed['scheme'], ['http', 'https'], true)) {
-                throw new \InvalidArgumentException('Webhook URL must use HTTP or HTTPS');
-            }
+            $this->validateWebhookUrl($data['url']);
         }
 
         $updates = [];
@@ -297,39 +328,13 @@ class WebhookService
         $timestamp = (string) time();
         $signature = 'sha256=' . hash_hmac('sha256', $timestamp . '.' . $body, $webhook['secret']);
 
-        // SSRF protection: resolve hostname and block private/reserved IPs
+        // SSRF protection: re-resolve + re-validate at delivery time (same authority as
+        // create/update), then pin curl to the validated IP below. Re-checking here closes
+        // the store-time -> send-time TOCTOU window (DNS could have changed).
         $parsedUrl = parse_url($webhook['url']);
         $host = $parsedUrl['host'] ?? '';
         $port = $parsedUrl['port'] ?? (($parsedUrl['scheme'] ?? 'https') === 'https' ? 443 : 80);
-        if ($host === '') {
-            throw new \RuntimeException('Webhook URL has no valid host');
-        }
-
-        // Block known metadata endpoints and localhost (including IPv4-mapped IPv6)
-        $blockedHosts = [
-            'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
-            'metadata.azure.internal', '0.0.0.0', '::1', '::ffff:127.0.0.1',
-            '::ffff:0:127.0.0.1', '::ffff:169.254.169.254', '::ffff:0.0.0.0',
-        ];
-        if (in_array(strtolower($host), $blockedHosts, true)) {
-            throw new \RuntimeException('Webhook URL host is not allowed');
-        }
-
-        $resolvedIps = gethostbynamel($host);
-        if ($resolvedIps === false || empty($resolvedIps)) {
-            throw new \RuntimeException('Unable to resolve webhook URL hostname');
-        }
-        foreach ($resolvedIps as $ip) {
-            // Strip IPv4-mapped IPv6 prefix for validation
-            $checkIp = $ip;
-            if (preg_match('/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i', $ip, $m)) {
-                $checkIp = $m[1];
-            }
-            if (!filter_var($checkIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                throw new \RuntimeException('Webhook URL resolves to a private or reserved IP address');
-            }
-        }
-        $resolvedIp = $resolvedIps[0];
+        $resolvedIp = $this->validateWebhookUrl($webhook['url']);
 
         $ch = curl_init($webhook['url']);
         $curlOpts = [

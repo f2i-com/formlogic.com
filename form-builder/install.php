@@ -22,6 +22,40 @@ if (file_exists($envPath)) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Installer access guard
+// ---------------------------------------------------------------------------
+// The installer is a powerful setup tool — lock it down so it can't be abused if it's
+// accidentally left online. Allowed only from localhost, unless INSTALL_ENABLE=1 is set
+// in the server environment (a deliberate opt-in for remote installs). Once installed, the
+// web installer is hard-disabled regardless of origin.
+$installEnabled = in_array(strtolower((string) getenv('INSTALL_ENABLE')), ['1', 'true', 'yes'], true);
+$remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
+$isLocalRequest = in_array($remoteAddr, ['127.0.0.1', '::1', 'localhost'], true);
+
+$installerDenied = null;
+if ($alreadyInstalled && !$installEnabled) {
+    $installerDenied = 'FormLogic is already installed. For security, delete form-builder/install.php. '
+        . 'To deliberately re-run setup, set the environment variable INSTALL_ENABLE=1.';
+} elseif (!$isLocalRequest && !$installEnabled) {
+    $installerDenied = 'For security, run the installer from the server itself (localhost), '
+        . 'or set the environment variable INSTALL_ENABLE=1 to allow remote setup.';
+}
+if ($installerDenied !== null) {
+    http_response_code(403);
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => $installerDenied]);
+    } else {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><meta charset="utf-8"><title>Installer disabled</title>'
+            . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
+            . '<h1 style="font-size:1.4rem">Installer disabled</h1><p>'
+            . htmlspecialchars($installerDenied, ENT_QUOTES) . '</p></body>';
+    }
+    exit;
+}
+
 // CSRF token
 session_start();
 if (empty($_SESSION['install_csrf'])) {

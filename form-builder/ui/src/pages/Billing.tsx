@@ -170,6 +170,19 @@ export function Billing() {
         )}
       </div>
 
+      {/* Plan usage (only when the hosted instance enforces limits) */}
+      {status?.usage?.enforced && (
+        <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-5 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Plan usage</h2>
+            <span className="text-xs fl-mono text-gray-400 dark:text-slate-500 capitalize">{status.usage.plan}</span>
+          </div>
+          <UsageBar label="Forms" used={status.usage.forms.used} limit={status.usage.forms.limit} format={(n) => String(n)} />
+          <div className="h-3" />
+          <UsageBar label="Storage" used={status.usage.storage.usedBytes} limit={status.usage.storage.limitBytes} format={formatBytes} />
+        </div>
+      )}
+
       {/* Buy cloud months */}
       <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-6">
         <div className="flex items-baseline justify-between mb-1">
@@ -237,6 +250,33 @@ export function Billing() {
       <p className="text-center text-xs text-gray-400 dark:text-slate-500 mt-5">
         Payments are one-time and processed securely by PayPal. No subscription is created and nothing auto-renews.
       </p>
+    </div>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function UsageBar({ label, used, limit, format }: { label: string; used: number; limit: number | null; format: (n: number) => string }) {
+  const pct = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const near = pct >= 90;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm mb-1.5">
+        <span className="text-gray-600 dark:text-slate-300">{label}</span>
+        <span className="fl-mono text-xs text-gray-500 dark:text-slate-400">
+          {format(used)}{limit !== null ? ` / ${format(limit)}` : ''}
+        </span>
+      </div>
+      {limit !== null && (
+        <div className="h-1.5 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
+          <div className={`h-full rounded-full ${near ? 'bg-amber-500' : 'bg-primary-500'}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
     </div>
   );
 }

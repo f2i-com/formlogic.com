@@ -26,6 +26,13 @@ export interface ScriptTestResult {
   executionTimeMs: number;
 }
 
+export interface PlanUsage {
+  enforced: boolean;
+  plan: string;
+  forms: { used: number; limit: number | null };
+  storage: { usedBytes: number; limitBytes: number | null };
+}
+
 export interface BillingStatus {
   cloudUntil: string | null;
   active: boolean;
@@ -34,6 +41,7 @@ export interface BillingStatus {
   maxMonths: number;
   paypalEnabled: boolean;
   paypalClientId: string | null;
+  usage: PlanUsage | null;
 }
 
 class ApiClient {

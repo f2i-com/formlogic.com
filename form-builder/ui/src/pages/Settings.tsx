@@ -189,8 +189,8 @@ export function Settings() {
       setPasswordError('Current password is required');
       return;
     }
-    if (newPassword.length < 8) {
-      setPasswordError('New password must be at least 8 characters');
+    if (newPassword.length < 10) {
+      setPasswordError('New password must be at least 10 characters');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -562,7 +562,7 @@ export function Settings() {
               <Input
                 label="New Password"
                 type="password"
-                placeholder="Enter new password (min 8 characters)"
+                placeholder="Enter new password (min 10 characters)"
                 value={newPassword}
                 onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); }}
               />

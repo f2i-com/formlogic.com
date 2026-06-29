@@ -70,10 +70,10 @@ class AuthController
             ], 400);
         }
 
-        if (strlen($data['password']) < 8) {
+        if (($pwError = \FormLogic\Services\AuthService::passwordError($data['password'])) !== null) {
             return $this->jsonResponse($response, [
                 'error' => true,
-                'message' => 'Password must be at least 8 characters',
+                'message' => $pwError,
             ], 400);
         }
 
