@@ -4,12 +4,12 @@ A full-stack form builder and internal apps platform. Build forms with drag-and-
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed scripting engine. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
+FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
 
 ### Key Capabilities
 
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
-- **Scripting Engine** -- Custom language (FormLogic) for conditional logic, validation expressions, calculated fields, and post-submission scripts
+- **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — the same engine and standard-library prelude run in the browser and on the server
 - **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
 - **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
@@ -48,14 +48,17 @@ FormLogic combines a Typeform-style form builder with an internal apps platform.
 | Auth | HttpOnly cookie sessions (JWT-signed) |
 | Database | MySQL (global metadata) + SQLite (per-form responses) |
 | Logging | Monolog |
-| Scripting | FormLogic VM (custom bytecode interpreter) |
+| Scripting | QuickJS sandbox (vendored static `qjs` binary — no Node.js) |
 | DI | PHP-DI |
 
 ### Scripting Engine
 
-FormLogic includes a custom scripting language with both a TypeScript implementation (frontend) and a PHP implementation (backend). Scripts run in a sandboxed bytecode VM with memory limits -- no `eval()` or system access.
+FormLogic expressions and `onSubmit` scripts are **real JavaScript** run inside a sandboxed [QuickJS](https://github.com/quickjs-ng/quickjs) engine — one engine and one shared standard-library prelude (`ui/src/lib/formlogic/prelude.js`) on both the client and the server:
 
-Built-in modules: `format`, `compliance`, `finance`
+- **Browser** -- [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten) runs the engine in a dedicated Web Worker for real-time validation, conditional logic, and calculated-field previews.
+- **Server** -- the PHP API shells out to a vendored static `qjs` binary (committed under `backend/bin/qjs/`, selected per-OS); a `prebuild` step syncs the prelude into `backend/resources/`. **No Node.js is required on the server.**
+
+The sandbox enforces instruction-count, wall-clock, memory, and call-depth limits, and exposes no `eval`, DOM, filesystem, or network access. The shared prelude ships built-in helper modules: `validators`, `format`, `compliance`, `finance`, and `safety`.
 
 ---
 
@@ -183,13 +186,13 @@ Linked record fields allow cross-form references within an app (e.g., a "Transfe
 
 ### FormLogic Scripting
 
-The scripting engine supports:
+Scripts and expressions are plain JavaScript, evaluated in the QuickJS sandbox described above. The engine supports:
 - **Conditional visibility** -- Show/hide fields based on expressions (`age >= 18 && country === "US"`)
 - **Custom validation** -- Validate fields with expressions that return error messages
 - **Calculated fields** -- Compute values from other fields (`price * quantity * (1 + tax_rate)`)
-- **Post-submission scripts** -- Run logic after form submission (compute derived fields, set tags, reject submissions)
+- **Post-submission scripts** -- An `onSubmit` script runs after a submission to compute derived fields, set tags, or reject the submission
 
-Script modules extend the language with domain functions:
+The shared prelude provides domain helper modules:
 ```
 // Compliance module
 compliance.regBICheck(risk_score, portfolio_type)
@@ -296,7 +299,7 @@ finance.transferFee(amount, custodian)
 - **Rate limiting** on auth endpoints (10/min) and submissions (30/min)
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
-- **Sandboxed scripting** -- FormLogic VM runs in isolated bytecode with memory limits (1MB string, 100K array)
+- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, filesystem, or network access
 - **Hash-chained audit log** with SHA-256 integrity verification
 - **Body size limits** on uploads
 

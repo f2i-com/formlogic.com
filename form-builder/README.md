@@ -4,12 +4,12 @@ A full-stack form builder and internal apps platform. Build forms with drag-and-
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed scripting engine. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
+FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
 
 ### Key Capabilities
 
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
-- **Scripting Engine** -- Custom language (FormLogic) for conditional logic, validation expressions, calculated fields, and post-submission scripts
+- **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — one engine and prelude shared by the browser and the server
 - **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
 - **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
@@ -513,7 +513,7 @@ The scripting engine supports:
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
 - **SSRF protection** on webhooks with DNS resolution checks and private IP blocking
-- **Sandboxed scripting** -- FormLogic VM runs in isolated bytecode with execution limits
+- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, filesystem, or network access
 - **Hash-chained audit log** with HMAC-SHA256 integrity verification
 - **Body size limits** on uploads
 - **User-Agent sanitization** to prevent stored XSS

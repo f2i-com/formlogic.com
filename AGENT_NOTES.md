@@ -1,6 +1,6 @@
 # FormLogic — Comprehensive Agent Notes
 
-> Full project reference covering backend and frontend. Last updated: 2026-02-22.
+> Full project reference covering backend and frontend. Last updated: 2026-06-29.
 
 ---
 
@@ -94,7 +94,7 @@ formlogic-app/
 
 2. **Snapshot-Before-Update Versioning**: When a form is updated, the current state is snapshotted to `form_versions` before the update is applied. Restoration also creates a snapshot first.
 
-3. **Script Execution Pipeline**: On response creation: validate answers -> execute FormLogic script -> handle rejection or capture computed fields/tags/status -> save response -> save computed data -> sync to MySQL metadata -> update analytics -> dispatch webhooks.
+3. **Script Execution Pipeline**: On response creation: validate answers -> run the form's `onSubmit` script in the QuickJS sandbox -> handle rejection or capture computed fields/tags/status -> save response -> save computed data -> sync to MySQL metadata -> update analytics -> dispatch webhooks.
 
 4. **SSRF Protection**: Applied consistently across webhook delivery, HTTP module in FormLogic runtime, and AI image URL validation. Uses DNS resolution + private IP blocking.
 
@@ -251,7 +251,7 @@ Error handling: `RuntimeException` -> 400, "Rate limit" messages -> 429, others 
 - Version endpoints: list, get, restore
 
 ### `ResponseController`
-- `POST /api/forms/{formId}/responses` — **Public endpoint**. Checks form published. Validates answers against field definitions. Runs FormLogic script. Handles `ScriptRejection` with 422
+- `POST /api/forms/{formId}/responses` — **Public endpoint**. Checks form published. Validates answers against field definitions. Runs the form's `onSubmit` script (QuickJS). Handles `ScriptRejection` with 422
 - `GET .../responses` — Auth + form ownership. Filters: status, from/to dates, limit/offset
 - `POST .../responses/import` — Two-phase CSV: without mapping = preview, with mapping = import
 - Export: CSV, SQLite file download, JSON download
@@ -629,7 +629,7 @@ Thin client over a QuickJS sandbox: each evaluation is dispatched to a dedicated
 Web Worker (`formlogic.worker.ts` → `quickjs-host.ts`, using `quickjs-emscripten`)
 with memory/stack/interrupt limits and a terminate watchdog. The standard library
 below is the shared prelude (`prelude.js`), which also runs server-side via the
-vendored `qjs` binary, so results match. (No more `getEngine()`/bytecode VM.)
+vendored `qjs` binary, so client and server results match.
 
 **Standard-library modules** (from `prelude.js`):
 - `validators`: email, phone, url, minLength, maxLength, pattern (ReDoS-limited 500 chars), required, min, max
@@ -647,7 +647,7 @@ vendored `qjs` binary, so results match. (No more `getEngine()`/bytecode VM.)
 - `testExpression(expression, context)` — Returns `{ valid, output?, error? }`
 - `validateExpression(expression)` — Syntax check only
 
-### `modules/compliance.ts`
+### `compliance` module (in `prelude.js`)
 - `regBICheck(riskScore, portfolioType)` — Reg BI suitability (conservative 0-30, moderate 20-60, aggressive 50-85, speculative 75-100)
 - `suitabilityScore(age, income, netWorth, riskTolerance, timeHorizon)` — Weighted 1-100 (age 20%, income 15%, netWorth 20%, tolerance 25%, horizon 20%)
 - `amlFlag(amount, frequency?)` — CTR threshold (>=10k), structuring ($8k-$10k, freq>3), high volume (>50/month)
@@ -655,16 +655,12 @@ vendored `qjs` binary, so results match. (No more `getEngine()`/bytecode VM.)
 - `nigoCheck(...fields)` — Comma-separated 1-based indices of missing fields
 - `accreditedInvestor(income, netWorth)` — SEC Rule 501(a): income >$200k or netWorth >$1M
 
-### `modules/finance.ts`
+### `finance` module (in `prelude.js`)
 - `compoundInterest(principal, rate, periods)` — A = P * (1+r)^n, rounded 2 decimals
 - `aumFee(assets, tiersJson?)` — Tiered fee (default: 1% first $1M, 0.75% $1M-$5M, 0.50% $5M-$10M, 0.35% above)
 - `riskScore(age, timeHorizon, riskTolerance)` — Weighted 30/30/40
 - `portfolioAllocation(riskScore)` — Returns "equity:bond:cash" string, linear interpolation
 - `transferFee(amount, custodian?)` — $0 for Schwab/Fidelity/Vanguard, $75 otherwise, waived under $500
-
-### `modules/helpers.ts`
-- `getValue(obj)` — Extracts native value from FormLogic engine objects
-- `isNullish(obj)` — Checks null/undefined type (ObjectType 3 or 4)
 
 ---
 
@@ -746,7 +742,7 @@ Pack references use `@pack:packFormId` syntax for linked records, resolved at im
 | `LogicEditor` | Conditional logic expression editor + action selector (show/hide/skip/require) |
 | `ValidationEditor` | Add/edit validation rules |
 | `CalculatedFieldEditor` | Expression editor with formula testing |
-| `ScriptEditor` | Full-screen modal code editor for FormLogic scripts |
+| `ScriptEditor` | Full-screen modal code editor for `onSubmit` scripts (JavaScript, runs in QuickJS) |
 | `ThemeEditor` | Visual theme customizer: colors, font, border radius, background |
 | `EmbedModal` | Share/embed: direct link, iframe, JavaScript snippet |
 | `AIFormGenerator` | AI form generation: text prompt, file upload (PDF/images) |
