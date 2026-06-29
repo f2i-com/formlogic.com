@@ -1,0 +1,140 @@
+# Deploying FormLogic to production
+
+This guide covers the production launch checklist, backups, the webhook worker, and the
+health/diagnostics endpoint. For first-time setup see the installer in
+[`form-builder/install.php`](form-builder/README.md) or the manual steps in the README.
+
+> FormLogic runs the same codebase self-hosted (no limits) or as a hosted multi-tenant
+> service (with plan limits). The hosted-only bits below are clearly marked.
+
+---
+
+## 1. Production launch checklist
+
+Work top to bottom before exposing the app publicly. Most of these live in
+`form-builder/backend/.env`.
+
+**App & secrets**
+- [ ] `APP_ENV=production`
+- [ ] `APP_DEBUG=false`
+- [ ] `JWT_SECRET` set to a strong, unique 32+ char value (`openssl rand -base64 32`)
+- [ ] `AUDIT_HMAC_KEY` set to a strong, unique value
+- [ ] `DB_PASSWORD` set to a strong value (the app refuses to boot in production with the
+      default `password`)
+
+**Web / transport**
+- [ ] Served over **HTTPS** (auth cookies are `Secure` in production and won't be sent over HTTP)
+- [ ] `COOKIE_DOMAIN` correct for your domain (e.g. `.example.com`), or empty for current-domain-only
+- [ ] `CORS_ORIGIN` = your exact production frontend origin
+- [ ] `CORS_ALLOWED_ORIGINS` contains only real origins (no leftover `localhost`/staging)
+- [ ] `TRUSTED_PROXIES` set if behind a reverse proxy/load balancer (for correct client IPs)
+
+**Installer & files**
+- [ ] **Delete `form-builder/install.php`** (it hard-disables itself once installed, but delete it anyway)
+- [ ] `form-builder/backend/storage/` and `logs/` are **not** web-readable (serve only `public/`)
+- [ ] `form-builder/backend/.env` is not web-readable
+
+**Email (optional but recommended)**
+- [ ] `MAIL_FROM_ADDRESS` (+ SMTP_* if using SMTP) set, and a test email sent (password reset / invite)
+
+**AI (optional)**
+- [ ] If using cloud AI, `OPENAI_API_URL` is `https://…` (in production the key is never sent over
+      plaintext `http://`; a local model needs `ALLOW_INSECURE_LOCAL_AI=1`)
+
+**Billing & plans (hosted SaaS only)**
+- [ ] See the PayPal go-live checklist in §4
+- [ ] If enforcing plans, `CLOUD_PLAN_ENFORCED=true` (requires PayPal configured — the app
+      refuses to boot otherwise) and `CLOUD_MAX_FORMS` / `CLOUD_MAX_STORAGE_BYTES` reviewed
+
+**Operations**
+- [ ] Webhook retry worker scheduled (§3)
+- [ ] Backups configured (§2)
+- [ ] `GET /api/health/deep` returns `status: ok` (§5)
+- [ ] Dependency audits clean: `composer audit` (backend), `npm audit` (ui)
+
+---
+
+## 2. Backup & restore
+
+FormLogic stores data in **MySQL** (accounts, forms, apps, payments, audit) **and** in
+per-form **SQLite** files plus uploaded files on disk. A backup is *not* just a MySQL dump.
+
+**Back up all of:**
+- MySQL database (`mysqldump formlogic > formlogic.sql`)
+- `form-builder/backend/storage/forms/` — per-form SQLite response databases
+- `form-builder/backend/storage/uploads/` — uploaded files
+- `form-builder/backend/storage/packs/` — pack archives
+- `form-builder/backend/.env` — secrets (store securely/separately)
+
+Example:
+
+```bash
+mysqldump -u USER -p formlogic | gzip > backups/db-$(date +%F).sql.gz
+tar czf backups/storage-$(date +%F).tar.gz -C form-builder/backend storage
+cp form-builder/backend/.env backups/env-$(date +%F)   # keep this somewhere safe
+```
+
+**Restore:**
+1. Restore the MySQL dump into an empty database.
+2. Restore the `storage/` directories with the **same paths and permissions** (dirs `0700`).
+3. Restore `.env` (the `AUDIT_HMAC_KEY` must match the original or audit-chain verification fails).
+4. Run `GET /api/health/deep` and confirm `status: ok`.
+
+> Keep MySQL and `storage/` backups in sync — a form row in MySQL points at a SQLite file on
+> disk, so restoring one without the other leaves orphaned/missing responses.
+
+---
+
+## 3. Webhook retry worker
+
+Failed webhook deliveries are retried with exponential backoff (1m, 5m, 30m, 2h, 6h, up to 5
+attempts). SSRF guards are re-applied at send time, so deferred retries are safe. Schedule the
+worker so retries actually fire:
+
+```cron
+# once a minute
+* * * * * php /path/to/form-builder/backend/bin/webhook-worker.php >> /var/log/formlogic-webhooks.log 2>&1
+```
+
+On hosts without cron, run it continuously (sleeps 60s between passes):
+
+```bash
+php form-builder/backend/bin/webhook-worker.php --loop
+```
+
+If the worker isn't running, initial (synchronous) deliveries still happen, but failed ones
+are never retried.
+
+---
+
+## 4. PayPal go-live (hosted billing only)
+
+Cloud billing is pay-as-you-go via PayPal (one-time captures, no subscription). Configure it
+in `.env` and **test in sandbox before going live**:
+
+- [ ] `PAYPAL_CLIENT_ID` / `PAYPAL_SECRET` — REST app credentials from developer.paypal.com
+- [ ] `PAYPAL_WEBHOOK_ID` — from the app's webhook config; register the webhook URL
+      `https://YOUR_API_HOST/api/billing/webhook/paypal` in the PayPal dashboard
+- [ ] Keep `PAYPAL_ENV=sandbox` and run one full sandbox payment end-to-end:
+  - [ ] a successful $5 capture credits exactly 30 days
+  - [ ] buying again stacks (does not overwrite the expiry)
+  - [ ] a declined payment does not credit
+  - [ ] a pending/eCheck payment shows "processing" and credits once it clears (webhook)
+  - [ ] re-submitting an order does not double-credit
+- [ ] Only then set `PAYPAL_ENV=live` with live credentials and repeat a real $5 test
+
+Without credentials the `/billing` page degrades to "not configured" and no charges occur.
+
+---
+
+## 5. Health & diagnostics
+
+- `GET /api/health` — public heartbeat (`{status, timestamp}`); use it for uptime/load-balancer checks.
+- `GET /api/health/deep` — **authenticated** "Doctor": checks DB connectivity, writable
+  `storage/`+`logs/` dirs, the QuickJS runtime (binary + harness + prelude), billing config
+  (critical only when plan enforcement is on; warns on sandbox / missing webhook id), and the
+  document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`). Returns `200` when all
+  critical checks pass, `503` otherwise. Run it after every deploy/restore.
+
+> Rate limiting fails *open* if its table is unwritable (availability over strictness) — the
+> Doctor's `writable:*` checks make that condition visible.

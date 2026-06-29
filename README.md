@@ -168,6 +168,12 @@ npm run build        # production build
 
 Then open <http://localhost:5173> and create your account.
 
+### Going to production
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the production launch checklist, backup &
+restore procedure, the webhook retry worker (cron), PayPal go-live steps, and the
+`GET /api/health/deep` diagnostics endpoint.
+
 ---
 
 ## Architecture
