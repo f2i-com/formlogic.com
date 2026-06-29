@@ -117,9 +117,9 @@ class AIService
     /**
      * Generate a backend logic script from a prompt
      */
-    public function generateScript(string $prompt, array $formFields): array
+    public function generateScript(string $prompt, array $formFields, string $exampleScript = ''): array
     {
-        $systemPrompt = $this->getScriptGenerationSystemPrompt($formFields);
+        $systemPrompt = $this->getScriptGenerationSystemPrompt($formFields, $exampleScript);
 
         $response = $this->chatCompletion([
             [
@@ -297,11 +297,18 @@ PROMPT;
     /**
      * Get the system prompt for script generation
      */
-    private function getScriptGenerationSystemPrompt(array $formFields): string
+    private function getScriptGenerationSystemPrompt(array $formFields, string $exampleScript = ''): string
     {
         $fieldsList = "";
         foreach ($formFields as $field) {
             $fieldsList .= "- {$field['id']}: {$field['label']} ({$field['type']})\n";
+        }
+
+        // A field-grounded starter the client generated for THIS form. Giving it to the
+        // model anchors it to the real field IDs and the correct ctx API shape.
+        $starterSection = '';
+        if (trim($exampleScript) !== '') {
+            $starterSection = "\nHere is a starter script already wired to this form's fields. Use it as a reference for the correct API shape and the exact field IDs, then adapt it to the request (don't just return it unchanged):\n```\n{$exampleScript}\n```\n";
         }
 
         return <<<PROMPT
@@ -309,7 +316,7 @@ You are a backend script generator for FormLogic forms. Generate safe, sandboxed
 
 The form has these fields:
 {$fieldsList}
-
+{$starterSection}
 Your script must follow this structure:
 ```
 function onSubmit(ctx) {

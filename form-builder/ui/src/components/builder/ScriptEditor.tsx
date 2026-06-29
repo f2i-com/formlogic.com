@@ -92,6 +92,82 @@ function onSubmit(ctx) {
   };
 }`;
 
+/**
+ * Build a starter onSubmit script tailored to THIS form's fields — real field IDs
+ * and type-appropriate logic — so the author starts from relevant code instead of a
+ * generic template. Falls back to EXAMPLE_SCRIPT when the form has no usable inputs.
+ */
+function buildExampleScript(fields: Array<{ id: string; label: string; type: string }>): string {
+  const NON_INPUT = ['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'signature', 'file_upload'];
+  const input = fields.filter((f) => !NON_INPUT.includes(f.type));
+  if (input.length === 0) return EXAMPLE_SCRIPT;
+
+  const isIdent = (s: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s);
+  const acc = (id: string) => (isIdent(id) ? `ctx.answers.${id}` : `ctx.answers[${JSON.stringify(id)}]`);
+
+  const email = input.find((f) => f.type === 'email');
+  const numbers = input.filter((f) => ['number', 'rating', 'scale'].includes(f.type));
+  const choice = input.find((f) => ['dropdown', 'multiple_choice'].includes(f.type));
+  const text = input.find((f) => ['short_text', 'long_text'].includes(f.type));
+
+  const L: string[] = [];
+  L.push('// Runs on the server when this form is submitted.');
+  L.push('// Generated from your current fields — edit freely.');
+  L.push('');
+  L.push('function onSubmit(ctx) {');
+  let added = false;
+
+  if (email) {
+    L.push(`  // Require a work email on "${email.label}"`);
+    L.push(`  const email = String(${acc(email.id)} || "").toLowerCase();`);
+    L.push(`  if (email.endsWith("@gmail.com") || email.endsWith("@outlook.com")) {`);
+    L.push(`    return { reject: true, message: "Please use your work email address." };`);
+    L.push(`  }`);
+    L.push('');
+    added = true;
+  }
+
+  if (numbers.length > 0) {
+    const expr = numbers.map((f) => `(Number(${acc(f.id)}) || 0)`).join(' + ');
+    L.push(`  // Total of ${numbers.map((f) => f.label).join(' + ')}`);
+    L.push(`  const score = ${expr};`);
+    L.push(`  ctx.db.setField("total_score", score);`);
+    L.push(`  if (score >= ${numbers.length * 4}) {`);
+    L.push(`    ctx.db.setStatus("approved");`);
+    L.push(`    ctx.db.addTag("high-score");`);
+    L.push(`  }`);
+    L.push('');
+    added = true;
+  }
+
+  if (choice) {
+    L.push(`  // Tag the response by the "${choice.label}" selection`);
+    L.push(`  const selected = ${acc(choice.id)};`);
+    L.push(`  if (selected) ctx.db.addTag(String(Array.isArray(selected) ? selected[0] : selected));`);
+    L.push('');
+    added = true;
+  }
+
+  if (!added && text) {
+    L.push(`  // Flag short "${text.label}" answers for review`);
+    L.push(`  if (String(${acc(text.id)} || "").trim().length < 10) ctx.db.addTag("needs-review");`);
+    L.push('');
+    added = true;
+  }
+
+  if (!added) {
+    const f = input[0];
+    L.push(`  // Record whether "${f.label}" was answered`);
+    L.push(`  ctx.db.setField("has_${isIdent(f.id) ? f.id : 'answer'}", ${acc(f.id)} != null && ${acc(f.id)} !== "");`);
+    L.push('');
+  }
+
+  L.push('  // Values returned here are stored alongside the response.');
+  L.push('  return { processedAt: ctx.utils.now() };');
+  L.push('}');
+  return L.join('\n');
+}
+
 const DOCS = [
   {
     title: 'Getting Started',
@@ -299,7 +375,13 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
   };
 
   const handleInsertExample = () => {
-    setEditedScript(EXAMPLE_SCRIPT);
+    // Tailored to the current form's fields. Confirm before replacing real work.
+    if (editedScript.trim() && !window.confirm('Replace the current script with a starter generated from your fields?')) {
+      return;
+    }
+    setEditedScript(buildExampleScript(formFields));
+    setActiveTab('editor');
+    setTestResult(null);
   };
 
   const handleTest = async () => {
@@ -392,7 +474,9 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
     setAiExplanation(null);
 
     try {
-      const result = await api.generateScript(aiPrompt, formFields);
+      // Give the AI a field-grounded starter script as a reference (correct API shape
+      // + this form's real field IDs), alongside the prompt + field list.
+      const result = await api.generateScript(aiPrompt, formFields, buildExampleScript(formFields));
 
       if (result.error) {
         toast.error('Generation Failed', result.error);
@@ -586,10 +670,38 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
 
           {activeTab === 'ai' && (
             <div className="h-full overflow-y-auto p-6">
-              <div className="max-w-2xl mx-auto space-y-5">
-                <p className="text-sm text-gray-600 dark:text-slate-400">
-                  Describe what your script should do and AI will generate the code.
-                </p>
+              <div className="max-w-2xl mx-auto space-y-6">
+                {/* Intro */}
+                <div className="flex items-start gap-3">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/30">
+                    <Sparkles className="h-5 w-5 text-primary-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Generate with AI</h3>
+                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">
+                      Describe what should happen on submit — the AI writes the <code className="font-mono text-xs bg-gray-100 dark:bg-slate-800 px-1 py-0.5 rounded">onSubmit</code> script using your form's fields.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Field context — shows the AI is grounded in this form */}
+                {formFields.length > 0 && (
+                  <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/40 px-4 py-3">
+                    <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-2">
+                      The AI can reference your {formFields.length} field{formFields.length === 1 ? '' : 's'}:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {formFields.slice(0, 14).map((f) => (
+                        <span key={f.id} className="inline-flex items-center px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-xs text-gray-600 dark:text-slate-300">
+                          {f.label}
+                        </span>
+                      ))}
+                      {formFields.length > 14 && (
+                        <span className="px-1 py-0.5 text-xs text-gray-400 dark:text-slate-500">+{formFields.length - 14} more</span>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Prompt input */}
                 <div>
@@ -599,32 +711,30 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                   <textarea
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="Example: Reject submissions if the email is not from our company domain. Calculate a total score from the rating fields and tag high scorers..."
-                    className="w-full h-32 px-3 py-2.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                    placeholder="e.g. Calculate a total score from the rating fields and tag responses above 80 as 'high-priority'. Reject submissions from personal email domains."
+                    className="w-full h-28 px-3.5 py-2.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
                   />
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
-                    size="sm"
                     onClick={handleAIGenerate}
                     disabled={isGenerating || formFields.length === 0}
                     isLoading={isGenerating}
                     leftIcon={!isGenerating ? <Sparkles className="h-4 w-4" /> : undefined}
                   >
-                    {isGenerating ? 'Generating...' : 'Generate New Script'}
+                    {isGenerating ? 'Generating…' : 'Generate script'}
                   </Button>
                   {editedScript.trim() && (
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={handleAIImprove}
                       disabled={isGenerating}
                       isLoading={isGenerating}
                       leftIcon={!isGenerating ? <Sparkles className="h-4 w-4" /> : undefined}
                     >
-                      {isGenerating ? 'Improving...' : 'Improve Existing'}
+                      {isGenerating ? 'Improving…' : 'Improve current'}
                     </Button>
                   )}
                 </div>
@@ -634,31 +744,34 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
                   <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg flex items-start gap-3">
                     <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">No form fields found</p>
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Add fields first</p>
                       <p className="text-sm text-amber-700 dark:text-amber-400 mt-0.5">
-                        Add some fields to your form first. The AI uses your form fields to generate appropriate logic.
+                        The AI grounds the script in your form's fields — add at least one field to generate.
                       </p>
                     </div>
                   </div>
                 )}
 
-                {/* Example Prompts */}
+                {/* Example prompts as cards */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Example prompts</h4>
-                  <div className="space-y-1">
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Try an example</h4>
+                  <div className="grid sm:grid-cols-2 gap-2">
                     {[
                       "Reject submissions if the age field is under 18",
-                      "Calculate a total score from all rating fields and tag responses as 'high-performer' if score is above 80",
-                      "Send form data to a webhook and mark as approved if successful",
-                      "Only allow business email addresses, reject personal emails like gmail or yahoo",
-                      "Auto-categorize responses based on the selected department",
+                      "Total all rating fields and tag responses scoring above 80 as 'high-priority'",
+                      "Send the submission to a webhook and approve it if the call succeeds",
+                      "Only allow business email addresses; reject gmail/yahoo/outlook",
+                      "Auto-categorise responses by the selected department",
+                      "Generate a reference number and store it with the response",
                     ].map((example, i) => (
                       <button
                         key={i}
+                        type="button"
                         onClick={() => setAiPrompt(example)}
-                        className="w-full text-left text-sm text-gray-600 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 hover:bg-gray-50 dark:hover:bg-slate-800 px-3 py-2 rounded-lg transition-colors cursor-pointer"
+                        className="group flex items-start gap-2 text-left text-sm text-gray-600 dark:text-slate-300 bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/40 hover:bg-primary-50/60 dark:hover:bg-primary-500/10 px-3 py-2.5 rounded-lg transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                       >
-                        {example}
+                        <Sparkles className="h-3.5 w-3.5 text-gray-300 dark:text-slate-600 group-hover:text-primary-500 dark:group-hover:text-primary-400 mt-0.5 flex-shrink-0 transition-colors" />
+                        <span>{example}</span>
                       </button>
                     ))}
                   </div>
@@ -778,8 +891,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         {/* Footer */}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={handleInsertExample}>
-              Insert Example
+            <Button variant="outline" size="sm" onClick={handleInsertExample} title="Generate a starter script from your form's fields">
+              Starter script
             </Button>
             <Button variant="outline" size="sm" onClick={handleTest} disabled={isTesting} leftIcon={<Play className="h-4 w-4" />}>
               {isTesting ? 'Running…' : 'Run Test'}

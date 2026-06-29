@@ -464,10 +464,12 @@ class ApiClient {
     });
   }
 
-  async generateScript(prompt: string, fields: FormField[]): Promise<ApiResponse<AIScriptGenerationResult>> {
+  async generateScript(prompt: string, fields: FormField[], example?: string): Promise<ApiResponse<AIScriptGenerationResult>> {
     return this.request('/ai/generate-script', {
       method: 'POST',
-      body: JSON.stringify({ prompt, fields }),
+      // `example` is a field-grounded starter script the AI uses as a reference for
+      // the correct API shape + this form's real field IDs.
+      body: JSON.stringify({ prompt, fields, example }),
     });
   }
 

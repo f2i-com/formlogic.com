@@ -256,6 +256,8 @@ class AIController
         $body = $request->getParsedBody();
         $prompt = $body['prompt'] ?? '';
         $fields = $body['fields'] ?? [];
+        // Optional field-grounded starter script the client passes as a reference.
+        $example = is_string($body['example'] ?? null) ? substr($body['example'], 0, 20000) : '';
 
         if (empty($prompt)) {
             return $this->jsonResponse($response, [
@@ -279,7 +281,7 @@ class AIController
         }
 
         try {
-            $result = $this->aiService->generateScript($prompt, $fields);
+            $result = $this->aiService->generateScript($prompt, $fields, $example);
 
             return $this->jsonResponse($response, [
                 'success' => true,
