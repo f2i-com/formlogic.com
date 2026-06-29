@@ -4,10 +4,13 @@ PHP Slim-based REST API for the FormLogic Form Builder.
 
 ## Requirements
 
-- PHP 8.1+
+- PHP 8.1+ (`pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, `fileinfo`)
 - Composer
-- MySQL 5.7+ or 8.0+
-- SQLite3 extension
+- MySQL 8.0+
+
+> Tip: the assisted installers (`form-builder/install.php` wizard or `install.sh`) handle
+> the steps below — including generating `JWT_SECRET` and `AUDIT_HMAC_KEY`. The vendored
+> `qjs` scripting binary ships in `bin/qjs/` (no separate install).
 
 ## Setup
 
@@ -33,14 +36,19 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_DATABASE=formlogic
 DB_USERNAME=formlogic
-DB_PASSWORD=password
+DB_PASSWORD=your_secure_password_here
 ```
+
+Also set a 32+ character `JWT_SECRET` and `AUDIT_HMAC_KEY` (generate with
+`php -r "echo bin2hex(random_bytes(32));"`) — both are **required when `APP_ENV=production`**.
 
 ### 3. Create MySQL Database
 
+Use a strong password (the production safety check rejects defaults like `password`):
+
 ```sql
 CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'formlogic'@'localhost' IDENTIFIED BY 'password';
+CREATE USER 'formlogic'@'localhost' IDENTIFIED BY 'your_secure_password_here';
 GRANT ALL PRIVILEGES ON formlogic.* TO 'formlogic'@'localhost';
 FLUSH PRIVILEGES;
 ```
@@ -90,10 +98,13 @@ The API will be available at `http://localhost:8080/api`
 
 ## Authentication
 
-The API uses JWT (JSON Web Token) for authentication. Include the token in the Authorization header:
+The API uses JWT-signed sessions. Browser clients log in and receive an **HttpOnly
+session cookie**, and must send the CSRF token (set as a readable cookie) in the
+`X-CSRF-Token` header on state-changing requests. Programmatic clients can instead send an
+API key as a Bearer token:
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <api-key>
 ```
 
 ## Storage Architecture
@@ -137,7 +148,7 @@ composer test
 ## Production Deployment
 
 1. Set `APP_ENV=production` and `APP_DEBUG=false` in `.env`
-2. Use a strong `JWT_SECRET`
-3. Configure proper CORS origins
+2. Use a strong `JWT_SECRET` and `AUDIT_HMAC_KEY` (32+ chars each)
+3. Configure proper CORS origins (`CORS_ORIGIN` / `CORS_ALLOWED_ORIGINS`)
 4. Set up proper file permissions for `storage/` directory
 5. Use a proper web server (Apache/Nginx) with PHP-FPM

@@ -3,7 +3,9 @@
  * FormLogic Installation Wizard
  *
  * A browser-based installer for setting up FormLogic on WAMP/XAMPP/LAMP.
- * Access via: http://localhost/formlogic/install.php
+ * Access via your web root + this file's path, e.g.
+ *   http://localhost/<your-folder>/form-builder/install.php
+ * (for the default checkout: http://localhost/formlogic-app/form-builder/install.php)
  *
  * IMPORTANT: Delete this file after installation is complete.
  */
@@ -156,14 +158,15 @@ function checkRequirements(): array
     if ($nodeRc === 0 && !empty($nodeOut[0])) {
         $nodeVersion = trim($nodeOut[0]);
         $major = (int) ltrim($nodeVersion, 'v');
-        $nodeOk = $major >= 18;
+        // Vite 7 requires Node 20.19+ or 22.12+ (major 20+ covers the common case).
+        $nodeOk = $major >= 20;
     }
     $checks['node'] = [
         'label' => 'Node.js',
-        'required' => '>= 18',
+        'required' => '>= 20.19 / 22.12',
         'current' => $nodeVersion ?: 'Not found in PATH',
         'pass' => $nodeOk,
-        'help' => $nodeOk ? '' : 'Install Node.js 18+ from https://nodejs.org',
+        'help' => $nodeOk ? '' : 'Install Node.js 20.19+ or 22.12+ from https://nodejs.org (required by Vite 7)',
     ];
     $checks['npm'] = [
         'label' => 'npm',

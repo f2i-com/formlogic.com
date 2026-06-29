@@ -39,12 +39,12 @@
 ## Architecture Overview
 
 - **Backend**: PHP Slim 4 with PHP-DI container (`form-builder/backend/`)
-- **Frontend**: React 18 + TypeScript + Vite + Zustand (`form-builder/ui/`)
+- **Frontend**: React 19 + TypeScript + Vite + Zustand (`form-builder/ui/`)
 - **Dual Database**: MySQL (metadata, users, apps, analytics) + SQLite (per-form field definitions, responses, computed data)
 - **Auth**: JWT via HttpOnly cookies (firebase/php-jwt, HS256), with Bearer header fallback for API clients
 - **CSRF**: Double-submit cookie pattern (non-HttpOnly cookie readable by JS, matched against `X-CSRF-Token` header)
 - **Scripting**: QuickJS sandbox running real JavaScript — `quickjs-emscripten` in a Web Worker (frontend) and a vendored static `qjs` binary (backend, no Node.js), sharing one standard-library prelude
-- **Audit**: Hash-chained audit log with SHA256 integrity verification
+- **Audit**: Hash-chained audit log with HMAC-SHA256 integrity verification
 - **RBAC**: Role-based access control with per-form permission granularity (Owner role always bypasses checks)
 - **Webhooks**: HMAC-SHA256 signed deliveries with SSRF protection
 - **AI**: OpenAI-compatible API for form generation (text, file, image), script generation/improvement
@@ -66,7 +66,7 @@ formlogic-app/
         Middleware/              # Auth, CORS, CSRF, rate limiting, security headers
         Helpers/                # IpResolver
         Constants/              # AppPermissions
-      storage/sqlite/           # Per-form SQLite databases
+      storage/forms/            # Per-form SQLite databases
       logs/                     # Monolog rotating logs
     ui/
       src/
@@ -106,7 +106,7 @@ formlogic-app/
 
 8. **Pack Import with ID Remapping**: When importing packs, all form IDs and linked record references are remapped to new UUIDs, with a `formIdMap` maintaining the old-to-new mapping.
 
-9. **Rate Limiting Layers**: Multiple independent rate limiters at different granularities: global auth (10/60s), form creation (20/60s), public submissions (30/60s), public form viewing (60/60s), plus login-specific dual rate limiting (per IP+email and per email alone). In-memory per-process — not suitable for multi-server production.
+9. **Rate Limiting Layers**: Multiple independent rate limiters at different granularities: global auth (10/60s), form creation (20/60s), public submissions (30/60s), public form viewing (60/60s), plus login-specific dual rate limiting (per IP+email and per email alone). Backed by the MySQL `rate_limits` table (fixed-window counter) — shared across workers and persistent across restarts.
 
 10. **Cookie-First Auth with Header Fallback**: Browser clients use HttpOnly cookies (immune to XSS token theft) + CSRF double-submit. API clients can use Bearer tokens in the Authorization header.
 
@@ -132,10 +132,10 @@ formlogic-app/
 |---|---|
 | `APP_ENV` | `development` |
 | `DB_HOST` / `DB_PORT` / `DB_DATABASE` / `DB_USERNAME` / `DB_PASSWORD` | MySQL config |
-| `SQLITE_STORAGE_PATH` | `./storage/sqlite` |
+| `SQLITE_STORAGE_PATH` | `storage/forms` |
 | `JWT_SECRET` | Must be >= 32 chars in production |
 | `JWT_EXPIRY` | `86400` (seconds) |
-| `COOKIE_DOMAIN` | `localhost` |
+| `COOKIE_DOMAIN` | (empty = current domain) |
 | `CORS_ORIGIN` | `http://localhost:5173` |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated list (optional) |
 | `LOGIN_MAX_ATTEMPTS` / `LOGIN_DECAY_MINUTES` | `5` / `15` |
@@ -224,7 +224,7 @@ Single-origin and multi-origin modes. Supports wildcard subdomains (`*.example.c
 Double-submit cookie. Only on POST/PUT/PATCH/DELETE. Exempt: login, register, logout, public form submission. Skips if no auth cookie present. `hash_equals()` for timing-safe comparison.
 
 ### `RateLimitMiddleware`
-In-memory sliding window. Key: `prefix:sha256(client_ip)`. Adds `X-RateLimit-*` headers. Returns 429 with `Retry-After`. **Per-process storage — resets on restart.**
+MySQL-backed fixed-window counter (`rate_limits` table). Key: `prefix:sha256(client_ip)`. Adds `X-RateLimit-*` headers. Returns 429 with `Retry-After`. **Shared across workers; persists across restarts; fails open on storage error.**
 
 ### `SecurityHeadersMiddleware`
 X-Frame-Options: DENY, X-Content-Type-Options: nosniff, CSP, Referrer-Policy. Production adds HSTS.

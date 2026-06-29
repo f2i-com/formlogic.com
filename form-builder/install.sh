@@ -12,7 +12,7 @@
 # Prerequisites:
 #   - PHP >= 8.1 with extensions: pdo_mysql, pdo_sqlite, mbstring, json, openssl
 #   - Composer (https://getcomposer.org)
-#   - Node.js >= 18 and npm
+#   - Node.js >= 20.19 (or 22.12+) and npm
 #   - MySQL 8.0+
 #   - Git
 # =============================================================================
@@ -22,7 +22,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 UI_DIR="$SCRIPT_DIR/ui"
-QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-linux-x86_64"
+# Pick the qjs binary that matches the OS the backend will actually run on, so the
+# check below doesn't falsely warn (e.g. on Windows Git Bash the binary is the .exe).
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-windows-x86_64.exe" ;;
+    *)                    QJS_BIN="$SCRIPT_DIR/backend/bin/qjs/qjs-linux-x86_64" ;;
+esac
 
 # Colors
 RED='\033[0;31m'
@@ -62,8 +67,8 @@ if [[ "$(echo "$PHP_VERSION >= 8.1" | bc -l 2>/dev/null || php -r "echo version_
 fi
 
 NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
-if [[ "$NODE_MAJOR" -lt 18 ]]; then
-    error "Node.js >= 18 is required (found $(node -v))"
+if [[ "$NODE_MAJOR" -lt 20 ]]; then
+    error "Node.js >= 20.19 (or 22.12+) is required by Vite 7 (found $(node -v))"
     exit 1
 fi
 

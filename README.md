@@ -71,8 +71,8 @@ formlogic-app/
 │   │   ├── public/index.php          # Routes, DI container, middleware
 │   │   ├── config/settings.php       # Environment config
 │   │   └── src/
-│   │       ├── Controllers/           # 9 controllers (Auth, Form, Response, App, AI, Pack, Webhook...)
-│   │       ├── Services/              # 17 services (FormLogicRuntime, AuditService, PackService...)
+│   │       ├── Controllers/           # Auth, Form, Response, App, AI, Pack, Webhook, ...
+│   │       ├── Services/              # FormLogicRuntime, QuickJsRunner, AuditService, PackService, ...
 │   │       ├── Middleware/            # 6 middleware (Auth, CORS, CSRF, RateLimit, Security, BodySize)
 │   │       ├── Models/                # 6 models
 │   │       ├── Database/              # MySQLConnection + SQLiteConnection
@@ -87,7 +87,7 @@ formlogic-app/
 │           │   ├── builder/           # Form builder (field palette, script editor, NIGO dashboard...)
 │           │   ├── layout/            # App shell, sidebar, header
 │           │   └── ui/                # Shared UI components (buttons, modals, toasts...)
-│           ├── stores/                # 6 Zustand stores (auth, form, app, response, runtime, ui)
+│           ├── stores/                # Zustand stores (auth, form, app, response, runtime, ui, ...)
 │           ├── hooks/                 # Custom hooks (keyboard shortcuts, NIGO, online status)
 │           ├── lib/
 │           │   └── formlogic/         # QuickJS engine wrapper, Web Worker + shared prelude
@@ -109,47 +109,64 @@ formlogic-app/
 
 ### Prerequisites
 
-- PHP 8.1+
+- PHP 8.1+ with the `pdo_mysql`, `pdo_sqlite`, `mbstring`, `json`, `openssl`, and `fileinfo` extensions
 - MySQL 8.0+
-- Node.js 18+
+- Node.js 20.19+ or 22.12+ (required by Vite 7)
 - Composer
 
-### Backend Setup
+### Easy install (recommended)
+
+Two assisted installers live in `form-builder/` — both create the `.env` files, generate
+security keys, and set up the database for you:
+
+- **Web wizard (WAMP / XAMPP / any PHP web server):** serve the repo from your web root
+  and open `http://localhost/<your-folder>/form-builder/install.php` in a browser
+  (for the default checkout that's `http://localhost/formlogic-app/form-builder/install.php`).
+  It checks requirements, tests the DB connection, and writes config. **Delete
+  `install.php` when you're done.**
+- **CLI (macOS / Linux):**
+  ```bash
+  cd form-builder
+  chmod +x install.sh && ./install.sh
+  ```
+
+Both still need `composer install` (backend) and `npm install` (frontend) — they tell you
+which are outstanding. Prefer to do it by hand? Follow the manual steps below.
+
+### Manual setup
+
+**1. Create the database** (the app creates the tables, not the database):
+
+```bash
+mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+**2. Backend:**
 
 ```bash
 cd form-builder/backend
-
-# Install dependencies
 composer install
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your MySQL credentials, JWT secret, etc.
-
-# Start development server
+# Edit .env: set DB_DATABASE/DB_USERNAME/DB_PASSWORD, and a 32+ char JWT_SECRET
+# (the installers generate JWT_SECRET + AUDIT_HMAC_KEY for you).
 composer start
 # API available at http://localhost:8080/api
 ```
 
-### Frontend Setup
+MySQL *tables* are auto-created on the first request inside that database via
+`MySQLConnection::initializeSchema()`; per-form SQLite databases are created on demand in
+the configured storage directory.
+
+**3. Frontend:**
 
 ```bash
 cd form-builder/ui
-
-# Install dependencies
 npm install
-
-# Start development server
-npm run dev
-# App available at http://localhost:5173
-
-# Production build
-npm run build
+npm run dev          # app at http://localhost:5173
+npm run build        # production build
 ```
 
-### Database
-
-MySQL tables are auto-created on first request via `MySQLConnection::initialize()`. Per-form SQLite databases are created on demand in the configured storage directory.
+Then open <http://localhost:5173> and create your account.
 
 ---
 
@@ -300,7 +317,7 @@ finance.transferFee(amount, custodian)
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
 - **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, filesystem, or network access
-- **Hash-chained audit log** with SHA-256 integrity verification
+- **Hash-chained audit log** with HMAC-SHA256 integrity verification
 - **Body size limits** on uploads
 
 ---

@@ -33,16 +33,24 @@ FormLogic combines a Typeform-style form builder with an internal apps platform.
 | PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
-| Node.js | 18+ | `node -v` |
+| Node.js | 20.19+ / 22.12+ (Vite 7) | `node -v` |
 | npm | any | `npm -v` |
 | Git | any | `git --version` |
 
 ### Option 1: Web Install Wizard (Windows / WAMP / XAMPP)
 
-If you're using WAMP, XAMPP, or any PHP web server, open the install wizard in your browser:
+If you're using WAMP, XAMPP, or any PHP web server, serve the repo from your web root and
+open the install wizard in your browser (the URL must include the `/form-builder/`
+segment, since that's where `install.php` lives):
 
 ```
-http://localhost/formlogic/install.php
+http://localhost/<your-folder>/form-builder/install.php
+```
+
+For the default checkout under your web root that's:
+
+```
+http://localhost/formlogic-app/form-builder/install.php
 ```
 
 The wizard will guide you through:
@@ -77,8 +85,8 @@ After the script completes, update `backend/.env` with your database password, t
 #### 1. Clone the repository
 
 ```bash
-git clone git@github.com:f2i-com/formlogic.com.git formlogic
-cd formlogic
+git clone git@github.com:izuc/formlogic-app.git
+cd formlogic-app/form-builder
 ```
 
 #### 2. Set up the backend
@@ -319,11 +327,15 @@ bindings; runaway scripts are killed by the watchdog.
 ## Project Structure
 
 ```
-formlogic/
+form-builder/                     # (under the repo root, e.g. formlogic-app/form-builder/)
+├── install.php                   # Browser install wizard (delete after install)
+├── install.sh                    # CLI install script (macOS / Linux)
 ├── backend/
 │   ├── public/index.php          # Routes, DI container, middleware
 │   ├── config/settings.php       # Environment config
 │   ├── database/schema.sql       # MySQL schema export
+│   ├── bin/qjs/                  # Vendored static qjs binary (server-side sandbox)
+│   ├── resources/                # Prelude synced here by the build prebuild step
 │   ├── .env.example              # Backend environment template
 │   └── src/
 │       ├── Controllers/           # Auth, Form, Response, App, AI, Pack, Webhook, File, ApiKey
@@ -343,16 +355,15 @@ formlogic/
 │       │   ├── builder/           # Form builder (field palette, script editor, AI generator...)
 │       │   ├── layout/            # App shell, sidebar, header, mobile nav
 │       │   └── ui/                # Shared UI components (buttons, modals, toasts...)
-│       ├── stores/                # 6 Zustand stores (auth, form, app, response, runtime, ui)
+│       ├── stores/                # Zustand stores (auth, form, app, response, runtime, ui, ...)
 │       ├── hooks/                 # Custom hooks (keyboard shortcuts, NIGO, online status)
 │       ├── lib/
-│       │   └── formlogic/         # WASM engine wrapper + module prelude
+│       │   └── formlogic/         # QuickJS engine wrapper (Web Worker) + shared prelude
 │       ├── types/                 # TypeScript interfaces (form, app)
 │       └── data/
 │           ├── formTemplates.ts   # Built-in form templates
 │           └── packs/             # Pre-built pack bundles
 │
-├── install.sh                     # Automated install script
 └── README.md
 ```
 
@@ -411,6 +422,7 @@ The scripting engine supports:
 | `DB_USERNAME` | `formlogic` | MySQL user |
 | `DB_PASSWORD` | | MySQL password (**required in production**) |
 | `JWT_SECRET` | | JWT signing secret, min 32 chars (**required in production**) |
+| `AUDIT_HMAC_KEY` | | HMAC key for audit-log integrity, min 32 chars (**required in production**) |
 | `JWT_EXPIRY` | `86400` | Token lifetime in seconds (24h) |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
 | `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
@@ -425,7 +437,7 @@ The scripting engine supports:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VITE_API_URL` | `/api` | Backend API URL |
+| `VITE_API_URL` | `http://localhost:8080/api` | Backend API URL (dev default; use `/api` for same-domain production) |
 
 ---
 
@@ -530,8 +542,13 @@ Your `APP_ENV` is set to `production` but `JWT_SECRET` is empty. Either:
 ### CORS errors in browser console
 Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g., `http://localhost:5173` for dev).
 
-### WASM engine not loading
-Ensure the WASM files exist in `ui/src/lib/formlogic/wasm/`. Run the WASM download step from the install instructions above, or run `./install.sh` which handles it automatically.
+### Scripting (form logic / validation / calculations) not running
+- **Browser:** make sure `npm install` completed in `ui/` — it pulls `quickjs-emscripten`
+  (the WASM engine), which Vite bundles automatically. There's no separate download step.
+- **Server:** ensure the vendored `qjs` binary exists under `backend/bin/qjs/` for your OS
+  (it's committed in the repo). On macOS/Linux it must be executable
+  (`chmod +x backend/bin/qjs/qjs-linux-x86_64`; `install.sh` does this). The prelude is
+  synced to `backend/resources/` by the `prebuild` step of `npm run build`.
 
 ### MySQL connection refused
 - Verify MySQL is running: `mysql -u root -p -e "SELECT 1"`
@@ -548,8 +565,8 @@ sudo apt install php8.1-mysql php8.1-sqlite3 php8.1-mbstring php8.1-xml
 
 ## Scripting Runtime (upstream)
 
-The scripting engine is **QuickJS** on both sides (the previous custom Rust/WASM +
-PHP engines were retired):
+The scripting engine is **QuickJS** on both sides, running the same JavaScript from one
+shared prelude:
 
 - **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** -- QuickJS compiled to WASM, used in the browser (vendored via npm)
 - **[quickjs-ng](https://github.com/quickjs-ng/quickjs)** -- source of the vendored static `qjs` binary used on the server
