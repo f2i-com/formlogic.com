@@ -250,7 +250,7 @@ function closeFormPopup() {
           <button
             type="button"
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />

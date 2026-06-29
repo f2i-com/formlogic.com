@@ -63,7 +63,7 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="keyboard-shortcuts-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
         {/* Header */}
@@ -80,7 +80,7 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
           <button
             type="button"
             onClick={onClose}
-            className="p-2 hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />

@@ -152,7 +152,7 @@ export default function PackGalleryPage() {
                 <button
                   key={pack.id}
                   onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="text-left p-4 rounded-xl border-2 border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/5 hover:shadow-md transition-all cursor-pointer"
+                  className="text-left p-4 rounded-xl border-2 border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/5 hover:shadow-md transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
                 >
                   <div className="flex items-start gap-3">
                     <span className="text-3xl" aria-hidden="true">{pack.icon || '📦'}</span>
@@ -204,7 +204,7 @@ export default function PackGalleryPage() {
             value={sortBy}
             onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
             aria-label="Sort packs"
-            className="rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-1.5"
+            className="rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-1.5"
           >
             <option value="popular">Popular</option>
             <option value="top_rated">Top Rated</option>
@@ -238,7 +238,7 @@ export default function PackGalleryPage() {
                 <button
                   key={pack.id}
                   onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="text-left p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all cursor-pointer"
+                  className="text-left p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-md transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
                 >
                   <div className="flex items-start gap-3">
                     <span className="text-3xl" aria-hidden="true">{pack.icon || '📦'}</span>

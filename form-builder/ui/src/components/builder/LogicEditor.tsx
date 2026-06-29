@@ -410,7 +410,7 @@ export function LogicEditor({
                     return (
                       <button
                         key={f.id}
-                        onClick={() => setExpression((prev) => prev + varName)}
+                        onClick={() => setExpression((prev) => prev + (prev && !/\s$/.test(prev) ? ' ' : '') + varName)}
                         className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-500/30 transition-colors font-mono cursor-pointer"
                         title={f.label}
                       >

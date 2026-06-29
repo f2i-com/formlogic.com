@@ -367,7 +367,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
 
       {/* Footer */}
       <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-slate-700">
-        <Button variant="ghost" size="sm" onClick={resetAndClose}>
+        <Button variant="outline" size="sm" onClick={resetAndClose}>
           Cancel
         </Button>
         <Button

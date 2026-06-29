@@ -94,6 +94,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
       // api -> local keeps the currently-loaded forms (persist writes them back to
       // localStorage in local mode), so there's no data-loss risk this direction.
       setStorageMode('local');
+      toast.success('Local storage enabled', 'Your forms are now stored on this device.');
       setIsOpen(false);
     }
   };

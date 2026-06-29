@@ -114,7 +114,7 @@ export function CalculatedFieldEditor({
               <button
                 key={field.id}
                 onClick={() => insertFieldReference(field.id)}
-                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded transition-colors font-mono"
+                className="px-2 py-1 text-xs bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-300 hover:bg-primary-200 dark:hover:bg-primary-500/30 rounded transition-colors font-mono"
                 title={field.label}
               >
                 {varName}

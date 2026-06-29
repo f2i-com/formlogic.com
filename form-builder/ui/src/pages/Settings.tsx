@@ -373,8 +373,8 @@ export function Settings() {
               icon={User}
               title="Profile"
               description="Manage your personal information"
-              iconBg="bg-indigo-500/10"
-              iconColor="text-indigo-400"
+              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
+              iconColor="text-indigo-600 dark:text-indigo-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <Input
@@ -420,8 +420,8 @@ export function Settings() {
               icon={Bell}
               title="Notifications"
               description="Configure how you receive updates"
-              iconBg="bg-blue-500/10"
-              iconColor="text-blue-400"
+              iconBg="bg-blue-50 dark:bg-blue-500/10"
+              iconColor="text-blue-600 dark:text-blue-400"
             />
             <div className="space-y-1 ml-0 sm:ml-14">
               <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
@@ -465,8 +465,8 @@ export function Settings() {
               icon={Palette}
               title="Appearance"
               description="Customize the look and feel of your workspace"
-              iconBg="bg-pink-500/10"
-              iconColor="text-pink-400"
+              iconBg="bg-pink-50 dark:bg-pink-500/10"
+              iconColor="text-pink-600 dark:text-pink-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <div>
@@ -524,8 +524,8 @@ export function Settings() {
               icon={Settings2}
               title="Default Form Settings"
               description="Set defaults for new forms you create"
-              iconBg="bg-green-500/10"
-              iconColor="text-green-400"
+              iconBg="bg-green-50 dark:bg-green-500/10"
+              iconColor="text-green-600 dark:text-green-400"
             />
             <div className="space-y-1 ml-0 sm:ml-14">
               <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-slate-800">
@@ -569,8 +569,8 @@ export function Settings() {
               icon={Shield}
               title="Security"
               description="Manage your account security"
-              iconBg="bg-purple-500/10"
-              iconColor="text-purple-400"
+              iconBg="bg-purple-50 dark:bg-purple-500/10"
+              iconColor="text-purple-600 dark:text-purple-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <div className="flex items-center gap-2 mb-2">
@@ -621,8 +621,8 @@ export function Settings() {
               icon={Key}
               title="API Keys"
               description="Manage API keys for external integrations"
-              iconBg="bg-amber-500/10"
-              iconColor="text-amber-400"
+              iconBg="bg-amber-50 dark:bg-amber-500/10"
+              iconColor="text-amber-600 dark:text-amber-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               {/* Created key display (one-time) */}
@@ -787,8 +787,8 @@ export function Settings() {
               icon={Shield}
               title="Audit & Compliance"
               description="Verify the integrity of your audit trail"
-              iconBg="bg-emerald-500/10"
-              iconColor="text-emerald-400"
+              iconBg="bg-emerald-50 dark:bg-emerald-500/10"
+              iconColor="text-emerald-600 dark:text-emerald-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <p className="text-sm text-gray-500 dark:text-slate-500">
@@ -842,8 +842,8 @@ export function Settings() {
               icon={AlertTriangle}
               title="Danger Zone"
               description="Export or permanently delete your account data"
-              iconBg="bg-red-500/10"
-              iconColor="text-red-500"
+              iconBg="bg-red-50 dark:bg-red-500/10"
+              iconColor="text-red-600 dark:text-red-400"
             />
             <div className="space-y-3 ml-0 sm:ml-14">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">

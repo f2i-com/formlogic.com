@@ -517,6 +517,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
                         <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500">
                           <span className="inline-flex items-center gap-1">
                             {renderStars(pack.avgRating)}
+                            {pack.ratingCount > 0 && <span className="ml-0.5">({pack.ratingCount})</span>}
                           </span>
                           <span className="text-gray-300 dark:text-slate-700">&middot;</span>
                           <span className="inline-flex items-center gap-0.5">

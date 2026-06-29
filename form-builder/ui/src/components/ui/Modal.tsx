@@ -3,9 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion';
 import { X } from 'lucide-react';
 import { cn } from '../../lib/utils';
-
-// Track open modal count for correct body scroll lock with stacked modals
-let openModalCount = 0;
+import { lockBodyScroll, unlockBodyScroll } from '../../lib/scrollLock';
 
 interface ModalProps {
   isOpen: boolean;
@@ -94,8 +92,7 @@ export function Modal({
     }
 
     document.addEventListener('keydown', handleKeyDown);
-    openModalCount++;
-    document.body.style.overflow = 'hidden';
+    lockBodyScroll();
 
     // Focus the first focusable element in the modal (only on initial open)
     if (!hasInitialFocusRef.current) {
@@ -110,10 +107,7 @@ export function Modal({
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-      openModalCount = Math.max(0, openModalCount - 1);
-      if (openModalCount === 0) {
-        document.body.style.overflow = '';
-      }
+      unlockBodyScroll();
 
       // Restore focus to the previously focused element when closing
       if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {

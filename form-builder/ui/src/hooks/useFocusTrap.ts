@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { lockBodyScroll, unlockBodyScroll } from '../lib/scrollLock';
 
 const FOCUSABLE_SELECTORS = [
   'button:not([disabled])',
@@ -35,6 +36,8 @@ export function useFocusTrap(
     if (!active) return;
     const container = containerRef.current;
     previousFocus.current = document.activeElement as HTMLElement;
+    // Lock page scroll behind the dialog (shared with Modal so they coexist).
+    lockBodyScroll();
 
     // Move focus into the dialog (defer so children have mounted).
     const raf = requestAnimationFrame(() => {
@@ -73,6 +76,7 @@ export function useFocusTrap(
     return () => {
       cancelAnimationFrame(raf);
       document.removeEventListener('keydown', handleKeyDown);
+      unlockBodyScroll();
       const prev = previousFocus.current;
       if (prev && typeof prev.focus === 'function') {
         prev.focus();

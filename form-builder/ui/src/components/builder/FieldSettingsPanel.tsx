@@ -394,7 +394,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
               <div>
                 <h4 className="font-medium text-gray-900 dark:text-white">Conditional Logic</h4>
                 <p className="text-sm text-gray-500 dark:text-slate-500">
-                  Show or hide this field based on conditions
+                  Show, hide, require, or skip this field based on conditions
                 </p>
               </div>
             </div>

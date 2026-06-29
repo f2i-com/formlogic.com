@@ -114,7 +114,8 @@ export function FormVersionHistory({ isOpen, onClose, formId, onRestored }: Form
         onConfirm={() => { if (restoreTarget !== null) handleRestore(restoreTarget); }}
         title="Restore this version?"
         message={`This replaces the current form with version ${restoreTarget}. The current state is saved as a new version first, so you can undo this.`}
-        confirmLabel={restoring ? 'Restoring…' : 'Restore'}
+        confirmLabel="Restore"
+        isLoading={restoring}
       />
     </>
   );

@@ -450,7 +450,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onKeyDown={handleKeyDown}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="script-editor-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col mx-4 border border-gray-200 dark:border-slate-800 focus:outline-none">
         {/* Header */}
@@ -462,13 +462,13 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
               <p className="text-sm text-gray-500 dark:text-slate-400">Write code that runs when forms are submitted</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close script editor" className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer">
+          <button type="button" onClick={onClose} aria-label="Close script editor" className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer">
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
         </div>
 
         {/* Tabs */}
-        <div role="tablist" aria-label="Script editor sections" className="flex border-b border-gray-200 dark:border-slate-700 px-6">
+        <div role="tablist" aria-label="Script editor sections" className="flex border-b border-gray-200 dark:border-slate-700 px-6 overflow-x-auto scrollbar-hide">
           {([
             { key: 'editor' as const, label: 'Editor', icon: Code2 },
             { key: 'ai' as const, label: 'AI Generate', icon: Sparkles },
@@ -776,8 +776,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700">
-          <div className="flex gap-2">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between px-6 py-4 border-t border-gray-200 dark:border-slate-700">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={handleInsertExample}>
               Insert Example
             </Button>
@@ -788,8 +788,8 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
               {showSample ? 'Hide sample data' : 'Sample data'}
             </Button>
           </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose}>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button onClick={handleSave}>
