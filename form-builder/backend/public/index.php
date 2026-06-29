@@ -538,6 +538,20 @@ $app->get('/api/health', function ($request, $response) {
     return $response->withHeader('Content-Type', 'application/json');
 });
 
+// Deep diagnostics ("Doctor") — protected; surfaces broken DB / unwritable dirs / missing
+// QuickJS / billing misconfig that would otherwise fail silently.
+$container->set(\FormLogic\Controllers\HealthController::class, function (Container $c) {
+    return new \FormLogic\Controllers\HealthController(
+        $c->get(MySQLConnection::class),
+        $c->get('settings'),
+        $c->get(\FormLogic\Services\PayPalService::class),
+        $c->get(DocumentConverter::class)
+    );
+});
+$app->get('/api/health/deep', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\HealthController::class)->deep($request, $response);
+})->add($authRequired);
+
 // Auth routes (public, rate limited)
 // Shared persistent rate-limit store so every limit below holds across requests
 // and worker processes (not just within a single PHP process).

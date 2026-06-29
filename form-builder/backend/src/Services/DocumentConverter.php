@@ -53,23 +53,61 @@ class DocumentConverter
      */
     private function executeWithTimeout(string $command): array
     {
-        // Wrap command with timeout to prevent hanging
-        // Using 'timeout' command which is available on Linux
-        $timeoutCommand = sprintf(
-            'timeout --signal=KILL %d %s',
-            $this->commandTimeoutSeconds,
-            $command
-        );
+        $isWindows = PHP_OS_FAMILY === 'Windows';
 
-        $output = [];
-        $returnCode = 0;
-        exec($timeoutCommand, $output, $returnCode);
-
-        // Return code 137 means killed by SIGKILL (timeout exceeded)
-        if ($returnCode === 137) {
-            throw new \Exception('Document conversion timed out. The file may be too complex or corrupted.');
+        // On Linux/macOS, prefer GNU coreutils `timeout` (clean SIGKILL on overrun).
+        if (!$isWindows && $this->commandExists('timeout')) {
+            $wrapped = sprintf('timeout --signal=KILL %d %s', $this->commandTimeoutSeconds, $command);
+            $output = [];
+            $returnCode = 0;
+            exec($wrapped, $output, $returnCode);
+            if ($returnCode === 137) { // 128 + SIGKILL(9)
+                throw new \Exception('Document conversion timed out. The file may be too complex or corrupted.');
+            }
+            return ['output' => $output, 'returnCode' => $returnCode];
         }
 
+        // Cross-platform fallback (Windows, or no `timeout`): run via proc_open and
+        // enforce a wall-clock deadline ourselves.
+        return $this->runWithDeadline($command);
+    }
+
+    /** Run a shell command, killing it if it exceeds the configured timeout. Works on Windows. */
+    private function runWithDeadline(string $command): array
+    {
+        $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $pipes = [];
+        $proc = @proc_open($command, $descriptors, $pipes);
+        if (!is_resource($proc)) {
+            throw new \Exception('Failed to start document conversion process');
+        }
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $deadline = microtime(true) + $this->commandTimeoutSeconds;
+        $stdout = '';
+        while (true) {
+            $stdout .= stream_get_contents($pipes[1]) ?: '';
+            stream_get_contents($pipes[2]); // drain stderr so the pipe can't fill and block
+            $status = proc_get_status($proc);
+            if (!$status['running']) {
+                break;
+            }
+            if (microtime(true) >= $deadline) {
+                proc_terminate($proc, 9);
+                fclose($pipes[1]);
+                fclose($pipes[2]);
+                proc_close($proc);
+                throw new \Exception('Document conversion timed out. The file may be too complex or corrupted.');
+            }
+            usleep(50000); // 50ms
+        }
+        $stdout .= stream_get_contents($pipes[1]) ?: '';
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $returnCode = proc_close($proc);
+
+        $output = $stdout === '' ? [] : explode("\n", rtrim($stdout, "\r\n"));
         return ['output' => $output, 'returnCode' => $returnCode];
     }
 
@@ -303,12 +341,22 @@ class DocumentConverter
     }
 
     /**
-     * Check if a command exists
+     * Whether an external command is resolvable on this host (cross-platform:
+     * `where` on Windows, `command -v` elsewhere).
      */
-    private function commandExists(string $command): bool
+    public function commandExists(string $command): bool
     {
-        $return = shell_exec(sprintf("which %s 2>/dev/null", escapeshellarg($command)));
-        return !empty(trim($return ?? ''));
+        $isWindows = PHP_OS_FAMILY === 'Windows';
+        $probe = sprintf(
+            '%s %s 2>%s',
+            $isWindows ? 'where' : 'command -v',
+            escapeshellarg($command),
+            $isWindows ? 'NUL' : '/dev/null'
+        );
+        $out = [];
+        $rc = 1;
+        @exec($probe, $out, $rc);
+        return $rc === 0;
     }
 
     /**
