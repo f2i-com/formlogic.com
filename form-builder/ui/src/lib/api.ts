@@ -313,6 +313,13 @@ class ApiClient {
     });
   }
 
+  /** Record a form "start" (first interaction) for the analytics funnel. Fire-and-forget. */
+  async recordFormStart(formId: string): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/forms/${formId}/start`, { method: 'POST', credentials: 'include' });
+    } catch { /* best-effort: never block the fill on an analytics ping */ }
+  }
+
   async updateResponse(formId: string, responseId: string, data: Partial<FormResponse>): Promise<ApiResponse<{ response: FormResponse }>> {
     return this.request(`/forms/${formId}/responses/${responseId}`, {
       method: 'PUT',
@@ -455,13 +462,6 @@ class ApiClient {
       logger.error('API request failed:', error);
       return { error: error instanceof Error ? error.message : 'Network error' };
     }
-  }
-
-  async generateFormFromImages(images: string[], prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
-    return this.request('/ai/generate-form-from-images', {
-      method: 'POST',
-      body: JSON.stringify({ images, prompt }),
-    });
   }
 
   async generateScript(prompt: string, fields: FormField[], example?: string): Promise<ApiResponse<AIScriptGenerationResult>> {
@@ -814,13 +814,6 @@ class ApiClient {
 
   async uninstallPack(installationId: string): Promise<ApiResponse<PackUninstallResult>> {
     return this.request(`/packs/${installationId}`, { method: 'DELETE' });
-  }
-
-  async adoptPack(pack: PackData): Promise<ApiResponse<{ success: boolean; installationId: string; formsMatched: number; appsMatched: number }>> {
-    return this.request('/packs/adopt', {
-      method: 'POST',
-      body: JSON.stringify({ pack }),
-    });
   }
 
   // Pack Marketplace

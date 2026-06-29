@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox } from 'lucide-react';
+import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye } from 'lucide-react';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
@@ -303,6 +303,7 @@ export default function FormAnalytics() {
   }
 
   const totalResponses = analytics?.totalResponses ?? localAnalytics.totalResponses;
+  const totalViews = analytics?.totalViews ?? 0;
   const completionRate = analytics?.completionRate ?? localAnalytics.completionRate;
   const avgCompletionTime = Math.round((analytics?.averageCompletionTime ?? localAnalytics.averageCompletionTime) / 1000);
 
@@ -547,7 +548,14 @@ export default function FormAnalytics() {
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
         {/* Stats Cards — shared StatCard so they match the Dashboard tiles */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+          <StatCard
+            icon={Eye}
+            iconBg="bg-sky-500/10"
+            iconColor="text-sky-500"
+            value={totalViews}
+            label="Views"
+          />
           <StatCard
             icon={Users}
             iconBg="bg-blue-500/10"

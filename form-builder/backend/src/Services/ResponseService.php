@@ -1451,6 +1451,19 @@ class ResponseService
     }
 
     /**
+     * Record a form "start" (first interaction) for analytics. Best-effort — never
+     * throws. Powers the view → start → completion funnel in form analytics.
+     */
+    public function recordStart(string $formId): void
+    {
+        try {
+            $this->updateAnalytics($formId, 'start');
+        } catch (\Throwable $e) {
+            $this->logger->warning('Failed to record form start', ['formId' => $formId, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * Update form analytics
      *
      * Note: Uses validated column names in SQL. The column name is strictly

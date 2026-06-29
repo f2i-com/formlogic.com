@@ -849,6 +849,15 @@ export default function FormResponse() {
     return s;
   }, [visibleFields, isFieldRequired]);
 
+  // Record a "start" (first interaction) once per fill, for the analytics funnel.
+  const startRecordedRef = useRef(false);
+  useEffect(() => {
+    if (startRecordedRef.current || !formId) return;
+    if (Object.keys(currentAnswers).length === 0) return;
+    startRecordedRef.current = true;
+    api.recordFormStart(formId);
+  }, [currentAnswers, formId]);
+
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
     if (visibleFields.length > 0 && currentStep >= visibleFields.length) {

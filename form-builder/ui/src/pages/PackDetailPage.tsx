@@ -165,6 +165,27 @@ export default function PackDetailPage() {
     }
   }, [slug, ratingInput, reviewInput, submittingRating, loadPackDetail, loadRatings, user, goSignIn]);
 
+  const handleRemoveRating = useCallback(async () => {
+    if (!slug || submittingRating || !userRating) return;
+    setSubmittingRating(true);
+    try {
+      const result = await api.deletePackRating(slug);
+      if (result.error) {
+        toast.error('Failed to remove rating', typeof result.error === 'string' ? result.error : undefined);
+        return;
+      }
+      toast.success('Rating removed');
+      setUserRating(null);
+      setRatingInput(0);
+      setReviewInput('');
+      await Promise.all([loadPackDetail(), loadRatings()]);
+    } catch {
+      toast.error('Failed to remove rating');
+    } finally {
+      setSubmittingRating(false);
+    }
+  }, [slug, submittingRating, userRating, loadPackDetail, loadRatings]);
+
   const renderStars = (rating: number, size = 'h-4 w-4') => (
     <div className="flex items-center gap-0.5">
       {[1, 2, 3, 4, 5].map((s) => (
@@ -365,7 +386,17 @@ export default function PackDetailPage() {
               rows={3}
               className="w-full text-sm rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white p-2 resize-none focus:ring-1 focus:ring-primary-500"
             />
-            <div className="flex justify-end mt-2">
+            <div className="flex justify-end gap-2 mt-2">
+              {userRating && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleRemoveRating}
+                  disabled={submittingRating}
+                >
+                  Remove
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="primary"

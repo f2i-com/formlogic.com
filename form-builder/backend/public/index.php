@@ -558,11 +558,6 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $a
         return $container->get(AIController::class)->generateFormFromFile($request, $response);
     })->add($aiFileRateLimiter);
 
-    // Form generation from base64 images
-    $group->post('/generate-form-from-images', function ($request, $response) use ($container) {
-        return $container->get(AIController::class)->generateFormFromImages($request, $response);
-    });
-
     // Script generation
     $group->post('/generate-script', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateScript($request, $response);
@@ -681,6 +676,15 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
 // Public form submission endpoint (rate limited, no auth required)
 $app->post('/api/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
     return $container->get(ResponseController::class)->create($request, $response, $getArgs($request));
+})->add($submissionRateLimiter);
+
+// Record a form "start" (first interaction) for the analytics funnel. Best-effort,
+// fire-and-forget; rate-limited like submissions.
+$app->post('/api/forms/{formId}/start', function ($request, $response) use ($container, $getArgs) {
+    try {
+        $container->get(\FormLogic\Services\ResponseService::class)->recordStart($getArgs($request)['formId']);
+    } catch (\Throwable $e) { /* analytics is non-critical */ }
+    return $response->withStatus(204);
 })->add($submissionRateLimiter);
 
 // File upload for standalone forms (no auth required since forms can be public)

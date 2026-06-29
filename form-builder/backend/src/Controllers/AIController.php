@@ -102,6 +102,12 @@ class AIController
      */
     public function generateFormFromFile(Request $request, Response $response): Response
     {
+        // Opportunistically purge temp PNGs left by failed PDF/doc conversions (~5% of
+        // requests), so the converter's scratch dir can't grow unbounded.
+        if (random_int(1, 20) === 1) {
+            $this->documentConverter->cleanupTempFiles();
+        }
+
         $uploadedFiles = $request->getUploadedFiles();
         $body = $request->getParsedBody();
 
@@ -188,60 +194,6 @@ class AIController
             if (file_exists($tempPath)) {
                 unlink($tempPath);
             }
-        }
-    }
-
-    /**
-     * Generate form from base64 images
-     * POST /api/ai/generate-form-from-images
-     *
-     * Body: { "images": ["base64...", "base64..."], "prompt": "optional" }
-     */
-    public function generateFormFromImages(Request $request, Response $response): Response
-    {
-        $body = $request->getParsedBody();
-        $images = $body['images'] ?? [];
-        $additionalPrompt = $body['prompt'] ?? null;
-
-        if (empty($images) || !is_array($images)) {
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'message' => 'At least one image is required',
-            ], 400);
-        }
-
-        // Limit number of images
-        if (count($images) > 10) {
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'message' => 'Maximum 10 images allowed',
-            ], 400);
-        }
-
-        // Each image must be a string (avoids a TypeError in the service) and is
-        // size-capped (~11MB of base64) to bound token cost.
-        foreach ($images as $img) {
-            if (!is_string($img)) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Each image must be a base64 string'], 400);
-            }
-            if (strlen($img) > 15000000) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'An image exceeds the maximum size'], 400);
-            }
-        }
-
-        try {
-            $result = $this->aiService->generateFormFromImages($images, $additionalPrompt);
-
-            return $this->jsonResponse($response, [
-                'success' => true,
-                'data' => $result,
-            ]);
-        } catch (\Throwable $e) {
-            $this->logger->error('AI image generation error', ['exception' => $e->getMessage()]);
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'message' => 'An unexpected error occurred',
-            ], 500);
         }
     }
 
