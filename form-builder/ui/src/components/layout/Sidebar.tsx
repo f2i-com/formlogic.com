@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   FileText,
@@ -13,7 +13,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
 import { useFormStore } from '../../stores/formStore';
-import { toast } from '../../stores/toastStore';
+import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 
@@ -25,20 +25,10 @@ const navItems = [
 ];
 
 export function Sidebar({ offline = false }: { offline?: boolean }) {
-  const navigate = useNavigate();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
-  const { createForm, setActiveForm, storageMode } = useFormStore();
-
-  const handleCreateForm = async () => {
-    try {
-      const form = await createForm('Untitled Form');
-      if (!form) return;
-      setActiveForm(form.id);
-      navigate(`/builder/${form.id}`);
-    } catch {
-      toast.error('Creation failed', 'Could not create a new form. Please try again.');
-    }
-  };
+  const { storageMode } = useFormStore();
+  // "Create Form" opens the New Form picker (template or blank), not a blank form.
+  const { openNewForm, newFormPicker } = useCreateFormFlow();
 
   return (
     <aside
@@ -58,7 +48,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
       {/* Create Button */}
       <div className="p-3">
         <Button
-          onClick={handleCreateForm}
+          onClick={openNewForm}
           className={cn('w-full', sidebarCollapsed && 'px-0')}
           leftIcon={<Plus className="h-4 w-4" />}
           aria-label={sidebarCollapsed ? 'Create Form' : undefined}
@@ -141,6 +131,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           )}
         </button>
       </div>
+      {newFormPicker}
     </aside>
   );
 }

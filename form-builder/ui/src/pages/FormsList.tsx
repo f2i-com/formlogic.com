@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { logger } from '../lib/logger';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useCreateFormFlow } from '../hooks/useCreateFormFlow';
 import {
   Plus,
   Search,
@@ -267,7 +268,9 @@ const FormCard = memo(function FormCard({
 export function FormsList() {
   useDocumentTitle('My Forms');
   const navigate = useNavigate();
-  const { forms, createForm, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
+  const { forms, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
+  // "New Form" / "Create Form" open the New Form picker (template or blank).
+  const { openNewForm, newFormPicker } = useCreateFormFlow();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const storageMode = useFormStore((s) => s.storageMode);
   const { getResponsesByFormId } = useResponseStore();
@@ -280,7 +283,6 @@ export function FormsList() {
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
   const [showPackImport, setShowPackImport] = useState(false);
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
@@ -342,22 +344,6 @@ export function FormsList() {
       document.removeEventListener('keydown', onKey);
     };
   }, [activeMenu]);
-
-  const handleCreateForm = async () => {
-    if (isCreating) return;
-    setIsCreating(true);
-    try {
-      const form = await createForm('Untitled Form');
-      if (!form) return;
-      setActiveForm(form.id);
-      navigate(`/builder/${form.id}`);
-    } catch (error) {
-      logger.error('Failed to create form:', error);
-      toast.error('Failed to create form', 'Please try again');
-    } finally {
-      setIsCreating(false);
-    }
-  };
 
   const handleNavigate = useCallback((path: string) => {
     navigate(path);
@@ -460,7 +446,7 @@ export function FormsList() {
             <Button variant="outline" size="sm" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} aria-label="Manage Packs" title="Manage Packs">
               <span className="hidden sm:inline">Manage Packs</span>
             </Button>
-            <Button onClick={handleCreateForm} size="sm" leftIcon={<Plus className="h-4 w-4" />} disabled={isCreating} isLoading={isCreating}>
+            <Button onClick={openNewForm} size="sm" leftIcon={<Plus className="h-4 w-4" />}>
               <span className="hidden sm:inline">New Form</span>
               <span className="sm:hidden">New</span>
             </Button>
@@ -536,7 +522,7 @@ export function FormsList() {
                       title="No forms yet"
                       description="Create your first form to get started"
                       action={
-                        <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+                        <Button onClick={openNewForm} leftIcon={<Plus className="h-4 w-4" />}>
                           Create Form
                         </Button>
                       }
@@ -636,6 +622,8 @@ export function FormsList() {
         confirmLabel="Delete"
         variant="danger"
       />
+
+      {newFormPicker}
     </div>
   );
 }

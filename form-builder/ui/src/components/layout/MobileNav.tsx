@@ -1,44 +1,16 @@
-import { NavLink, useNavigate } from 'react-router-dom';
-import { useRef, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, FileText, Plus, Globe, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useFormStore } from '../../stores/formStore';
-import { toast } from '../../stores/toastStore';
-import { TemplateSelector } from '../builder';
-import type { FormTemplate } from '../../data/formTemplates';
+import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 
 export function MobileNav() {
-  const navigate = useNavigate();
-  const { createForm, addFields, setActiveForm } = useFormStore();
-  const creatingRef = useRef(false);
-  // Tapping "Create" opens the New Form picker (template or blank) — parity with the
-  // desktop Dashboard, instead of jumping straight into a blank form.
-  const [showTemplate, setShowTemplate] = useState(false);
-
-  const handleSelectTemplate = async (template: FormTemplate | null) => {
-    if (creatingRef.current) return; // guard against a double-tap creating two drafts
-    creatingRef.current = true;
-    setShowTemplate(false);
-    try {
-      const form = await createForm(template ? template.name : 'Untitled Form');
-      if (!form) return;
-      if (template && template.fields.length > 0) {
-        addFields(form.id, template.fields);
-      }
-      setActiveForm(form.id);
-      navigate(`/builder/${form.id}`);
-      if (template) toast.success('Form Created', `Started with "${template.name}" template`);
-    } catch {
-      toast.error('Creation failed', 'Could not create a new form. Please try again.');
-    } finally {
-      creatingRef.current = false;
-    }
-  };
+  // Tapping "Create" opens the New Form picker (template or blank), not a blank form.
+  const { openNewForm, newFormPicker } = useCreateFormFlow();
 
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Home' },
     { path: '/forms', icon: FileText, label: 'Forms' },
-    { action: () => setShowTemplate(true), icon: Plus, label: 'Create', isAction: true },
+    { action: openNewForm, icon: Plus, label: 'Create', isAction: true },
     { path: '/apps', icon: Globe, label: 'Apps' },
     { path: '/settings', icon: Settings, label: 'Settings' },
   ];
@@ -89,11 +61,7 @@ export function MobileNav() {
         })}
       </div>
     </nav>
-    <TemplateSelector
-      isOpen={showTemplate}
-      onClose={() => setShowTemplate(false)}
-      onSelectTemplate={handleSelectTemplate}
-    />
+    {newFormPicker}
     </>
   );
 }
