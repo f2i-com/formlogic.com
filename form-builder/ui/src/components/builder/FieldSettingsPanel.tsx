@@ -15,7 +15,7 @@ import { LogicEditor } from './LogicEditor';
 import { ValidationEditor } from './ValidationEditor';
 import { CalculatedFieldEditor } from './CalculatedFieldEditor';
 import { LinkedRecordSettings } from './LinkedRecordSettings';
-import { FIELD_TYPE_INFO, type FormField, type ConditionalLogic } from '../../types/form';
+import { type FormField, type ConditionalLogic } from '../../types/form';
 
 export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   field,
@@ -42,11 +42,6 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-200 dark:border-slate-700">
-        <h3 className="font-medium text-gray-900 dark:text-white">Field Settings</h3>
-        <p className="text-sm text-gray-500 dark:text-slate-500 mt-1">{FIELD_TYPE_INFO[field.type]?.label}</p>
-      </div>
 
       {/* Tabs */}
       <Tabs key={field.id} defaultValue="basic" className="flex-1 flex flex-col">

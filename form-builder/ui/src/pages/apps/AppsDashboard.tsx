@@ -11,14 +11,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
-import { cn, parseServerDate } from '../../lib/utils';
+import { cn, formatRelativeTime } from '../../lib/utils';
 import type { App } from '../../types/app';
-
-const statusColors: Record<string, string> = {
-  draft: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400',
-  published: 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400',
-  archived: 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400',
-};
 
 export function AppsDashboard() {
   const navigate = useNavigate();
@@ -136,16 +130,16 @@ export function AppsDashboard() {
             {Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)}
           </div>
         ) : filteredApps.length === 0 && apps.length === 0 ? (
-          <div className="text-center py-20 bg-white dark:bg-slate-900/30 rounded-2xl border border-dashed border-gray-200 dark:border-slate-700">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-100 dark:bg-slate-800 flex items-center justify-center mb-4">
-              <Globe className="h-8 w-8 text-gray-400 dark:text-slate-500" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1 tracking-tight">No apps yet</h3>
-            <p className="text-gray-500 dark:text-slate-400 mb-6 text-sm max-w-sm mx-auto">Create your first app to group forms into a deployable application.</p>
-            <Button onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
-              Create Your First App
-            </Button>
-          </div>
+          <EmptyState
+            icon={Globe}
+            title="No apps yet"
+            description="Create your first app to group forms into a deployable application."
+            action={
+              <Button onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
+                Create Your First App
+              </Button>
+            }
+          />
         ) : filteredApps.length === 0 ? (
           <EmptyState
             icon={Search}
@@ -199,7 +193,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       className={cn(
-        'bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6',
+        'bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03] p-6',
         'hover:shadow-lg hover:shadow-gray-900/[0.06] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
         'focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 outline-none',
         'transition-all duration-200 cursor-pointer group'
@@ -230,9 +224,13 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             </div>
           </div>
         </div>
-        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium capitalize flex-shrink-0', statusColors[app.status])}>
+        <Badge
+          variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
+          size="sm"
+          className="capitalize flex-shrink-0"
+        >
           {app.status}
-        </span>
+        </Badge>
       </div>
 
       {app.description && (
@@ -241,7 +239,7 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
 
       <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-slate-700/40">
         <span className="text-xs text-gray-400 dark:text-slate-500">
-          Updated {parseServerDate(app.updatedAt).toLocaleDateString()}
+          Updated {formatRelativeTime(app.updatedAt)}
         </span>
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           {app.status === 'published' && (

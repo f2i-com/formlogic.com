@@ -84,7 +84,7 @@ const FormCard = memo(function FormCard({
               <h3 className="font-medium text-gray-900 dark:text-white truncate">{form.title || 'Untitled Form'}</h3>
               <div className="flex items-center gap-2">
                 <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
-                  {form.fieldCount ?? form.fields?.length ?? 0} fields
+                  {(() => { const n = form.fieldCount ?? form.fields?.length ?? 0; return `${n} field${n === 1 ? '' : 's'}`; })()}
                 </p>
                 {packName && (
                   <Badge variant="info" size="sm">

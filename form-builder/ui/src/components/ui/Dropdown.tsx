@@ -212,7 +212,7 @@ export function Dropdown({
                   : { top: menuRect.bottom + 4 }),
               };
             })()}
-            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-auto"
+            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-auto animate-scale-in"
           >
             {options.map((option, index) => (
               <div

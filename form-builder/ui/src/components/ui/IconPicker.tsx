@@ -78,7 +78,7 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute left-0 top-full mt-1 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 z-50 overflow-hidden">
+        <div className="absolute left-0 top-full mt-1 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 z-50 overflow-hidden animate-scale-in origin-top-left">
           {/* Search */}
           <div className="p-2 border-b border-gray-100 dark:border-slate-800">
             <div className="relative">

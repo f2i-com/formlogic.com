@@ -6,6 +6,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
+import { StatCard } from '../components/ui/StatCard';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
@@ -485,61 +486,40 @@ export default function FormAnalytics() {
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
-        {/* Stats Cards */}
+        {/* Stats Cards — shared StatCard so they match the Dashboard tiles */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <Card>
-            <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-blue-500/10 rounded-lg flex-shrink-0">
-                <Users className="h-5 w-5 sm:h-6 sm:w-6 text-blue-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">{totalResponses}</p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Responses</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-green-500/10 rounded-lg flex-shrink-0">
-                <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 text-green-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">{completionRate}%</p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Completion</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-purple-500/10 rounded-lg flex-shrink-0">
-                <Clock className="h-5 w-5 sm:h-6 sm:w-6 text-purple-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white transition-colors tabular-nums">
-                  {avgCompletionTime > 60
-                    ? `${Math.floor(avgCompletionTime / 60)}m`
-                    : `${avgCompletionTime}s`}
-                </p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">Avg. Time</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="flex items-center gap-3">
-              <div className="p-2 sm:p-3 bg-orange-500/10 rounded-lg flex-shrink-0">
-                <TrendingUp className="h-5 w-5 sm:h-6 sm:w-6 text-orange-500" />
-              </div>
-              <div className="min-w-0">
-                <p className={`text-xl sm:text-2xl font-bold tabular-nums ${weeklyChange === null ? 'text-gray-500 dark:text-slate-400' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'} transition-colors`}>
-                  {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
-                </p>
-                <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate transition-colors">This Week</p>
-              </div>
-            </CardContent>
-          </Card>
+          <StatCard
+            icon={Users}
+            iconBg="bg-blue-500/10"
+            iconColor="text-blue-500"
+            value={totalResponses}
+            label="Responses"
+          />
+          <StatCard
+            icon={CheckCircle}
+            iconBg="bg-green-500/10"
+            iconColor="text-green-500"
+            value={`${completionRate}%`}
+            label="Completion"
+          />
+          <StatCard
+            icon={Clock}
+            iconBg="bg-purple-500/10"
+            iconColor="text-purple-500"
+            value={avgCompletionTime > 60 ? `${Math.floor(avgCompletionTime / 60)}m` : `${avgCompletionTime}s`}
+            label="Avg. Time"
+          />
+          <StatCard
+            icon={TrendingUp}
+            iconBg="bg-orange-500/10"
+            iconColor="text-orange-500"
+            value={
+              <span className={weeklyChange === null ? '' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'}>
+                {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
+              </span>
+            }
+            label="This Week"
+          />
         </div>
 
         {/* Chart */}

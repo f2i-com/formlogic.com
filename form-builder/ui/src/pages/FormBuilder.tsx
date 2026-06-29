@@ -50,7 +50,7 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboar
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
-import type { FormField, FieldType } from '../types/form';
+import { FIELD_TYPE_INFO, type FormField, type FieldType } from '../types/form';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | null;
 
@@ -61,6 +61,10 @@ export default function FormBuilder() {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
+  // Toolbar dock toggles — focus returns here when a panel is collapsed via its X,
+  // so keyboard/SR users land on the control that reopens it.
+  const addFieldToggleRef = useRef<HTMLButtonElement>(null);
+  const settingsToggleRef = useRef<HTMLButtonElement>(null);
   // Desktop dockable panels: the Fields palette is hidden until "Add Field"; the
   // field-settings panel auto-opens when a field is selected (collapsible via X).
   // The canvas takes the freed space when either is collapsed.
@@ -163,17 +167,36 @@ export default function FormBuilder() {
       setMobilePanel('settings');
     } else {
       setSettingsCollapsed(false);
+      // Avoid a 3-column crush on a narrow desktop (<lg): give settings the room.
+      if (window.innerWidth < 1024) setPaletteOpen(false);
     }
   }, [setSelectedField, isMobile, setMobilePanel]);
 
-  // Open the Fields palette (the mobile tab, or the desktop dock).
+  // Open the Fields palette (the mobile tab, or the desktop dock). On a narrow
+  // desktop (<lg) collapse the settings dock so we never show 3 columns at once.
   const openPalette = useCallback(() => {
     if (isMobile) {
       setMobilePanel('palette');
-    } else {
-      setPaletteOpen(true);
+      return;
     }
+    setPaletteOpen(true);
+    if (window.innerWidth < 1024) setSettingsCollapsed(true);
   }, [isMobile, setMobilePanel]);
+
+  // Toolbar dock toggles — flip a panel and, on a narrow desktop, keep at most two
+  // columns so the canvas stays usable (768–1023px would otherwise crush it).
+  const toggleDock = useCallback((which: 'palette' | 'settings') => {
+    const narrow = window.innerWidth < 1024;
+    if (which === 'palette') {
+      const opening = !paletteOpen;
+      setPaletteOpen(opening);
+      if (opening && narrow) setSettingsCollapsed(true);
+    } else {
+      const opening = settingsCollapsed;
+      setSettingsCollapsed(!settingsCollapsed);
+      if (opening && narrow) setPaletteOpen(false);
+    }
+  }, [paletteOpen, settingsCollapsed]);
 
   // Add field handler (defined first for use in shortcuts)
   const handleAddField = useCallback((type: FieldType) => {
@@ -239,6 +262,7 @@ export default function FormBuilder() {
       setMobilePanel('canvas');
     } else {
       setSettingsCollapsed(false);
+      if (window.innerWidth < 1024) setPaletteOpen(false);
     }
   }, [form, addField, setSelectedField, isMobile, setMobilePanel]);
 
@@ -269,8 +293,10 @@ export default function FormBuilder() {
   const handleNavigateFields = useCallback((direction: 'up' | 'down') => {
     if (formFields.length === 0) return;
 
+    // Route through handleSelectField so keyboard navigation also opens the settings
+    // dock (raw setSelectedField left it collapsed).
     if (!selectedFieldId) {
-      setSelectedField(formFields[0].id);
+      handleSelectField(formFields[0].id);
       return;
     }
 
@@ -278,8 +304,8 @@ export default function FormBuilder() {
       ? Math.max(0, selectedFieldIndex - 1)
       : Math.min(formFields.length - 1, selectedFieldIndex + 1);
 
-    setSelectedField(formFields[newIndex].id);
-  }, [formFields, selectedFieldId, selectedFieldIndex, setSelectedField]);
+    handleSelectField(formFields[newIndex].id);
+  }, [formFields, selectedFieldId, selectedFieldIndex, handleSelectField]);
 
   const handleMoveField = useCallback((direction: 'up' | 'down') => {
     if (!form || !selectedFieldId || formFields.length < 2) return;
@@ -554,7 +580,7 @@ export default function FormBuilder() {
               <MoreVertical className="h-4 w-4" />
             </Button>
             {showMobileMenu && (
-              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 py-1 z-50">
+              <div className="absolute right-0 top-full mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 py-1 z-50 animate-scale-in origin-top-right">
                 {[
                   { label: 'Form Settings', icon: Settings, modal: 'settings' as ModalType },
                   { label: 'Theme', icon: Palette, modal: 'theme' as ModalType },
@@ -648,11 +674,11 @@ export default function FormBuilder() {
         {/* Field Palette — mobile tab, or desktop dock (opened via "Add Field").
             Hidden by default on desktop so the canvas gets the room. */}
         {(isMobile ? mobilePanel === 'palette' : paletteOpen) && (
-          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0">
+          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left">
             <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
               <h2 className="font-semibold text-gray-900 dark:text-white">Add a field</h2>
               <button
-                onClick={() => setPaletteOpen(false)}
+                onClick={() => { setPaletteOpen(false); addFieldToggleRef.current?.focus(); }}
                 className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 aria-label="Collapse fields panel"
                 title="Collapse"
@@ -673,9 +699,10 @@ export default function FormBuilder() {
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
             <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
               <Button
+                ref={addFieldToggleRef}
                 size="sm"
                 variant={paletteOpen ? 'secondary' : 'outline'}
-                onClick={() => setPaletteOpen((v) => !v)}
+                onClick={() => toggleDock('palette')}
                 leftIcon={<Plus className="h-4 w-4" />}
                 aria-pressed={paletteOpen}
               >
@@ -685,11 +712,13 @@ export default function FormBuilder() {
                 {formFields.length} field{formFields.length === 1 ? '' : 's'}
               </span>
               <Button
+                ref={settingsToggleRef}
                 size="sm"
                 variant={selectedField && !settingsCollapsed ? 'secondary' : 'ghost'}
-                onClick={() => { if (selectedField) setSettingsCollapsed((v) => !v); }}
+                onClick={() => { if (selectedField) toggleDock('settings'); }}
                 disabled={!selectedField}
                 aria-pressed={!!selectedField && !settingsCollapsed}
+                aria-label="Toggle field settings"
                 title={selectedField ? 'Toggle field settings' : 'Select a field to edit its settings'}
               >
                 <SlidersHorizontal className="h-4 w-4" />
@@ -764,11 +793,16 @@ export default function FormBuilder() {
 
         {/* Settings Panel — mobile tab, or desktop dock (auto-opens on field select) */}
         {(isMobile ? mobilePanel === 'settings' : (!!selectedField && !settingsCollapsed)) && (
-          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0">
+          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right">
             <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
-              <h2 className="font-semibold text-gray-900 dark:text-white">Field settings</h2>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-gray-900 dark:text-white">Field settings</h2>
+                {selectedField && (
+                  <p className="text-sm text-gray-500 dark:text-slate-500 truncate">{FIELD_TYPE_INFO[selectedField.type]?.label}</p>
+                )}
+              </div>
               <button
-                onClick={() => setSettingsCollapsed(true)}
+                onClick={() => { setSettingsCollapsed(true); settingsToggleRef.current?.focus(); }}
                 className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 aria-label="Collapse settings panel"
                 title="Collapse"

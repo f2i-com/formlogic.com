@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
+import { StatCard } from '../components/ui/StatCard';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -48,44 +49,6 @@ import type { FormTemplate } from '../data/formTemplates';
 interface DashboardStats {
   totalResponses: number;
   avgCompletionRate: number;
-}
-
-// Stat Card Component with enhanced styling
-function StatCard({
-  icon: Icon,
-  iconBg,
-  iconColor,
-  value,
-  label,
-  subtext,
-  className,
-}: {
-  icon: React.ElementType;
-  iconBg: string;
-  iconColor: string;
-  value: string | number;
-  label: string;
-  subtext?: string;
-  className?: string;
-}) {
-  return (
-    <Card className={`hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300 hover:-translate-y-0.5 group ${className ?? ''}`}>
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight tabular-nums">{value}</p>
-            <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mt-1">{label}</p>
-            {subtext && (
-              <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{subtext}</p>
-            )}
-          </div>
-          <div className={`p-2.5 rounded-xl ${iconBg} group-hover:scale-105 transition-transform duration-300`}>
-            <Icon className={`h-5 w-5 ${iconColor}`} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
 }
 
 // Quick Action Button Component
@@ -706,6 +669,7 @@ export function Dashboard() {
                                 <Badge
                                   variant={form.status === 'published' ? 'success' : 'default'}
                                   size="sm"
+                                  className="capitalize"
                                 >
                                   {form.status}
                                 </Badge>
@@ -716,9 +680,9 @@ export function Dashboard() {
                                   {formatRelativeTime(form.updatedAt)}
                                 </span>
                                 <span className="hidden sm:inline">•</span>
-                                <span className="hidden sm:inline">{fieldCount} fields</span>
+                                <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
                                 <span>•</span>
-                                <span>{(storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length)} responses</span>
+                                {(() => { const n = storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length; return <span>{n} response{n === 1 ? '' : 's'}</span>; })()}
                               </div>
                             </div>
                           </div>
