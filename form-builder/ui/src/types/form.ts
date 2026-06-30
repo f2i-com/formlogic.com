@@ -118,8 +118,10 @@ export interface CustomScreen {
   html?: string;
   css?: string;
   js?: string;
-  /** When true, the screen's records() works on the public link (e.g. a leaderboard). Answers only. */
+  /** When true, the screen's records() works on the public link (e.g. a leaderboard). */
   publicRecords?: boolean;
+  /** Whitelist of field ids exposed publicly via records() — ONLY these answer keys are returned. */
+  publicRecordFields?: string[];
 }
 
 export interface Form {

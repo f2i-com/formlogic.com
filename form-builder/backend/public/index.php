@@ -854,13 +854,24 @@ $app->get('/api/public/forms/{id}/screen-records', function ($request, $response
         $response->getBody()->write(json_encode(['error' => true, 'message' => 'Form not found']));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
     }
-    $limit = max(1, min((int) ($request->getQueryParams()['limit'] ?? 100), 500));
+    // Only expose the whitelisted answer fields — never the whole response (PII/internal/hidden values).
+    // No whitelist => no answer data (secure default; the owner must explicitly pick public fields).
+    $allowed = array_values(array_filter(
+        is_array($form['customScreen']['publicRecordFields'] ?? null) ? $form['customScreen']['publicRecordFields'] : [],
+        'is_string'
+    ));
+    $limit = max(1, min((int) ($request->getQueryParams()['limit'] ?? 100), 200));
     $rows = $container->get(\FormLogic\Services\ResponseService::class)->getFormResponses($args['id'], ['limit' => $limit]);
-    $records = array_map(static fn ($r) => [
-        'id' => $r['id'] ?? null,
-        'answers' => $r['answers'] ?? [],
-        'submittedAt' => $r['submittedAt'] ?? null,
-    ], $rows);
+    $records = array_map(static function ($r) use ($allowed) {
+        $answers = is_array($r['answers'] ?? null) ? $r['answers'] : [];
+        $safe = [];
+        foreach ($allowed as $key) {
+            if (array_key_exists($key, $answers)) {
+                $safe[$key] = $answers[$key];
+            }
+        }
+        return ['id' => $r['id'] ?? null, 'answers' => $safe, 'submittedAt' => $r['submittedAt'] ?? null];
+    }, $rows);
     $response->getBody()->write(json_encode(['records' => $records]));
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);

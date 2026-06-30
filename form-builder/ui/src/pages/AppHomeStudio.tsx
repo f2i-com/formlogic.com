@@ -30,6 +30,7 @@ export default function AppHomeStudio() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const previewTimer = useRef<number | undefined>(undefined);
   useDocumentTitle(`Custom home — ${name || 'App'}`);
 
@@ -58,7 +59,7 @@ export default function AppHomeStudio() {
           settings: {} as Record<string, unknown>,
         };
       }));
-      if (!cancelled) setForms(enriched);
+      if (!cancelled) { setForms(enriched); setLoaded(true); }
     })();
     return () => { cancelled = true; };
   }, [appId]);
@@ -160,8 +161,11 @@ export default function AppHomeStudio() {
         <div className="min-h-0 flex flex-col bg-white dark:bg-slate-900">
           <div className="px-4 h-9 shrink-0 flex items-center text-xs font-medium text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-800">Live preview</div>
           <div className="flex-1 min-h-0">
-            {(preview.html || preview.js) ? (
-              <AppCustomScreenRuntime key="preview" screen={preview} appSlug={slug} appName={name} forms={forms} className="w-full h-full border-0" />
+            {!loaded ? (
+              <div className="h-full flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary-500" /></div>
+            ) : (preview.html || preview.js) ? (
+              // key on form ids so the preview re-mounts once forms resolve (records() needs them).
+              <AppCustomScreenRuntime key={forms.map((f) => f.formId).join(',')} screen={preview} appSlug={slug} appName={name} forms={forms} className="w-full h-full border-0" />
             ) : (
               <div className="h-full flex items-center justify-center text-center px-6">
                 <p className="text-sm text-gray-400 dark:text-slate-500">Describe the home page and hit <span className="font-medium text-gray-600 dark:text-slate-300">Generate</span> — the live preview appears here.</p>

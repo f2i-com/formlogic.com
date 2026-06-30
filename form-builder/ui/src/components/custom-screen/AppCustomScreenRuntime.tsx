@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
+import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
 import type { CustomScreen } from '../../types/form';
 import type { AppRuntimeForm } from '../../types/app';
 
@@ -65,6 +66,7 @@ export function AppCustomScreenRuntime({
   className?: string;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const rateRef = useRef(createSdkRateLimiter());
   const user = useAuthStore((s) => s.user);
 
   const srcDoc = useMemo(() => {
@@ -72,6 +74,7 @@ export function AppCustomScreenRuntime({
     const html = screen.html || '';
     const js = (screen.js || '').replace(/<\/script>/gi, '<\\/script>');
     return `<!doctype html><html><head><meta charset="utf-8">`
+      + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<script>${APP_SDK_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${css}</style></head>`
@@ -87,6 +90,10 @@ export function AppCustomScreenRuntime({
       if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
       let result: unknown;
       let error: string | undefined;
+      if (!rateRef.current(String(m.action))) {
+        iframeRef.current.contentWindow?.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' }, '*');
+        return;
+      }
       const requireForm = (id: unknown): string => {
         const fid = String(id || '');
         if (!formIds.has(fid)) throw new Error(`Unknown form: ${fid}`);
@@ -102,7 +109,9 @@ export function AppCustomScreenRuntime({
             break;
           case 'submit': {
             const fid = requireForm(m.payload?.formId);
-            const res = await api.createAppResponse(appSlug, fid, { answers: (m.payload?.answers as Record<string, unknown>) || {} });
+            const answers = (m.payload?.answers as Record<string, unknown>) || {};
+            if (JSON.stringify(answers).length > 262144) throw new Error('Submission is too large');
+            const res = await api.createAppResponse(appSlug, fid, { answers });
             if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Submit failed');
             result = res.data.response;
             break;
@@ -124,10 +133,12 @@ export function AppCustomScreenRuntime({
             result = true;
             break;
           }
-          case 'toast':
-            if (m.payload?.type === 'error') toast.error(String(m.payload?.msg || '')); else toast.success(String(m.payload?.msg || ''));
+          case 'toast': {
+            const msg = String(m.payload?.msg || '').slice(0, 200);
+            if (m.payload?.type === 'error') toast.error(msg); else toast.success(msg);
             result = true;
             break;
+          }
           default:
             error = `Unknown action: ${m.action}`;
         }
