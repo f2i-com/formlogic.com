@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2, Plug, Upload } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload } from 'lucide-react';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -8,11 +8,9 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { GenerateAppModal } from '../../components/ai-app-builder/GenerateAppModal';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { PackImportModal } from '../../components/builder/PackImportModal';
 import { ShowMore } from '../../components/ui/ShowMore';
-import { useAiAvailable } from '../../hooks/useAiAvailable';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
@@ -29,10 +27,8 @@ export function AppsDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [appLimit, setAppLimit] = useState(APPS_PAGE);
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
-  const [showGenerate, setShowGenerate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
-  const aiAvailable = useAiAvailable();
 
   // Open a "creator" MCP connection so an external AI can build a brand-new app itself — no placeholder.
 
@@ -79,11 +75,6 @@ export function AppsDashboard() {
             <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} title="Share a temporary MCP link so your own AI can build a new app">
               Hand to an AI
             </Button>
-            {aiAvailable && (
-              <Button variant="outline" size="sm" onClick={() => setShowGenerate(true)} leftIcon={<Wand2 className="h-4 w-4" />}>
-                Generate with AI
-              </Button>
-            )}
             <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} title="Import an app from a .json bundle exported from FormLogic">
               Import
             </Button>
@@ -172,7 +163,6 @@ export function AppsDashboard() {
         isLoading={deleting}
       />
 
-      <GenerateAppModal isOpen={showGenerate} onClose={() => { setShowGenerate(false); fetchApps(); }} />
       {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
     </div>
