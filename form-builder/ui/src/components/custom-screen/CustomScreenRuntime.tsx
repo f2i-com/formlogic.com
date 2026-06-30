@@ -57,6 +57,7 @@ export function CustomScreenRuntime({
   fields,
   className,
   publicMode = false,
+  appSlug,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -65,6 +66,8 @@ export function CustomScreenRuntime({
   className?: string;
   /** Public link/embed context (anonymous): records() uses the gated public endpoint, not the owner API. */
   publicMode?: boolean;
+  /** App-runtime context: route submit/records through the app API (membership + permission checks). */
+  appSlug?: string;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
@@ -100,14 +103,20 @@ export function CustomScreenRuntime({
           case 'submit': {
             const answers = (m.payload?.answers as Record<string, unknown>) || {};
             if (JSON.stringify(answers).length > 262144) throw new Error('Submission is too large');
-            const res = await api.submitResponse(formId, { answers });
+            const res = appSlug
+              ? await api.createAppResponse(appSlug, formId, { answers })
+              : await api.submitResponse(formId, { answers });
             if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Submit failed');
-            result = res.data.response;
+            result = (res.data as { response: unknown }).response;
             break;
           }
           case 'records': {
             const limit = Math.min(500, Math.max(1, Number(m.payload?.opts?.limit) || 100));
-            if (publicMode) {
+            if (appSlug) {
+              const res = await api.getAppResponses(appSlug, formId, { limit });
+              const rows = (res.data?.responses || []) as Array<Record<string, unknown>>;
+              result = rows.map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt, status: r.status, tags: r.tags }));
+            } else if (publicMode) {
               const res = await api.getScreenRecords(formId, { limit });
               result = (res.data?.records || []).map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt }));
             } else {
@@ -139,7 +148,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug]);
 
   return (
     <iframe

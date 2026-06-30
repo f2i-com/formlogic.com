@@ -22,7 +22,8 @@ import { FileUploadField } from '../ui/FileUploadField';
 import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
-import type { FormField as FormFieldType } from '../../types/form';
+import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
+import type { FormField as FormFieldType, CustomScreen } from '../../types/form';
 
 interface FormField {
   id: string;
@@ -960,6 +961,25 @@ export function AppFormView() {
         </div>
       </div>
     );
+  }
+
+  // A form's custom screen takes over its view in the app runtime too (SDK routed through the app API).
+  {
+    const cs = form?.customScreen as (CustomScreen | undefined);
+    if (cs?.enabled && (cs.html || cs.js)) {
+      return (
+        <div className="h-full min-h-[60vh]">
+          <CustomScreenRuntime
+            screen={cs}
+            formId={formId}
+            formTitle={runtimeForm?.displayName || (form?.title as string) || ''}
+            fields={((form?.fields ?? []) as Array<{ id: string; label: string; type: string }>).map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+            appSlug={appSlug}
+            className="w-full h-full border-0 rounded-lg"
+          />
+        </div>
+      );
+    }
   }
 
   if (!canSubmit(formId)) {

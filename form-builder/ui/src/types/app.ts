@@ -133,6 +133,7 @@ export interface AppRuntimeForm {
   description?: string | null;
   fields: unknown[];
   settings: Record<string, unknown>;
+  customScreen?: CustomScreen | null;
 }
 
 export interface AppRuntimeConfig {

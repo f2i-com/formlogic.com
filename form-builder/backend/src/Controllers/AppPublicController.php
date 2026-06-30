@@ -104,6 +104,7 @@ class AppPublicController
                     'theme' => $formData['theme'],
                     'icon' => $formData['icon'] ?? null,
                     'description' => $formData['description'] ?? null,
+                    'customScreen' => $formData['customScreen'] ?? null,
                 ];
             }
         }
