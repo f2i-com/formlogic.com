@@ -75,7 +75,7 @@ class McpController
         $userId = $request->getAttribute('userId');
         $ok = $this->tokens->revoke($args['id'], $userId);
         if ($ok) {
-            $this->audit($request, 'mcp.token.revoke');
+            $this->audit($request, 'mcp.token.revoke', $userId, ['sessionId' => $args['id']]);
         }
         return $this->jsonResponse($response, ['success' => $ok]);
     }
@@ -185,7 +185,11 @@ class McpController
                 case 'create_form':
                     $this->validateFormInput($args);
                     $data = $this->formService->createForm(array_merge($this->formInput($args), ['userId' => $userId]));
-                    $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null]);
+                    // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
+                    if ($scopedApp !== null && !empty($data['id'])) {
+                        $this->appService->addFormToApp($scopedApp, (string) $data['id']);
+                    }
+                    $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null, 'appId' => $scopedApp]);
                     break;
                 case 'update_form':
                     $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
