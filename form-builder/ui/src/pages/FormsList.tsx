@@ -23,6 +23,7 @@ import {
   FileText,
   Boxes,
   ChevronRight,
+  Loader2,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -33,6 +34,7 @@ import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { EmptyState } from '../components/ui/EmptyState';
 import { FormCardSkeleton } from '../components/ui/Skeleton';
+import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
@@ -44,6 +46,10 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { api } from '../lib/api';
 import type { PackInstallation } from '../lib/api';
 import type { Form } from '../types/form';
+
+// Incremental pagination page sizes for the card grids.
+const FORMS_PAGE = 12;
+const APPS_PAGE = 8;
 
 // Extracted outside FormsList so React maintains a stable component identity across renders
 const FormCard = memo(function FormCard({
@@ -291,6 +297,11 @@ export function FormsList() {
   // App grouping: which forms belong to which app, and the current drill-in.
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [appGroups, setAppGroups] = useState<Array<{ id: string; name: string; formIds: string[] }>>([]);
+  // Apps load async — track it so the section reserves space (skeleton) instead of popping in.
+  const [appsLoading, setAppsLoading] = useState(() => useFormStore.getState().storageMode === 'api');
+  // Incremental pagination limits.
+  const [appLimit, setAppLimit] = useState(APPS_PAGE);
+  const [formLimit, setFormLimit] = useState(FORMS_PAGE);
 
   // Build formId → packName map from installed packs
   const formPackMap = useMemo(() => {
@@ -327,15 +338,20 @@ export function FormsList() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (storageMode !== 'api') { if (!cancelled) setAppGroups([]); return; }
-      const res = await api.getApps();
-      const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
-      const groups = await Promise.all(apps.map(async (a) => {
-        const fr = await api.getAppForms(a.id);
-        const formIds = ((fr.data?.forms || []) as Array<{ formId: string }>).map((f) => f.formId);
-        return { id: a.id, name: a.name, formIds };
-      }));
-      if (!cancelled) setAppGroups(groups);
+      if (storageMode !== 'api') { if (!cancelled) { setAppGroups([]); setAppsLoading(false); } return; }
+      if (!cancelled) setAppsLoading(true);
+      try {
+        const res = await api.getApps();
+        const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
+        const groups = await Promise.all(apps.map(async (a) => {
+          const fr = await api.getAppForms(a.id);
+          const formIds = ((fr.data?.forms || []) as Array<{ formId: string }>).map((f) => f.formId);
+          return { id: a.id, name: a.name, formIds };
+        }));
+        if (!cancelled) setAppGroups(groups);
+      } finally {
+        if (!cancelled) setAppsLoading(false);
+      }
     })();
     return () => { cancelled = true; };
   }, [storageMode]);
@@ -348,15 +364,20 @@ export function FormsList() {
   }, [appGroups]);
 
   // The forms to show in the current view: a drilled-in app's forms, or top-level standalone forms.
+  // While apps are still loading at the top level, hold the list empty so we show skeletons instead of
+  // briefly listing in-app forms and then filtering them out (which caused a visible jump).
   const viewForms = useMemo(() => {
     if (selectedAppId) {
       const ids = new Set(appGroups.find((g) => g.id === selectedAppId)?.formIds ?? []);
       return forms.filter((f) => ids.has(f.id));
     }
+    if (storageMode === 'api' && appsLoading) return [];
     return forms.filter((f) => !formToApp[f.id]);
-  }, [forms, selectedAppId, appGroups, formToApp]);
+  }, [forms, selectedAppId, appGroups, formToApp, storageMode, appsLoading]);
 
   const selectedApp = selectedAppId ? appGroups.find((g) => g.id === selectedAppId) : null;
+  // The grid is "loading" while forms load, or while apps load at the top level (grouping not ready yet).
+  const gridLoading = formsLoading || (storageMode === 'api' && appsLoading && !selectedAppId);
 
   // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning
   useEffect(() => {
@@ -492,28 +513,48 @@ export function FormsList() {
           </nav>
         )}
 
-        {/* Apps grouping (top level only) */}
-        {!selectedAppId && appGroups.length > 0 && (
+        {/* Apps grouping (top level only). Rendered as a skeleton while apps load so it reserves space
+            instead of popping in and shifting the forms below. */}
+        {!selectedAppId && storageMode === 'api' && (appsLoading || appGroups.length > 0) && (
           <div className="mb-6">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5">Apps</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {appGroups.map((g) => (
-                <button
-                  key={g.id}
-                  onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
-                  className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
-                >
-                  <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors shrink-0">
-                    <Boxes className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
+              Apps {appsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />}
+            </h2>
+            {appsLoading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 animate-pulse">
+                    <div className="h-9 w-9 rounded-lg bg-gray-200 dark:bg-slate-700 shrink-0" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3.5 w-2/3 rounded bg-gray-200 dark:bg-slate-700" />
+                      <div className="h-3 w-1/3 rounded bg-gray-200 dark:bg-slate-700" />
+                    </div>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{g.name}</span>
-                    <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
-                </button>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                  {appGroups.slice(0, appLimit).map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
+                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+                    >
+                      <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors shrink-0">
+                        <Boxes className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{g.name}</span>
+                        <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+                <ShowMore shown={Math.min(appLimit, appGroups.length)} total={appGroups.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
+              </>
+            )}
             <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-1">Standalone forms</h2>
           </div>
         )}
@@ -549,8 +590,8 @@ export function FormsList() {
           </TabsList>
 
           <TabsContent value="all">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4" aria-busy={formsLoading && filteredForms.length === 0}>
-              {formsLoading && filteredForms.length === 0 && !searchQuery && packFilter === 'all' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4" aria-busy={gridLoading && filteredForms.length === 0}>
+              {gridLoading && filteredForms.length === 0 && !searchQuery && packFilter === 'all' ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : filteredForms.length === 0 ? (
                 <div className="col-span-full">
@@ -579,14 +620,15 @@ export function FormsList() {
                   )}
                 </div>
               ) : (
-                filteredForms.map(renderFormCard)
+                filteredForms.slice(0, formLimit).map(renderFormCard)
               )}
             </div>
+            <ShowMore shown={Math.min(formLimit, filteredForms.length)} total={filteredForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
           </TabsContent>
 
           <TabsContent value="published">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
-              {formsLoading && publishedForms.length === 0 ? (
+              {gridLoading && publishedForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : publishedForms.length === 0 ? (
                 <div className="col-span-full">
@@ -597,14 +639,15 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                publishedForms.map(renderFormCard)
+                publishedForms.slice(0, formLimit).map(renderFormCard)
               )}
             </div>
+            <ShowMore shown={Math.min(formLimit, publishedForms.length)} total={publishedForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
           </TabsContent>
 
           <TabsContent value="draft">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
-              {formsLoading && draftForms.length === 0 ? (
+              {gridLoading && draftForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : draftForms.length === 0 ? (
                 <div className="col-span-full">
@@ -615,14 +658,15 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                draftForms.map(renderFormCard)
+                draftForms.slice(0, formLimit).map(renderFormCard)
               )}
             </div>
+            <ShowMore shown={Math.min(formLimit, draftForms.length)} total={draftForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
           </TabsContent>
 
           <TabsContent value="archived">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
-              {formsLoading && archivedForms.length === 0 ? (
+              {gridLoading && archivedForms.length === 0 ? (
                 Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
               ) : archivedForms.length === 0 ? (
                 <div className="col-span-full">
@@ -633,9 +677,10 @@ export function FormsList() {
                   />
                 </div>
               ) : (
-                archivedForms.map(renderFormCard)
+                archivedForms.slice(0, formLimit).map(renderFormCard)
               )}
             </div>
+            <ShowMore shown={Math.min(formLimit, archivedForms.length)} total={archivedForms.length} onShowMore={() => setFormLimit((n) => n + FORMS_PAGE)} noun="forms" />
           </TabsContent>
         </Tabs>
       </div>

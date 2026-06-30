@@ -11,6 +11,7 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { GenerateAppModal } from '../../components/ai-app-builder/GenerateAppModal';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { PackImportModal } from '../../components/builder/PackImportModal';
+import { ShowMore } from '../../components/ui/ShowMore';
 import { useAiAvailable } from '../../hooks/useAiAvailable';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
@@ -18,12 +19,15 @@ import type { PackInstallation } from '../../lib/api';
 import { cn, formatRelativeTime } from '../../lib/utils';
 import type { App } from '../../types/app';
 
+const APPS_PAGE = 9;
+
 export function AppsDashboard() {
   const navigate = useNavigate();
   const { apps, isLoading, fetchApps, deleteApp, createApp } = useAppStore();
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [appLimit, setAppLimit] = useState(APPS_PAGE);
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showGenerate, setShowGenerate] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -108,7 +112,7 @@ export function AppsDashboard() {
             <Input
               placeholder={Object.keys(appPackMap).length > 0 ? 'Search apps or packs…' : 'Search apps…'}
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setAppLimit(APPS_PAGE); }}
               leftIcon={<Search className="h-4 w-4" />}
               className="w-full sm:max-w-xs lg:max-w-md"
             />
@@ -142,17 +146,20 @@ export function AppsDashboard() {
             }
           />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-            {filteredApps.map((app) => (
-              <AppCard
-                key={app.id}
-                app={app}
-                packName={appPackMap[app.id] ?? null}
-                onClick={() => navigate(`/apps/${app.id}/settings`)}
-                onDelete={() => setDeleteTarget(app)}
-              />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              {filteredApps.slice(0, appLimit).map((app) => (
+                <AppCard
+                  key={app.id}
+                  app={app}
+                  packName={appPackMap[app.id] ?? null}
+                  onClick={() => navigate(`/apps/${app.id}/settings`)}
+                  onDelete={() => setDeleteTarget(app)}
+                />
+              ))}
+            </div>
+            <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" />
+          </>
         )}
       </div>
 
