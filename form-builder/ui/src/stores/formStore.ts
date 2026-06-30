@@ -51,6 +51,15 @@ function generateFieldId(label: string, existingIds: string[]): string {
 // Storage mode: 'local' for localStorage, 'api' for backend
 type StorageMode = 'local' | 'api';
 
+// A form changed BOTH offline and in the cloud (since it was last in sync) — the user must pick
+// which version to keep when reconnecting.
+export interface SyncConflict {
+  id: string;
+  title: string;
+  localUpdatedAt: string;
+  serverUpdatedAt: string;
+}
+
 interface FormState {
   forms: Form[];
   activeFormId: string | null;
@@ -98,8 +107,13 @@ interface FormState {
   updateFormTheme: (formId: string, theme: Partial<FormTheme>) => void;
 
   // Sync
-  syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; errors: string[] }>;
+  syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; conflicts: SyncConflict[]; errors: string[] }>;
   saveFormToApi: (formId: string) => Promise<boolean>;
+  // Reconnect conflict resolution (set when syncToApi finds forms changed both offline + in cloud)
+  syncConflicts: SyncConflict[] | null;
+  syncSwitchAfter: boolean;
+  setSyncConflicts: (conflicts: SyncConflict[] | null, switchAfter?: boolean) => void;
+  resolveSyncConflicts: (decisions: Record<string, 'mine' | 'cloud'>) => Promise<void>;
 }
 
 const defaultSettings: FormSettings = {
@@ -897,12 +911,18 @@ export const useFormStore = create<FormState>()(
       syncToApi: async () => {
         const state = get();
         const errors: string[] = [];
+        const conflicts: SyncConflict[] = [];
         let synced = 0;
         let unchanged = 0;
 
+        // The server returns MySQL datetimes ("Y-m-d H:i:s", UTC); offline edits re-stamp updatedAt
+        // to an ISO string (toISOString, has 'T'+'Z'). Normalize both to a UTC ISO for comparison,
+        // and use the 'T' marker to tell a real offline edit apart from an untouched loaded value.
+        const toUtc = (s: string) => (s.includes('T') ? s : s.replace(' ', 'T') + 'Z');
+        const wasEditedOffline = (s: string) => s.includes('T');
+
         for (const form of state.forms) {
           try {
-            // Check if the form exists on the server.
             const existingResult = await api.getForm(form.id);
             const serverForm = existingResult.data?.form;
 
@@ -917,28 +937,81 @@ export const useFormStore = create<FormState>()(
               continue;
             }
 
-            // Exists on both. Push ONLY if it actually changed offline. A form left untouched keeps
-            // the exact server `updatedAt` string it was loaded with, so an identical timestamp means
-            // "not edited offline" — skip it, so we don't overwrite the cloud copy or bump its
-            // last-edited time. (String compare is timezone-safe; any local edit re-stamps updatedAt
-            // to a new ISO value, which won't match.)
-            if ((form.updatedAt || '') === (serverForm.updatedAt || '')) {
+            const localStr = form.updatedAt || '';
+            const serverStr = serverForm.updatedAt || '';
+
+            // Identical timestamp string → untouched on both sides → nothing to do.
+            if (localStr === serverStr) {
               unchanged++;
               continue;
             }
 
-            const updateResult = await api.updateForm(form.id, form);
-            if (updateResult.error) {
-              errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
+            const localT = Date.parse(toUtc(localStr));
+            const serverT = Date.parse(toUtc(serverStr));
+            const localIsNewer = Number.isNaN(serverT) || Number.isNaN(localT) || localT > serverT;
+
+            if (localIsNewer) {
+              // Local holds the most recent edit → push it.
+              const updateResult = await api.updateForm(form.id, form);
+              if (updateResult.error) {
+                errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
+              } else {
+                synced++;
+              }
+            } else if (wasEditedOffline(localStr)) {
+              // The cloud copy is newer than this form's offline edit → BOTH changed since they were
+              // last in sync. Don't silently clobber either side; defer to the user.
+              conflicts.push({
+                id: form.id,
+                title: form.title,
+                localUpdatedAt: localStr,
+                serverUpdatedAt: serverStr,
+              });
             } else {
-              synced++;
+              // Local was never edited offline (still the old loaded value) and the cloud moved on →
+              // keep the cloud version (the reload after switching pulls it). Nothing to push.
+              unchanged++;
             }
           } catch (error) {
             errors.push(`Error syncing "${form.title}": ${error}`);
           }
         }
 
-        return { success: errors.length === 0, synced, unchanged, errors };
+        return { success: errors.length === 0, synced, unchanged, conflicts, errors };
+      },
+
+      syncConflicts: null,
+      syncSwitchAfter: false,
+
+      setSyncConflicts: (conflicts, switchAfter = false) => {
+        set({ syncConflicts: conflicts, syncSwitchAfter: switchAfter });
+      },
+
+      resolveSyncConflicts: async (decisions) => {
+        const { syncConflicts: conflicts, syncSwitchAfter: switchAfter } = get();
+        for (const c of conflicts ?? []) {
+          const choice = decisions[c.id] ?? 'mine';
+          try {
+            if (choice === 'mine') {
+              // Keep the offline version → push it over the cloud copy.
+              const form = get().forms.find((f) => f.id === c.id);
+              if (form) await api.updateForm(form.id, form);
+            } else {
+              // Keep the cloud version → pull it into the local store so it reflects the choice.
+              const res = await api.getForm(c.id);
+              if (res.data?.form) {
+                set((s) => ({ forms: s.forms.map((f) => (f.id === c.id ? (res.data!.form as Form) : f)) }));
+              }
+            }
+          } catch (e) {
+            logger.error(`Failed to resolve conflict for "${c.title}":`, e);
+          }
+        }
+        set({ syncConflicts: null, syncSwitchAfter: false });
+        // For a reconnect, finish switching to cloud (reloads everything from the server).
+        if (switchAfter) {
+          get().setStorageMode('api');
+        }
       },
 
       // Save a specific form to API

@@ -15,6 +15,7 @@ import { useFormStore } from './stores/formStore';
 import { useUIStore } from './stores/uiStore';
 import { useAppStore } from './stores/appStore';
 import { ToastContainer } from './components/ui/Toast';
+import { SyncConflictDialog } from './components/sync/SyncConflictDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
 
@@ -143,7 +144,13 @@ function AppInitializer({ children }: { children: React.ReactNode }) {
           try {
             const result = await useFormStore.getState().syncToApi();
             if (result.success) {
-              useFormStore.getState().setStorageMode('api');
+              if (result.conflicts.length > 0) {
+                // Forms changed both offline and in the cloud — let the user choose; the dialog
+                // finishes the switch to cloud once resolved.
+                useFormStore.getState().setSyncConflicts(result.conflicts, true);
+              } else {
+                useFormStore.getState().setStorageMode('api');
+              }
               return;
             }
           } catch { /* fall through to local init */ }
@@ -329,6 +336,7 @@ export default function App() {
             </React.Suspense>
           </RouteErrorBoundary>
           <ToastContainer />
+          <SyncConflictDialog />
         </AppInitializer>
       </BrowserRouter>
     </ErrorBoundary>

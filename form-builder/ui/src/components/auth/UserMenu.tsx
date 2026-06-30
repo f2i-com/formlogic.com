@@ -26,7 +26,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const { user, logout } = useAuthStore();
-  const { storageMode, setStorageMode, syncToApi } = useFormStore();
+  const { storageMode, setStorageMode, syncToApi, setSyncConflicts } = useFormStore();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -76,6 +76,13 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           );
           return;
         }
+        // Conflicts (changed offline AND in the cloud) → let the user choose; the dialog finishes
+        // the switch to cloud once resolved. Don't switch yet.
+        if (result.conflicts.length > 0) {
+          setSyncConflicts(result.conflicts, true);
+          setIsOpen(false);
+          return;
+        }
         setStorageMode('api');
         const parts: string[] = [];
         if (result.synced > 0) parts.push(`${result.synced} synced`);
@@ -111,6 +118,12 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     try {
       const result = await syncToApi();
       if (result.success) {
+        if (result.conflicts.length > 0) {
+          // Staying in local mode — resolve conflicts without switching.
+          setSyncConflicts(result.conflicts, false);
+          setIsOpen(false);
+          return;
+        }
         const parts: string[] = [];
         if (result.synced > 0) parts.push(`${result.synced} synced`);
         if (result.unchanged > 0) parts.push(`${result.unchanged} unchanged`);
