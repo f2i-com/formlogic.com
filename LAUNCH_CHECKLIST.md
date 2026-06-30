@@ -42,8 +42,9 @@ Last reconciled against code: 2026-06-30.
   `/api/health/deep` (`dual_store`). Done.
 - [x] **Reconcile scripting/network docs** — README no longer says "no network access" (onSubmit
   has SSRF-guarded `ctx.http`). Done.
-- [ ] **Account export scope** — decide GDPR-complete vs lightweight; expand (apps/memberships/
-  responses/file manifest/API-key metadata/billing/audit) or rename the "download my data" UI.
+- [x] **Account export scope** — expanded to include apps (owned + memberships) + API-key metadata
+  (no secrets) with explicit included/excluded lists; per-form responses stay per-form (memory-safe).
+  Settings copy updated to match. Done.
 
 ## P2 — launch polish & UX
 
@@ -53,8 +54,8 @@ Last reconciled against code: 2026-06-30.
   test submit → view; skippable; state persisted.
 - [ ] **One killer demo pack** — client onboarding + file upload + reviewer status + dashboard +
   export; installable from the gallery; no AI/API key needed; self-host friendly.
-- [ ] **README/docs screenshots + GIFs** — landing, builder, script editor, public form, response
-  dashboard, app runtime, pack gallery, Doctor.
+- [x] **README screenshots** — builder (hero) + public form, app runtime, Doctor, landing in docs/images,
+  showcased atop the README. Done. (Animated GIFs still a nice-to-have.)
 - [x] **Billing disabled/self-host states** — self-host says "unlimited / not required"; hosted
   enforced explains limits/top-up; PayPal sandbox/live warnings admin-only.
 - [x] **AI config states** — clear unavailable/misconfigured/local-model/insecure-transport;
