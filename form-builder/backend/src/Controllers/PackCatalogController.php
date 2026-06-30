@@ -8,11 +8,14 @@ use FormLogic\Services\PackCatalogService;
 use FormLogic\Services\PackFileService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 class PackCatalogController
 {
+    use JsonResponseTrait;
+
     private PackCatalogService $catalogService;
     private PackFileService $fileService;
     private ?AuditService $auditService;
@@ -411,18 +414,5 @@ class PackCatalogController
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to seed packs'], 500);
         }
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 }

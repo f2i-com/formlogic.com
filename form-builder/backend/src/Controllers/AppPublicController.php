@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppResponseService;
@@ -19,6 +20,8 @@ use PDO;
 
 class AppPublicController
 {
+    use JsonResponseTrait;
+
     private AppService $appService;
     private AppUserService $appUserService;
     private AppResponseService $appResponseService;
@@ -1497,18 +1500,5 @@ class AppPublicController
             unset($resp['metadata']['ipAddress'], $resp['metadata']['userAgent'], $resp['metadata']['referrer']);
         }
         return $resp;
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 }

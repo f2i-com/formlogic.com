@@ -10,11 +10,14 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\PlanService;
 use FormLogic\Constants\AppPermissions;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 class FileController
 {
+    use JsonResponseTrait;
+
     private FileStorageService $fileStorage;
     private FormService $formService;
     private ?AppService $appService;
@@ -378,18 +381,5 @@ class FileController
         }
 
         return false;
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withHeader('Content-Type', 'application/json')
-            ->withStatus($status);
     }
 }

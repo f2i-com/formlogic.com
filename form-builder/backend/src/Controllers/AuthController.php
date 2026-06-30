@@ -12,6 +12,7 @@ use FormLogic\Services\ApiKeyService;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -19,6 +20,8 @@ use Psr\Log\NullLogger;
 
 class AuthController
 {
+    use JsonResponseTrait;
+
     private AuthService $authService;
     private IpResolver $ipResolver;
     private array $cookieConfig;
@@ -561,19 +564,4 @@ class AuthController
         $this->auditService->log($action, $resourceType, $resourceId, $request->getAttribute('userId'), $ip, $details);
     }
 
-    /**
-     * Helper to create JSON responses
-     */
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
-    }
 }

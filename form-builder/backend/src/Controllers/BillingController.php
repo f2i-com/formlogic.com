@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\PlanService;
@@ -25,6 +26,8 @@ use Psr\Log\NullLogger;
  */
 class BillingController
 {
+    use JsonResponseTrait;
+
     private PayPalService $paypal;
     private MySQLConnection $db;
     private ?AuditService $auditService;
@@ -338,16 +341,5 @@ class BillingController
         $d[6] = chr((ord($d[6]) & 0x0f) | 0x40);
         $d[8] = chr((ord($d[8]) & 0x3f) | 0x80);
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($d), 4));
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response->withStatus($status)->withHeader('Content-Type', 'application/json');
     }
 }

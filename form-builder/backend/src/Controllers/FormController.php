@@ -8,6 +8,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\PlanService;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -16,6 +17,8 @@ use Psr\Log\NullLogger;
 
 class FormController
 {
+    use JsonResponseTrait;
+
     private FormService $formService;
     private LoggerInterface $logger;
     private ?FormVersionService $versionService;
@@ -531,21 +534,5 @@ class FormController
         $userId = $request->getAttribute('userId');
         $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
-    }
-
-    /**
-     * Helper to create JSON responses
-     */
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 }

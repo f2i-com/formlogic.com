@@ -10,6 +10,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\EmailService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\AuditService;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -19,6 +20,8 @@ use Psr\Log\NullLogger;
 
 class ResponseController
 {
+    use JsonResponseTrait;
+
     // Hard ceiling on the serialized answers of a single submission, so an
     // unauthenticated client can't write arbitrarily large blobs into the per-form
     // SQLite store (disk-exhaustion DoS). Generous for any real form.
@@ -1105,22 +1108,6 @@ class ResponseController
         $userId = $request->getAttribute('userId');
         $ip = $this->ipResolver->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
-    }
-
-    /**
-     * Helper to create JSON responses
-     */
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 
     /**

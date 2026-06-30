@@ -10,11 +10,14 @@ use FormLogic\Services\AuditService;
 use FormLogic\Services\EmailService;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
 class AppUserController
 {
+    use JsonResponseTrait;
+
     private AppUserService $appUserService;
     private AppService $appService;
     private ?AuditService $auditService;
@@ -544,18 +547,5 @@ class AppUserController
         $userId = $request->getAttribute('userId');
         $ip = IpResolver::fromEnvironment()->getClientIp($request);
         $this->auditService->log($action, $resourceType, $resourceId, $userId, $ip, $details);
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace FormLogic\Controllers;
 
+use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\WebhookService;
@@ -14,6 +15,8 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 
 class ExternalApiController
 {
+    use JsonResponseTrait;
+
     private FormService $formService;
     private ResponseService $responseService;
     private WebhookService $webhookService;
@@ -878,18 +881,5 @@ class ExternalApiController
             }
         }
         return false;
-    }
-
-    private function jsonResponse(Response $response, array $data, int $status = 200): Response
-    {
-        $json = json_encode($data);
-        if ($json === false) {
-            $json = json_encode(['error' => true, 'message' => 'Internal server error']);
-            $status = 500;
-        }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus($status)
-            ->withHeader('Content-Type', 'application/json');
     }
 }
