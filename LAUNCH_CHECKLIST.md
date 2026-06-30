@@ -72,7 +72,6 @@ Last reconciled against code: 2026-06-30.
   build's prebuild sync (tells the dev to run `npm run sync:prelude`). Done.
 - [ ] **Shared JSON error helper** — standardize `{ error, message, code?, details? }` /
   `errors` across controllers; migrate gradually.
-- [~] **Lint baseline to zero** — investigation FOUND + FIXED a real bug (latent hooks-order crash on
-  the analytics page) and documented a false positive (DynamicIcon). 47 remain: 35 are conservative
-  react-compiler flags (set-state-in-effect, exhaustive-deps, safe mirror-refs) + a few `any`s needing
-  per-file restructure — a dedicated careful pass before the hard CI gate.
+- [x] **Lint baseline to zero** — ESLint 47→0 across 27 files (justified inline disables for
+  correct-but-flagged patterns + real type/memo fixes; fixed a TDZ crash in PackGalleryPage found en
+  route). CI lint step is now a HARD GATE. Done.
