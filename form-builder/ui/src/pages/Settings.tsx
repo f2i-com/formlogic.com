@@ -20,6 +20,7 @@ import {
   LayoutGrid,
   ArrowLeft,
   Shield,
+  Plug,
   ShieldCheck,
   Palette,
   Check,
@@ -34,6 +35,7 @@ import {
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated } from '../lib/api';
+import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -133,6 +135,7 @@ export function Settings() {
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [showMcp, setShowMcp] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
@@ -764,6 +767,24 @@ export function Settings() {
           </CardContent>
         </Card>
 
+        {/* Connect an AI (MCP) Section */}
+        <Card className="overflow-hidden">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Plug}
+              title="Connect an AI"
+              description="Let an external AI (Claude, Cursor, …) build and edit your apps over MCP"
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
+            />
+            <div className="ml-0 sm:ml-14">
+              <Button variant="outline" onClick={() => setShowMcp(true)} leftIcon={<Plug className="h-4 w-4" />}>
+                Manage AI connections
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Audit & Compliance Section */}
         <Card className="overflow-hidden">
           <CardContent className="p-6">
@@ -885,6 +906,8 @@ export function Settings() {
         confirmLabel="Revoke key"
         isLoading={isRevoking}
       />
+
+      <ConnectAiModal isOpen={showMcp} onClose={() => setShowMcp(false)} />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useAiAvailable } from '../hooks/useAiAvailable';
 import type { CustomScreen } from '../types/form';
 
 const EMPTY: CustomScreen = { enabled: true, html: '', css: '', js: '' };
@@ -30,6 +31,7 @@ export default function CustomScreenStudio() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const previewTimer = useRef<number | undefined>(undefined);
+  const aiAvailable = useAiAvailable();
   useDocumentTitle(`Custom screen — ${title || 'Form'}`);
 
   useEffect(() => {
@@ -110,26 +112,32 @@ export default function CustomScreenStudio() {
         {/* Editor */}
         <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800 overflow-y-auto">
           <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
-            <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the screen</label>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="e.g. A Wordle clone that saves each finished game and shows a leaderboard"
-              className="w-full h-20 px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
-            />
-            {!hasScreen && (
-              <div className="flex flex-wrap gap-1.5">
-                {EXAMPLES.map((ex) => (
-                  <button key={ex} type="button" onClick={() => setPrompt(ex)} className="text-xs px-2 py-1 rounded-md border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors cursor-pointer text-left">{ex}</button>
-                ))}
-              </div>
+            {aiAvailable ? (
+              <>
+                <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the screen</label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="e.g. A Wordle clone that saves each finished game and shows a leaderboard"
+                  className="w-full h-20 px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                />
+                {!hasScreen && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {EXAMPLES.map((ex) => (
+                      <button key={ex} type="button" onClick={() => setPrompt(ex)} className="text-xs px-2 py-1 rounded-md border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors cursor-pointer text-left">{ex}</button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-gray-400 dark:text-slate-500">Uses the FormLogic SDK (submit/records) over <span className="font-medium">{title || 'this form'}</span>.</p>
+                  <Button size="sm" onClick={generate} disabled={!prompt.trim() || generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : (hasScreen ? <Wand2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />)}>
+                    {generating ? 'Generating…' : hasScreen ? 'Regenerate' : 'Generate'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="text-xs text-gray-500 dark:text-slate-400">Write the screen code in the tabs below — it uses the FormLogic SDK (submit/records) over <span className="font-medium">{title || 'this form'}</span>. Or connect an external AI via the MCP server (Settings → Connect an AI).</p>
             )}
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-400 dark:text-slate-500">Uses the FormLogic SDK (submit/records) over <span className="font-medium">{title || 'this form'}</span>.</p>
-              <Button size="sm" onClick={generate} disabled={!prompt.trim() || generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : (hasScreen ? <Wand2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />)}>
-                {generating ? 'Generating…' : hasScreen ? 'Regenerate' : 'Generate'}
-              </Button>
-            </div>
             <div className="pt-1 space-y-2">
               <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                 <input
