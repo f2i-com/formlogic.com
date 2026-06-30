@@ -8,7 +8,8 @@ import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
-import { readableForegroundColor } from '../lib/color';
+import { readableForegroundColor, parseHex, luminance } from '../lib/color';
+import { useUIStore } from '../stores/uiStore';
 import { api } from '../lib/api';
 import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
@@ -828,6 +829,24 @@ export default function FormResponse() {
   // Use store form (with fields) if available, otherwise fetched form
   const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
   useDocumentTitle(form?.title);
+
+  // The public form must render in its OWN theme, not the visitor's app dark-mode
+  // preference — otherwise Tailwind `dark:` control colors (e.g. slate-400 text) leak
+  // onto a light themed background and break contrast. Drive the document's `.dark`
+  // class from the form theme's background luminance while this page is mounted, and
+  // restore the app preference on unmount.
+  const formBg = form?.theme?.backgroundColor;
+  useEffect(() => {
+    if (!formBg) return;
+    const rgb = parseHex(formBg);
+    const themeIsDark = rgb ? luminance(rgb) < 0.5 : false;
+    const root = document.documentElement;
+    root.classList.toggle('dark', themeIsDark);
+    return () => {
+      // Restore the app's own theme preference when leaving the form.
+      root.classList.toggle('dark', useUIStore.getState().theme === 'dark');
+    };
+  }, [formBg]);
 
   // Merge user answers with computed calculated field values so dependent
   // calculated fields (e.g. risk_level depending on risk_score) can resolve

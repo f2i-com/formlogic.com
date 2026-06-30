@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
+import { ThemeToggle } from '../components/ui/ThemeToggle';
 
 // Landing-only chrome: a characterful display face (Bricolage Grotesque) + a
 // monospace signature (JetBrains Mono) for the technical/data accents, plus the
@@ -245,6 +246,7 @@ export function Landing() {
               </Link>
             </div>
             <div className="hidden md:flex items-center gap-4">
+              <ThemeToggle />
               <Link to="/login" className="text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Sign In
               </Link>
@@ -295,6 +297,10 @@ export function Landing() {
             >
               Docs
             </Link>
+            <div className="flex items-center justify-between py-2">
+              <span className="text-gray-600 dark:text-slate-300 font-medium">Theme</span>
+              <ThemeToggle />
+            </div>
             <div className="pt-3 border-t border-gray-100 dark:border-slate-900 flex flex-col gap-2">
               <Link
                 to="/login"
@@ -340,9 +346,9 @@ export function Landing() {
             className="fl-display fl-reveal text-[2.85rem] leading-[1.04] sm:text-7xl text-gray-900 dark:text-white mb-7"
             style={{ transitionDelay: '80ms' }}
           >
-            The form platform for
+            The form platform with
             <br />
-            <span className="fl-grad">serious applications</span>
+            <span className="fl-grad">backend logic</span>
           </h1>
 
           <p
@@ -796,7 +802,7 @@ export function Landing() {
             <div className="md:col-span-1">
               <Logo size="md" />
               <p className="text-gray-400 dark:text-slate-500 mt-6 text-sm leading-relaxed">
-                The form platform for serious applications. Built for developers and enterprises.
+                The form platform with backend logic. Built for developers and enterprises.
               </p>
             </div>
             <div>

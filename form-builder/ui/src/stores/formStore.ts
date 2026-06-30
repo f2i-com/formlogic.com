@@ -111,7 +111,7 @@ const defaultSettings: FormSettings = {
 };
 
 const defaultTheme: FormTheme = {
-  primaryColor: '#6366f1',
+  primaryColor: '#4f46e5',
   backgroundColor: '#ffffff',
   textColor: '#1f2937',
   fontFamily: 'Inter',

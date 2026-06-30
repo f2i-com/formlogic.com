@@ -161,7 +161,7 @@ export const DEFAULT_FORM_SETTINGS: FormSettings = {
 };
 
 export const DEFAULT_FORM_THEME: FormTheme = {
-  primaryColor: '#6366f1',
+  primaryColor: '#4f46e5',
   backgroundColor: '#ffffff',
   textColor: '#1f2937',
   fontFamily: 'Inter',

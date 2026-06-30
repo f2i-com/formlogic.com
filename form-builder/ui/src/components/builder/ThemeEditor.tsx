@@ -30,7 +30,7 @@ const THEME_PRESETS: ThemePreset[] = [
     id: 'default',
     name: 'Default',
     theme: {
-      primaryColor: '#6366f1',
+      primaryColor: '#4f46e5',
       backgroundColor: '#ffffff',
       textColor: '#1f2937',
       fontFamily: 'DM Sans',
@@ -46,7 +46,7 @@ const THEME_PRESETS: ThemePreset[] = [
     id: 'dark',
     name: 'Dark',
     theme: {
-      primaryColor: '#8b5cf6',
+      primaryColor: '#7c3aed',
       backgroundColor: '#1f2937',
       textColor: '#f9fafb',
       fontFamily: 'DM Sans',
