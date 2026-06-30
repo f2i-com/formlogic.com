@@ -11,6 +11,39 @@ use PDO;
 
 class FormService
 {
+    /**
+     * Field-id slugs must not collide with the FormLogic expression prelude's globals
+     * (a field id like "count"/"sum"/"format" would shadow that builtin in generated
+     * expressions). Mirrors the frontend RESERVED_FIELD_IDS (formStore.ts).
+     */
+    private const RESERVED_FIELD_IDS = [
+        '__isArr', 'validators', 'format', 'compliance', 'finance', 'safety',
+        'isEmpty', 'isNotEmpty', 'contains', 'sum', 'avg', 'count', 'value',
+    ];
+
+    /**
+     * Validate an explicit, client-supplied field id against the same constraints the frontend
+     * enforces — so API-created / imported forms can't introduce ids that break scripting,
+     * json_extract paths, search, or exports. Returns an error message, or null if valid (or
+     * empty, in which case the server generates one). Static so it's unit-testable without a DB.
+     */
+    public static function fieldIdError(string $id): ?string
+    {
+        if ($id === '') {
+            return null; // server generates a safe id for empty values
+        }
+        if (strlen($id) > 64) {
+            return "Field ID is too long (max 64): {$id}";
+        }
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $id)) {
+            return "Field ID must start with a letter or underscore and use only letters, numbers, and underscores: {$id}";
+        }
+        if (in_array($id, self::RESERVED_FIELD_IDS, true)) {
+            return "Field ID is reserved and cannot be used: {$id}";
+        }
+        return null;
+    }
+
     private PDO $mysql;
     private SQLiteConnection $sqlite;
     private ?WebhookService $webhookService;
@@ -486,6 +519,15 @@ class FormService
         ));
         if (count($explicitIds) !== count(array_unique($explicitIds))) {
             throw new \InvalidArgumentException('Field IDs must be unique within a form');
+        }
+
+        // Explicit ids must be safe identifiers (matches the frontend) — protects scripting,
+        // json_extract paths, search, and exports from API-/import-supplied unsafe ids.
+        foreach ($explicitIds as $explicitId) {
+            $err = self::fieldIdError((string) $explicitId);
+            if ($err !== null) {
+                throw new \InvalidArgumentException($err);
+            }
         }
 
         // Resolve a final, unique id for EVERY field before insert. Fields without
