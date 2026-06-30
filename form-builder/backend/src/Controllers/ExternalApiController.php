@@ -115,7 +115,7 @@ class ExternalApiController
         $data = $request->getParsedBody();
         // Sanitize answers: strip non-input fields and unknown field IDs
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
-        $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+        $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
         if ($this->responseService->answersTooLarge($data['answers'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
@@ -243,7 +243,7 @@ class ExternalApiController
 
             // Sanitize answers: strip non-input fields and unknown field IDs
             $item['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $item['answers'] ?? []);
-            $item['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
+            $item['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
             $item['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $item['answers']);
             if ($this->responseService->answersTooLarge($item['answers'])) {
                 $results[] = ['index' => $index, 'success' => false, 'errors' => ['Submission is too large.']];
@@ -347,7 +347,7 @@ class ExternalApiController
         if (isset($data['answers']) && is_array($data['answers'])) {
             // Drop calculated/unknown-field answers before validating/persisting.
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
-            $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
             if ($this->responseService->answersTooLarge($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
@@ -798,6 +798,14 @@ class ExternalApiController
                         }
                     }
                     break;
+            }
+
+            // Builder-configured rules (min/maxLength, min/max, pattern, number bounds, date format)
+            if (!isset($errors[$fieldId])) {
+                $ruleError = $this->responseService->validateFieldRules($field, $value);
+                if ($ruleError) {
+                    $errors[$fieldId] = $ruleError;
+                }
             }
         }
 

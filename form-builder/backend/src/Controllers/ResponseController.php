@@ -219,7 +219,7 @@ class ResponseController
 
         // Re-derive file URLs server-side so a submitter can't store an attacker-chosen
         // link that later renders as a clickable anchor to reviewers.
-        $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
+        $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
 
         // Recompute calculated fields server-side and merge them in so they
         // round-trip into storage/export/analytics and are available to
@@ -350,7 +350,7 @@ class ResponseController
      * only ever see links that point at this form's own file-serving route — never an
      * attacker-supplied phishing or `javascript:` link.
      */
-    // normalizeFileAnswers moved to ResponseService (shared across all write paths).
+    // normalizeAnswers moved to ResponseService (shared across all write paths).
 
     /**
      * Validate answers against form field definitions
@@ -406,6 +406,12 @@ class ResponseController
             $typeError = $this->validateFieldType($field, $value);
             if ($typeError) {
                 $errors[$fieldId] = $typeError;
+                continue;
+            }
+            // Builder-configured rules (min/maxLength, min/max, pattern, number bounds, date format)
+            $ruleError = $this->responseService->validateFieldRules($field, $value);
+            if ($ruleError) {
+                $errors[$fieldId] = $ruleError;
             }
         }
 
@@ -645,7 +651,7 @@ class ResponseController
         // update path previously stripped without recomputing).
         if (isset($data['answers']) && is_array($data['answers'])) {
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
-            $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
+            $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
             if ($this->responseService->answersTooLarge($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);

@@ -138,9 +138,32 @@ class ResponseService
      * analytics; recomputing prevents client tampering). Iterates to a fixed
      * point so calculated fields that depend on other calculated fields resolve
      * regardless of document order. Best-effort — a broken expression is skipped.
+     *
+     * Also seeds static defaults for hidden fields (type 'hidden', no calc expression)
+     * when the client didn't supply a value — so programmatic/API submits get the
+     * default the form author configured, not an empty field (the UI seeds it client-side).
      */
     public function applyCalculatedFields(array $fields, array $answers): array
     {
+        // Seed static hidden-field defaults BEFORE computing, so a hidden field with a
+        // calc expression still overrides, and a calc that references the hidden field
+        // sees the default. Only fills when the value is genuinely absent/empty.
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') !== 'hidden' || empty($field['id'])) {
+                continue;
+            }
+            $expr = $field['properties']['calculationExpression'] ?? null;
+            if (is_string($expr) && trim($expr) !== '') {
+                continue; // calc-driven hidden field — handled below
+            }
+            $default = $field['properties']['defaultValue'] ?? null;
+            $id = (string) $field['id'];
+            $hasValue = array_key_exists($id, $answers) && $answers[$id] !== null && $answers[$id] !== '';
+            if (!$hasValue && $default !== null && $default !== '') {
+                $answers[$id] = $default;
+            }
+        }
+
         $jobs = [];   // [['id'=>fieldId, 'expression'=>calculationExpression]]
         foreach ($fields as $field) {
             // Calculated fields AND hidden fields can carry a calculationExpression that is
@@ -198,22 +221,38 @@ class ResponseService
     }
 
     /**
-     * Re-derive each file_upload answer's `url` from the trusted formId + id + filename, so a
-     * submitter can't store an attacker-chosen link that is later rendered to reviewers.
-     * Shared by every write path (public form, app runtime, external API).
+     * Normalize answers before persistence — shared by every write path (public form,
+     * app runtime, external API):
+     *  - Re-derive each file_upload answer's `url` from the trusted formId + id + filename,
+     *    so a submitter can't store an attacker-chosen link later rendered to reviewers.
+     *  - De-duplicate multi-select (checkboxes) answer arrays.
      */
-    public function normalizeFileAnswers(array $fields, array $answers, string $formId): array
+    public function normalizeAnswers(array $fields, array $answers, string $formId): array
     {
         $fileFieldIds = [];
+        $checkboxFieldIds = [];
         foreach ($fields as $field) {
-            if (($field['type'] ?? '') === 'file_upload' && isset($field['id'])) {
-                $fileFieldIds[$field['id']] = true;
+            $id = $field['id'] ?? null;
+            if ($id === null) {
+                continue;
+            }
+            $type = $field['type'] ?? '';
+            if ($type === 'file_upload') {
+                $fileFieldIds[$id] = true;
+            } elseif ($type === 'checkboxes') {
+                $checkboxFieldIds[$id] = true;
             }
         }
-        if (empty($fileFieldIds)) {
+        if (empty($fileFieldIds) && empty($checkboxFieldIds)) {
             return $answers;
         }
         foreach ($answers as $fieldId => $value) {
+            // De-duplicate multi-select answers so a crafted payload can't double-count
+            // an option in analytics/exports.
+            if (isset($checkboxFieldIds[$fieldId]) && is_array($value)) {
+                $answers[$fieldId] = array_values(array_unique($value));
+                continue;
+            }
             if (!isset($fileFieldIds[$fieldId]) || !is_array($value)) {
                 continue;
             }
@@ -227,6 +266,94 @@ class ResponseService
             }
         }
         return $answers;
+    }
+
+    /**
+     * Enforce builder-configured validation server-side. The client enforces these rules,
+     * but the External API and any crafted POST bypass the client — so every write path
+     * must re-check. Returns an error message, or null if the value passes. Call with a
+     * non-empty value (required/empty handling lives in each controller's validateAnswers).
+     *
+     * @param mixed $value
+     */
+    public function validateFieldRules(array $field, $value): ?string
+    {
+        $type = $field['type'] ?? 'short_text';
+        $p = $field['properties'] ?? [];
+
+        // Number: min/max from properties (the builder only emits these as native input attrs).
+        if ($type === 'number' && is_numeric($value)) {
+            $n = (float) $value;
+            if (isset($p['min']) && $p['min'] !== '' && is_numeric($p['min']) && $n < (float) $p['min']) {
+                return 'Minimum value is ' . $p['min'];
+            }
+            if (isset($p['max']) && $p['max'] !== '' && is_numeric($p['max']) && $n > (float) $p['max']) {
+                return 'Maximum value is ' . $p['max'];
+            }
+        }
+
+        // Date/time/datetime: reject malformed strings rather than storing junk.
+        if (is_string($value) && $value !== '') {
+            if ($type === 'date' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+                return 'Invalid date format';
+            }
+            if ($type === 'time' && !preg_match('/^\d{1,2}:\d{2}(:\d{2})?$/', $value)) {
+                return 'Invalid time format';
+            }
+            if ($type === 'datetime' && !preg_match('/^\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}/', $value)) {
+                return 'Invalid date/time format';
+            }
+        }
+
+        // Builder validation-rules array (minLength/maxLength/min/max/pattern).
+        $rules = $field['validation'] ?? null;
+        if (!is_array($rules)) {
+            return null;
+        }
+        foreach ($rules as $rule) {
+            if (!is_array($rule)) {
+                continue;
+            }
+            $msg = (isset($rule['message']) && $rule['message'] !== '') ? (string) $rule['message'] : 'Invalid value';
+            $rval = $rule['value'] ?? null;
+            switch ($rule['type'] ?? '') {
+                case 'minLength':
+                    if (is_string($value) && $value !== '' && mb_strlen($value) < (int) $rval) {
+                        return $msg;
+                    }
+                    break;
+                case 'maxLength':
+                    if (is_string($value) && mb_strlen($value) > (int) $rval) {
+                        return $msg;
+                    }
+                    break;
+                case 'min':
+                    if (is_numeric($value) && (float) $value < (float) $rval) {
+                        return $msg;
+                    }
+                    break;
+                case 'max':
+                    if (is_numeric($value) && (float) $value > (float) $rval) {
+                        return $msg;
+                    }
+                    break;
+                case 'pattern':
+                    if (is_string($value) && $value !== '' && is_string($rval) && $rval !== '') {
+                        // ReDoS guard (mirrors the client): cap length + reject nested quantifiers.
+                        if (strlen($rval) > 500
+                            || preg_match('/(\+|\*|\{[^}]*\})\s*(\+|\*|\{[^}]*\})/', $rval)
+                            || preg_match('/\([^)]*\|[^)]*\)\+/', $rval)) {
+                            return $msg;
+                        }
+                        $ok = @preg_match('/' . str_replace('/', '\\/', $rval) . '/', $value);
+                        if ($ok !== 1) {
+                            return $msg; // fail closed on no-match or an uncompilable pattern
+                        }
+                    }
+                    break;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1285,6 +1412,10 @@ class ResponseService
         // Header row (sanitize against CSV formula injection)
         $headers = ['Response ID', 'Submitted At', 'Status'];
         foreach ($fields as $field) {
+            // Display-only layout fields carry no data — don't emit empty columns for them.
+            if (in_array($field['type'] ?? '', ['statement', 'welcome_screen', 'thank_you'], true)) {
+                continue;
+            }
             $label = $field['label'] ?? $field['id'];
             // Same neutralization as the data rows below (leading whitespace/TAB/CR
             // before a formula trigger) so the header can't smuggle a formula either.
@@ -1320,6 +1451,10 @@ class ResponseService
                 ];
 
                 foreach ($fields as $field) {
+                    // Skip display-only layout fields so row columns stay aligned with the header.
+                    if (in_array($field['type'] ?? '', ['statement', 'welcome_screen', 'thank_you'], true)) {
+                        continue;
+                    }
                     $value = $response['answers'][$field['id']] ?? '';
 
                     // Resolve linked record IDs to display text
