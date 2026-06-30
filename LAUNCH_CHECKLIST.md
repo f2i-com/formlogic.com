@@ -47,7 +47,7 @@ Last reconciled against code: 2026-06-30.
 
 ## P2 — launch polish & UX
 
-- [ ] **Public-file visibility copy** — warn (field settings + pre-publish + docs) that files on
+- [x] **Public-file visibility copy** — warn (field settings + pre-publish + docs) that files on
   public standalone forms are link-accessible; use app forms for member-only.
 - [ ] **First-run onboarding** — welcome → blank/template/AI → create → field → preview → publish →
   test submit → view; skippable; state persisted.
@@ -55,9 +55,9 @@ Last reconciled against code: 2026-06-30.
   export; installable from the gallery; no AI/API key needed; self-host friendly.
 - [ ] **README/docs screenshots + GIFs** — landing, builder, script editor, public form, response
   dashboard, app runtime, pack gallery, Doctor.
-- [ ] **Billing disabled/self-host states** — self-host says "unlimited / not required"; hosted
+- [x] **Billing disabled/self-host states** — self-host says "unlimited / not required"; hosted
   enforced explains limits/top-up; PayPal sandbox/live warnings admin-only.
-- [ ] **AI config states** — clear unavailable/misconfigured/local-model/insecure-transport;
+- [x] **AI config states** — clear unavailable/misconfigured/local-model/insecure-transport;
   status in `/api/health/deep`; never expose keys.
 - [x] **Doctor UI** — `/doctor` admin page over `/api/health/deep` (pass/warn/fail cards: DB,
   storage, QuickJS, billing, doc converters, webhook worker, dual-store) with remediation hints,
