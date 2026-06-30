@@ -58,7 +58,7 @@ import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboar
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
-import { FIELD_TYPE_INFO, type FormField, type FieldType } from '../types/form';
+import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 
 type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | null;
 
@@ -66,9 +66,13 @@ type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' 
  * Serialize the current form into a single-form PackData so it can be published to the
  * marketplace via PublishPackDialog — resolving the "no way to author a pack from your own
  * forms" gap. Per-form notification recipients are stripped so they aren't shared.
+ *
+ * Parity with the app exporter (PackService::exportApp): carries the form's customScreen, and strips
+ * a linked_record's targetFormId — a single-form pack has no in-pack target, so keeping the real id
+ * would leak a form UUID and create a dangling import.
  */
 function buildFormPack(
-  form: { title?: string; description?: string; icon?: string; settings?: unknown; theme?: unknown; logicScript?: string; fields?: FormField[] },
+  form: { title?: string; description?: string; icon?: string; settings?: unknown; theme?: unknown; logicScript?: string; customScreen?: CustomScreen; fields?: FormField[] },
   author: string,
 ): PackData {
   const slug = (form.title || 'form').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'form';
@@ -91,17 +95,25 @@ function buildFormPack(
       settings,
       theme: { ...((form.theme as Record<string, unknown>) || {}) },
       logicScript: form.logicScript || undefined,
-      fields: (form.fields || []).map((f) => ({
-        id: f.id,
-        type: f.type,
-        label: f.label,
-        description: f.description,
-        placeholder: f.placeholder,
-        required: !!f.required,
-        properties: (f.properties || {}) as Record<string, unknown>,
-        conditionalLogic: f.conditionalLogic,
-        validation: f.validation,
-      })),
+      customScreen: form.customScreen?.enabled ? form.customScreen : undefined,
+      fields: (form.fields || []).map((f) => {
+        let properties = (f.properties || {}) as Record<string, unknown>;
+        if (f.type === 'linked_record' && 'targetFormId' in properties) {
+          properties = { ...properties };
+          delete properties.targetFormId;
+        }
+        return {
+          id: f.id,
+          type: f.type,
+          label: f.label,
+          description: f.description,
+          placeholder: f.placeholder,
+          required: !!f.required,
+          properties,
+          conditionalLogic: f.conditionalLogic,
+          validation: f.validation,
+        };
+      }),
     }],
     apps: [],
   };
