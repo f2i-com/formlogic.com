@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug } from 'lucide-react';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
@@ -29,6 +31,7 @@ export function AppSettings() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [slugError, setSlugError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   // Snapshot of the persisted state; anything diverging from it is unsaved.
@@ -109,6 +112,32 @@ export function AppSettings() {
       setInitialSnapshot(JSON.stringify(app)); // edits are now persisted
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!appId || exporting) return;
+    setExporting(true);
+    try {
+      const r = await api.exportApp(appId);
+      if (r.error || !r.data?.pack) {
+        toast.error('Export failed', r.error || 'Could not export this app.');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(r.data.pack, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${app.slug || 'app'}.formlogic-app.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('App exported', 'Downloaded a self-contained .json bundle.');
+    } catch {
+      toast.error('Export failed', 'Could not export this app.');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -385,6 +414,19 @@ export function AppSettings() {
               <div>
                 <span className="block text-sm font-medium text-gray-900 dark:text-white">Connect an AI</span>
                 <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Let an external AI build via MCP (Beta)</span>
+              </div>
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
+                <Download className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+              </div>
+              <div>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">{exporting ? 'Exporting…' : 'Export app'}</span>
+                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Download all forms, screens &amp; scripts as a portable .json</span>
               </div>
             </button>
           </div>

@@ -102,6 +102,47 @@ class PackController
     }
 
     /**
+     * GET /api/apps/{id}/export
+     * Export a whole app (forms + screens + scripts + roles) as a self-contained pack JSON.
+     */
+    public function exportApp(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $appId = $args['id'] ?? '';
+        if (!$appId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App ID is required'], 400);
+        }
+
+        try {
+            $pack = $this->packService->exportApp($appId, $userId);
+
+            if ($this->auditService) {
+                $this->auditService->log(
+                    'app.export',
+                    'app',
+                    $appId,
+                    $userId,
+                    $this->ipResolver->getClientIp($request),
+                    [
+                        'appName' => $pack['packMeta']['name'] ?? null,
+                        'formCount' => count($pack['forms'] ?? []),
+                    ]
+                );
+            }
+
+            return $this->jsonResponse($response, ['pack' => $pack]);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to export app'], 500);
+        }
+    }
+
+    /**
      * POST /api/packs/adopt
      * Retroactively register an existing pack installation by matching form titles
      */

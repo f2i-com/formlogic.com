@@ -109,18 +109,48 @@ class PackService
             // 3. Create each app
             $appSummary = [];
             foreach ($packData['apps'] ?? [] as $packApp) {
+                // App settings: strip the author's notifications, remap landingPage (@pack:->UUID),
+                // and defer defaultRoleId until roles exist (carried as defaultRoleName).
+                $appSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
+                unset($appSettings['notifications']);
+                $lp = $appSettings['landingPage'] ?? null;
+                if (is_string($lp) && str_starts_with($lp, '@pack:')) {
+                    $appSettings['landingPage'] = $formIdMap[substr($lp, 6)] ?? 'dashboard';
+                }
+                $defaultRoleName = $appSettings['defaultRoleName'] ?? null;
+                unset($appSettings['defaultRoleName'], $appSettings['defaultRoleId']);
+
+                // navConfig: remap each item.formId (@pack:->UUID); drop items pointing at a missing form.
+                $navConfig = [];
+                foreach ((is_array($packApp['navConfig'] ?? null) ? $packApp['navConfig'] : []) as $item) {
+                    $fid = $item['formId'] ?? null;
+                    if (is_string($fid) && str_starts_with($fid, '@pack:')) {
+                        $key = substr($fid, 6);
+                        if (!isset($formIdMap[$key])) {
+                            continue;
+                        }
+                        $item['formId'] = $formIdMap[$key];
+                    }
+                    $navConfig[] = $item;
+                }
+
                 $appData = [
                     'name' => $packApp['name'],
                     'description' => $packApp['description'] ?? null,
-                    'settings' => $packApp['settings'] ?? [],
+                    'settings' => $appSettings,
                     'theme' => $packApp['theme'] ?? [],
+                    'logoUrl' => $packApp['logoUrl'] ?? null,
+                    'navConfig' => $navConfig,
+                    'customScreen' => !empty($packApp['customScreen']) ? $packApp['customScreen'] : null,
                 ];
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
                 $createdAppIds[] = $appId;
 
-                // 4. Add forms to app with remapped IDs
-                foreach ($packApp['forms'] ?? [] as $appForm) {
+                // 4. Add forms to app with remapped IDs, preserving order + visibility + per-form settings.
+                $memberForms = $packApp['forms'] ?? [];
+                usort($memberForms, fn ($a, $b) => ($a['sortOrder'] ?? 0) <=> ($b['sortOrder'] ?? 0));
+                foreach ($memberForms as $appForm) {
                     $realFormId = $formIdMap[$appForm['packFormId']] ?? null;
                     if ($realFormId) {
                         $this->appService->addFormToApp(
@@ -128,6 +158,16 @@ class PackService
                             $realFormId,
                             $appForm['displayName'] ?? null
                         );
+                        $meta = [];
+                        if (array_key_exists('isVisible', $appForm)) {
+                            $meta['isVisible'] = (bool) $appForm['isVisible'];
+                        }
+                        if (isset($appForm['settings'])) {
+                            $meta['settings'] = $appForm['settings'];
+                        }
+                        if (!empty($meta)) {
+                            $this->appService->updateAppForm($appId, $realFormId, $meta);
+                        }
                     }
                 }
 
@@ -163,6 +203,17 @@ class PackService
                         // (e.g. one with view_analytics/manage_users) would be
                         // uninstallable for everyone.
                         $this->appUserService->setRolePermissions($role['id'], $permissions, true);
+                    }
+                }
+
+                // Resolve the default role (carried by name) to the new role id now that roles exist.
+                if ($defaultRoleName !== null && $defaultRoleName !== '') {
+                    foreach ($this->appUserService->getRoles($appId) as $rn) {
+                        if (($rn['name'] ?? null) === $defaultRoleName) {
+                            $appSettings['defaultRoleId'] = $rn['id'];
+                            $this->appService->updateApp($appId, ['settings' => $appSettings]);
+                            break;
+                        }
                     }
                 }
 
@@ -213,6 +264,174 @@ class PackService
 
             throw $e;
         }
+    }
+
+    /**
+     * Export a whole app as a self-contained Pack (the app + ALL its member forms incl. fields,
+     * logicScript and customScreen, the app's custom home screen / settings / theme / navConfig,
+     * membership metadata, and custom roles). The result round-trips through importPack().
+     *
+     * Portable + safe by construction: this WHITELISTS fields and emits only local pack keys and
+     * @pack: references — never real UUIDs, owner ids, members, responses, or secrets.
+     *
+     * @return array PackData
+     */
+    public function exportApp(string $appId, string $userId): array
+    {
+        $app = $this->appService->getApp($appId);
+        if (!$app || ($app['ownerId'] ?? null) !== $userId) {
+            throw new \RuntimeException('App not found');
+        }
+
+        $appForms = $this->appService->getAppForms($appId); // ordered by sort_order
+
+        // Stable real-formId -> packFormId (slug) map, built first so cross-form links resolve.
+        $realToPackKey = [];
+        $usedKeys = [];
+        $loadedForms = [];
+        foreach ($appForms as $af) {
+            $form = $this->formService->getForm($af['formId']);
+            if (!$form) {
+                continue;
+            }
+            $loadedForms[$af['formId']] = $form;
+            $realToPackKey[$af['formId']] = $this->uniqueSlug((string) ($form['title'] ?? 'form'), $usedKeys);
+        }
+
+        // Build pack forms (whitelist; strip the author's notification settings).
+        $packForms = [];
+        foreach ($appForms as $af) {
+            $form = $loadedForms[$af['formId']] ?? null;
+            if (!$form) {
+                continue;
+            }
+            $settings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+            unset($settings['notifications']);
+            $entry = [
+                'packFormId' => $realToPackKey[$af['formId']],
+                'title' => $form['title'] ?? 'Untitled',
+                'description' => $form['description'] ?? null,
+                'icon' => $form['icon'] ?? null,
+                'settings' => $settings,
+                'theme' => $form['theme'] ?? [],
+                'fields' => $this->packifyFieldReferences($form['fields'] ?? [], $realToPackKey),
+            ];
+            if (!empty($form['logicScript'])) {
+                $entry['logicScript'] = $form['logicScript'];
+            }
+            if (!empty($form['customScreen'])) {
+                $entry['customScreen'] = $form['customScreen'];
+            }
+            $packForms[] = $entry;
+        }
+
+        if (empty($packForms)) {
+            throw new \RuntimeException('This app has no forms to export');
+        }
+
+        // Roles (for default-role name mapping + exporting custom roles).
+        $roles = $this->appUserService->getRoles($appId);
+        $roleNameById = [];
+        foreach ($roles as $r) {
+            $roleNameById[$r['id']] = $r['name'] ?? null;
+        }
+
+        // App settings: drop PII + remap instance ids to portable references.
+        $appSettings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        unset($appSettings['notifications'], $appSettings['notificationEmail']);
+        if (!empty($appSettings['defaultRoleId']) && isset($roleNameById[$appSettings['defaultRoleId']])) {
+            $appSettings['defaultRoleName'] = $roleNameById[$appSettings['defaultRoleId']];
+        }
+        unset($appSettings['defaultRoleId']);
+        $lp = $appSettings['landingPage'] ?? null;
+        if (is_string($lp) && $lp !== '' && $lp !== 'dashboard') {
+            $appSettings['landingPage'] = isset($realToPackKey[$lp]) ? '@pack:' . $realToPackKey[$lp] : 'dashboard';
+        }
+
+        // navConfig: remap each item.formId to @pack:<key>; drop items pointing outside the app.
+        $navConfig = [];
+        foreach ((is_array($app['navConfig'] ?? null) ? $app['navConfig'] : []) as $item) {
+            $fid = $item['formId'] ?? null;
+            if ($fid !== null && $fid !== '') {
+                if (!isset($realToPackKey[$fid])) {
+                    continue;
+                }
+                $item['formId'] = '@pack:' . $realToPackKey[$fid];
+            }
+            $navConfig[] = $item;
+        }
+
+        // Membership metadata.
+        $packAppForms = [];
+        foreach ($appForms as $af) {
+            if (!isset($realToPackKey[$af['formId']])) {
+                continue;
+            }
+            $packAppForms[] = [
+                'packFormId' => $realToPackKey[$af['formId']],
+                'displayName' => $af['displayName'] ?? null,
+                'sortOrder' => $af['sortOrder'] ?? 0,
+                'isVisible' => $af['isVisible'] ?? true,
+                'settings' => $af['settings'] ?? [],
+            ];
+        }
+
+        // Custom roles only (system Owner/Admin/Member are recreated by createApp).
+        $packRoles = [];
+        foreach ($roles as $r) {
+            if (!empty($r['isSystem'])) {
+                continue;
+            }
+            $perms = [];
+            foreach ($r['permissions'] ?? [] as $p) {
+                $fid = $p['formId'] ?? null;
+                if ($fid !== null && $fid !== '') {
+                    if (!isset($realToPackKey[$fid])) {
+                        continue; // permission on a form outside the app
+                    }
+                    $perms[] = ['packFormId' => $realToPackKey[$fid], 'permission' => $p['permission']];
+                } else {
+                    $perms[] = ['packFormId' => null, 'permission' => $p['permission']];
+                }
+            }
+            $packRoles[] = [
+                'name' => $r['name'] ?? 'Role',
+                'description' => $r['description'] ?? null,
+                'permissions' => $perms,
+            ];
+        }
+
+        $packApp = [
+            'packAppId' => $this->slugify((string) ($app['name'] ?? 'app')),
+            'name' => $app['name'] ?? 'App',
+            'description' => $app['description'] ?? null,
+            'logoUrl' => $app['logoUrl'] ?? null,
+            'settings' => $appSettings,
+            'theme' => $app['theme'] ?? [],
+            'navConfig' => $navConfig,
+            'forms' => $packAppForms,
+            'roles' => $packRoles,
+        ];
+        if (!empty($app['customScreen'])) {
+            $packApp['customScreen'] = $app['customScreen'];
+        }
+
+        $pack = [
+            'formatVersion' => 1,
+            'packMeta' => [
+                'name' => $app['name'] ?? 'App',
+                'description' => $app['description'] ?? '',
+                'version' => '1.0.0',
+                'tags' => [],
+            ],
+            'forms' => $packForms,
+            'apps' => [$packApp],
+        ];
+
+        // Fail fast with a clear message if the app exceeds pack size caps.
+        $this->validatePack($pack);
+
+        return $pack;
     }
 
     /**
@@ -611,6 +830,21 @@ class PackService
             if (empty($app['name'])) {
                 throw new \RuntimeException("App '{$app['packAppId']}' is missing name");
             }
+            // Per-app size caps (mirror the form caps) — the app home screen ships executable HTML/CSS/JS.
+            if (isset($app['customScreen'])) {
+                $screenJson = json_encode($app['customScreen']);
+                if ($screenJson !== false && strlen($screenJson) > 524288) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 512KB limit");
+                }
+            }
+            foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240] as $key => $cap) {
+                if (isset($app[$key])) {
+                    $json = json_encode($app[$key]);
+                    if ($json !== false && strlen($json) > $cap) {
+                        throw new \RuntimeException("App '{$app['packAppId']}' {$key} exceeds " . ($cap / 1024) . "KB limit");
+                    }
+                }
+            }
         }
     }
 
@@ -635,6 +869,52 @@ class PackService
         }
         unset($field);
         return $fields;
+    }
+
+    /**
+     * Inverse of remapFieldReferences: rewrite a linked_record's real targetFormId to a portable
+     * '@pack:<key>' reference. A reference to a form OUTSIDE the exported set is stripped (never leak a
+     * foreign/internal UUID, and never emit a dangling import).
+     */
+    private function packifyFieldReferences(array $fields, array $realToPackKey): array
+    {
+        foreach ($fields as &$field) {
+            if (($field['type'] ?? '') === 'linked_record') {
+                $tid = $field['properties']['targetFormId'] ?? null;
+                if (is_string($tid) && $tid !== '') {
+                    if (isset($realToPackKey[$tid])) {
+                        $field['properties']['targetFormId'] = '@pack:' . $realToPackKey[$tid];
+                    } else {
+                        unset($field['properties']['targetFormId']);
+                    }
+                }
+            }
+        }
+        unset($field);
+        return $fields;
+    }
+
+    /** Slugify a name into a pack key (lowercase, hyphenated, max 50 chars). */
+    private function slugify(string $name): string
+    {
+        $slug = strtolower(trim($name));
+        $slug = preg_replace('/[^a-z0-9]+/', '-', $slug) ?? '';
+        $slug = trim($slug, '-');
+        return $slug !== '' ? substr($slug, 0, 50) : 'form';
+    }
+
+    /** A slug unique within the exported pack (appends -2, -3, … on collision). */
+    private function uniqueSlug(string $name, array &$used): string
+    {
+        $base = $this->slugify($name);
+        $key = $base;
+        $n = 2;
+        while (isset($used[$key])) {
+            $key = $base . '-' . $n;
+            $n++;
+        }
+        $used[$key] = true;
+        return $key;
     }
 
     /**

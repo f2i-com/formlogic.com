@@ -929,6 +929,11 @@ class ApiClient {
     });
   }
 
+  /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
+  async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
+    return this.request(`/apps/${appId}/export`);
+  }
+
   async getInstalledPacks(): Promise<ApiResponse<{ installations: PackInstallation[] }>> {
     return this.request('/packs/installed');
   }

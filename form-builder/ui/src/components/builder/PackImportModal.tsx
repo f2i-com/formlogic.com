@@ -36,10 +36,12 @@ type Tab = 'marketplace' | 'installed' | 'mypacks' | 'upload';
 interface PackImportModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Which tab to open on. Defaults to the marketplace; pass 'upload' to jump straight to file import. */
+  initialTab?: Tab;
 }
 
-export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
-  const [activeTab, setActiveTab] = useState<Tab>('marketplace');
+export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModalProps) {
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? 'marketplace');
 
   // Marketplace state
   const [catalogPacks, setCatalogPacks] = useState<CatalogPack[]>([]);

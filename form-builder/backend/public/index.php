@@ -1155,6 +1155,10 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->delete($request, $response, $getArgs($request));
     });
+    // Export the whole app (forms + screens + scripts + roles) as a self-contained pack JSON.
+    $group->get('/{id}/export', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(PackController::class)->exportApp($request, $response, $getArgs($request));
+    });
 
     // App form management
     $group->get('/{id}/forms', function ($request, $response) use ($container, $getArgs) {

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2, Plug, Loader2 } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2, Plug, Loader2, Upload } from 'lucide-react';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -10,6 +10,7 @@ import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { GenerateAppModal } from '../../components/ai-app-builder/GenerateAppModal';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
+import { PackImportModal } from '../../components/builder/PackImportModal';
 import { useAiAvailable } from '../../hooks/useAiAvailable';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
@@ -26,6 +27,7 @@ export function AppsDashboard() {
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [handing, setHanding] = useState(false);
   const [mcpAppId, setMcpAppId] = useState<string | null>(null);
   const aiAvailable = useAiAvailable();
@@ -111,6 +113,9 @@ export function AppsDashboard() {
                 Generate with AI
               </Button>
             )}
+            <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} title="Import an app from a .json bundle exported from FormLogic">
+              Import
+            </Button>
             <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
               Create App
             </Button>
@@ -208,6 +213,7 @@ export function AppsDashboard() {
       />
 
       <GenerateAppModal isOpen={showGenerate} onClose={() => { setShowGenerate(false); fetchApps(); }} />
+      {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
       <ConnectAiModal isOpen={mcpAppId !== null} onClose={() => { setMcpAppId(null); fetchApps(); }} appId={mcpAppId ?? undefined} appName="your new app" />
     </div>
   );
