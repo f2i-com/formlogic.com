@@ -124,11 +124,14 @@ class PlanService
     /** Usage snapshot for the billing UI. */
     public function usage(string $userId): array
     {
+        // Storage usage requires crawling the upload filesystem, and the figure is only
+        // meaningful when enforcement is on — so skip the disk walk entirely otherwise
+        // (self-hosted billing-page loads no longer stat every uploaded file).
         return [
             'enforced' => $this->enforced,
             'plan' => $this->planFor($userId),
             'forms' => ['used' => $this->getFormCount($userId), 'limit' => $this->formLimit($userId)],
-            'storage' => ['usedBytes' => $this->getStorageBytes($userId), 'limitBytes' => $this->storageLimitBytes($userId)],
+            'storage' => ['usedBytes' => $this->enforced ? $this->getStorageBytes($userId) : null, 'limitBytes' => $this->storageLimitBytes($userId)],
         ];
     }
 

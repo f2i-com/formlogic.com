@@ -15,7 +15,7 @@ class SQLiteConnection
      * v2 = computed, tags, script_logs tables
      * v3 = compound indexes for common query patterns
      */
-    private const SCHEMA_VERSION = 3;
+    private const SCHEMA_VERSION = 4;
 
     private string $storagePath;
     private array $connections = [];
@@ -256,6 +256,9 @@ class SQLiteConnection
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_status_submitted ON responses(status, submitted_at)");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response_field ON computed(response_id, field_name)");
         $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response_tag ON tags(response_id, tag)");
+        // Expression index for the "own responses" scope (app members) — the submitter id
+        // lives in the metadata JSON, so without this the list+count full-scan every row.
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_submitted_by ON responses(json_extract(metadata, '$.submittedByUserId'))");
 
         // Record schema version
         $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);
@@ -365,6 +368,11 @@ class SQLiteConnection
             $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_status_submitted ON responses(status, submitted_at)");
             $pdo->exec("CREATE INDEX IF NOT EXISTS idx_computed_response_field ON computed(response_id, field_name)");
             $pdo->exec("CREATE INDEX IF NOT EXISTS idx_tags_response_tag ON tags(response_id, tag)");
+        }
+
+        // v3→v4: expression index for the "own responses" (per-submitter) scope
+        if ($fromVersion < 4) {
+            $pdo->exec("CREATE INDEX IF NOT EXISTS idx_responses_submitted_by ON responses(json_extract(metadata, '$.submittedByUserId'))");
         }
 
         $this->setSchemaVersion($pdo, self::SCHEMA_VERSION);
