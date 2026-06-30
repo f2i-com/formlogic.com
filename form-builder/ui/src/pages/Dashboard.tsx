@@ -42,6 +42,7 @@ import { useAuthStore } from '../stores/authStore';
 import { api } from '../lib/api';
 import { formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
+import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormTemplate } from '../data/formTemplates';
@@ -338,6 +339,25 @@ export function Dashboard() {
     }
   };
 
+  // First-run onboarding: a welcome that routes a brand-new user into creating their first form.
+  // Dismissal persists so returning users aren't nagged.
+  const [welcomeDismissed, setWelcomeDismissed] = useState(() => {
+    try { return localStorage.getItem('formlogic_onboarding_dismissed') === '1'; } catch { return false; }
+  });
+  const dismissWelcome = useCallback(() => {
+    setWelcomeDismissed(true);
+    try { localStorage.setItem('formlogic_onboarding_dismissed', '1'); } catch { /* ignore */ }
+  }, []);
+  const onWelcomeBlank = () => { dismissWelcome(); handleSelectTemplate(null); };
+  const onWelcomeTemplate = () => { dismissWelcome(); setShowTemplateSelector(true); };
+  const onWelcomeAI = async () => {
+    dismissWelcome();
+    const form = await createForm('Untitled Form');
+    if (!form) return;
+    setActiveForm(form.id);
+    navigate(`/builder/${form.id}?ai=1`);
+  };
+
   // Calculate various stats
   const totalForms = forms.length;
   const publishedForms = forms.filter(f => f.status === 'published').length;
@@ -479,6 +499,7 @@ export function Dashboard() {
   // Show getting started only for genuinely-new users — not during the initial
   // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
   const showGettingStarted = forms.length === 0 && !formsLoading;
+  const showWelcome = showGettingStarted && !welcomeDismissed;
 
   return (
     <div className="min-h-screen">
@@ -825,6 +846,15 @@ export function Dashboard() {
           formTitle={embedModalForm.title}
         />
       )}
+
+      {/* First-run welcome */}
+      <WelcomeModal
+        isOpen={showWelcome}
+        onClose={dismissWelcome}
+        onBlank={onWelcomeBlank}
+        onTemplate={onWelcomeTemplate}
+        onAI={onWelcomeAI}
+      />
 
       {/* Template Selector */}
       <TemplateSelector

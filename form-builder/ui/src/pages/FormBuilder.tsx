@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   Eye,
@@ -110,6 +110,7 @@ function buildFormPack(
 export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
   // it stays stable while the publish dialog is open rather than rebuilding on each edit).
@@ -181,6 +182,17 @@ export default function FormBuilder() {
     return () => { cancelled = true; };
   }, [formId, loadFullForm]);
   const loadFinished = loadedFor === formId;
+
+  // First-run onboarding routes "Generate with AI" here as ?ai=1 — open the AI generator once the
+  // form has loaded, then strip the param so it doesn't re-open on refresh/navigation.
+  const aiAutoOpened = useRef(false);
+  useEffect(() => {
+    if (loadFinished && !aiAutoOpened.current && searchParams.get('ai') !== null) {
+      aiAutoOpened.current = true;
+      setActiveModal('ai');
+      setSearchParams((p) => { p.delete('ai'); return p; }, { replace: true });
+    }
+  }, [loadFinished, searchParams, setSearchParams]);
 
   // On a wide screen, open the builder with both docks: select the first editable
   // field once the form loads so the settings dock appears alongside the (default-open)
