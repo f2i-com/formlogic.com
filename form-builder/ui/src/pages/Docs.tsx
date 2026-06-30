@@ -142,6 +142,7 @@ const FIELD_TYPES: Array<[string, string]> = [
   ['Calculated', 'A read-only value computed from an expression over other fields.'],
   ['Linked record', 'Reference a response from another form (relationships).'],
   ['Location', 'Capture latitude / longitude.'],
+  ['Hidden', 'Stores a default, computed, or script-set value that respondents never see — saved with the response and shown in exports.'],
   ['Statement · Welcome · Thank you', 'Display-only content and intro / completion screens.'],
 ];
 
@@ -294,6 +295,7 @@ export function Docs() {
               <h3 id="ctx-api" className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">What's available on <C>ctx</C></h3>
               <Bullets items={[
                 <><C>ctx.answers.fieldId</C> — every submitted answer.</>,
+                <><C>ctx.db.getField(name)</C> — read a field from the record (a submitted answer, or one this script set).</>,
                 <><C>ctx.db.setField(name, value)</C>, <C>ctx.db.setStatus(status)</C>, <C>ctx.db.addTag(tag)</C> — write computed data back to the response.</>,
                 <><C>ctx.utils.now()</C>, <C>ctx.utils.uuid()</C>, <C>ctx.utils.hash(str)</C>, <C>ctx.utils.formatDate(...)</C> — helpers.</>,
                 <><C>ctx.http.post(url, data, opts)</C> / <C>get</C> / <C>put</C> … — call external APIs (e.g. a webhook or CRM).</>,
