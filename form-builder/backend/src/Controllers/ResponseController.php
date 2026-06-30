@@ -61,12 +61,15 @@ class ResponseController
         }
         try {
             $to = (string) $notifications['notificationEmail'];
-            $title = htmlspecialchars((string) ($form['title'] ?? 'your form'), ENT_QUOTES);
+            $rawTitle = (string) ($form['title'] ?? 'your form');
+            $title = htmlspecialchars($rawTitle, ENT_QUOTES); // for the HTML body only
             $formId = (string) ($form['id'] ?? '');
             $html = "<p>You've received a new response on <strong>{$title}</strong>.</p>"
                 . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
                 . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
-            $this->emailService->send($to, "New response: {$title}", $html);
+            // Subject is plaintext (EmailService strips CR/LF) — use the raw title so HTML entities
+            // don't show literally (e.g. "Tom &amp; Jerry").
+            $this->emailService->send($to, "New response: {$rawTitle}", $html);
         } catch (\Throwable $e) {
             $this->logger->warning('New-response notification failed', ['error' => $e->getMessage()]);
         }
@@ -970,7 +973,9 @@ class ResponseController
             rewind($handle);
         }
 
-        $headers = fgetcsv($handle);
+        // Match the export's RFC-4180 escaping (fputcsv with '' escape) so export→edit→re-import
+        // round-trips symmetrically, and pass the arg explicitly to silence the PHP 8.4 deprecation.
+        $headers = fgetcsv($handle, 0, ',', '"', '');
         if ($headers === false || empty($headers)) {
             fclose($handle);
             return $this->jsonResponse($response, [
@@ -981,7 +986,7 @@ class ResponseController
 
         // Read all data rows
         $rows = [];
-        while (($row = fgetcsv($handle)) !== false) {
+        while (($row = fgetcsv($handle, 0, ',', '"', '')) !== false) {
             if (count($row) === count($headers)) {
                 $rows[] = array_combine($headers, $row);
             } elseif (count($row) > 0 && !(count($row) === 1 && trim($row[0]) === '')) {

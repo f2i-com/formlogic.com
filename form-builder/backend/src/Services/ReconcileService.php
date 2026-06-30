@@ -112,7 +112,9 @@ class ReconcileService
         $report = $this->report();
         $resynced = [];
         foreach ($report['countDrift'] as $d) {
-            $stmt = $this->mysql->prepare('UPDATE forms SET response_count = :c WHERE id = :id');
+            // Preserve updated_at (mirrors ResponseService::syncResponseCount) — a count resync
+            // is maintenance, not a content edit, so it must not bump the form's "Last Modified".
+            $stmt = $this->mysql->prepare('UPDATE forms SET response_count = :c, updated_at = updated_at WHERE id = :id');
             $stmt->execute(['c' => $d['sqlite'], 'id' => $d['formId']]);
             $resynced[] = $d['formId'];
         }

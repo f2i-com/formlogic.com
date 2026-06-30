@@ -25,11 +25,16 @@ class PackRatingService
             throw new \RuntimeException('Rating must be between 1 and 5');
         }
 
-        // Check pack exists
-        $stmt = $this->mysql->prepare("SELECT id FROM pack_catalog WHERE id = :id AND status = 'published'");
+        // Check pack exists, and capture its publisher to block self-rating (which would inflate
+        // the top_rated marketplace ranking from the publisher's own account).
+        $stmt = $this->mysql->prepare("SELECT id, publisher_id FROM pack_catalog WHERE id = :id AND status = 'published'");
         $stmt->execute(['id' => $catalogId]);
-        if (!$stmt->fetch()) {
+        $pack = $stmt->fetch();
+        if (!$pack) {
             throw new \RuntimeException('Pack not found');
+        }
+        if (($pack['publisher_id'] ?? null) === $userId) {
+            throw new \RuntimeException('You cannot rate your own pack');
         }
 
         // Atomic upsert to prevent race conditions with concurrent requests

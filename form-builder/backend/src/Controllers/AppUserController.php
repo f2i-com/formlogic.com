@@ -327,12 +327,14 @@ class AppUserController
                     // token can't be funneled to an attacker domain.
                     $origin = \FormLogic\Helpers\AppUrl::frontendBase($request);
                     $app = $this->appService->getApp($appId);
-                    $appName = htmlspecialchars((string) ($app['name'] ?? 'an app'), ENT_QUOTES);
+                    $rawAppName = (string) ($app['name'] ?? 'an app');
+                    $appName = htmlspecialchars($rawAppName, ENT_QUOTES); // for the HTML body only
                     $link = htmlspecialchars($origin . '/accept-invite?token=' . $invitation['token'], ENT_QUOTES);
                     $html = "<p>You've been invited to join <strong>{$appName}</strong> on FormLogic.</p>"
                         . "<p><a href=\"{$link}\">Accept your invitation</a></p>"
                         . "<p>Sign in (or create an account) with this email address to join. This invitation expires in 7 days.</p>";
-                    $this->emailService->send((string) $data['email'], "You're invited to {$appName}", $html);
+                    // Subject is plaintext — use the raw name so HTML entities don't render literally.
+                    $this->emailService->send((string) $data['email'], "You're invited to {$rawAppName}", $html);
                 } catch (\Throwable $e) {
                     // Email failure must not fail invitation creation.
                 }
