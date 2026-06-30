@@ -206,7 +206,7 @@ const DOCS = [
     description: 'Store computed values, set status, and add tags to responses.',
     items: [
       { name: 'ctx.db.setField(name, value)', desc: 'Store a computed field value (e.g., calculated score)' },
-      { name: 'ctx.db.getField(name)', desc: 'Get a previously computed field value' },
+      { name: 'ctx.db.getField(name)', desc: 'Read a field value — a submitted answer, or one this script set' },
       { name: 'ctx.db.setStatus(status)', desc: 'Set response status: submitted, reviewed, approved, rejected, spam, archived' },
       { name: 'ctx.db.addTag(tag)', desc: 'Add a tag to the response for filtering/organization' },
     ],

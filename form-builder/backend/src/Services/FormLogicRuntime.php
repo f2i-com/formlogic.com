@@ -64,9 +64,11 @@ class FormLogicRuntime
         // a tarpit could block a PHP worker for minutes (DoS). Clamp to [3s, 10s].
         $this->httpDeadline = $startTime + min(max($this->maxWallTimeMs / 1000, 3.0), 10.0);
 
-        $capture = new DbContextCapture();
-
         $answers = $context['answers'] ?? [];
+        // Seed the capture with the submitted answers so ctx.db.getField() can read the
+        // record's submitted values, not only fields the script itself sets this run.
+        $capture = new DbContextCapture($answers);
+
         $meta = [
             'ip' => $context['ipAddress'] ?? null,
             'userAgent' => $context['userAgent'] ?? null,

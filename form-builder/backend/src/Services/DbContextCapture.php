@@ -41,6 +41,14 @@ class DbContextCapture
     private int $totalValueBytes = 0;
 
     /**
+     * @param array<string, mixed> $initialAnswers The submitted answers, so ctx.db.getField()
+     *   reads the record's submitted values (not only fields the script itself set).
+     */
+    public function __construct(private array $initialAnswers = [])
+    {
+    }
+
+    /**
      * Set a computed field value
      * @param string $name Field name
      * @param mixed $value Field value
@@ -81,13 +89,14 @@ class DbContextCapture
     }
 
     /**
-     * Get a field value (from previously set computed fields)
+     * Get a field value from the record: a value the script already set this run takes
+     * precedence, otherwise the submitted answer for that field; null if neither exists.
      * @param string $name Field name
-     * @return mixed|null Field value or null if not set
+     * @return mixed|null
      */
     public function getField(string $name): mixed
     {
-        return $this->fields[$name] ?? null;
+        return $this->fields[$name] ?? $this->initialAnswers[$name] ?? null;
     }
 
     /**
