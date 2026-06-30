@@ -281,6 +281,21 @@ export default function FormAnalytics() {
     return lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
   }, [analytics, responses]);
 
+  // Preview only INPUT fields (skip welcome/statement/thank-you layout fields, which have no
+  // answer). Computed defensively and the column-fit hook is called BEFORE the early return below,
+  // so the hook order stays stable when `form` transitions loading → loaded (else React throws
+  // "rendered more hooks than during the previous render").
+  const previewFields = (form?.fields ?? [])
+    .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+    .slice(0, 8);
+  const { ref: previewRef, count: previewCount, cards: previewCards } = useFittedColumns<HTMLDivElement>({
+    itemCount: previewFields.length,
+    itemMinPx: 150,
+    reservedPx: 340,
+    cardBelowPx: 560,
+  });
+  const visiblePreview = previewFields.slice(0, previewCount);
+
   if (!form) {
     // Still hydrating the store (e.g. a direct link / refresh) — don't flash not-found.
     if (formsLoading) {
@@ -327,21 +342,6 @@ export default function FormAnalytics() {
       })()
     : localAnalytics.dailyResponses;
 
-  // Preview only INPUT fields (skip welcome/statement/thank-you layout fields,
-  // which have no answer and otherwise show as empty "-" columns).
-  const previewFields = form.fields
-    .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
-    .slice(0, 8);
-
-  // Fit as many preview columns as the card width allows (no horizontal scroll);
-  // stack as cards on narrow screens. Reserved ≈ ID + Submitted + Time columns.
-  const { ref: previewRef, count: previewCount, cards: previewCards } = useFittedColumns<HTMLDivElement>({
-    itemCount: previewFields.length,
-    itemMinPx: 150,
-    reservedPx: 340,
-    cardBelowPx: 560,
-  });
-  const visiblePreview = previewFields.slice(0, previewCount);
 
   // Shared value formatter for the recent-responses preview (table + card modes).
   const formatPreviewValue = (field: { id: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }, val: unknown): string => {
