@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText, MonitorPlay } from 'lucide-react';
+import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText, MonitorPlay, Image as ImageIcon } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -22,14 +22,26 @@ export function GenerateAppModal({ isOpen, onClose }: { isOpen: boolean; onClose
   const [progress, setProgress] = useState<BuildProgress | null>(null);
   const [result, setResult] = useState<BuildResult | null>(null);
   const [error, setError] = useState('');
+  const [image, setImage] = useState<string | null>(null);
+  const [imageName, setImageName] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  const reset = () => { setStage('prompt'); setPrompt(''); setPlan(null); setProgress(null); setResult(null); setError(''); };
+  const reset = () => { setStage('prompt'); setPrompt(''); setPlan(null); setProgress(null); setResult(null); setError(''); setImage(null); setImageName(''); };
   const close = () => { if (stage === 'building') return; reset(); onClose(); };
+
+  const onPickImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => { setImage(reader.result as string); setImageName(file.name); };
+    reader.readAsDataURL(file);
+  };
 
   const generatePlan = async () => {
     if (!prompt.trim()) return;
     setStage('planning'); setError('');
-    const res = await api.generateAppPlan(prompt.trim());
+    const res = await api.generateAppPlan(prompt.trim(), 6, image || undefined);
     const p = res.data?.data;
     if (res.error || !p) { setError(typeof res.error === 'string' ? res.error : 'Could not generate a plan. Try rephrasing.'); setStage('error'); return; }
     const errs = validatePlan(p);
@@ -74,7 +86,17 @@ export function GenerateAppModal({ isOpen, onClose }: { isOpen: boolean; onClose
               <button key={ex} type="button" onClick={() => setPrompt(ex)} className="text-xs px-2 py-1 rounded-md border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors cursor-pointer">{ex}</button>
             ))}
           </div>
-          <div className="flex justify-end">
+          <div className="flex items-center justify-between gap-2">
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickImage} />
+            {image ? (
+              <div className="flex items-center gap-2 min-w-0">
+                <img src={image} alt="" className="h-8 w-8 rounded object-cover border border-gray-200 dark:border-slate-700 shrink-0" />
+                <span className="text-xs text-gray-500 dark:text-slate-400 truncate max-w-[120px]">{imageName}</span>
+                <button type="button" onClick={() => { setImage(null); setImageName(''); }} className="text-xs text-gray-400 hover:text-red-500 cursor-pointer">Remove</button>
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()} leftIcon={<ImageIcon className="h-4 w-4" />}>Attach image</Button>
+            )}
             <Button onClick={generatePlan} disabled={!prompt.trim()} leftIcon={<Sparkles className="h-4 w-4" />}>Generate plan</Button>
           </div>
         </div>

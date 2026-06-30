@@ -507,11 +507,11 @@ class ApiClient {
     });
   }
 
-  /** AI App Builder: turn a prompt into a multi-form app plan (data.data is the AppPlan). */
-  async generateAppPlan(prompt: string, maxForms = 6): Promise<ApiResponse<{ data: import('./ai-app-builder/types').AppPlan }>> {
+  /** AI App Builder: turn a prompt (+ optional reference image data URL) into a multi-form app plan. */
+  async generateAppPlan(prompt: string, maxForms = 6, image?: string): Promise<ApiResponse<{ data: import('./ai-app-builder/types').AppPlan }>> {
     return this.request('/ai/generate-app-plan', {
       method: 'POST',
-      body: JSON.stringify({ prompt, maxForms }),
+      body: JSON.stringify({ prompt, maxForms, image }),
     });
   }
 

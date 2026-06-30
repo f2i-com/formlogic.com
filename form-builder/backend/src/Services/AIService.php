@@ -402,12 +402,30 @@ PROMPT;
      * Generate a multi-form APP PLAN from a prompt (AI App Builder). Returns a normalized plan:
      * { app:{name,description}, forms:[{key,title,purpose}], relations:[{from,to,label}], roles:[{name,level}] }.
      */
-    public function generateAppPlan(string $prompt, int $maxForms = 6): array
+    public function generateAppPlan(string $prompt, int $maxForms = 6, ?string $image = null): array
     {
-        $response = $this->chatCompletion([
-            ['role' => 'system', 'content' => $this->getAppPlanSystemPrompt()],
-            ['role' => 'user', 'content' => $prompt . "\n\nDesign up to {$maxForms} forms."],
-        ]);
+        $system = $this->getAppPlanSystemPrompt();
+        $userText = $prompt . "\n\nDesign up to {$maxForms} forms.";
+
+        if ($image !== null && $image !== '') {
+            // A sketch/screenshot/wireframe/document image as extra design detail (vision).
+            if (!preg_match('/^data:image\/(jpeg|png|gif|webp);base64,/', $image)) {
+                throw new \Exception('Invalid image: must be a base64 image data URL (jpeg/png/gif/webp)');
+            }
+            $messages = [
+                ['role' => 'system', 'content' => $system],
+                ['role' => 'user', 'content' => [
+                    ['type' => 'text', 'text' => $userText . "\n\nUse the attached image (a sketch, screenshot, wireframe, or document) as additional detail for the app design."],
+                    ['type' => 'image_url', 'image_url' => ['url' => $image]],
+                ]],
+            ];
+            $response = $this->chatCompletion($messages, $this->visionModel);
+        } else {
+            $response = $this->chatCompletion([
+                ['role' => 'system', 'content' => $system],
+                ['role' => 'user', 'content' => $userText],
+            ]);
+        }
         return $this->parseAppPlan($response, $maxForms);
     }
 

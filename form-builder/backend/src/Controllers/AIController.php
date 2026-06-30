@@ -130,9 +130,13 @@ class AIController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt must be text no longer than 10000 characters'], 400);
         }
         $maxForms = max(1, min(10, (int) ($body['maxForms'] ?? 6)));
+        $image = is_string($body['image'] ?? null) ? $body['image'] : null;
+        if ($image !== null && strlen($image) > 8_000_000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Image is too large (max ~6MB)'], 400);
+        }
 
         try {
-            $plan = $this->aiService->generateAppPlan($prompt, $maxForms);
+            $plan = $this->aiService->generateAppPlan($prompt, $maxForms, $image);
             return $this->jsonResponse($response, ['success' => true, 'data' => $plan]);
         } catch (\Throwable $e) {
             $this->logger->error('AI app-plan error', ['exception' => $e->getMessage()]);
