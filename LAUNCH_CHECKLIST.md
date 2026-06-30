@@ -17,12 +17,12 @@ Last reconciled against code: 2026-06-30.
   stored file against its field (MIME/size), blocking cross-field reuse. Done — verified E2E.
 - [x] **CI hard-fails on high/critical audits** — `composer audit` + `npm audit --audit-level=high`
   are gates; slim 4.15.2, npm highs fixed. Done.
-- [ ] **Launch E2E suite (Playwright)** — golden paths: auth; build→publish→submit→view;
-  required/conditional; hidden/calc; upload valid/invalid; app RBAC (submit/view-own/view-all/
-  export/edit/delete); `onSubmit` reject + computed write; billing-disabled self-host. Must be
-  deterministic, isolated, screenshots/traces on failure. NOTE: current Playwright config expects
-  a live WAMP app + system Chrome and doesn't start a server — make it CI-runnable (webServer or
-  a documented local command).
+- [x] **Launch E2E suite (Playwright)** — `e2e/launch-golden-paths.spec.ts` (6 tests, green):
+  auth login/logout; build→publish→submit-public→view; required validation; hidden-field
+  server-authority + calc; field-aware upload rejection; `onSubmit` reject + computed write.
+  Self-cleaning, traces/screenshots on failure, documented in `e2e/README.md`. Remaining
+  (follow-ups): app-RBAC / export / billing-disabled golden paths, and wiring the PHP/MySQL stack
+  into CI (currently a documented local/pre-release command).
 
 ## P1 — security & data-integrity hardening
 
@@ -31,8 +31,8 @@ Last reconciled against code: 2026-06-30.
 - [ ] **App/RBAC permission-matrix tests** — owner/admin/member/view-own/view-all/export/edit/
   delete/suspended/pending/non-member; a VIEW_OWN user can't read another's response; EDIT without
   VIEW_ALL can't edit another's; suspended/pending denied; owner always; non-member 403/404.
-- [ ] **Backend field-ID validation** — match the frontend rules (non-empty, length cap, no
-  leading digit, safe chars, not a reserved FormLogic global) for explicit/imported field IDs.
+- [x] **Backend field-ID validation** — `FormService::fieldIdError()` rejects unsafe/reserved
+  explicit IDs on every save path (matches the frontend); tested. Done.
 - [ ] **API key + external API tests** — scope enforcement (`forms:read` can't write), revocation,
   batch limits, consistent error shapes.
 - [ ] **Webhook retry-worker health** — heartbeat timestamp surfaced in `/api/health/deep` as
