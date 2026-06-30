@@ -20,7 +20,8 @@ export type FieldType =
   | 'thank_you'
   | 'calculated'
   | 'linked_record'
-  | 'location';
+  | 'location'
+  | 'hidden';
 
 export interface FieldOption {
   id: string;
@@ -56,6 +57,8 @@ export interface FieldProperties {
   maxFiles?: number;
   acceptedFileTypes?: string[];
   calculationExpression?: string;
+  // Static value seeded into a hidden field (used when there's no calculationExpression).
+  defaultValue?: string;
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
   buttonText?: string;
@@ -187,4 +190,5 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   location: { label: 'Location', icon: 'MapPin', category: 'advanced' },
   welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout' },
   thank_you: { label: 'Thank You', icon: 'Heart', category: 'layout' },
+  hidden: { label: 'Hidden Field', icon: 'EyeOff', category: 'advanced' },
 };

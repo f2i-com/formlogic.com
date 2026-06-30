@@ -821,6 +821,22 @@ export default function FormResponse() {
     [currentAnswers, calculatedValues]
   );
 
+  // Every field id — for resolving calculation-expression dependencies.
+  const allFieldIds = useMemo(() => (form?.fields ?? []).map((f) => f.id), [form]);
+
+  // Hidden fields are never rendered, but their values (static default, calculation
+  // expression, or backend-script-set) are still collected into the submission.
+  const hiddenFields = useMemo(() => (form?.fields ?? []).filter((f) => f.type === 'hidden'), [form]);
+
+  // Seed static defaults for hidden fields that have no calculation expression.
+  useEffect(() => {
+    hiddenFields.forEach((f) => {
+      if (!f.properties.calculationExpression && f.properties.defaultValue !== undefined && currentAnswers[f.id] === undefined) {
+        setAnswer(f.id, f.properties.defaultValue);
+      }
+    });
+  }, [hiddenFields, currentAnswers, setAnswer]);
+
   // Use conditional logic to determine field visibility
   // Note: hooks must be called before any early returns
   const { isFieldVisible, isFieldRequired, isEvaluating } = useConditionalLogic(
@@ -833,8 +849,8 @@ export default function FormResponse() {
     if (!form) return [];
     return form.fields.filter((f) => {
       // thank_you is rendered as the post-submit success screen, not an in-form step.
-      // welcome_screen IS shown (as a leading content step).
-      if (f.type === 'thank_you') return false;
+      // welcome_screen IS shown (as a leading content step). hidden fields are never shown.
+      if (f.type === 'thank_you' || f.type === 'hidden') return false;
       return isFieldVisible(f.id);
     });
   }, [form, isFieldVisible]);
@@ -1038,7 +1054,7 @@ export default function FormResponse() {
     // Skip the required/validation gate for non-input field types — a calculated
     // or layout step has nothing for the user to fill in, so requiring it would
     // be an unrecoverable dead-end. Matches the classic-mode exclusion.
-    if (currentField && !['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(currentField.type)) {
+    if (currentField && !['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(currentField.type)) {
       const answer = currentAnswers[currentField.id];
 
       // Check required
@@ -1132,7 +1148,7 @@ export default function FormResponse() {
     setFieldError(null);
     const missingFields = visibleFields.filter(f => {
       if (!getFieldRequired(f)) return false;
-      if (['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(f.type)) return false;
+      if (['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) return false;
       const answer = currentAnswers[f.id];
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)
         // An empty typed signature is the sentinel 'typed:' (a non-empty string) — treat as blank.
@@ -1153,7 +1169,7 @@ export default function FormResponse() {
 
     // Run field validation rules
     for (const f of visibleFields) {
-      if (['statement', 'calculated', 'welcome_screen', 'thank_you'].includes(f.type)) continue;
+      if (['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) continue;
       const answer = currentAnswers[f.id];
       if (answer === undefined || answer === null || answer === '') continue;
       if (f.validation?.length) {
@@ -1315,6 +1331,22 @@ export default function FormResponse() {
           />
         </div>
       )}
+
+      {/* Hidden fields with a calculation expression compute off-screen, so their value is
+          captured in the submission without ever being shown to the respondent. */}
+      {hiddenFields.filter((f) => f.properties.calculationExpression).map((f) => (
+        <div key={f.id} className="hidden" aria-hidden="true">
+          <CalculatedFieldDisplay
+            expression={f.properties.calculationExpression}
+            formData={allFormData}
+            allFieldIds={allFieldIds}
+            fieldId={f.id}
+            onCalculated={handleCalculated}
+          >
+            {() => null}
+          </CalculatedFieldDisplay>
+        </div>
+      ))}
 
       {effectiveMode === 'focused' ? (
       <>

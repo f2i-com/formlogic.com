@@ -83,6 +83,11 @@ export const SortableFieldCard = memo(function SortableFieldCard({
             {field.required && (
               <span className="text-xs text-red-500">*</span>
             )}
+            {field.type === 'hidden' && (
+              <span className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-slate-700 text-gray-500 dark:text-slate-400">
+                Not shown
+              </span>
+            )}
           </div>
           <p className="font-medium text-gray-900 dark:text-white truncate">{field.label}</p>
           {field.description && (

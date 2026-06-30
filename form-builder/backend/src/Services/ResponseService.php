@@ -143,7 +143,9 @@ class ResponseService
     {
         $jobs = [];   // [['id'=>fieldId, 'expression'=>calculationExpression]]
         foreach ($fields as $field) {
-            if (($field['type'] ?? '') === 'calculated'
+            // Calculated fields AND hidden fields can carry a calculationExpression that is
+            // computed server-side (authoritative) from the submitted answers.
+            if (in_array($field['type'] ?? '', ['calculated', 'hidden'], true)
                 && !empty($field['id'])
                 && is_string($field['properties']['calculationExpression'] ?? null)
                 && trim($field['properties']['calculationExpression']) !== '') {

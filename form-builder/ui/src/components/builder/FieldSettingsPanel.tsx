@@ -73,7 +73,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             onChange={(e) => onUpdate({ description: e.target.value })}
           />
 
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record'].includes(field.type) && (
+          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) && (
             <Input
               label="Placeholder"
               value={field.placeholder || ''}
@@ -81,7 +81,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             />
           )}
 
-          {!['statement', 'welcome_screen', 'thank_you'].includes(field.type) && (
+          {!['statement', 'welcome_screen', 'thank_you', 'hidden'].includes(field.type) && (
             <Switch
               checked={field.required}
               onChange={(checked) => onUpdate({ required: checked })}
@@ -377,6 +377,34 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             />
           )}
 
+          {/* Hidden field: never shown to respondents; stores computed/script-set data */}
+          {field.type === 'hidden' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3 text-xs text-gray-500 dark:text-slate-400">
+                This field is never shown to respondents. Use it to store computed or script-set
+                data — it's saved with each response and appears in exports.
+              </div>
+              <Input
+                label="Default value"
+                value={field.properties.defaultValue || ''}
+                onChange={(e) => onUpdate({ properties: { ...field.properties, defaultValue: e.target.value } })}
+                placeholder="Optional starting value"
+              />
+              <div>
+                <p className="text-xs text-gray-500 dark:text-slate-500 mb-2">
+                  Optional: compute the value from other fields. If set, this overrides the default.
+                </p>
+                <CalculatedFieldEditor
+                  expression={field.properties.calculationExpression || ''}
+                  allFields={allFields}
+                  onChange={(expr) =>
+                    onUpdate({ properties: { ...field.properties, calculationExpression: expr } })
+                  }
+                />
+              </div>
+            </div>
+          )}
+
           {/* Linked record settings */}
           {field.type === 'linked_record' && (
             <LinkedRecordSettings
@@ -390,7 +418,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
-          {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record'].includes(field.type) ? (
+          {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) ? (
             <div className="text-center py-8 text-gray-500 dark:text-slate-500">
               <ShieldCheck className="h-8 w-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
               <p>Validation is not applicable for this field type.</p>

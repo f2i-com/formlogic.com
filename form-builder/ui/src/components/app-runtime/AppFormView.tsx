@@ -733,10 +733,28 @@ export function AppFormView() {
 
   const fields = useMemo(
     () => ((form?.fields ?? []) as FormField[]).filter(
-      (f) => f.type !== 'thank_you' && isFieldVisible(f.id)
+      (f) => f.type !== 'thank_you' && f.type !== 'hidden' && isFieldVisible(f.id)
     ),
     [form, isFieldVisible]
   );
+
+  // Hidden fields: never shown, but their value (default / calculation / script-set) is
+  // still collected. Mirrors the public runtime (FormResponse).
+  const hiddenFields = useMemo(
+    () => ((form?.fields ?? []) as FormField[]).filter((f) => f.type === 'hidden'),
+    [form]
+  );
+  const allFieldIds = useMemo(() => ((form?.fields ?? []) as FormField[]).map((f) => f.id), [form]);
+
+  // Seed static defaults for hidden fields that have no calculation expression.
+  useEffect(() => {
+    hiddenFields.forEach((f) => {
+      const props = f.properties as { calculationExpression?: string; defaultValue?: string };
+      if (!props.calculationExpression && props.defaultValue !== undefined) {
+        setAnswers((prev) => (prev[f.id] === undefined ? { ...prev, [f.id]: props.defaultValue } : prev));
+      }
+    });
+  }, [hiddenFields]);
   const thankYouField = useMemo(
     () => ((form?.fields ?? []) as FormField[]).find(f => f.type === 'thank_you'),
     [form]
@@ -985,6 +1003,24 @@ export function AppFormView() {
 
   return (
     <div className="relative flex-1 flex flex-col min-h-[60vh]" onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}>
+      {/* Hidden fields with a calculation expression compute off-screen so their value is
+          captured in the submission without ever being shown. */}
+      {hiddenFields
+        .map((f) => ({ id: f.id, expr: (f.properties as { calculationExpression?: string } | undefined)?.calculationExpression }))
+        .filter((f) => !!f.expr)
+        .map((f) => (
+          <div key={f.id} className="hidden" aria-hidden="true">
+            <CalculatedFieldDisplay
+              expression={f.expr}
+              formData={allFormData}
+              allFieldIds={allFieldIds}
+              fieldId={f.id}
+              onCalculated={handleCalculated}
+            >
+              {() => null}
+            </CalculatedFieldDisplay>
+          </div>
+        ))}
       {/* Back button + Mode toggle */}
       <div className="pt-2 pb-0 px-1 flex items-center justify-between">
         <button
