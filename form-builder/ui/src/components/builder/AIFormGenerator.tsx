@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Sparkles, FileText, Image, Upload, AlertCircle, Wand2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { Switch } from '../ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { api } from '../../lib/api';
 import { logger } from '../../lib/logger';
@@ -24,6 +25,9 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   const [isGenerating, setIsGenerating] = useState(false);
   // Two-stage generation: 'form' = fields, 'script' = the optional follow-up backend-logic call.
   const [genStage, setGenStage] = useState<'form' | 'script' | null>(null);
+  // When on (default), also generate the backend script if the form needs logic. Opt out to get
+  // fields only and write the script yourself in the Script section.
+  const [autoScript, setAutoScript] = useState(true);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [aiMessage, setAiMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -158,7 +162,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       // form is still created with its fields. The Script section remains available to refine it.
       let logicScript: string | undefined;
       const scriptDesc = (suggestedScript || '').trim();
-      if (needsScript && scriptDesc) {
+      if (autoScript && needsScript && scriptDesc) {
         setGenStage('script');
         try {
           // Pass the minimal field projection the script generator needs (matches ScriptEditor).
@@ -413,7 +417,15 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           <p className="text-xs text-amber-700 dark:text-amber-400 min-w-0 leading-snug">
             {aiMessage || 'AI isn’t configured on this instance.'} <span className="text-gray-400 dark:text-slate-500">You can still build forms manually.</span>
           </p>
-        ) : <span />}
+        ) : (
+          <Switch
+            size="sm"
+            checked={autoScript}
+            onChange={setAutoScript}
+            disabled={isGenerating}
+            label="Auto-generate logic"
+          />
+        )}
         <div className="flex items-center gap-2 shrink-0">
         <Button variant="outline" size="sm" onClick={resetAndClose}>
           Cancel

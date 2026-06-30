@@ -671,19 +671,6 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
           {activeTab === 'ai' && (
             <div className="h-full overflow-y-auto p-6">
               <div className="max-w-2xl mx-auto space-y-6">
-                {/* Intro */}
-                <div className="flex items-start gap-3">
-                  <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center shadow-sm shadow-primary-500/30">
-                    <Sparkles className="h-5 w-5 text-primary-foreground" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-semibold text-gray-900 dark:text-white">Generate with AI</h3>
-                    <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5">
-                      Describe what should happen on submit — the AI writes the <code className="font-mono text-xs bg-gray-100 dark:bg-slate-800 px-1 py-0.5 rounded">onSubmit</code> script using your form's fields.
-                    </p>
-                  </div>
-                </div>
-
                 {/* Field context — shows the AI is grounded in this form */}
                 {formFields.length > 0 && (
                   <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-800/40 px-4 py-3">
