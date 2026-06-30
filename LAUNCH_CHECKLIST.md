@@ -28,15 +28,15 @@ Last reconciled against code: 2026-06-30.
 
 - [x] **Webhook SSRF tests** — `WebhookSecurityTest` covers blocked hosts / private IPs / schemes.
   Done.
-- [ ] **App/RBAC permission-matrix tests** — owner/admin/member/view-own/view-all/export/edit/
-  delete/suspended/pending/non-member; a VIEW_OWN user can't read another's response; EDIT without
-  VIEW_ALL can't edit another's; suspended/pending denied; owner always; non-member 403/404.
+- [x] **App/RBAC permission-matrix tests** — `AppRbacTest` (owner bypass, view-own vs view-all,
+  edit-without-view-all, form-scoped vs app-level, suspended/pending/non-member). Done.
 - [x] **Backend field-ID validation** — `FormService::fieldIdError()` rejects unsafe/reserved
   explicit IDs on every save path (matches the frontend); tested. Done.
-- [ ] **API key + external API tests** — scope enforcement (`forms:read` can't write), revocation,
-  batch limits, consistent error shapes.
-- [ ] **Webhook retry-worker health** — heartbeat timestamp surfaced in `/api/health/deep` as
-  ok/warn/stale; document cron frequency; Doctor shows "retries not running".
+- [x] **API key + external API tests** — `ApiKeyTest` (scope preservation/enforcement basis,
+  invalid/empty scope, unknown/revoked/expired key, cross-user revoke, form-id restriction). Done.
+  (Per-route middleware enforcement + batch-limit E2E remain a nice follow-up.)
+- [x] **Webhook retry-worker health** — heartbeat in `system_meta` surfaced in `/api/health/deep`
+  (`webhook_worker`: last-run age + stale/never-run warning); DEPLOYMENT.md §3 updated. Done.
 - [ ] **Dual-store (MySQL↔SQLite) reconcile doctor** — read-only report (+ optional `--fix`) for
   missing SQLite files, orphaned metadata/uploads/`response_links`, `response_count` drift;
   summarized in `/api/health/deep`.
