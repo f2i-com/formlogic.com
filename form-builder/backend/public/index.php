@@ -204,7 +204,8 @@ $container->set(AuthController::class, function (Container $c) {
         $c->get(AuditService::class),
         $csrfSecret,
         $c->get(FormService::class),
-        $c->get(AppService::class)
+        $c->get(AppService::class),
+        $c->get(ApiKeyService::class)
     );
 });
 

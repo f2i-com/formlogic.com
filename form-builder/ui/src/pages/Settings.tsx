@@ -833,7 +833,7 @@ export function Settings() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
-                  <p className="text-sm text-gray-500 dark:text-slate-400">Export your profile and forms as a JSON file.</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400">Profile, forms, apps, and API-key metadata as JSON. Per-form responses export from each form; secrets are never included.</p>
                 </div>
                 <Button variant="outline" onClick={handleExportData} isLoading={isExportingData} leftIcon={<Download className="h-4 w-4" />}>
                   Export

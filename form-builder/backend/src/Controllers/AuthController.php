@@ -8,6 +8,7 @@ use FormLogic\Services\AuthService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
@@ -27,8 +28,9 @@ class AuthController
     private string $csrfSecret;
     private ?FormService $formService;
     private ?AppService $appService;
+    private ?ApiKeyService $apiKeyService;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null)
     {
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
@@ -37,6 +39,7 @@ class AuthController
         $this->csrfSecret = $csrfSecret;
         $this->formService = $formService;
         $this->appService = $appService;
+        $this->apiKeyService = $apiKeyService;
         $this->cookieConfig = array_merge([
             'name' => 'formlogic_auth',
             'httpOnly' => true,
@@ -329,11 +332,22 @@ class AuthController
                 $offset += 1000;
             } while (count($batch) === 1000);
         }
+        // Apps the user owns or belongs to, and API-key metadata (never the secret). Both are
+        // small, bounded sets — no need to stream.
+        $apps = $this->appService ? $this->appService->getAllApps($userId) : [];
+        $apiKeys = $this->apiKeyService ? $this->apiKeyService->listKeys($userId) : [];
+
         $payload = [
             'exportedAt' => date('c'),
             'user' => $user->toArray(),
             'forms' => $forms,
-            'note' => "Per-form responses can be exported individually from each form's analytics page (CSV / JSON / SQLite).",
+            'apps' => $apps,
+            'apiKeys' => $apiKeys,
+            'included' => ['account profile', 'forms you own', 'apps you own or belong to', 'API key metadata (no secret values)'],
+            'excluded' => [
+                "per-form responses — export them from each form's analytics page (CSV / JSON / SQLite)",
+                'secrets (API key values, passwords, webhook signing secrets) are never included',
+            ],
         ];
 
         $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) ?: '{}';
