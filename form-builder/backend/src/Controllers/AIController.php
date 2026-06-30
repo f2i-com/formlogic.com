@@ -115,7 +115,10 @@ class AIController
         $body = $request->getParsedBody();
 
         $file = $uploadedFiles['file'] ?? null;
-        $additionalPrompt = $body['prompt'] ?? null;
+        // Guard the optional prompt like the text endpoint: a multipart prompt[]=x would otherwise be
+        // an array → TypeError (strict_types) → noisy 500. Coerce to a capped string or null.
+        $rawPrompt = $body['prompt'] ?? null;
+        $additionalPrompt = is_string($rawPrompt) ? substr($rawPrompt, 0, 50000) : null;
 
         if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
             $errorMessage = 'File upload failed or no file provided';

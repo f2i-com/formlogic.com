@@ -7,6 +7,7 @@ namespace FormLogic\Controllers;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\ReconcileService;
+use FormLogic\Services\AIService;
 use FormLogic\Services\QuickJsRunner;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\DocumentConverter;
@@ -153,14 +154,13 @@ class HealthController
         // Provider-neutral AI_* names take precedence over the legacy OPENAI_* names.
         $aiKey = (string) ($_ENV['AI_API_KEY'] ?? $_ENV['OPENAI_API_KEY'] ?? '');
         $aiUrl = (string) ($_ENV['AI_BASE_URL'] ?? $_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1');
-        $aiScheme = strtolower((string) parse_url($aiUrl, PHP_URL_SCHEME));
         $aiHost = (string) parse_url($aiUrl, PHP_URL_HOST);
         $isProd = (bool) ($this->settings['isProduction'] ?? true);
         $isCustom = $aiHost !== '' && stripos($aiHost, 'openai.com') === false;
         // A custom (local/self-hosted) endpoint may run keyless; the default OpenAI endpoint needs a key.
         $configured = $aiKey !== '' || $isCustom;
-        $insecureAi = $isProd && $aiKey !== '' && $aiScheme === 'http'
-            && !in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true);
+        // Reuse AIService's exact guard so the diagnostic matches the runtime (incl. IPv6-loopback).
+        $insecureAi = AIService::keyBlockedOverHttp($aiUrl, $aiKey, $isProd);
         if (!$configured) {
             $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => 'not configured (AI features disabled)'];
         } elseif ($insecureAi) {

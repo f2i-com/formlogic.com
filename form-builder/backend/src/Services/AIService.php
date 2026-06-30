@@ -26,18 +26,34 @@ class AIService
         $this->visionModel = (string) ($_ENV['AI_VISION_MODEL'] ?? $_ENV['OPENAI_VISION_MODEL'] ?? $this->model);
 
         // Never send an API KEY over plaintext HTTP in production (credential leak). A KEYLESS local
-        // endpoint over HTTP is fine — there's no secret to leak — so this guard only fires when a key
-        // is set. Allow a keyed http endpoint only for an explicitly-enabled loopback model.
+        // endpoint over HTTP is fine — there's no secret to leak. Decision is shared with the health
+        // check via keyBlockedOverHttp() so the two can't drift.
         $isProduction = (($_ENV['APP_ENV'] ?? 'production') !== 'development');
-        if ($isProduction && $this->apiKey !== '' && strtolower((string) parse_url($this->apiUrl, PHP_URL_SCHEME)) === 'http') {
-            $host = strtolower((string) parse_url($this->apiUrl, PHP_URL_HOST));
-            $allowInsecureLocal = in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true)
-                && in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
-            if (!$allowInsecureLocal) {
-                error_log('FormLogic AIService: refusing to send the API key over plaintext HTTP in production; key cleared. Use HTTPS, or set ALLOW_INSECURE_LOCAL_AI=1 for a loopback model.');
-                $this->apiKey = '';
-            }
+        if (self::keyBlockedOverHttp($this->apiUrl, $this->apiKey, $isProduction)) {
+            error_log('FormLogic AIService: refusing to send the API key over plaintext HTTP in production; key cleared. Use HTTPS, set ALLOW_INSECURE_LOCAL_AI=1 for a loopback model, or run the local endpoint keyless.');
+            $this->apiKey = '';
         }
+    }
+
+    /**
+     * Whether a set API key would be sent over plaintext HTTP in production and therefore must be
+     * cleared (true = unsafe, drop the key). Keyless / https / dev all return false. Honors
+     * ALLOW_INSECURE_LOCAL_AI only for a loopback host. Shared by the constructor and the Doctor
+     * health check so the guard and its diagnostic never diverge.
+     */
+    public static function keyBlockedOverHttp(string $apiUrl, string $apiKey, bool $isProduction): bool
+    {
+        if ($apiKey === '' || !$isProduction) {
+            return false;
+        }
+        if (strtolower((string) parse_url($apiUrl, PHP_URL_SCHEME)) !== 'http') {
+            return false;
+        }
+        // parse_url returns IPv6 hosts bracketed ("[::1]") — strip the brackets so loopback matches.
+        $host = trim(strtolower((string) parse_url($apiUrl, PHP_URL_HOST)), '[]');
+        $allowInsecureLocal = in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true)
+            && in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
+        return !$allowInsecureLocal;
     }
 
     /**

@@ -340,14 +340,18 @@ export function Dashboard() {
   };
 
   // First-run onboarding: a welcome that routes a brand-new user into creating their first form.
-  // Dismissal persists so returning users aren't nagged.
-  const [welcomeDismissed, setWelcomeDismissed] = useState(() => {
-    try { return localStorage.getItem('formlogic_onboarding_dismissed') === '1'; } catch { return false; }
-  });
+  // Dismissal persists PER USER (namespaced by id) so a fresh account on a shared browser still sees
+  // it and returning users aren't nagged. Derived during render (no effect) so it reacts once `user`
+  // hydrates; a bump forces the re-render after dismissal — avoids a setState-in-effect.
+  const onboardingKey = user?.id ? `formlogic_onboarding_dismissed:${user.id}` : null;
+  const [, bumpOnboarding] = useState(0);
+  const welcomeDismissed = !onboardingKey || (() => {
+    try { return localStorage.getItem(onboardingKey) === '1'; } catch { return false; }
+  })();
   const dismissWelcome = useCallback(() => {
-    setWelcomeDismissed(true);
-    try { localStorage.setItem('formlogic_onboarding_dismissed', '1'); } catch { /* ignore */ }
-  }, []);
+    if (onboardingKey) { try { localStorage.setItem(onboardingKey, '1'); } catch { /* ignore */ } }
+    bumpOnboarding((n) => n + 1);
+  }, [onboardingKey]);
   const onWelcomeBlank = () => { dismissWelcome(); handleSelectTemplate(null); };
   const onWelcomeTemplate = () => { dismissWelcome(); setShowTemplateSelector(true); };
   const onWelcomeAI = async () => {
