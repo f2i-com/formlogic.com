@@ -218,6 +218,101 @@ class AIService
     }
 
     /**
+     * Generate a CUSTOM SCREEN ({ html, css, js }) for a form — a sandboxed single-page UI that talks
+     * to the backend only via the FormLogic SDK. $fields are the form's fields the screen submits to.
+     */
+    public function generateCustomScreen(string $prompt, array $fields = [], string $existing = ''): array
+    {
+        $messages = [
+            ['role' => 'system', 'content' => $this->getCustomScreenSystemPrompt($fields)],
+        ];
+        if (trim($existing) !== '') {
+            $messages[] = ['role' => 'user', 'content' => "Here is the current screen JSON:\n```json\n{$existing}\n```\n\nModify it based on this request:\n\n" . $prompt];
+        } else {
+            $messages[] = ['role' => 'user', 'content' => "Build this screen:\n\n" . $prompt];
+        }
+        // Screens are bigger than forms/scripts (full HTML+CSS+JS), so allow more output room.
+        return $this->parseCustomScreen($this->chatCompletion($messages, null, 16384));
+    }
+
+    private function getCustomScreenSystemPrompt(array $fields): string
+    {
+        $fieldList = '(this form has no fields yet)';
+        if (!empty($fields)) {
+            $lines = [];
+            foreach ($fields as $f) {
+                if (!is_array($f)) {
+                    continue;
+                }
+                $lines[] = '- ' . ($f['id'] ?? '?') . ' (' . ($f['type'] ?? 'text') . '): ' . ($f['label'] ?? '');
+            }
+            $fieldList = implode("\n", $lines);
+        }
+
+        return <<<PROMPT
+You build a single-page CUSTOM SCREEN (vanilla HTML, CSS, and JavaScript) that runs inside a SANDBOXED iframe.
+It has NO network access of its own (fetch/XHR are blocked). It talks to the FormLogic backend ONLY through the
+global `FormLogic` SDK, which is already injected (do not redefine it):
+
+  await FormLogic.context()            -> { formId, title, fields: [{ id, label, type }] }
+  await FormLogic.records({ limit })   -> [{ id, answers: {<fieldId>: value}, submittedAt, status, tags }]  // this form's saved records, newest first
+  await FormLogic.submit(answers)      -> saves a record (answers is an object keyed by FIELD ID); returns the saved record. Runs server validation + the form's onSubmit script.
+  await FormLogic.currentUser()        -> { id, name, email } | null
+  FormLogic.toast.success(message)     // small success toast
+  FormLogic.toast.error(message)       // small error toast
+
+This form's fields (submit using these EXACT ids):
+{$fieldList}
+
+Requirements:
+- Self-contained: all logic in the js, all styling in the css. Do NOT load external scripts, fonts, or images by URL.
+- Use ONLY FormLogic for data — never fetch().
+- Make it genuinely functional and visually polished (responsive, looks good on its own).
+- To save data call FormLogic.submit({ ...fieldId: value }); to show a leaderboard/history call FormLogic.records().
+- Wrap async calls in try/catch and use FormLogic.toast.error on failure.
+- Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
+- Keep total output reasonable so it isn't truncated; put ALL behaviour in the js block.
+
+Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
+```html
+...the body markup...
+```
+```css
+...the css rules...
+```
+```js
+...the javascript...
+```
+PROMPT;
+    }
+
+    /** Parse the three fenced code blocks (robust for code); fall back to a JSON object if needed. */
+    private function parseCustomScreen(string $response): array
+    {
+        $grab = static function (string $lang) use ($response): string {
+            return preg_match('/```' . $lang . '\b[ \t]*\r?\n([\s\S]*?)```/i', $response, $m) ? trim($m[1]) : '';
+        };
+        $html = $grab('html');
+        $css = $grab('css');
+        $js = $grab('(?:js|javascript)');
+
+        // Fallback: some models return a JSON object instead of fenced blocks.
+        if ($html === '' && $js === '' && preg_match('/\{[\s\S]*\}/', $response, $m)) {
+            $data = json_decode(preg_replace('/,\s*([}\]])/', '$1', $m[0]), true);
+            if (is_array($data)) {
+                $html = (string) ($data['html'] ?? '');
+                $css = (string) ($data['css'] ?? '');
+                $js = (string) ($data['js'] ?? '');
+            }
+        }
+        if ($html === '' && $js === '') {
+            throw new \Exception('No screen content found in AI reply');
+        }
+        $clip = static fn ($v, int $max): string => substr((string) $v, 0, $max);
+        return ['html' => $clip($html, 100000), 'css' => $clip($css, 100000), 'js' => $clip($js, 200000)];
+    }
+
+    /**
      * Improve or modify an existing script
      */
     public function improveScript(string $currentScript, string $prompt, array $formFields): array
@@ -346,7 +441,7 @@ PROMPT;
     /**
      * Make a chat completion request to the API
      */
-    private function chatCompletion(array $messages, ?string $model = null): string
+    private function chatCompletion(array $messages, ?string $model = null, int $maxTokens = 4096): string
     {
         if (!$this->isConfigured()) {
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
@@ -358,7 +453,7 @@ PROMPT;
             'model' => $model,
             'messages' => $messages,
             'temperature' => 0.7,
-            'max_tokens' => 4096,
+            'max_tokens' => $maxTokens,
         ];
 
         // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)

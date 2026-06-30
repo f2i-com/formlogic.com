@@ -15,6 +15,7 @@ class Form
         public array $fields = [],
         public array $settings = [],
         public array $theme = [],
+        public array $customScreen = [],
         public ?string $logicScript = null,
         public ?string $logicPrompt = null,
         public ?string $icon = null,
@@ -42,6 +43,9 @@ class Form
             theme: is_string($data['theme'] ?? null)
                 ? json_decode($data['theme'], true) ?? []
                 : ($data['theme'] ?? []),
+            customScreen: is_string($data['custom_screen'] ?? null)
+                ? json_decode($data['custom_screen'], true) ?? []
+                : ($data['customScreen'] ?? []),
             logicScript: $data['logic_script'] ?? $data['logicScript'] ?? null,
             logicPrompt: $data['logic_prompt'] ?? $data['logicPrompt'] ?? null,
             icon: $data['icon'] ?? null,
@@ -66,6 +70,7 @@ class Form
             'fields' => $this->fields,
             'settings' => $this->settings,
             'theme' => $this->theme,
+            'customScreen' => $this->customScreen,
             'logicScript' => $this->logicScript,
             'logicPrompt' => $this->logicPrompt,
             'icon' => $this->icon,
@@ -87,6 +92,7 @@ class Form
             'status' => $this->status,
             'settings' => json_encode($this->settings),
             'theme' => json_encode($this->theme),
+            'custom_screen' => empty($this->customScreen) ? null : json_encode($this->customScreen),
             'logic_script' => $this->logicScript,
             'logic_prompt' => $this->logicPrompt,
             'icon' => $this->icon,

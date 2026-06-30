@@ -99,6 +99,7 @@ class MySQLConnection
                 theme JSON,
                 logic_script TEXT DEFAULT NULL,
                 logic_prompt TEXT DEFAULT NULL,
+                custom_screen MEDIUMTEXT DEFAULT NULL,
                 icon VARCHAR(255) DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -489,6 +490,12 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'logic_prompt'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN logic_prompt TEXT DEFAULT NULL AFTER logic_script");
+        }
+
+        // Add custom_screen column (sandboxed HTML/CSS/JS UI over the form's data) if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'custom_screen'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER logic_prompt");
         }
 
         // Convert audit_log details column from JSON to TEXT (prevents MySQL key reordering)

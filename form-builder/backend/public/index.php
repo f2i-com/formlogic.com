@@ -620,6 +620,11 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $a
     $group->post('/generate-app-plan', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->generateAppPlan($request, $response);
     });
+
+    // Custom screen generation — a sandboxed HTML/CSS/JS UI over a form, targeting the FormLogic SDK.
+    $group->post('/generate-screen', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateScreen($request, $response);
+    });
 })->add($aiRateLimiter)->add($authRequired);
 
 // Helper function to get route args

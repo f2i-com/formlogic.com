@@ -113,6 +113,13 @@ export interface FormTheme {
   logo?: string;
 }
 
+export interface CustomScreen {
+  enabled?: boolean;
+  html?: string;
+  css?: string;
+  js?: string;
+}
+
 export interface Form {
   id: string;
   title: string;
@@ -123,6 +130,8 @@ export interface Form {
   theme: FormTheme;
   logicScript?: string;
   logicPrompt?: string;
+  /** Optional sandboxed custom frontend ({ html, css, js }) over this form's data. */
+  customScreen?: CustomScreen;
   icon?: string;
   createdAt: string;
   updatedAt: string;

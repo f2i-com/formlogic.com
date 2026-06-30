@@ -86,6 +86,15 @@ class FormController
                 return 'Theme must be 10KB or smaller';
             }
         }
+        if (isset($data['customScreen'])) {
+            if (!is_array($data['customScreen'])) {
+                return 'Custom screen must be an object';
+            }
+            $screenJson = json_encode($data['customScreen']);
+            if ($screenJson !== false && strlen($screenJson) > 524288) {
+                return 'Custom screen must be 512KB or smaller';
+            }
+        }
         return null;
     }
 

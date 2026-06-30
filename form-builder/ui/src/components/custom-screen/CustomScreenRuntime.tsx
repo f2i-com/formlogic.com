@@ -70,10 +70,12 @@ export function CustomScreenRuntime({
     const html = screen.html || '';
     // Neutralize an early </script> in user code so it can't break out of its <script> block.
     const js = (screen.js || '').replace(/<\/script>/gi, '<\\/script>');
+    // SDK shim goes in <head> so window.FormLogic exists before any user script (inline or block) runs.
     return `<!doctype html><html><head><meta charset="utf-8">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<script>${SDK_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${css}</style></head>`
-      + `<body>${html}<script>${SDK_SHIM}</script><script>${js}</script></body></html>`;
+      + `<body>${html}<script>${js}</script></body></html>`;
   }, [screen.html, screen.css, screen.js]);
 
   useEffect(() => {

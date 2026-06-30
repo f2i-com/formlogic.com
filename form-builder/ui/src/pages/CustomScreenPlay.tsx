@@ -23,8 +23,8 @@ export default function CustomScreenPlay() {
     let cancelled = false;
     api.getForm(formId).then((res) => {
       if (cancelled) return;
-      const form = res.data?.form as { title?: string; settings?: { customScreen?: CustomScreen & { enabled?: boolean } }; fields?: Array<{ id: string; label: string; type: string }> } | undefined;
-      const cs = form?.settings?.customScreen;
+      const form = res.data?.form as { title?: string; customScreen?: CustomScreen & { enabled?: boolean }; fields?: Array<{ id: string; label: string; type: string }> } | undefined;
+      const cs = form?.customScreen;
       setTitle(form?.title || '');
       setFields((form?.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
       setScreen(cs && (cs.html || cs.js) ? cs : null);

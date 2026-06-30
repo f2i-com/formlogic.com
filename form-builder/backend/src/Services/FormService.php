@@ -224,8 +224,8 @@ class FormService
 
         // Insert into MySQL
         $stmt = $this->mysql->prepare("
-            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, icon, created_at, updated_at)
-            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :icon, :created_at, :updated_at)
+            INSERT INTO forms (id, user_id, title, description, status, settings, theme, logic_script, logic_prompt, custom_screen, icon, created_at, updated_at)
+            VALUES (:id, :user_id, :title, :description, :status, :settings, :theme, :logic_script, :logic_prompt, :custom_screen, :icon, :created_at, :updated_at)
         ");
 
         $stmt->execute([
@@ -238,6 +238,7 @@ class FormService
             'theme' => json_encode($data['theme'] ?? []),
             'logic_script' => $data['logicScript'] ?? null,
             'logic_prompt' => $data['logicPrompt'] ?? null,
+            'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
             'icon' => $data['icon'] ?? null,
             'created_at' => $now,
             'updated_at' => $now,
@@ -320,6 +321,11 @@ class FormService
         if (array_key_exists('logicPrompt', $data)) {
             $updates[] = "logic_prompt = :logic_prompt";
             $params['logic_prompt'] = $data['logicPrompt'];
+        }
+
+        if (array_key_exists('customScreen', $data)) {
+            $updates[] = "custom_screen = :custom_screen";
+            $params['custom_screen'] = !empty($data['customScreen']) ? json_encode($data['customScreen']) : null;
         }
 
         if (array_key_exists('icon', $data)) {

@@ -144,6 +144,32 @@ class AIController
     }
 
     /**
+     * Generate a CUSTOM SCREEN ({ html, css, js }) for a form.
+     * POST /api/ai/generate-screen  Body: { "prompt": "...", "fields"?: [{id,label,type}], "existing"?: "{json}" }
+     */
+    public function generateScreen(Request $request, Response $response): Response
+    {
+        $body = $request->getParsedBody();
+        $prompt = $body['prompt'] ?? '';
+        if (empty($prompt) || !is_string($prompt) || strlen($prompt) > 10000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt is required (max 10000 chars)'], 400);
+        }
+        $fields = is_array($body['fields'] ?? null) ? array_slice($body['fields'], 0, 200) : [];
+        $existing = is_string($body['existing'] ?? null) ? substr($body['existing'], 0, 200000) : '';
+
+        try {
+            $screen = $this->aiService->generateCustomScreen($prompt, $fields, $existing);
+            return $this->jsonResponse($response, ['success' => true, 'data' => $screen]);
+        } catch (\Throwable $e) {
+            $this->logger->error('AI screen generation error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Could not generate the screen — try rephrasing.',
+            ], 500);
+        }
+    }
+
+    /**
      * Generate form from uploaded document or image
      * POST /api/ai/generate-form-from-file
      *
