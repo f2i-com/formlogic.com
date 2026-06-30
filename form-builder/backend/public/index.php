@@ -344,6 +344,21 @@ $container->set(ApiKeyController::class, function (Container $c) {
     );
 });
 
+// MCP: ephemeral tokens + the Model Context Protocol server (external AI drives the API).
+$container->set(\FormLogic\Services\McpTokenService::class, function (Container $c) {
+    return new \FormLogic\Services\McpTokenService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\McpController::class, function (Container $c) {
+    return new \FormLogic\Controllers\McpController(
+        $c->get(\FormLogic\Services\McpTokenService::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(ResponseService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
 // Billing: pay-as-you-go cloud months via PayPal (one-time captures, no subscription).
 $container->set(\FormLogic\Services\PayPalService::class, function () {
     return new \FormLogic\Services\PayPalService();
@@ -975,6 +990,25 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
     });
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ApiKeyController::class)->revoke($request, $response, $getArgs($request));
+    });
+})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+
+// MCP server (Model Context Protocol over HTTP). The endpoint self-authenticates via the Bearer MCP
+// token — NO session middleware. Token management below is session-authenticated (the app owner).
+$mcpRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'mcp');
+$app->post('/api/mcp', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handle($request, $response);
+})->add($mcpRateLimiter);
+
+$app->group('/api/mcp/tokens', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\McpController::class)->listTokens($request, $response);
+    });
+    $group->post('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\McpController::class)->createToken($request, $response);
+    });
+    $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\McpController::class)->revokeToken($request, $response, $getArgs($request));
     });
 })->add($authRequired)->add($apiKeyMgmtRateLimiter);
 

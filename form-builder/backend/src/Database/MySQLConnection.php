@@ -680,6 +680,26 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Ephemeral MCP sessions: short-lived, scoped tokens that let an external AI (Claude/Cursor/…)
+        // drive the API over the MCP server. TTL + idle timeout + revoke; one row per issued token.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mcp_sessions (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) DEFAULT NULL,
+                token_hash VARCHAR(64) NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                idle_timeout_seconds INT NOT NULL DEFAULT 1800,
+                last_used_at TIMESTAMP NULL,
+                last_used_ip VARCHAR(45) NULL,
+                revoked_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_mcp_hash (token_hash),
+                INDEX idx_mcp_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Add token_version column to users for JWT revocation (R2). Without this
         // on the runtime path, revocation silently no-ops (getTokenVersion fails open).
         $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'token_version'");

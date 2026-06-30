@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay } from 'lucide-react';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
 import { cn } from '../../lib/utils';
@@ -32,6 +33,7 @@ export function AppSettings() {
   // Snapshot of the persisted state; anything diverging from it is unsaved.
   const [initialSnapshot, setInitialSnapshot] = useState('');
   const [pendingNav, setPendingNav] = useState<string | null>(null);
+  const [showMcp, setShowMcp] = useState(false);
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -337,6 +339,18 @@ export function AppSettings() {
                 </div>
               </button>
             ))}
+            <button
+              onClick={() => setShowMcp(true)}
+              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+            >
+              <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
+                <Plug className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+              </div>
+              <div>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">Connect an AI</span>
+                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Let an external AI build via MCP (Beta)</span>
+              </div>
+            </button>
           </div>
           </TabsContent>
         </div>
@@ -352,6 +366,7 @@ export function AppSettings() {
         confirmLabel="Discard changes"
         variant="danger"
       />
+      <ConnectAiModal isOpen={showMcp} onClose={() => setShowMcp(false)} appId={appId} appName={app?.name} />
     </div>
   );
 }
