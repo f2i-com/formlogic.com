@@ -2,6 +2,21 @@
 
 A full-stack form builder and internal apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
 
+![FormLogic form builder — drag-and-drop canvas, field palette, and per-field settings](docs/images/builder.png)
+
+<p align="center">
+  <img src="docs/images/public-form.png" width="49%" alt="Public form fill — focused, one-question-at-a-time mode" />
+  &nbsp;
+  <img src="docs/images/app-runtime.png" width="49%" alt="Internal app runtime — multi-form app with RBAC" />
+</p>
+<p align="center">
+  <img src="docs/images/doctor.png" width="49%" alt="Doctor — admin health diagnostics" />
+  &nbsp;
+  <img src="docs/images/landing.png" width="49%" alt="Landing page" />
+</p>
+
+<p align="center"><sub>Form builder · public form (focused mode) · internal app runtime · Doctor diagnostics · landing</sub></p>
+
 ## Overview
 
 FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
