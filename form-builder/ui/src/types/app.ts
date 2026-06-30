@@ -1,4 +1,5 @@
 // App types for the Apps feature
+import type { CustomScreen } from './form';
 
 export interface AppTheme {
   primaryColor: string;
@@ -42,6 +43,8 @@ export interface App {
   settings: AppSettings;
   theme: AppTheme;
   navConfig: AppNavItem[];
+  /** Optional sandboxed custom HOME screen ({ html, css, js }) shown instead of the form list. */
+  customScreen?: CustomScreen;
   createdAt: string;
   updatedAt: string;
 }

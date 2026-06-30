@@ -221,10 +221,15 @@ class AIService
      * Generate a CUSTOM SCREEN ({ html, css, js }) for a form — a sandboxed single-page UI that talks
      * to the backend only via the FormLogic SDK. $fields are the form's fields the screen submits to.
      */
-    public function generateCustomScreen(string $prompt, array $fields = [], string $existing = ''): array
+    public function generateCustomScreen(string $prompt, array $fields = [], string $existing = '', array $appForms = []): array
     {
+        // When appForms is given, the screen is an APP HOME (multi-form, app-scoped SDK); otherwise it's
+        // a single-form screen.
+        $system = !empty($appForms)
+            ? $this->getAppScreenSystemPrompt($appForms)
+            : $this->getCustomScreenSystemPrompt($fields);
         $messages = [
-            ['role' => 'system', 'content' => $this->getCustomScreenSystemPrompt($fields)],
+            ['role' => 'system', 'content' => $system],
         ];
         if (trim($existing) !== '') {
             $messages[] = ['role' => 'user', 'content' => "Here is the current screen JSON:\n```json\n{$existing}\n```\n\nModify it based on this request:\n\n" . $prompt];
@@ -272,6 +277,66 @@ Requirements:
 - Wrap async calls in try/catch and use FormLogic.toast.error on failure.
 - Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
 - Keep total output reasonable so it isn't truncated; put ALL behaviour in the js block.
+
+Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
+```html
+...the body markup...
+```
+```css
+...the css rules...
+```
+```js
+...the javascript...
+```
+PROMPT;
+    }
+
+    private function getAppScreenSystemPrompt(array $appForms): string
+    {
+        $formList = '(this app has no forms yet)';
+        if (!empty($appForms)) {
+            $blocks = [];
+            foreach ($appForms as $f) {
+                if (!is_array($f)) {
+                    continue;
+                }
+                $fid = $f['formId'] ?? $f['id'] ?? '?';
+                $title = $f['title'] ?? $f['displayName'] ?? '';
+                $fieldLines = [];
+                foreach (($f['fields'] ?? []) as $fld) {
+                    if (!is_array($fld)) {
+                        continue;
+                    }
+                    $fieldLines[] = '      - ' . ($fld['id'] ?? '?') . ' (' . ($fld['type'] ?? 'text') . '): ' . ($fld['label'] ?? '');
+                }
+                $blocks[] = "  formId \"{$fid}\" — {$title}\n" . (empty($fieldLines) ? '      (no fields)' : implode("\n", $fieldLines));
+            }
+            $formList = implode("\n", $blocks);
+        }
+
+        return <<<PROMPT
+You build an APP HOME screen — the landing page of a multi-form app — as a single page of vanilla HTML, CSS,
+and JavaScript that runs inside a SANDBOXED iframe. It has NO network access of its own (fetch/XHR are blocked).
+It talks to the backend ONLY through the global `FormLogic` SDK, which is already injected (do not redefine it).
+This SDK is APP-scoped — it spans the app's forms, so data calls take a formId:
+
+  await FormLogic.context()                  -> { appName, appSlug, forms: [{ formId, displayName, fields:[{id,label,type}] }] }
+  await FormLogic.forms()                    -> the forms array (same as context().forms)
+  await FormLogic.submit(formId, answers)    -> save a record to that form (answers keyed by FIELD ID; runs its onSubmit)
+  await FormLogic.records(formId, { limit }) -> that form's records, newest first: [{ id, answers, submittedAt }]
+  await FormLogic.navigate(formId)           -> open that form inside the app
+  await FormLogic.currentUser()              -> { id, name, email } | null
+  FormLogic.toast.success(message) / FormLogic.toast.error(message)
+
+This app's forms (use these EXACT formId values and field ids):
+{$formList}
+
+Requirements:
+- Self-contained: all logic in the js, all styling in the css. Do NOT load external scripts, fonts, or images by URL.
+- Use ONLY FormLogic for data — never fetch(). Pass the correct formId to submit/records/navigate.
+- Make it a genuinely useful, polished landing (responsive, looks good on its own) — e.g. a dashboard, a game, a launcher.
+- Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
+- Wrap async calls in try/catch and use FormLogic.toast.error on failure. Put ALL behaviour in the js block.
 
 Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
 ```html

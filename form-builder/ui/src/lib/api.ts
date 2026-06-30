@@ -515,15 +515,16 @@ class ApiClient {
     });
   }
 
-  /** Generate a custom screen ({ html, css, js }) for a form; data.data is the screen. */
+  /** Generate a custom screen ({ html, css, js }); pass appForms for an APP HOME (multi-form SDK). */
   async generateScreen(
     prompt: string,
     fields?: Array<{ id: string; label: string; type: string }>,
     existing?: string,
+    appForms?: Array<{ formId: string; title: string; fields: unknown[] }>,
   ): Promise<ApiResponse<{ data: { html: string; css: string; js: string } }>> {
     return this.request('/ai/generate-screen', {
       method: 'POST',
-      body: JSON.stringify({ prompt, fields, existing }),
+      body: JSON.stringify({ prompt, fields, existing, appForms }),
     });
   }
 

@@ -4,7 +4,7 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppRuntimeThemeProvider } from './AppRuntimeThemeProvider';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { AppRuntimeShell } from './AppRuntimeShell';
-import { AppDashboard } from './AppDashboard';
+import { AppHomeScreen } from './AppHomeScreen';
 import { AppFormView } from './AppFormView';
 import { AppDataTable } from './AppDataTable';
 import { AppResponseDetail } from './AppResponseDetail';
@@ -88,7 +88,7 @@ export function AppRuntimeRoot() {
       <AppRuntimeAuthGuard>
         <AppRuntimeShell>
           <Routes>
-            <Route path="/" element={<AppDashboard />} />
+            <Route path="/" element={<AppHomeScreen />} />
             <Route path="/form/:formId" element={<AppFormView />} />
             <Route path="/form/:formId/responses" element={<AppDataTable />} />
             <Route path="/form/:formId/responses/:responseId" element={<AppResponseDetail />} />

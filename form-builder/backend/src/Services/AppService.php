@@ -127,8 +127,8 @@ class AppService
         }
         try {
             $stmt = $this->mysql->prepare("
-                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, created_at, updated_at)
-                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :created_at, :updated_at)
+                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, custom_screen, created_at, updated_at)
+                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :created_at, :updated_at)
             ");
 
             $stmt->execute([
@@ -142,6 +142,7 @@ class AppService
                 'settings' => json_encode($data['settings'] ?? []),
                 'theme' => json_encode($data['theme'] ?? []),
                 'nav_config' => json_encode($data['navConfig'] ?? []),
+                'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -216,6 +217,11 @@ class AppService
         if (isset($data['navConfig'])) {
             $updates[] = "nav_config = :nav_config";
             $params['nav_config'] = json_encode($data['navConfig']);
+        }
+
+        if (array_key_exists('customScreen', $data)) {
+            $updates[] = "custom_screen = :custom_screen";
+            $params['custom_screen'] = !empty($data['customScreen']) ? json_encode($data['customScreen']) : null;
         }
 
         if (!empty($updates)) {

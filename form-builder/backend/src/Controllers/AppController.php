@@ -146,6 +146,16 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App name is required'], 400);
         }
 
+        if (isset($data['customScreen'])) {
+            if (!is_array($data['customScreen'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be an object'], 400);
+            }
+            $screenJson = json_encode($data['customScreen']);
+            if ($screenJson !== false && strlen($screenJson) > 524288) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 512KB or smaller'], 400);
+            }
+        }
+
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             $this->audit($request, 'app.update', 'app', $args['id']);

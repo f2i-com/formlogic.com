@@ -191,6 +191,7 @@ class MySQLConnection
                 settings JSON,
                 theme JSON,
                 nav_config JSON,
+                custom_screen MEDIUMTEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -496,6 +497,12 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'custom_screen'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE forms ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER logic_prompt");
+        }
+
+        // Add custom_screen column to apps (the app's custom HOME screen) if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_screen'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE apps ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER nav_config");
         }
 
         // Convert audit_log details column from JSON to TEXT (prevents MySQL key reordering)

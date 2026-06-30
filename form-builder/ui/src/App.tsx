@@ -61,6 +61,7 @@ const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
 const FormAnalytics = lazyWithRetry(() => import('./pages/FormAnalytics'));
 const CustomScreenPlay = lazyWithRetry(() => import('./pages/CustomScreenPlay'));
 const CustomScreenStudio = lazyWithRetry(() => import('./pages/CustomScreenStudio'));
+const AppHomeStudio = lazyWithRetry(() => import('./pages/AppHomeStudio'));
 const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
 const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
@@ -287,6 +288,7 @@ function AppRoutes() {
         <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
         <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
+        <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
       </Route>
 
       {/* Redirect authenticated users from auth pages */}
