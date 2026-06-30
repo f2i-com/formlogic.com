@@ -485,7 +485,32 @@ class WebhookService
             }
         }
 
+        $this->recordWorkerHeartbeat();
         return ['processed' => $processed, 'sent' => $sent, 'failed' => $failed, 'abandoned' => $abandoned];
+    }
+
+    /**
+     * Record that the retry worker ran (so /api/health/deep can warn when it's not scheduled).
+     * Best-effort: a heartbeat write must never break the worker.
+     */
+    private function recordWorkerHeartbeat(): void
+    {
+        try {
+            $this->mysql->exec("
+                CREATE TABLE IF NOT EXISTS system_meta (
+                    meta_key VARCHAR(64) NOT NULL PRIMARY KEY,
+                    meta_value TEXT NULL,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            ");
+            $this->mysql->prepare("
+                INSERT INTO system_meta (meta_key, meta_value, updated_at)
+                VALUES ('webhook_worker_last_run', NOW(), NOW())
+                ON DUPLICATE KEY UPDATE meta_value = NOW(), updated_at = NOW()
+            ")->execute();
+        } catch (\Throwable $e) {
+            // ignore — heartbeat is non-essential
+        }
     }
 
     /** Re-send a single stored delivery. Returns success|failed|abandoned. */

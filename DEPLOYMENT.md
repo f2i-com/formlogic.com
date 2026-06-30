@@ -105,6 +105,10 @@ php form-builder/backend/bin/webhook-worker.php --loop
 If the worker isn't running, initial (synchronous) deliveries still happen, but failed ones
 are never retried.
 
+Each run records a heartbeat, so `GET /api/health/deep` (and the Doctor view) report the
+`webhook_worker` check as `last run ~Nm ago`, with a warning if it has never run or is stale
+(>15 min) — an easy way to catch a missing/broken cron.
+
 ---
 
 ## 4. PayPal go-live (hosted billing only)

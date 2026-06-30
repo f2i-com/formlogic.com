@@ -103,6 +103,27 @@ class HealthController
             $checks['document_converter'] = ['ok' => false, 'critical' => false, 'detail' => 'unavailable: ' . $e->getMessage()];
         }
 
+        // Webhook retry worker — non-critical (failed deliveries simply won't retry), but warn
+        // when it's never run or looks stale, so an operator knows the cron isn't scheduled.
+        try {
+            $stmt = $this->db->getConnection()->query("SELECT meta_value FROM system_meta WHERE meta_key = 'webhook_worker_last_run'");
+            $lastRun = $stmt ? $stmt->fetchColumn() : false;
+            if ($lastRun === false || $lastRun === null) {
+                $checks['webhook_worker'] = [
+                    'ok' => true, 'critical' => false, 'detail' => 'no run recorded yet',
+                    'warning' => 'webhook retry worker has not run — schedule bin/webhook-worker.php (e.g. every 5 minutes)',
+                ];
+            } else {
+                $ageMin = (int) round((time() - strtotime((string) $lastRun)) / 60);
+                $checks['webhook_worker'] = ['ok' => true, 'critical' => false, 'detail' => "last run ~{$ageMin}m ago"];
+                if ($ageMin > 15) {
+                    $checks['webhook_worker']['warning'] = 'webhook retry worker looks stale (>15m) — ensure its cron is running';
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks['webhook_worker'] = ['ok' => true, 'critical' => false, 'detail' => 'heartbeat unavailable'];
+        }
+
         $ok = true;
         foreach ($checks as $c) {
             if (($c['critical'] ?? false) && !($c['ok'] ?? false)) {

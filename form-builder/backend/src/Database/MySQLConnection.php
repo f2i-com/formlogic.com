@@ -685,6 +685,15 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
+        // Small key/value store for operational metadata (e.g. background-worker heartbeats).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS system_meta (
+                meta_key VARCHAR(64) NOT NULL PRIMARY KEY,
+                meta_value TEXT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Pay-as-you-go cloud access: an expiry date on the user (NULL = free tier).
         // Each paid month extends it; there is no recurring subscription.
         $result = $pdo->query("SHOW COLUMNS FROM users LIKE 'cloud_until'");
