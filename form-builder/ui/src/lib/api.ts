@@ -335,6 +335,11 @@ class ApiClient {
     return this.request(`/public/forms/${id}`);
   }
 
+  /** Public, opt-in records for a custom screen's leaderboard (answers only). */
+  async getScreenRecords(id: string, opts?: { limit?: number }): Promise<ApiResponse<{ records: Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }> }>> {
+    return this.request(`/public/forms/${id}/screen-records${opts?.limit ? `?limit=${opts.limit}` : ''}`);
+  }
+
   // Response endpoints
   async getResponses(
     formId: string,

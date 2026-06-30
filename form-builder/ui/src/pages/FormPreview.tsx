@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { FieldResponse } from './FormResponse';
+import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { useFormStore } from '../stores/formStore';
 import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
@@ -110,6 +111,21 @@ export default function FormPreview() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
         <p className="text-gray-500 dark:text-slate-400">Form not found</p>
+      </div>
+    );
+  }
+
+  // A custom screen replaces the default form in preview too (owner context → live data).
+  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js)) {
+    return (
+      <div className="h-screen w-full bg-white dark:bg-slate-950">
+        <CustomScreenRuntime
+          screen={form.customScreen}
+          formId={form.id}
+          formTitle={form.title}
+          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+          className="w-full h-full border-0"
+        />
       </div>
     );
   }

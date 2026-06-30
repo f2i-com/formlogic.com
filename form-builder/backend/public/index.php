@@ -836,6 +836,35 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);
 
+// Public records for a custom screen (e.g. a leaderboard) — ONLY when the form's custom screen has
+// opted in via customScreen.publicRecords. Returns answers only (no submitter metadata/status/tags).
+$app->get('/api/public/forms/{id}/screen-records', function ($request, $response) use ($container, $getArgs) {
+    $args = $getArgs($request);
+    $form = $container->get(FormService::class)->getForm($args['id']);
+    if (!$form || ($form['status'] ?? '') !== 'published') {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Form not found']));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+    }
+    if (empty($form['customScreen']['publicRecords'])) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Public records are not enabled for this form']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
+    // App-scoped forms are served through the authenticated app runtime (mirror the public form gate).
+    if ($container->get(\FormLogic\Services\AppService::class)->isFormInAnyApp($args['id'])) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Form not found']));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+    }
+    $limit = max(1, min((int) ($request->getQueryParams()['limit'] ?? 100), 500));
+    $rows = $container->get(\FormLogic\Services\ResponseService::class)->getFormResponses($args['id'], ['limit' => $limit]);
+    $records = array_map(static fn ($r) => [
+        'id' => $r['id'] ?? null,
+        'answers' => $r['answers'] ?? [],
+        'submittedAt' => $r['submittedAt'] ?? null,
+    ], $rows);
+    $response->getBody()->write(json_encode(['records' => $records]));
+    return $response->withHeader('Content-Type', 'application/json');
+})->add($publicFormRateLimiter);
+
 // Pack management routes (protected)
 $app->post('/api/packs/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->import($request, $response);

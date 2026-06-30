@@ -130,6 +130,15 @@ export default function CustomScreenStudio() {
                 {generating ? 'Generating…' : hasScreen ? 'Regenerate' : 'Generate'}
               </Button>
             </div>
+            <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={!!screen.publicRecords}
+                onChange={(e) => { setScreen({ ...screen, publicRecords: e.target.checked }); setDirty(true); }}
+                className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500/30"
+              />
+              <span>Let visitors read submissions on the public link (answers only — needed for a public leaderboard).</span>
+            </label>
           </div>
 
           {/* Code tabs */}

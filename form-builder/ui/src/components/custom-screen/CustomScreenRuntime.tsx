@@ -55,12 +55,15 @@ export function CustomScreenRuntime({
   formTitle,
   fields,
   className,
+  publicMode = false,
 }: {
   screen: CustomScreen;
   formId: string;
   formTitle?: string;
   fields?: Array<{ id: string; label: string; type: string }>;
   className?: string;
+  /** Public link/embed context (anonymous): records() uses the gated public endpoint, not the owner API. */
+  publicMode?: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const user = useAuthStore((s) => s.user);
@@ -95,9 +98,14 @@ export function CustomScreenRuntime({
           }
           case 'records': {
             const limit = Math.min(500, Math.max(1, Number(m.payload?.opts?.limit) || 100));
-            const res = await api.getResponses(formId, { limit });
-            const rows = (res.data?.responses || []) as unknown as Array<Record<string, unknown>>;
-            result = rows.map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt, status: r.status, tags: r.tags }));
+            if (publicMode) {
+              const res = await api.getScreenRecords(formId, { limit });
+              result = (res.data?.records || []).map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt }));
+            } else {
+              const res = await api.getResponses(formId, { limit });
+              const rows = (res.data?.responses || []) as unknown as Array<Record<string, unknown>>;
+              result = rows.map((r) => ({ id: r.id, answers: r.answers, submittedAt: r.submittedAt, status: r.status, tags: r.tags }));
+            }
             break;
           }
           case 'currentUser':
@@ -120,7 +128,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user]);
+  }, [formId, formTitle, fields, user, publicMode]);
 
   return (
     <iframe

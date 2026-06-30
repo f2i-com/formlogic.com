@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 import { readableForegroundColor, parseHex, luminance } from '../lib/color';
 import { useUIStore } from '../stores/uiStore';
 import { api } from '../lib/api';
+import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
@@ -960,6 +961,22 @@ export default function FormResponse() {
             Try again
           </Button>
         </div>
+      </div>
+    );
+  }
+
+  // A custom screen takes over the whole form experience (public link + embed).
+  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js)) {
+    return (
+      <div className="h-screen w-full bg-white dark:bg-slate-950">
+        <CustomScreenRuntime
+          screen={form.customScreen}
+          formId={form.id}
+          formTitle={form.title}
+          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+          publicMode={!api.isAuthenticated()}
+          className="w-full h-full border-0"
+        />
       </div>
     );
   }
