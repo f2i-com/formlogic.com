@@ -314,18 +314,6 @@ export function FormsList() {
     return map;
   }, [installedPacks]);
 
-  // Unique pack names for filter options
-  const packOptions = useMemo(() => {
-    const packs = installedPacks.map((p) => ({ id: p.packId, name: p.packName }));
-    // Deduplicate by packId
-    const seen = new Set<string>();
-    return packs.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-  }, [installedPacks]);
-
   // Fetch installed packs on mount
   useEffect(() => {
     api.getInstalledPacks().then((result) => {
@@ -549,20 +537,6 @@ export function FormsList() {
             <option value="name">Name A-Z</option>
             <option value="responses">Most Responses</option>
           </select>
-          {packOptions.length > 0 && (
-            <select
-              value={packFilter}
-              onChange={(e) => setPackFilter(e.target.value)}
-              aria-label="Filter by pack"
-              className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer w-full sm:w-auto"
-            >
-              <option value="all">All Packs</option>
-              <option value="none">No Pack</option>
-              {packOptions.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          )}
         </div>
 
         {/* Tabs */}
