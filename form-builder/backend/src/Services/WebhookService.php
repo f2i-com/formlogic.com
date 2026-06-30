@@ -34,7 +34,7 @@ class WebhookService
      * (preventing store/deliver drift and TOCTOU gaps). Returns the resolved IP for
      * DNS-pinning at delivery. Throws \InvalidArgumentException on any failure.
      */
-    public function validateWebhookUrl(string $url): string
+    public static function validateWebhookUrl(string $url): string
     {
         $parsed = parse_url($url);
         if (!$parsed || empty($parsed['scheme']) || empty($parsed['host'])) {
@@ -43,7 +43,10 @@ class WebhookService
         if (!in_array(strtolower($parsed['scheme']), ['http', 'https'], true)) {
             throw new \InvalidArgumentException('Webhook URL must use HTTP or HTTPS');
         }
-        $host = $parsed['host'];
+        // parse_url keeps the brackets on an IPv6 literal host ("[::1]"); strip them so
+        // IPv6 loopback / IPv4-mapped entries match the block list explicitly (rather than
+        // only failing later at the IPv4-only DNS step).
+        $host = trim($parsed['host'], '[]');
         if (in_array(strtolower($host), self::SSRF_BLOCKED_HOSTS, true)) {
             throw new \InvalidArgumentException('Webhook URL host is not allowed');
         }
