@@ -321,7 +321,7 @@ class ResponseController
 
         // Build map of valid input field IDs
         $inputFieldIds = [];
-        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you'];
+        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you', 'hidden'];
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
             if (!$id) {
