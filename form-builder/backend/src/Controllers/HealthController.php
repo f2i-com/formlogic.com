@@ -149,6 +149,26 @@ class HealthController
             $checks['dual_store'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }
 
+        // AI — optional feature; report config status WITHOUT exposing the key (host/scheme only).
+        $aiKey = (string) ($_ENV['OPENAI_API_KEY'] ?? '');
+        $aiUrl = (string) ($_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1');
+        $aiScheme = strtolower((string) parse_url($aiUrl, PHP_URL_SCHEME));
+        $aiHost = (string) parse_url($aiUrl, PHP_URL_HOST);
+        $isProd = (bool) ($this->settings['isProduction'] ?? true);
+        $insecureAi = $isProd && $aiKey !== '' && $aiScheme === 'http'
+            && !in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true);
+        if ($aiKey === '') {
+            $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => 'not configured (AI features disabled)'];
+        } elseif ($insecureAi) {
+            $checks['ai'] = [
+                'ok' => true, 'critical' => false, 'detail' => 'configured but blocked',
+                'warning' => 'AI URL is http:// in production — disabled for safety. Use https, or set ALLOW_INSECURE_LOCAL_AI for a trusted local model.',
+            ];
+        } else {
+            $local = $aiHost !== '' && stripos($aiHost, 'openai.com') === false;
+            $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => $local ? "configured (local/self-hosted model: {$aiHost})" : 'configured (OpenAI)'];
+        }
+
         $ok = true;
         foreach ($checks as $c) {
             if (($c['critical'] ?? false) && !($c['ok'] ?? false)) {

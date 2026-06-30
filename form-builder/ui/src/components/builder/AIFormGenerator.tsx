@@ -23,6 +23,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   const [additionalPrompt, setAdditionalPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
+  const [aiMessage, setAiMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,8 +49,10 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
     const result = await api.getAIStatus();
     if (result.data) {
       setIsAvailable(result.data.available);
+      setAiMessage(result.data.message || '');
     } else {
       setIsAvailable(false);
+      setAiMessage('AI is unavailable right now.');
     }
   };
 
@@ -368,7 +371,13 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       </Tabs>
 
       {/* Footer */}
-      <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-slate-700">
+      <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 dark:border-slate-700">
+        {isAvailable === false ? (
+          <p className="text-xs text-amber-700 dark:text-amber-400 min-w-0 leading-snug">
+            {aiMessage || 'AI isn’t configured on this instance.'} <span className="text-gray-400 dark:text-slate-500">You can still build forms manually.</span>
+          </p>
+        ) : <span />}
+        <div className="flex items-center gap-2 shrink-0">
         <Button variant="outline" size="sm" onClick={resetAndClose}>
           Cancel
         </Button>
@@ -381,6 +390,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         >
           {isGenerating ? 'Generating...' : 'Generate Form'}
         </Button>
+        </div>
       </div>
     </Modal>
   );

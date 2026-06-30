@@ -21,6 +21,7 @@ const LABELS: Record<string, string> = {
   webhook_worker: 'Webhook retry worker',
   dual_store: 'Dual-store consistency',
   document_converter: 'Document converters',
+  ai: 'AI service',
 };
 
 function humanize(key: string): string {

@@ -320,6 +320,7 @@ export function Docs() {
                 <>Open <C>Share</C> to copy the link or grab an <strong className="text-gray-900 dark:text-white">embed</strong> snippet for your website.</>,
                 <>Re-publish anytime — changes go live instantly. Set the form to “closed” or add a response quota in <C>Settings</C> when you're done collecting.</>,
               ]} />
+              <Tip>Files uploaded to a <strong className="text-gray-900 dark:text-white">public standalone form</strong> can be opened by anyone with the file link. For member-only file access, collect uploads through an <strong className="text-gray-900 dark:text-white">app form</strong>, where access is gated by app membership + permissions.</Tip>
             </section>
 
             {/* Responses */}

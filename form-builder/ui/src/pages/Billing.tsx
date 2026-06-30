@@ -141,6 +141,9 @@ export function Billing() {
 
   const cloudActive = status?.active;
   const cloudUntilLabel = status?.cloudUntil ? parseServerDate(status.cloudUntil).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null;
+  // Self-hosted: no managed billing AND no enforced limits → everything is unlimited and there's
+  // nothing to buy. Show that positively rather than as a "billing not set up" warning.
+  const selfHosted = !status?.paypalEnabled && !status?.usage?.enforced;
 
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -153,8 +156,16 @@ export function Billing() {
       <p className="text-gray-500 dark:text-slate-400 mb-8">Pay only for the time you use — no subscription, no auto-renew.</p>
 
       {/* Current status */}
-      <div className={`rounded-2xl border p-5 mb-6 ${cloudActive ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
-        {cloudActive ? (
+      <div className={`rounded-2xl border p-5 mb-6 ${(cloudActive || selfHosted) ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
+        {selfHosted ? (
+          <div className="flex items-start gap-3">
+            <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">Self-hosted — unlimited</p>
+              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">This instance runs without managed billing. All features are available with no limits and no payment required.</p>
+            </div>
+          </div>
+        ) : cloudActive ? (
           <div className="flex items-start gap-3">
             <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
             <div>
@@ -183,7 +194,8 @@ export function Billing() {
         </div>
       )}
 
-      {/* Buy cloud months */}
+      {/* Buy cloud months — hidden on self-hosted instances (nothing to purchase). */}
+      {!selfHosted && (<>
       <div className="rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 p-6">
         <div className="flex items-baseline justify-between mb-1">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Add cloud time</h2>
@@ -250,6 +262,7 @@ export function Billing() {
       <p className="text-center text-xs text-gray-400 dark:text-slate-500 mt-5">
         Payments are one-time and processed securely by PayPal. No subscription is created and nothing auto-renews.
       </p>
+      </>)}
     </div>
   );
 }

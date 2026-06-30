@@ -748,6 +748,14 @@ export default function FormBuilder() {
                   alreadyLive ? 'Changes published' : 'Your form is live',
                   'Share the link or embed it anywhere.'
                 );
+                // Heads-up on first publish if it collects files: standalone public-form uploads
+                // are link-accessible to anyone (see the file-upload field settings note).
+                if (!alreadyLive && (form.fields ?? []).some((f) => f.type === 'file_upload')) {
+                  toast.info(
+                    'Public file access',
+                    'Files uploaded to this public form can be opened by anyone with the link — use an app form for member-only access.'
+                  );
+                }
                 setActiveModal('embed');
               } else {
                 toast.success(
