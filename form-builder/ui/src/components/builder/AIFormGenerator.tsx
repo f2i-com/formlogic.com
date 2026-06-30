@@ -12,7 +12,7 @@ import { v4 as uuidv4 } from 'uuid';
 interface AIFormGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  onGenerate: (title: string, description: string, fields: FormField[], prompt?: string) => void;
+  onGenerate: (title: string, description: string, fields: FormField[], prompt?: string, logicScript?: string, logicPrompt?: string) => void;
 }
 
 type TabType = 'prompt' | 'document' | 'image';
@@ -22,6 +22,8 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
   const [prompt, setPrompt] = useState('');
   const [additionalPrompt, setAdditionalPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  // Two-stage generation: 'form' = fields, 'script' = the optional follow-up backend-logic call.
+  const [genStage, setGenStage] = useState<'form' | 'script' | null>(null);
   const [isAvailable, setIsAvailable] = useState<boolean | null>(null);
   const [aiMessage, setAiMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -115,6 +117,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
     }
 
     setIsGenerating(true);
+    setGenStage('form');
 
     try {
       let result;
@@ -135,7 +138,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         return;
       }
 
-      const { title, description, fields } = result.data.data;
+      const { title, description, fields, needsScript, suggestedScript } = result.data.data;
 
       const formFields: FormField[] = fields.map((field, index) => ({
         id: field.id || uuidv4(),
@@ -150,14 +153,48 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
         conditionalLogic: undefined,
       }));
 
-      toast.success('Form Generated', `Created ${formFields.length} fields`);
-      onGenerate(title, description || '', formFields, activeTab === 'prompt' ? prompt : additionalPrompt);
+      // Second, separate AI call — generate the backend onSubmit script ONLY when the form
+      // genuinely needs logic (the form-gen flagged needsScript). Best-effort: if it fails, the
+      // form is still created with its fields. The Script section remains available to refine it.
+      let logicScript: string | undefined;
+      const scriptDesc = (suggestedScript || '').trim();
+      if (needsScript && scriptDesc) {
+        setGenStage('script');
+        try {
+          // Pass the minimal field projection the script generator needs (matches ScriptEditor).
+          const scriptRes = await api.generateScript(
+            scriptDesc,
+            formFields.map((f) => ({ id: f.id, label: f.label, type: f.type })),
+          );
+          if (scriptRes.data?.data?.script) {
+            logicScript = scriptRes.data.data.script;
+          }
+        } catch (e) {
+          logger.error('AI script generation (post-form) failed:', e);
+        }
+      }
+
+      toast.success(
+        'Form Generated',
+        logicScript
+          ? `Created ${formFields.length} fields + backend logic`
+          : `Created ${formFields.length} fields`
+      );
+      onGenerate(
+        title,
+        description || '',
+        formFields,
+        activeTab === 'prompt' ? prompt : additionalPrompt,
+        logicScript,
+        logicScript ? scriptDesc : undefined,
+      );
       resetAndClose();
     } catch (error) {
       logger.error('AI generation error:', error);
       toast.error('Generation Failed', error instanceof Error ? error.message : 'An unexpected error occurred');
     } finally {
       setIsGenerating(false);
+      setGenStage(null);
     }
   };
 
@@ -388,7 +425,7 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           isLoading={isGenerating}
           leftIcon={!isGenerating ? <Sparkles className="h-4 w-4" /> : undefined}
         >
-          {isGenerating ? 'Generating...' : 'Generate Form'}
+          {isGenerating ? (genStage === 'script' ? 'Adding logic…' : 'Generating…') : 'Generate Form'}
         </Button>
         </div>
       </div>

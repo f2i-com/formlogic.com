@@ -1217,6 +1217,7 @@ interface AIFormGenerationResult {
     title: string;
     description?: string;
     fields: AIGeneratedField[];
+    needsScript?: boolean;
     suggestedScript?: string;
   };
   pagesProcessed?: number;

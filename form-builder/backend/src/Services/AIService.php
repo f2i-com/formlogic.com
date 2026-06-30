@@ -292,7 +292,8 @@ You must respond with a valid JSON object in this exact format:
       "properties": {}
     }
   ],
-  "suggestedScript": "Optional: describe any logic that might be useful"
+  "needsScript": false,
+  "suggestedScript": ""
 }
 
 Available field types:
@@ -335,6 +336,12 @@ Guidelines:
 - Add placeholders to guide users
 - For scale fields, add meaningful start/end labels
 - Extract ALL fields visible in documents/images
+- Set "needsScript" to true ONLY if the form genuinely needs backend logic on submit — e.g.
+  cross-field validation beyond simple field types, computed/derived values, conditional status or
+  routing, scoring, anti-spam / duplicate checks, or notifications. For a plain data-collection form
+  (contact, RSVP, basic survey with no computed outcome), set "needsScript" to false.
+- When "needsScript" is true, put a concise plain-language description of that logic in
+  "suggestedScript" (what to validate/compute/route, naming the relevant fields). Otherwise leave it "".
 
 Respond ONLY with the JSON object, no additional text.
 PROMPT;
@@ -481,6 +488,7 @@ PROMPT;
             'title' => $data['title'] ?? 'Untitled Form',
             'description' => $data['description'] ?? '',
             'fields' => $normalizedFields,
+            'needsScript' => (bool) ($data['needsScript'] ?? false),
             'suggestedScript' => $data['suggestedScript'] ?? null,
         ];
     }

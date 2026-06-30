@@ -536,12 +536,16 @@ export default function FormBuilder() {
     }
   };
 
-  const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string) => {
-    // Update form title and description
+  const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string, logicScript?: string, logicPrompt?: string) => {
+    // Update form title and description. If the generator also produced a backend script, set it —
+    // but never clobber a script the user already has (they can regenerate from the Script section).
+    // The Script tab badge then shows that logic was added.
+    const applyScript = !!logicScript && !form.logicScript;
     updateForm(form.id, {
       title: title || form.title,
       description: description || form.description,
-      logicPrompt: prompt,
+      ...(applyScript ? { logicScript } : {}),
+      logicPrompt: (applyScript ? logicPrompt : undefined) ?? prompt,
     });
 
     // Add generated fields as ONE undo step (not one per field).
