@@ -125,6 +125,7 @@ export function Settings() {
 
   // API key state
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [keyLoadError, setKeyLoadError] = useState<string | null>(null);
   const [isLoadingKeys, setIsLoadingKeys] = useState(true);
   const [showCreateKey, setShowCreateKey] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -262,13 +263,16 @@ export function Settings() {
 
   const loadApiKeys = async () => {
     setIsLoadingKeys(true);
+    setKeyLoadError(null);
     try {
       const result = await api.getApiKeys();
       if (result.data) {
         setApiKeys(result.data.keys);
+      } else {
+        setKeyLoadError(typeof result.error === 'string' ? result.error : 'Could not load API keys');
       }
     } catch {
-      // Silently fail
+      setKeyLoadError('Could not load API keys');
     } finally {
       setIsLoadingKeys(false);
     }
@@ -701,6 +705,11 @@ export function Settings() {
               {isLoadingKeys ? (
                 <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
                   <Spinner size="sm" /> <span>Loading keys…</span>
+                </div>
+              ) : keyLoadError ? (
+                <div className="py-6 text-center text-sm">
+                  <p className="text-gray-600 dark:text-slate-300">{keyLoadError}</p>
+                  <button type="button" onClick={loadApiKeys} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
                 </div>
               ) : apiKeys.length === 0 ? (
                 <EmptyState

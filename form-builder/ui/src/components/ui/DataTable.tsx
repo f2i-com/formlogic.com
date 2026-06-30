@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useDeferredValue } from 'react';
 import { ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight, Search, Inbox } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useFittedColumns } from '../../hooks/useFittedColumns';
@@ -65,16 +65,19 @@ export function DataTable<T extends Record<string, unknown>>({
   });
   const visibleColumns = cards ? columns : columns.slice(0, Math.max(1, fitCount));
 
+  // Defer the search term so filtering/sorting a large dataset runs a few times/sec
+  // instead of on every keystroke (the input stays responsive).
+  const deferredSearch = useDeferredValue(search);
   const filtered = useMemo(() => {
-    if (!search) return data;
-    const lower = search.toLowerCase();
+    if (!deferredSearch) return data;
+    const lower = deferredSearch.toLowerCase();
     return data.filter((item) =>
       columns.some((col) => {
         const val = item[col.key];
         return val != null && String(val).toLowerCase().includes(lower);
       })
     );
-  }, [data, search, columns]);
+  }, [data, deferredSearch, columns]);
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;

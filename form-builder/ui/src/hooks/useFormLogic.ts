@@ -20,6 +20,7 @@ export function useConditionalLogic(
   const [requiredFields, setRequiredFields] = useState<Set<string>>(() => new Set(fields.filter((f) => f.required).map((f) => f.id)));
   const [isEvaluating, setIsEvaluating] = useState(false);
   const evaluationIdRef = useRef(0);
+  const firstEvalRef = useRef(true);
 
   // Re-seed visibility whenever the SET of fields changes (e.g. the form finishes
   // loading asynchronously after this hook mounted). The useState initializer
@@ -114,7 +115,15 @@ export function useConditionalLogic(
   }, [fields, formData]);
 
   useEffect(() => {
-    evaluateAllConditions();
+    // Evaluate immediately on first run (so on-load visibility is correct, no flash), then
+    // debounce subsequent re-evals so typing doesn't fire a QuickJS round-trip per keystroke.
+    if (firstEvalRef.current) {
+      firstEvalRef.current = false;
+      evaluateAllConditions();
+      return;
+    }
+    const t = setTimeout(() => { evaluateAllConditions(); }, 160);
+    return () => clearTimeout(t);
   }, [evaluateAllConditions]);
 
   const isFieldVisible = useCallback(

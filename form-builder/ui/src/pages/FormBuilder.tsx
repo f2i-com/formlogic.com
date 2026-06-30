@@ -370,6 +370,12 @@ export default function FormBuilder() {
     setPendingDeleteId(selectedFieldId);
   }, [form, selectedFieldId]);
 
+  const handleDuplicateFieldById = useCallback((id: string) => {
+    if (!form || !duplicateField) return;
+    duplicateField(form.id, id);
+    toast.success('Duplicated', 'Field duplicated');
+  }, [form, duplicateField]);
+
   const handleDuplicateSelected = useCallback(() => {
     if (!form || !selectedFieldId || !duplicateField) return;
     duplicateField(form.id, selectedFieldId);
@@ -911,7 +917,7 @@ export default function FormBuilder() {
                             isSelected={field.id === selectedFieldId}
                             onSelect={handleSelectField}
                             onDelete={handleDeleteFieldById}
-                            onDuplicate={(id) => { duplicateField(form.id, id); toast.success('Duplicated', 'Field duplicated'); }}
+                            onDuplicate={handleDuplicateFieldById}
                           />
                         ))}
                       </div>

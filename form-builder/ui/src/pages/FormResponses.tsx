@@ -24,6 +24,7 @@ import {
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
+import { StatCard } from '../components/ui/StatCard';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -86,37 +87,7 @@ const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archiv
 // so the responses table, response detail, and members list stay in one palette.
 
 // Stats card component for consistency
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  iconBg,
-  iconColor,
-  textColor,
-}: {
-  icon: React.ElementType;
-  label: string;
-  value: string | number;
-  iconBg: string;
-  iconColor: string;
-  textColor?: string;
-}) {
-  return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-3">
-          <div className={cn('p-2.5 rounded-lg', iconBg)}>
-            <Icon className={cn('h-5 w-5', iconColor)} />
-          </div>
-          <div>
-            <p className={cn("text-2xl font-bold tracking-tight tabular-nums", textColor || "text-gray-900 dark:text-white")}>{value}</p>
-            <p className="text-sm text-gray-500 dark:text-slate-400">{label}</p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+// StatCard is the shared component (imported) — same metric tiles as Dashboard/Analytics.
 
 function FormResponses() {
   const { formId } = useParams<{ formId: string }>();
@@ -139,6 +110,7 @@ function FormResponses() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [editedAnswers, setEditedAnswers] = useState<Record<string, unknown>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [sortField, setSortField] = useState<'submittedAt' | 'completionTime'>('submittedAt');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -262,6 +234,14 @@ function FormResponses() {
     return { total: responses.length, thisWeek, todayCount, avgTime };
   }, [responses]);
 
+  // Precompute a lowercased search haystack per response ONCE (keyed on responses), so
+  // typing in the search box is a cheap substring scan instead of re-serializing every
+  // response's answers on every keystroke.
+  const searchIndex = useMemo(
+    () => responses.map((r) => ({ r, hay: (JSON.stringify(r.answers) + ' ' + r.id).toLowerCase() })),
+    [responses]
+  );
+
   // Filter and sort responses
   const filteredResponses = useMemo(() => {
     let filtered = responses;
@@ -269,12 +249,7 @@ function FormResponses() {
     // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter((response) => {
-        const answersStr = JSON.stringify(response.answers).toLowerCase();
-        if (answersStr.includes(query)) return true;
-        if (response.id.toLowerCase().includes(query)) return true;
-        return false;
-      });
+      filtered = searchIndex.filter((x) => x.hay.includes(query)).map((x) => x.r);
     }
 
     // Status filter (review queue)
@@ -302,7 +277,7 @@ function FormResponses() {
     });
 
     return filtered;
-  }, [responses, searchQuery, statusFilter, sortField, sortDirection]);
+  }, [responses, searchIndex, searchQuery, statusFilter, sortField, sortDirection]);
 
   // Pagination
   const totalPages = Math.ceil(filteredResponses.length / ITEMS_PER_PAGE);
@@ -375,8 +350,8 @@ function FormResponses() {
 
   // Handle delete
   const handleDelete = async () => {
-    if (!selectedResponse || !formId) return;
-
+    if (!selectedResponse || !formId || isDeleting) return;
+    setIsDeleting(true);
     try {
       if (storageMode === 'api') {
         const result = await api.deleteResponse(formId, selectedResponse.id);
@@ -393,6 +368,8 @@ function FormResponses() {
       setIsDeleteModalOpen(false);
     } catch {
       toast.error('Failed to delete', 'An error occurred');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -476,6 +453,8 @@ function FormResponses() {
     if (fieldType === 'file_upload' && Array.isArray(value)) {
       return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
     }
+    // Signature: never dump the raw data:image base64 into the grid/detail/CSV cell.
+    if (fieldType === 'signature') return value ? '[signature]' : '-';
     // Choice fields: map stored option values (e.g. "option_2") to their human labels.
     if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
       const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
@@ -609,7 +588,6 @@ function FormResponses() {
             value={stats.total}
             iconBg="bg-indigo-500/10"
             iconColor="text-indigo-500"
-            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={CalendarDays}
@@ -617,7 +595,6 @@ function FormResponses() {
             value={stats.thisWeek}
             iconBg="bg-green-500/10"
             iconColor="text-green-500"
-            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={Calendar}
@@ -625,7 +602,6 @@ function FormResponses() {
             value={stats.todayCount}
             iconBg="bg-blue-500/10"
             iconColor="text-blue-500"
-            textColor="text-gray-900 dark:text-white"
           />
           <StatCard
             icon={Timer}
@@ -633,7 +609,6 @@ function FormResponses() {
             value={formatDuration(stats.avgTime)}
             iconBg="bg-amber-500/10"
             iconColor="text-amber-500"
-            textColor="text-gray-900 dark:text-white"
           />
         </div>
 
@@ -1044,11 +1019,10 @@ function FormResponses() {
             submission will be permanently removed.
           </p>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+            <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)} disabled={isDeleting}>
               Cancel
             </Button>
-            <Button variant="danger" onClick={handleDelete}>
-              <Trash2 className="h-4 w-4 mr-2" />
+            <Button variant="danger" onClick={handleDelete} isLoading={isDeleting} leftIcon={<Trash2 className="h-4 w-4" />}>
               Delete
             </Button>
           </div>
