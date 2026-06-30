@@ -505,6 +505,14 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER nav_config");
         }
 
+        // Add scopes column to mcp_sessions (per-token capability list) if it doesn't exist
+        try {
+            $result = $pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'scopes'");
+            if ($result->rowCount() === 0) {
+                $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN scopes JSON DEFAULT NULL AFTER token_hash");
+            }
+        } catch (\Throwable $e) { /* table may not exist yet on a fresh install — CREATE handles it */ }
+
         // Convert audit_log details column from JSON to TEXT (prevents MySQL key reordering)
         $result = $pdo->query("SHOW COLUMNS FROM audit_log LIKE 'details'");
         $detailsCol = $result->fetch(PDO::FETCH_ASSOC);
@@ -688,6 +696,7 @@ class MySQLConnection
                 user_id VARCHAR(36) NOT NULL,
                 app_id VARCHAR(36) DEFAULT NULL,
                 token_hash VARCHAR(64) NOT NULL,
+                scopes JSON DEFAULT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 idle_timeout_seconds INT NOT NULL DEFAULT 1800,
                 last_used_at TIMESTAMP NULL,

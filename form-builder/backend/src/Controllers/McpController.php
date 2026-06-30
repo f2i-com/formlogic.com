@@ -51,10 +51,11 @@ class McpController
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
             }
         }
-        $ttl = (int) ($body['ttl'] ?? 86400);
-        $idle = (int) ($body['idle'] ?? 1800);
-        $result = $this->tokens->create($userId, $appId, $ttl, $idle);
-        $this->audit($request, 'mcp.token.create');
+        $ttl = (int) ($body['ttl'] ?? 3600);
+        $idle = (int) ($body['idle'] ?? 900);
+        $scopes = is_array($body['scopes'] ?? null) ? $body['scopes'] : null;
+        $result = $this->tokens->create($userId, $appId, $ttl, $idle, $scopes);
+        $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId]);
 
         $uri = $request->getUri();
         $base = $uri->getScheme() . '://' . $uri->getHost() . ($uri->getPort() ? ':' . $uri->getPort() : '');
@@ -102,6 +103,9 @@ class McpController
 
         // Batch (a list of messages) or a single message.
         if (array_is_list($body)) {
+            if (count($body) > 20) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Batch too large (max 20 messages)']], 400);
+            }
             $out = [];
             foreach ($body as $msg) {
                 $r = is_array($msg) ? $this->dispatch($msg, $session, $request) : null;
@@ -137,7 +141,7 @@ class McpController
             case 'ping':
                 return $this->ok($id, (object) []);
             case 'tools/list':
-                return $this->ok($id, ['tools' => $this->toolDefs()]);
+                return $this->ok($id, ['tools' => $this->toolDefs($session)]);
             case 'tools/call':
                 return $this->ok($id, $this->callTool((string) ($params['name'] ?? ''), is_array($params['arguments'] ?? null) ? $params['arguments'] : [], $session, $request));
             default:
@@ -150,76 +154,139 @@ class McpController
         return ['jsonrpc' => '2.0', 'id' => $id, 'result' => $result];
     }
 
-    /** Execute a tool, scoped to the session owner. Returns an MCP tools/call result. */
+    // Which scope each tool requires (a token without it can't see or call the tool).
+    private const TOOL_SCOPES = [
+        'list_forms' => 'forms:read', 'get_form' => 'forms:read',
+        'create_form' => 'forms:write', 'update_form' => 'forms:write',
+        'list_apps' => 'apps:read', 'create_app' => 'apps:write',
+        'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
+        'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
+    ];
+
+    /** Execute a tool, scoped to the session owner + the token's scopes + (optional) app scope. */
     private function callTool(string $name, array $args, array $session, Request $request): array
     {
         $userId = $session['userId'];
+        $scopedApp = $session['appId'] ?? null;
         try {
+            $this->requireScope($session, self::TOOL_SCOPES[$name] ?? '__none__');
             switch ($name) {
                 case 'list_forms':
-                    $data = array_map(static fn ($f) => [
-                        'id' => $f['id'], 'title' => $f['title'], 'status' => $f['status'] ?? 'draft',
-                        'fieldCount' => $f['fieldCount'] ?? count($f['fields'] ?? []),
-                    ], $this->formService->getAllForms($userId));
+                    if ($scopedApp !== null) {
+                        $data = array_map(static fn ($f) => ['id' => $f['formId'], 'title' => $f['displayName'], 'status' => $f['formStatus'] ?? 'draft'], $this->appService->getAppForms($scopedApp));
+                    } else {
+                        $data = array_map(static fn ($f) => ['id' => $f['id'], 'title' => $f['title'], 'status' => $f['status'] ?? 'draft', 'fieldCount' => $f['fieldCount'] ?? count($f['fields'] ?? [])], $this->formService->getAllForms($userId));
+                    }
                     break;
                 case 'get_form':
+                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $data = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     break;
                 case 'create_form':
+                    $this->validateFormInput($args);
                     $data = $this->formService->createForm(array_merge($this->formInput($args), ['userId' => $userId]));
-                    $this->audit($request, 'mcp.create_form');
+                    $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null]);
                     break;
                 case 'update_form':
+                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
+                    $this->validateFormInput($args);
                     $data = $this->formService->updateForm((string) $args['formId'], $this->formInput($args));
-                    $this->audit($request, 'mcp.update_form');
+                    $this->audit($request, 'mcp.update_form', $userId, ['formId' => $args['formId'] ?? null]);
                     break;
                 case 'list_apps':
-                    $data = array_map(static fn ($a) => [
-                        'id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft',
-                    ], $this->appService->getAllApps($userId));
+                    $apps = $this->appService->getAllApps($userId);
+                    if ($scopedApp !== null) {
+                        $apps = array_values(array_filter($apps, static fn ($a) => $a['id'] === $scopedApp));
+                    }
+                    $data = array_map(static fn ($a) => ['id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft'], $apps);
                     break;
                 case 'create_app':
+                    if ($scopedApp !== null) {
+                        throw new \Exception('This token is scoped to one app and cannot create new apps');
+                    }
                     $data = $this->appService->createApp(['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null], $userId);
-                    $this->audit($request, 'mcp.create_app');
+                    $this->audit($request, 'mcp.create_app', $userId, ['appId' => $data['id'] ?? null]);
                     break;
                 case 'update_app':
+                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
                     $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                     $upd = [];
-                    foreach (['name', 'description', 'status'] as $k) {
+                    foreach (['name', 'description', 'status', 'slug'] as $k) {
                         if (array_key_exists($k, $args)) {
                             $upd[$k] = $args[$k];
                         }
                     }
                     $data = $this->appService->updateApp((string) $args['appId'], $upd);
-                    $this->audit($request, 'mcp.update_app');
+                    $this->audit($request, 'mcp.update_app', $userId, ['appId' => $args['appId'] ?? null]);
                     break;
                 case 'add_form_to_app':
+                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
                     $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     $data = $this->appService->addFormToApp((string) $args['appId'], (string) $args['formId'], $args['displayName'] ?? null);
-                    $this->audit($request, 'mcp.add_form_to_app');
+                    $this->audit($request, 'mcp.add_form_to_app', $userId, ['appId' => $args['appId'] ?? null, 'formId' => $args['formId'] ?? null]);
                     break;
                 case 'set_app_home':
+                    $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
                     $this->ownApp((string) ($args['appId'] ?? ''), $userId);
-                    $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => is_array($args['customScreen'] ?? null) ? $args['customScreen'] : []]);
-                    $this->audit($request, 'mcp.set_app_home');
+                    $cs = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : [];
+                    if (strlen((string) json_encode($cs)) > 524288) {
+                        throw new \Exception('Custom screen exceeds the 512KB limit');
+                    }
+                    $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => $cs]);
+                    $this->audit($request, 'mcp.set_app_home', $userId, ['appId' => $args['appId'] ?? null]);
                     break;
                 case 'list_responses':
+                    $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     $data = $this->responseService->getFormResponses((string) $args['formId'], ['limit' => min(200, max(1, (int) ($args['limit'] ?? 50)))]);
                     break;
-                case 'add_response':
-                    $form = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
-                    $r = $this->responseService->createResponse((string) $args['formId'], is_array($args['answers'] ?? null) ? $args['answers'] : [], $form['logicScript'] ?? null);
-                    $data = is_array($r) ? $r : ['rejected' => true, 'reason' => method_exists($r, 'getMessage') ? $r->getMessage() : 'Rejected by onSubmit script'];
-                    break;
                 default:
-                    throw new \Exception("Unknown tool: {$name}");
+                    throw new \Exception("Unknown or unavailable tool: {$name}");
             }
             return ['content' => [['type' => 'text', 'text' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)]]];
         } catch (\Throwable $e) {
             return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
+        }
+    }
+
+    private function requireScope(array $session, string $scope): void
+    {
+        if (!in_array($scope, $session['scopes'] ?? [], true)) {
+            throw new \Exception("This MCP token lacks the required scope: {$scope}");
+        }
+    }
+
+    /** If the token is app-scoped, the target app must match. */
+    private function assertAppScope(array $session, string $appId): void
+    {
+        $scoped = $session['appId'] ?? null;
+        if ($scoped !== null && $scoped !== $appId) {
+            throw new \Exception('This MCP token is scoped to a single app and cannot touch other apps');
+        }
+    }
+
+    /** If the token is app-scoped, the target form must belong to that app. */
+    private function assertFormInScope(array $session, string $formId): void
+    {
+        $scoped = $session['appId'] ?? null;
+        if ($scoped !== null && ($formId === '' || !$this->appService->formBelongsToApp($scoped, $formId))) {
+            throw new \Exception('This MCP token is scoped to an app; that form is not part of it');
+        }
+    }
+
+    /** Size caps for MCP-created/updated forms (MCP bypasses FormController, so enforce here). */
+    private function validateFormInput(array $args): void
+    {
+        if (isset($args['logicScript']) && is_string($args['logicScript']) && strlen($args['logicScript']) > 102400) {
+            throw new \Exception('logicScript exceeds the 100KB limit');
+        }
+        if (isset($args['fields']) && is_array($args['fields']) && strlen((string) json_encode($args['fields'])) > 512000) {
+            throw new \Exception('fields exceed the 500KB limit');
+        }
+        if (isset($args['customScreen']) && is_array($args['customScreen']) && strlen((string) json_encode($args['customScreen'])) > 524288) {
+            throw new \Exception('customScreen exceeds the 512KB limit');
         }
     }
 
@@ -259,24 +326,38 @@ class McpController
         return $out;
     }
 
-    private function toolDefs(): array
+    /** Tool definitions visible to a session — filtered by its scopes (and app-scope for create_app). */
+    private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
         $screen = ['type' => 'object', 'description' => 'Custom screen { enabled, html, css, js } — sandboxed UI over the form; talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
-        return [
-            ['name' => 'list_forms', 'description' => "List the owner's forms.", 'inputSchema' => $obj([])],
-            ['name' => 'get_form', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
-            ['name' => 'create_form', 'description' => 'Create a form. Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
-            ['name' => 'update_form', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
-            ['name' => 'list_apps', 'description' => "List the owner's apps.", 'inputSchema' => $obj([])],
-            ['name' => 'create_app', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
-            ['name' => 'update_app', 'description' => 'Update an app: rename it, set its description, or publish it (status: draft|published|archived).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['appId'])],
-            ['name' => 'add_form_to_app', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
-            ['name' => 'set_app_home', 'description' => "Set the app's custom HOME screen (sandboxed UI; SDK spans the app's forms: submit(formId,answers)/records(formId)/navigate(formId)).", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
-            ['name' => 'list_responses', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
-            ['name' => 'add_response', 'description' => 'Submit a response to a form (runs its onSubmit script).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'answers' => ['type' => 'object']], ['formId', 'answers'])],
+        $scopes = $session['scopes'] ?? [];
+        $scopedApp = $session['appId'] ?? null;
+        $all = [
+            ['name' => 'list_forms', 'scope' => 'forms:read', 'description' => "List the owner's forms (only this app's forms when the token is app-scoped).", 'inputSchema' => $obj([])],
+            ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
+            ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a form. Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
+            ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
+            ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
+            ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
+            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, or publish (status: draft|published|archived).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['appId'])],
+            ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
+            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom HOME screen (sandboxed UI; SDK spans the app's forms: submit(formId,answers)/records(formId)/navigate(formId)).", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
         ];
+        $out = [];
+        foreach ($all as $t) {
+            if (!in_array($t['scope'], $scopes, true)) {
+                continue;
+            }
+            if ($t['name'] === 'create_app' && $scopedApp !== null) {
+                continue; // app-scoped tokens can't create new apps
+            }
+            unset($t['scope']);
+            $out[] = $t;
+        }
+        return $out;
     }
 
     private function rpc(Response $response, array $payload, int $status = 200): Response
@@ -291,10 +372,11 @@ class McpController
         return $sp['REMOTE_ADDR'] ?? null;
     }
 
-    private function audit(Request $request, string $action): void
+    private function audit(Request $request, string $action, ?string $userId = null, array $details = []): void
     {
         try {
-            $this->auditService?->log($action, 'mcp', null, $request->getAttribute('userId'), $this->ip($request));
+            // /api/mcp self-authenticates (no AuthMiddleware), so pass the session's userId explicitly.
+            $this->auditService?->log($action, 'mcp', $details['appId'] ?? $details['formId'] ?? null, $userId ?? $request->getAttribute('userId'), $this->ip($request), $details);
         } catch (\Throwable) { /* audit is best-effort */ }
     }
 }

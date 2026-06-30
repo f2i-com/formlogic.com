@@ -65,6 +65,9 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: bo
               <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
               <span>Copy this now — the token is shown once. It can create/edit your content, so treat it like a password. Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
             </div>
+            <p className="text-[11px] text-gray-500 dark:text-slate-400">
+              Access: <span className="font-medium text-gray-700 dark:text-slate-300">{appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>.
+            </p>
             <div>
               <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
               <div className="flex items-center gap-2">

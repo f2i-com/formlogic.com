@@ -204,6 +204,20 @@ class AppService
             $params['status'] = $data['status'];
         }
 
+        if (isset($data['slug'])) {
+            $slug = strtolower(trim((string) $data['slug']));
+            if (!preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug)) {
+                throw new \InvalidArgumentException('Invalid slug — use lowercase letters, digits, and hyphens (start alphanumeric, max 61 chars)');
+            }
+            $chk = $this->mysql->prepare("SELECT 1 FROM apps WHERE slug = :slug AND id != :id LIMIT 1");
+            $chk->execute(['slug' => $slug, 'id' => $id]);
+            if ($chk->fetch()) {
+                throw new \InvalidArgumentException('That slug is already taken — choose another');
+            }
+            $updates[] = "slug = :slug";
+            $params['slug'] = $slug;
+        }
+
         if (isset($data['settings'])) {
             $updates[] = "settings = :settings";
             $params['settings'] = json_encode($data['settings']);
