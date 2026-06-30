@@ -505,7 +505,9 @@ class FormLogicRuntime
             }
         }
 
-        if ($redirectCount >= $maxRedirects) {
+        // Only "too many redirects" if we hit the cap while STILL on a redirect — a chain
+        // that resolves to a final (2xx/4xx/5xx) response on the last allowed hop is valid.
+        if ($httpCode >= 300 && $httpCode < 400) {
             return $this->httpErrorResponse('Too many redirects');
         }
 

@@ -290,6 +290,9 @@ class WebhookService
             }
 
             $durationMs = (int)((microtime(true) - $h['start']) * 1000);
+            // Only retry transient failures; a permanent 4xx (404/401/403/422…) won't
+            // succeed on retry, so abandon it instead of burning the whole backoff schedule.
+            $retryable = !$success && $this->isRetryableStatus($responseStatus);
             $this->logDelivery(
                 $deliveryId,
                 $h['webhook']['id'],
@@ -300,9 +303,9 @@ class WebhookService
                 $durationMs,
                 $success,
                 $errorMessage,
-                $success ? 'success' : 'failed',
+                $success ? 'success' : ($retryable ? 'failed' : 'abandoned'),
                 1,
-                $success ? null : $this->nextRetryTimestamp(1)
+                $retryable ? $this->nextRetryTimestamp(1) : null
             );
 
             curl_multi_remove_handle($mh, $ch);
@@ -534,9 +537,25 @@ class WebhookService
             return 'success';
         }
 
+        // A permanent 4xx won't succeed on retry — abandon it now instead of cycling the
+        // whole backoff schedule against a dead/rejecting endpoint.
+        if (!$this->isRetryableStatus($responseStatus)) {
+            $this->updateDeliveryResult($deliveryId, false, $responseStatus ?: null, is_string($responseBody) ? $responseBody : null, $durationMs, $errorMessage, 'abandoned', $attempt, null);
+            return 'abandoned';
+        }
         $exhausted = $attempt >= $maxAttempts;
         $this->updateDeliveryResult($deliveryId, false, $responseStatus ?: null, is_string($responseBody) ? $responseBody : null, $durationMs, $errorMessage, $exhausted ? 'exhausted' : 'failed', $attempt, $exhausted ? null : $this->nextRetryTimestamp($attempt));
         return $exhausted ? 'abandoned' : 'failed';
+    }
+
+    /**
+     * Whether a delivery with this HTTP status is worth retrying. Transient only:
+     * 0 = curl/network failure, 408 timeout, 429 rate-limited, 5xx server error. A
+     * permanent 4xx (404/401/403/422…) is not retried.
+     */
+    private function isRetryableStatus(int $status): bool
+    {
+        return $status === 0 || $status === 408 || $status === 429 || $status >= 500;
     }
 
     /** Update an existing delivery row after a retry attempt. */
