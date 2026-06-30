@@ -73,7 +73,9 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             onChange={(e) => onUpdate({ description: e.target.value })}
           />
 
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) && (
+          {/* Placeholder only applies to free-text controls — native date/time pickers and
+              the phone input ignore it, so don't offer a setting that does nothing. */}
+          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden', 'phone', 'date', 'time', 'datetime'].includes(field.type) && (
             <Input
               label="Placeholder"
               value={field.placeholder || ''}
@@ -81,7 +83,8 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
             />
           )}
 
-          {!['statement', 'welcome_screen', 'thank_you', 'hidden'].includes(field.type) && (
+          {/* 'calculated' is computed + read-only, so a Required toggle would be a no-op. */}
+          {!['statement', 'welcome_screen', 'thank_you', 'hidden', 'calculated'].includes(field.type) && (
             <Switch
               checked={field.required}
               onChange={(checked) => onUpdate({ required: checked })}
@@ -361,6 +364,21 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 checked={!!field.properties.allowMultiple}
                 onChange={(checked) => onUpdate({ properties: { ...field.properties, allowMultiple: checked } })}
               />
+              {field.properties.allowMultiple && (
+                <Input
+                  label="Maximum number of files"
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={field.properties.maxFiles ?? 20}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value);
+                    const safe = isNaN(n) ? 20 : Math.min(50, Math.max(1, n));
+                    onUpdate({ properties: { ...field.properties, maxFiles: safe } });
+                  }}
+                  hint="Between 1 and 50."
+                />
+              )}
             </div>
           )}
 
