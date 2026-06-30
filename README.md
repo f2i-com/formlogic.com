@@ -58,7 +58,7 @@ FormLogic expressions and `onSubmit` scripts are **real JavaScript** run inside 
 - **Browser** -- [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten) runs the engine in a dedicated Web Worker for real-time validation, conditional logic, and calculated-field previews.
 - **Server** -- the PHP API shells out to a vendored static `qjs` binary (committed under `backend/bin/qjs/`, selected per-OS); a `prebuild` step syncs the prelude into `backend/resources/`. **No Node.js is required on the server.**
 
-The sandbox enforces instruction-count, wall-clock, memory, and call-depth limits, and exposes no `eval`, DOM, filesystem, or network access. The shared prelude ships built-in helper modules: `validators`, `format`, `compliance`, `finance`, and `safety`.
+The sandbox enforces instruction-count, wall-clock, memory, and call-depth limits, and exposes no `eval`, DOM, or filesystem access (field expressions also have no network; `onSubmit` scripts additionally get a server-brokered, SSRF-guarded `ctx.http` for external API calls). The shared prelude ships built-in helper modules: `validators`, `format`, `compliance`, `finance`, and `safety`.
 
 ---
 
@@ -325,7 +325,7 @@ finance.transferFee(amount, custodian)
 - **Rate limiting** on auth endpoints (10/min) and submissions (30/min)
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
-- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, filesystem, or network access
+- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, or filesystem access (field expressions also have no network; `onSubmit` scripts additionally get a server-brokered, SSRF-guarded `ctx.http` for external API calls)
 - **Hash-chained audit log** with HMAC-SHA256 integrity verification
 - **Body size limits** on uploads
 

@@ -1,5 +1,10 @@
 # FormLogic — Improvement Plan
 
+> ⚠️ **HISTORICAL (2026-02-22) — DO NOT TREAT ITEMS HERE AS OPEN WORK.** Much is resolved in
+> current code (rate limiting is MySQL-backed now, not in-memory/Redis; webhook delivery has
+> retry + backoff + a worker; PHPUnit/ESLint/CI exist). For the current open list see
+> **[LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md)**. Kept for historical context only.
+
 > Comprehensive audit-driven improvement plan. Generated 2026-02-22 from full-codebase analysis across backend, frontend, and cross-cutting concerns.
 
 ---
@@ -231,6 +236,8 @@ const handleCreateForm = async () => {
 - Show a route-specific error UI with "Go Back" / "Try Again" buttons
 
 ### 2.10 Webhook Delivery Failure — No Retry Mechanism
+> ✅ **RESOLVED** — WebhookService now schedules retries with exponential backoff, abandons
+> permanent 4xx, and a retry worker (`processPendingRetries`) replays failures. Stale below.
 **Severity**: MEDIUM
 **File**: `backend/src/Services/WebhookService.php` ~L145+
 **Problem**: Failed webhook deliveries are logged but never retried. Transient network errors cause permanent data loss for webhook consumers.
@@ -282,6 +289,8 @@ if (count($fieldIds) !== count(array_unique($fieldIds))) {
 ## Phase 3: Performance & Scalability
 
 ### 3.1 Replace In-Memory Rate Limiting
+> ✅ **RESOLVED** — `RateLimiter` is now MySQL-backed (shared `rate_limits` table, fixed-window,
+> shared across workers, fails open on storage error). No Redis needed. Stale below.
 **Severity**: CRITICAL for production
 **File**: `backend/src/Middleware/RateLimitMiddleware.php` L26
 **Problem**: `private static array $requests = []` is per-PHP-process. With N PHP-FPM workers, effective rate limit is N * configured limit. Resets on process recycle.

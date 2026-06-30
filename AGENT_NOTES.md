@@ -1,5 +1,9 @@
 # FormLogic — Comprehensive Agent Notes
 
+> ℹ️ Architecture/reference notes. For the current **open launch work**, use
+> **[LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md)** (this file is reference, not a TODO list). If a
+> claim here conflicts with code, the code wins — verify before acting.
+
 > Full project reference covering backend and frontend. Last updated: 2026-06-29.
 
 ---

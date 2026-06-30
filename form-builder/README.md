@@ -528,7 +528,7 @@ The scripting engine supports:
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
 - **SSRF protection** on webhooks with DNS resolution checks and private IP blocking
-- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, filesystem, or network access
+- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, or filesystem access (field expressions also have no network; `onSubmit` scripts additionally get a server-brokered, SSRF-guarded `ctx.http` for external API calls)
 - **Hash-chained audit log** with HMAC-SHA256 integrity verification
 - **Body size limits** on uploads
 - **User-Agent sanitization** to prevent stored XSS
