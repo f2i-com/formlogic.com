@@ -91,9 +91,15 @@ class McpTest extends TestCase
             return;
         }
         self::$pdo->prepare('DELETE FROM mcp_sessions WHERE user_id = ?')->execute([$this->userId]);
-        self::$pdo->prepare('DELETE FROM app_forms WHERE app_id IN (?, ?)')->execute([$this->appA, $this->appB]);
-        self::$pdo->prepare('DELETE FROM app_users WHERE app_id IN (?, ?)')->execute([$this->appA, $this->appB]);
-        self::$pdo->prepare('DELETE FROM app_roles WHERE app_id IN (?, ?)')->execute([$this->appA, $this->appB]);
+        // Clean children for EVERY app the user owns (incl. apps a creator token made during a test).
+        $owned = self::$pdo->prepare('SELECT id FROM apps WHERE owner_id = ?');
+        $owned->execute([$this->userId]);
+        foreach ($owned->fetchAll(PDO::FETCH_COLUMN) as $aid) {
+            self::$pdo->prepare('DELETE FROM app_forms WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id IN (SELECT id FROM app_roles WHERE app_id = ?)')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$aid]);
+        }
         self::$pdo->prepare('DELETE FROM apps WHERE owner_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM forms WHERE user_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$this->userId]);
@@ -267,5 +273,44 @@ class McpTest extends TestCase
         $res = $this->tool($tok, 'update_app', ['appId' => $this->appA, 'hideNav' => true]);
         $this->assertFalse($res['isError'], $res['text']);
         $this->assertTrue(($res['data']['settings']['hideNav'] ?? null) === true, 'hideNav should persist in settings');
+    }
+
+    // ── creator tokens ("Hand to an AI": create a new app, confined to it) ──
+
+    public function testCreatorTokenCreatesAndIsConfined(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];
+        // Creator tokens CAN create apps and start with none.
+        $this->assertContains('create_app', $this->toolNames($tok));
+        $this->assertCount(0, $this->tool($tok, 'list_apps')['data'], 'nothing created yet');
+
+        $made = $this->tool($tok, 'create_app', ['name' => 'AI Built']);
+        $this->assertFalse($made['isError'], $made['text']);
+        $newAppId = $made['data']['id'] ?? '';
+        $this->assertNotSame('', $newAppId);
+
+        // Can manage the app it created…
+        $this->assertFalse($this->tool($tok, 'update_app', ['appId' => $newAppId, 'hideNav' => true])['isError']);
+        // …but NOT a pre-existing app.
+        $bad = $this->tool($tok, 'update_app', ['appId' => $this->appB, 'name' => 'hijack']);
+        $this->assertTrue($bad['isError']);
+        $this->assertStringContainsString('created', $bad['text']);
+
+        // list_apps shows only the created app.
+        $list = $this->tool($tok, 'list_apps')['data'];
+        $this->assertCount(1, $list);
+        $this->assertSame($newAppId, $list[0]['id']);
+    }
+
+    public function testCreatorTokenConfinedToFormsItCreates(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];
+        $made = $this->tool($tok, 'create_form', ['title' => 'Tasks', 'fields' => [['id' => 'x', 'type' => 'short_text', 'label' => 'X', 'required' => false]]]);
+        $this->assertFalse($made['isError'], $made['text']);
+        $fid = $made['data']['id'] ?? '';
+        // Can read the form it created…
+        $this->assertFalse($this->tool($tok, 'get_form', ['formId' => $fid])['isError']);
+        // …but NOT an existing form it didn't create.
+        $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
     }
 }

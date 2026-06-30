@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2, Plug, Loader2, Upload } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2, Plug, Upload } from 'lucide-react';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -23,7 +23,7 @@ const APPS_PAGE = 9;
 
 export function AppsDashboard() {
   const navigate = useNavigate();
-  const { apps, isLoading, fetchApps, deleteApp, createApp } = useAppStore();
+  const { apps, isLoading, fetchApps, deleteApp } = useAppStore();
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -31,17 +31,10 @@ export function AppsDashboard() {
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showGenerate, setShowGenerate] = useState(false);
   const [showImport, setShowImport] = useState(false);
-  const [handing, setHanding] = useState(false);
-  const [mcpAppId, setMcpAppId] = useState<string | null>(null);
+  const [showHandToAi, setShowHandToAi] = useState(false);
   const aiAvailable = useAiAvailable();
 
-  // Create a blank app and immediately offer an MCP connection link so an external AI can build it out.
-  const handToAi = async () => {
-    setHanding(true);
-    const app = await createApp({ name: 'Untitled app' });
-    setHanding(false);
-    if (app) setMcpAppId(app.id);
-  };
+  // Open a "creator" MCP connection so an external AI can build a brand-new app itself — no placeholder.
 
   useEffect(() => {
     fetchApps();
@@ -83,7 +76,7 @@ export function AppsDashboard() {
         title="Apps"
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handToAi} disabled={handing} leftIcon={handing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />} title="Create a blank app and hand it to your own AI to build via MCP">
+            <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} title="Share a temporary MCP link so your own AI can build a new app">
               Hand to an AI
             </Button>
             {aiAvailable && (
@@ -181,7 +174,7 @@ export function AppsDashboard() {
 
       <GenerateAppModal isOpen={showGenerate} onClose={() => { setShowGenerate(false); fetchApps(); }} />
       {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
-      <ConnectAiModal isOpen={mcpAppId !== null} onClose={() => { setMcpAppId(null); fetchApps(); }} appId={mcpAppId ?? undefined} appName="your new app" />
+      <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
     </div>
   );
 }

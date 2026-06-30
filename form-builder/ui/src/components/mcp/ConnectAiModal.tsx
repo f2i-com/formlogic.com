@@ -9,7 +9,7 @@ import { formatRelativeTime, copyToClipboard } from '../../lib/utils';
 type Session = { id: string; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
 type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout: number };
 
-export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string }) {
+export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = false }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string; creator?: boolean }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<NewToken | null>(null);
@@ -24,7 +24,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: bo
 
   const generate = async () => {
     setGenerating(true);
-    const r = await api.createMcpToken(appId);
+    const r = await api.createMcpToken(appId, creator);
     setGenerating(false);
     if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
     setFresh(r.data);
@@ -56,7 +56,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: bo
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
       <div className="p-5 sm:p-6 space-y-5">
         <p className="text-sm text-gray-600 dark:text-slate-300">
-          Give an external AI (Claude, Cursor, …) access to build and edit {appName ? <span className="font-medium">{appName}</span> : 'your apps'} over MCP — it can create forms, write custom screens, and wire up the app. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.
+          Give an external AI (Claude, Cursor, …) access to build and edit {appName ? <span className="font-medium">{appName}</span> : (creator ? <span className="font-medium">a brand-new app</span> : 'your apps')} over MCP — it can create forms, write custom screens, and wire up the app. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.{creator ? ' The AI creates the app itself — nothing is added until it does.' : ''}
         </p>
 
         {fresh ? (
@@ -66,7 +66,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: bo
               <span>Copy this now — the token is shown once. It can create/edit your content, so treat it like a password. Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
             </div>
             <p className="text-[11px] text-gray-500 dark:text-slate-400">
-              Access: <span className="font-medium text-gray-700 dark:text-slate-300">{appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>.
+              Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
             </p>
             <div>
               <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>

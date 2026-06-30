@@ -636,8 +636,8 @@ class ApiClient {
   }
 
   // MCP: ephemeral tokens that let an external AI drive the API via the MCP server.
-  async createMcpToken(appId?: string): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
-    return this.request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ appId }) });
+  async createMcpToken(appId?: string, creator = false): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
+    return this.request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ appId, creator }) });
   }
   async listMcpTokens(appId?: string): Promise<ApiResponse<{ sessions: Array<{ id: string; appId: string | null; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string }> }>> {
     return this.request(`/mcp/tokens${appId ? `?appId=${appId}` : ''}`);

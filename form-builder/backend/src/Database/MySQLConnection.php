@@ -513,6 +513,15 @@ class MySQLConnection
             }
         } catch (\Throwable $e) { /* table may not exist yet on a fresh install — CREATE handles it */ }
 
+        // Add created_ids column to mcp_sessions — for "creator" tokens that can make a new app but are
+        // confined to the apps/forms they themselves create ({apps:[],forms:[]}; NULL = not a creator token).
+        try {
+            $result = $pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'created_ids'");
+            if ($result->rowCount() === 0) {
+                $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN created_ids JSON DEFAULT NULL AFTER scopes");
+            }
+        } catch (\Throwable $e) { /* table may not exist yet on a fresh install — CREATE handles it */ }
+
         // Convert audit_log details column from JSON to TEXT (prevents MySQL key reordering)
         $result = $pdo->query("SHOW COLUMNS FROM audit_log LIKE 'details'");
         $detailsCol = $result->fetch(PDO::FETCH_ASSOC);
@@ -697,6 +706,7 @@ class MySQLConnection
                 app_id VARCHAR(36) DEFAULT NULL,
                 token_hash VARCHAR(64) NOT NULL,
                 scopes JSON DEFAULT NULL,
+                created_ids JSON DEFAULT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 idle_timeout_seconds INT NOT NULL DEFAULT 1800,
                 last_used_at TIMESTAMP NULL,

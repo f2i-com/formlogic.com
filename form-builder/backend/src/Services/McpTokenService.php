@@ -32,8 +32,11 @@ class McpTokenService
 
     /**
      * Mint a token. Returns ['token' => '<plaintext, shown once>', 'id', 'expiresAt', 'idleTimeout'].
+     *
+     * $creator = a "creator" token: it can create NEW apps but is confined to the apps/forms it creates
+     * (it never sees or touches the owner's existing apps). Implies app_id = null. Used by "Hand to an AI".
      */
-    public function create(string $userId, ?string $appId = null, int $ttl = self::DEFAULT_TTL, int $idle = self::DEFAULT_IDLE, ?array $scopes = null): array
+    public function create(string $userId, ?string $appId = null, int $ttl = self::DEFAULT_TTL, int $idle = self::DEFAULT_IDLE, ?array $scopes = null, bool $creator = false): array
     {
         $ttl = max(300, min($ttl, self::MAX_TTL));   // 5m … 24h
         $idle = max(300, min($idle, self::MAX_TTL));
@@ -41,14 +44,17 @@ class McpTokenService
         if (empty($scopes)) {
             $scopes = self::DEFAULT_SCOPES;
         }
+        if ($creator) {
+            $appId = null; // a creator token is not pre-scoped to an existing app
+        }
         $id = $this->uuid();
         $raw = self::TOKEN_PREFIX . bin2hex(random_bytes(24));
         $hash = hash('sha256', $raw);
         $expiresAt = date('Y-m-d H:i:s', time() + $ttl);
 
         $stmt = $this->db()->prepare("
-            INSERT INTO mcp_sessions (id, user_id, app_id, token_hash, scopes, expires_at, idle_timeout_seconds, created_at)
-            VALUES (:id, :user_id, :app_id, :hash, :scopes, :expires_at, :idle, :created_at)
+            INSERT INTO mcp_sessions (id, user_id, app_id, token_hash, scopes, created_ids, expires_at, idle_timeout_seconds, created_at)
+            VALUES (:id, :user_id, :app_id, :hash, :scopes, :created_ids, :expires_at, :idle, :created_at)
         ");
         $stmt->execute([
             'id' => $id,
@@ -56,12 +62,30 @@ class McpTokenService
             'app_id' => $appId,
             'hash' => $hash,
             'scopes' => json_encode($scopes),
+            'created_ids' => $creator ? json_encode(['apps' => [], 'forms' => []]) : null,
             'expires_at' => $expiresAt,
             'idle' => $idle,
             'created_at' => date('Y-m-d H:i:s'),
         ]);
 
-        return ['token' => $raw, 'id' => $id, 'appId' => $appId, 'scopes' => $scopes, 'expiresAt' => $expiresAt, 'idleTimeout' => $idle];
+        return ['token' => $raw, 'id' => $id, 'appId' => $appId, 'scopes' => $scopes, 'creator' => $creator, 'expiresAt' => $expiresAt, 'idleTimeout' => $idle];
+    }
+
+    /**
+     * Record an app/form a creator token just created, so the token can keep managing it on later calls.
+     * No-op for non-creator tokens (created_ids is null). $kind is internal ('apps' | 'forms').
+     */
+    public function recordCreated(string $sessionId, string $kind, string $resourceId): void
+    {
+        if ($kind !== 'apps' && $kind !== 'forms') {
+            return;
+        }
+        $stmt = $this->db()->prepare(
+            "UPDATE mcp_sessions
+             SET created_ids = JSON_ARRAY_APPEND(COALESCE(created_ids, '{\"apps\":[],\"forms\":[]}'), :path, :id)
+             WHERE id = :sid AND created_ids IS NOT NULL"
+        );
+        $stmt->execute(['path' => '$.' . $kind, 'id' => $resourceId, 'sid' => $sessionId]);
     }
 
     /**
@@ -75,7 +99,7 @@ class McpTokenService
         }
         $hash = hash('sha256', $token);
         $stmt = $this->db()->prepare("
-            SELECT id, user_id, app_id, scopes, expires_at, idle_timeout_seconds, last_used_at, revoked_at
+            SELECT id, user_id, app_id, scopes, created_ids, expires_at, idle_timeout_seconds, last_used_at, revoked_at
             FROM mcp_sessions WHERE token_hash = :hash LIMIT 1
         ");
         $stmt->execute(['hash' => $hash]);
@@ -94,13 +118,19 @@ class McpTokenService
         $upd->execute(['ts' => date('Y-m-d H:i:s', $now), 'ip' => $ip, 'id' => $row['id']]);
 
         $scopes = is_string($row['scopes'] ?? null) ? (json_decode($row['scopes'], true) ?: self::DEFAULT_SCOPES) : self::DEFAULT_SCOPES;
-        return ['id' => $row['id'], 'userId' => $row['user_id'], 'appId' => $row['app_id'], 'scopes' => $scopes];
+        // created_ids present => a creator token; normalize to {apps:[],forms:[]}, else null.
+        $created = null;
+        if (is_string($row['created_ids'] ?? null)) {
+            $decoded = json_decode($row['created_ids'], true);
+            $created = ['apps' => array_values((array) ($decoded['apps'] ?? [])), 'forms' => array_values((array) ($decoded['forms'] ?? []))];
+        }
+        return ['id' => $row['id'], 'userId' => $row['user_id'], 'appId' => $row['app_id'], 'scopes' => $scopes, 'created' => $created];
     }
 
     /** Active (non-revoked, non-expired) sessions for a user — for the "Connect an AI" UI. */
     public function listActive(string $userId, ?string $appId = null): array
     {
-        $sql = "SELECT id, app_id, scopes, expires_at, idle_timeout_seconds, last_used_at, created_at
+        $sql = "SELECT id, app_id, scopes, created_ids, expires_at, idle_timeout_seconds, last_used_at, created_at
                 FROM mcp_sessions WHERE user_id = :uid AND revoked_at IS NULL AND expires_at > NOW()";
         $params = ['uid' => $userId];
         if ($appId !== null) {
@@ -113,6 +143,7 @@ class McpTokenService
         return array_map(static fn ($r) => [
             'id' => $r['id'],
             'appId' => $r['app_id'],
+            'creator' => ($r['created_ids'] ?? null) !== null,
             'scopes' => is_string($r['scopes'] ?? null) ? (json_decode($r['scopes'], true) ?: []) : [],
             'expiresAt' => $r['expires_at'],
             'idleTimeout' => (int) $r['idle_timeout_seconds'],

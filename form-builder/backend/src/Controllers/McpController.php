@@ -43,7 +43,9 @@ class McpController
     {
         $userId = $request->getAttribute('userId');
         $body = $request->getParsedBody() ?? [];
-        $appId = is_string($body['appId'] ?? null) ? $body['appId'] : null;
+        // A "creator" token lets the AI make a NEW app (confined to what it creates) — no placeholder app.
+        $creator = ($body['creator'] ?? false) === true;
+        $appId = (!$creator && is_string($body['appId'] ?? null)) ? $body['appId'] : null;
         // If scoped to an app, verify ownership.
         if ($appId !== null) {
             $app = $this->appService->getApp($appId);
@@ -54,8 +56,8 @@ class McpController
         $ttl = (int) ($body['ttl'] ?? 3600);
         $idle = (int) ($body['idle'] ?? 900);
         $scopes = is_array($body['scopes'] ?? null) ? $body['scopes'] : null;
-        $result = $this->tokens->create($userId, $appId, $ttl, $idle, $scopes);
-        $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId]);
+        $result = $this->tokens->create($userId, $appId, $ttl, $idle, $scopes, $creator);
+        $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId, 'creator' => $creator]);
 
         $uri = $request->getUri();
         $base = $uri->getScheme() . '://' . $uri->getHost() . ($uri->getPort() ? ':' . $uri->getPort() : '');
@@ -108,6 +110,8 @@ class McpController
             }
             $out = [];
             foreach ($body as $msg) {
+                // $session is passed by reference so a create_app/create_form earlier in the batch is
+                // visible to a dependent call later in the same batch (creator tokens).
                 $r = is_array($msg) ? $this->dispatch($msg, $session, $request) : null;
                 if ($r !== null) {
                     $out[] = $r;
@@ -121,7 +125,7 @@ class McpController
     }
 
     /** Handle one JSON-RPC message. Returns the response array, or null for notifications. */
-    private function dispatch(array $message, array $session, Request $request): ?array
+    private function dispatch(array $message, array &$session, Request $request): ?array
     {
         $id = $message['id'] ?? null;
         $method = (string) ($message['method'] ?? '');
@@ -164,10 +168,11 @@ class McpController
     ];
 
     /** Execute a tool, scoped to the session owner + the token's scopes + (optional) app scope. */
-    private function callTool(string $name, array $args, array $session, Request $request): array
+    private function callTool(string $name, array $args, array &$session, Request $request): array
     {
         $userId = $session['userId'];
         $scopedApp = $session['appId'] ?? null;
+        $creatorMode = is_array($session['created'] ?? null); // a "creator" token: confined to what it makes
         try {
             $this->requireScope($session, self::TOOL_SCOPES[$name] ?? '__none__');
             switch ($name) {
@@ -175,7 +180,12 @@ class McpController
                     if ($scopedApp !== null) {
                         $data = array_map(static fn ($f) => ['id' => $f['formId'], 'title' => $f['displayName'], 'status' => $f['formStatus'] ?? 'draft'], $this->appService->getAppForms($scopedApp));
                     } else {
-                        $data = array_map(static fn ($f) => ['id' => $f['id'], 'title' => $f['title'], 'status' => $f['status'] ?? 'draft', 'fieldCount' => $f['fieldCount'] ?? count($f['fields'] ?? [])], $this->formService->getAllForms($userId));
+                        $forms = $this->formService->getAllForms($userId);
+                        if ($creatorMode) {
+                            $allowed = $this->creatorFormIds($session);
+                            $forms = array_values(array_filter($forms, static fn ($f) => isset($allowed[$f['id']])));
+                        }
+                        $data = array_map(static fn ($f) => ['id' => $f['id'], 'title' => $f['title'], 'status' => $f['status'] ?? 'draft', 'fieldCount' => $f['fieldCount'] ?? count($f['fields'] ?? [])], $forms);
                     }
                     break;
                 case 'get_form':
@@ -188,6 +198,11 @@ class McpController
                     // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
                     if ($scopedApp !== null && !empty($data['id'])) {
                         $this->appService->addFormToApp($scopedApp, (string) $data['id']);
+                    }
+                    // Creator token: remember the form so the token can keep editing it (and attach it later).
+                    if ($creatorMode && !empty($data['id'])) {
+                        $session['created']['forms'][] = (string) $data['id'];
+                        $this->tokens->recordCreated((string) $session['id'], 'forms', (string) $data['id']);
                     }
                     $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null, 'appId' => $scopedApp]);
                     break;
@@ -202,6 +217,9 @@ class McpController
                     $apps = $this->appService->getAllApps($userId);
                     if ($scopedApp !== null) {
                         $apps = array_values(array_filter($apps, static fn ($a) => $a['id'] === $scopedApp));
+                    } elseif ($creatorMode) {
+                        $mine = $session['created']['apps'] ?? [];
+                        $apps = array_values(array_filter($apps, static fn ($a) => in_array($a['id'], $mine, true)));
                     }
                     $data = array_map(static fn ($a) => ['id' => $a['id'], 'name' => $a['name'], 'slug' => $a['slug'] ?? null, 'status' => $a['status'] ?? 'draft'], $apps);
                     break;
@@ -210,6 +228,11 @@ class McpController
                         throw new \Exception('This token is scoped to one app and cannot create new apps');
                     }
                     $data = $this->appService->createApp(['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null], $userId);
+                    // Creator token: confine future access to this newly-created app.
+                    if ($creatorMode && !empty($data['id'])) {
+                        $session['created']['apps'][] = (string) $data['id'];
+                        $this->tokens->recordCreated((string) $session['id'], 'apps', (string) $data['id']);
+                    }
                     $this->audit($request, 'mcp.create_app', $userId, ['appId' => $data['id'] ?? null]);
                     break;
                 case 'update_app':
@@ -267,22 +290,62 @@ class McpController
         }
     }
 
-    /** If the token is app-scoped, the target app must match. */
+    /** The target app must be in scope: the one scoped app, or (creator token) an app it created. */
     private function assertAppScope(array $session, string $appId): void
     {
+        if (is_array($session['created'] ?? null)) {
+            if ($appId === '' || !in_array($appId, $session['created']['apps'] ?? [], true)) {
+                throw new \Exception('This MCP link can only manage the app(s) it created');
+            }
+            return;
+        }
         $scoped = $session['appId'] ?? null;
         if ($scoped !== null && $scoped !== $appId) {
             throw new \Exception('This MCP token is scoped to a single app and cannot touch other apps');
         }
     }
 
-    /** If the token is app-scoped, the target form must belong to that app. */
+    /** The target form must be in scope: belong to the scoped app, or (creator token) be one it created
+     *  / belong to an app it created. */
     private function assertFormInScope(array $session, string $formId): void
     {
+        if (is_array($session['created'] ?? null)) {
+            $createdForms = $session['created']['forms'] ?? [];
+            if ($formId !== '' && (in_array($formId, $createdForms, true) || $this->formInAnyApp($session['created']['apps'] ?? [], $formId))) {
+                return;
+            }
+            throw new \Exception('This MCP link can only touch forms it created (or forms in apps it created)');
+        }
         $scoped = $session['appId'] ?? null;
         if ($scoped !== null && ($formId === '' || !$this->appService->formBelongsToApp($scoped, $formId))) {
             throw new \Exception('This MCP token is scoped to an app; that form is not part of it');
         }
+    }
+
+    /** True if $formId belongs to any of the given apps. */
+    private function formInAnyApp(array $appIds, string $formId): bool
+    {
+        foreach ($appIds as $aid) {
+            if ($this->appService->formBelongsToApp((string) $aid, $formId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The set (formId => true) a creator token may read in list_forms: forms it created + forms in its apps. */
+    private function creatorFormIds(array $session): array
+    {
+        $set = [];
+        foreach ($session['created']['forms'] ?? [] as $fid) {
+            $set[(string) $fid] = true;
+        }
+        foreach ($session['created']['apps'] ?? [] as $aid) {
+            foreach ($this->appService->getAppForms((string) $aid) as $f) {
+                $set[$f['formId']] = true;
+            }
+        }
+        return $set;
     }
 
     /** Size caps for MCP-created/updated forms (MCP bypasses FormController, so enforce here). */
