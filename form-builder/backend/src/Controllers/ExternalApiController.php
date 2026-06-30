@@ -9,9 +9,13 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\WebhookService;
 use FormLogic\Services\ScriptRejection;
+use FormLogic\Services\EmailService;
+use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
 
 class ExternalApiController
 {
@@ -21,16 +25,62 @@ class ExternalApiController
     private ResponseService $responseService;
     private WebhookService $webhookService;
     private IpResolver $ipResolver;
+    private ?EmailService $emailService;
+    private ?AuditService $auditService;
+    private LoggerInterface $logger;
 
     public function __construct(
         FormService $formService,
         ResponseService $responseService,
-        WebhookService $webhookService
+        WebhookService $webhookService,
+        ?EmailService $emailService = null,
+        ?AuditService $auditService = null,
+        ?LoggerInterface $logger = null
     ) {
         $this->formService = $formService;
         $this->responseService = $responseService;
         $this->webhookService = $webhookService;
+        $this->emailService = $emailService;
+        $this->auditService = $auditService;
+        $this->logger = $logger ?? new NullLogger();
         $this->ipResolver = IpResolver::fromEnvironment();
+    }
+
+    /** Best-effort "new response" email to the form owner (Notifications tab) — never fails the submit. */
+    private function maybeNotifyNewResponse(array $form): void
+    {
+        if ($this->emailService === null) {
+            return;
+        }
+        $notifications = $form['settings']['notifications'] ?? [];
+        if (empty($notifications['emailNotifications']) || empty($notifications['notificationEmail'])) {
+            return;
+        }
+        try {
+            $rawTitle = (string) ($form['title'] ?? 'your form');
+            $title = htmlspecialchars($rawTitle, ENT_QUOTES); // HTML body only
+            $formId = (string) ($form['id'] ?? '');
+            $html = "<p>You've received a new response on <strong>{$title}</strong> (via the API).</p>"
+                . "<p>Sign in to FormLogic to view it in the form's responses.</p>"
+                . ($formId !== '' ? "<p style=\"color:#888;font-size:12px\">Form ID: {$formId}</p>" : '');
+            $this->emailService->send((string) $notifications['notificationEmail'], "New response: {$rawTitle}", $html);
+        } catch (\Throwable $e) {
+            $this->logger->warning('External-API new-response notification failed', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /** Audit log helper. The middleware sets `userId` to the API key's owner, so audits attribute correctly. */
+    private function audit(Request $request, string $action, string $resourceId, array $details = []): void
+    {
+        if ($this->auditService === null) {
+            return;
+        }
+        $userId = $request->getAttribute('userId');
+        $ip = $this->ipResolver->getClientIp($request);
+        $this->auditService->log($action, 'response', $resourceId, $userId, $ip, array_merge($details, [
+            'via' => 'api',
+            'apiKeyId' => $request->getAttribute('apiKeyId'),
+        ]));
     }
 
     // ── Forms ────────────────────────────────────────────────
@@ -171,6 +221,10 @@ class ExternalApiController
             // Write inverse linked_record links (External API submissions skipped this).
             $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $data['answers'] ?? []);
 
+            // Parity with the public submit path: notify the owner + audit the create.
+            $this->maybeNotifyNewResponse($form);
+            $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId']]);
+
             return $this->jsonResponse($response, ['response' => $result], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -279,6 +333,7 @@ class ExternalApiController
                 } else {
                     $this->responseService->syncResponseLinks($args['formId'], $result['id'] ?? '', $form['fields'] ?? [], $item['answers'] ?? []);
                     $results[] = ['index' => $index, 'success' => true, 'responseId' => $result['id'] ?? null];
+                    $this->audit($request, 'response.create', $result['id'] ?? '', ['formId' => $args['formId'], 'batch' => true]);
                     $createdCount++;
                 }
             } catch (\RuntimeException | \InvalidArgumentException $e) {
@@ -289,6 +344,11 @@ class ExternalApiController
         }
 
         $this->responseService->releaseFormLock($quotaLock);
+
+        // One owner notification for the whole batch (avoids N emails for N responses).
+        if ($createdCount > 0) {
+            $this->maybeNotifyNewResponse($form);
+        }
 
         $succeeded = count(array_filter($results, fn($r) => $r['success']));
         return $this->jsonResponse($response, [
@@ -386,7 +446,14 @@ class ExternalApiController
             if (isset($data['answers']) && is_array($data['answers'])) {
                 $this->responseService->syncResponseLinks($args['formId'], $args['id'], $form['fields'] ?? [], $data['answers']);
             }
-            return $this->jsonResponse($response, ['response' => $this->sanitizeResponseData($formResponse)]);
+            // Only echo the full record (response contents / PII) when the key ALSO holds
+            // responses:read. A responses:manage-only key gets just an acknowledgement, so the update
+            // endpoint can't be used to read content that would otherwise require responses:read.
+            $scopes = $request->getAttribute('apiKeyScopes');
+            $canRead = is_array($scopes) && in_array('responses:read', $scopes, true);
+            return $this->jsonResponse($response, $canRead
+                ? ['response' => $this->sanitizeResponseData($formResponse)]
+                : ['success' => true, 'id' => $args['id']]);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
@@ -691,6 +758,12 @@ class ExternalApiController
                 continue;
             }
 
+            // Generic oversized-scalar guard (mirrors the public path's 100k cap).
+            if (is_scalar($value) && strlen((string) $value) > 100000) {
+                $errors[$fieldId] = 'Value is too long';
+                continue;
+            }
+
             // Type-specific validation (mirrors ResponseController::validateFieldType)
             switch ($fieldType) {
                 case 'email':
@@ -706,6 +779,8 @@ class ExternalApiController
                 case 'number':
                     if (!is_numeric($value)) {
                         $errors[$fieldId] = 'Must be a number';
+                    } elseif (strlen((string) $value) > 64) {
+                        $errors[$fieldId] = 'Number is too long';
                     }
                     break;
                 case 'phone':
@@ -799,6 +874,11 @@ class ExternalApiController
                             foreach ($value as $item) {
                                 if (!is_array($item) || !isset($item['id']) || !isset($item['originalFilename'])) {
                                     $errors[$fieldId] = 'Invalid file metadata';
+                                    break;
+                                }
+                                // Filename must be a string within the 255-char cap (mirrors the public path).
+                                if (!is_string($item['originalFilename']) || strlen($item['originalFilename']) > 255) {
+                                    $errors[$fieldId] = 'Invalid file name';
                                     break;
                                 }
                             }

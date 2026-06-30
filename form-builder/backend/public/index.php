@@ -362,7 +362,10 @@ $container->set(ExternalApiController::class, function (Container $c) {
     return new ExternalApiController(
         $c->get(FormService::class),
         $c->get(ResponseService::class),
-        $c->get(WebhookService::class)
+        $c->get(WebhookService::class),
+        $c->get(\FormLogic\Services\EmailService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
     );
 });
 
