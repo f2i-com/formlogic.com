@@ -966,7 +966,7 @@ export function AppFormView() {
   // A form's custom screen takes over its view in the app runtime too (SDK routed through the app API).
   {
     const cs = form?.customScreen as (CustomScreen | undefined);
-    if (cs?.enabled && (cs.html || cs.js)) {
+    if (cs?.enabled && (cs.html || cs.js || cs.ts)) {
       return (
         <div className="h-full min-h-[60vh]">
           <CustomScreenRuntime

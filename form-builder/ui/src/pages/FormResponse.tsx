@@ -966,7 +966,7 @@ export default function FormResponse() {
   }
 
   // A custom screen takes over the whole form experience (public link + embed).
-  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js)) {
+  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts)) {
     return (
       <div className="h-screen w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime

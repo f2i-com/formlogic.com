@@ -116,7 +116,7 @@ export default function FormPreview() {
   }
 
   // A custom screen replaces the default form in preview too (owner context → live data).
-  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js)) {
+  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts)) {
     return (
       <div className="h-screen w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime

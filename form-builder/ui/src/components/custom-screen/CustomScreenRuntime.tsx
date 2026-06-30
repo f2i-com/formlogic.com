@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
+import { compileScreenCode } from '../../lib/screenCompile';
 
 /**
  * Renders a custom screen ({ html, css, js }) inside a SANDBOXED iframe and bridges the FormLogic
@@ -48,7 +49,7 @@ const SDK_SHIM = `
 })();
 `;
 
-export interface CustomScreen { html?: string; css?: string; js?: string }
+export interface CustomScreen { html?: string; css?: string; js?: string; ts?: string }
 
 export function CustomScreenRuntime({
   screen,
@@ -73,11 +74,23 @@ export function CustomScreenRuntime({
   const rateRef = useRef(createSdkRateLimiter());
   const user = useAuthStore((s) => s.user);
 
+  // Screens normally carry precompiled `js`. Fall back to compiling `ts` on the fly (e.g. one an AI wrote
+  // over MCP that was never opened in the Studio) — lazy, so public pages with `js` never load esbuild.
+  const [compiledJs, setCompiledJs] = useState<string>('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!screen.js && screen.ts) {
+      compileScreenCode(screen.ts).then((r) => { if (!cancelled) setCompiledJs(r.js); });
+    }
+    return () => { cancelled = true; };
+  }, [screen.js, screen.ts]);
+  const effectiveJs = screen.js || compiledJs || '';
+
   const srcDoc = useMemo(() => {
     const css = screen.css || '';
     const html = screen.html || '';
     // Neutralize an early </script> in user code so it can't break out of its <script> block.
-    const js = (screen.js || '').replace(/<\/script>/gi, '<\\/script>');
+    const js = effectiveJs.replace(/<\/script>/gi, '<\\/script>');
     // SDK shim goes in <head> so window.FormLogic exists before any user script (inline or block) runs.
     return `<!doctype html><html><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
@@ -85,7 +98,7 @@ export function CustomScreenRuntime({
       + `<script>${SDK_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
-  }, [screen.html, screen.css, screen.js]);
+  }, [screen.html, screen.css, effectiveJs]);
 
   useEffect(() => {
     const handler = async (e: MessageEvent) => {

@@ -3,20 +3,22 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Sparkles } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
+import { CodeEditor } from '../components/ui/CodeEditor';
 import { AppCustomScreenRuntime } from '../components/custom-screen/AppCustomScreenRuntime';
+import { compileScreenCode } from '../lib/screenCompile';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
 import type { CustomScreen } from '../types/form';
 import type { AppRuntimeForm } from '../types/app';
 
-const EMPTY: CustomScreen = { enabled: true, html: '', css: '', js: '' };
+const EMPTY: CustomScreen = { enabled: true, html: '', css: '', js: '', ts: '' };
 const EXAMPLES = [
   'A colourful home dashboard with a card per form showing its record count, that opens the form on click',
   'A game launcher hub: big tiles for each form, plus a live high-score leaderboard',
   'A staff portal landing: quick-submit the most-used form inline, recent submissions below',
 ];
-type CodeTab = 'html' | 'css' | 'js';
+type CodeTab = 'html' | 'css' | 'code';
 
 export default function AppHomeStudio() {
   const { appId } = useParams<{ appId: string }>();
@@ -27,14 +29,15 @@ export default function AppHomeStudio() {
   const [prompt, setPrompt] = useState('');
   const [screen, setScreen] = useState<CustomScreen>(EMPTY);
   const [preview, setPreview] = useState<CustomScreen>(EMPTY);
-  const [tab, setTab] = useState<CodeTab>('html');
+  const [tab, setTab] = useState<CodeTab>('code');
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
   const previewTimer = useRef<number | undefined>(undefined);
   const aiAvailable = useAiAvailable();
-  useDocumentTitle(`Custom home — ${name || 'App'}`);
+  useDocumentTitle(`Custom app — ${name || 'App'}`);
 
   useEffect(() => {
     if (!appId) return;
@@ -45,8 +48,8 @@ export default function AppHomeStudio() {
       if (!app || cancelled) return;
       setName(app.name || '');
       setSlug(app.slug || '');
-      if (app.customScreen && (app.customScreen.html || app.customScreen.js)) {
-        const cs = { enabled: true, ...app.customScreen };
+      if (app.customScreen && (app.customScreen.html || app.customScreen.js || app.customScreen.ts)) {
+        const cs = { enabled: true, ...app.customScreen, ts: app.customScreen.ts ?? app.customScreen.js ?? '' };
         setScreen(cs);
         setPreview(cs);
       }
@@ -66,40 +69,57 @@ export default function AppHomeStudio() {
     return () => { cancelled = true; };
   }, [appId]);
 
-  const hasScreen = !!(screen.html || screen.js);
+  const hasScreen = !!(screen.html || screen.js || screen.ts);
 
   const generate = async () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
-    const existing = hasScreen ? JSON.stringify({ html: screen.html, css: screen.css, js: screen.js }) : undefined;
+    const existing = hasScreen ? JSON.stringify({ html: screen.html, css: screen.css, js: screen.ts || screen.js }) : undefined;
     const appForms = forms.map((f) => ({ formId: f.formId, title: f.displayName, fields: f.fields }));
     const res = await api.generateScreen(prompt.trim(), undefined, existing, appForms);
     setGenerating(false);
     const g = res.data?.data;
-    if (res.error || !g) { toast.error(typeof res.error === 'string' ? res.error : 'Could not generate the home screen.'); return; }
-    const next = { enabled: true, html: g.html, css: g.css, js: g.js };
+    if (res.error || !g) { toast.error(typeof res.error === 'string' ? res.error : 'Could not generate the app.'); return; }
+    const next = { ...screen, enabled: true, html: g.html, css: g.css, ts: g.js, js: g.js };
     setScreen(next);
     setPreview(next);
+    setCompileError(null);
     setDirty(true);
-    toast.success('Home screen generated — preview on the right.');
+    toast.success('App generated — preview on the right.');
   };
 
   const editCode = (part: CodeTab, value: string) => {
-    const next = { ...screen, [part]: value };
+    const key = part === 'code' ? 'ts' : part;
+    const next = { ...screen, [key]: value };
     setScreen(next);
     setDirty(true);
     window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => setPreview(next), 400);
+    previewTimer.current = window.setTimeout(async () => {
+      if (part === 'code') {
+        const r = await compileScreenCode(next.ts || '');
+        setCompileError(r.error || null);
+        const merged = { ...next, js: r.error ? next.js : r.js };
+        setScreen(merged);
+        setPreview(merged);
+      } else {
+        setPreview(next);
+      }
+    }, 450);
   };
 
   const save = async () => {
     if (!appId || saving) return;
+    const r = await compileScreenCode(screen.ts || '');
+    if (r.error) { setCompileError(r.error); toast.error('Fix the error before saving: ' + r.error); return; }
     setSaving(true);
-    const res = await api.updateApp(appId, { customScreen: { ...screen, enabled: true } });
+    const toSave: CustomScreen = { ...screen, ts: screen.ts || '', js: r.js, enabled: true };
+    const res = await api.updateApp(appId, { customScreen: toSave });
     setSaving(false);
-    if (res.error) { toast.error('Could not save the home screen.'); return; }
+    if (res.error) { toast.error('Could not save.'); return; }
+    setScreen(toSave);
+    setCompileError(null);
     setDirty(false);
-    toast.success('Custom home saved.');
+    toast.success('Custom app saved.');
   };
 
   return (
@@ -109,7 +129,7 @@ export default function AppHomeStudio() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0 flex items-center gap-2">
-          <span className="font-semibold text-gray-900 dark:text-white truncate">Custom Home</span>
+          <span className="font-semibold text-gray-900 dark:text-white truncate">Custom App</span>
           <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
           <span className="text-sm text-gray-400 dark:text-slate-500 truncate hidden sm:inline">· {name}</span>
         </div>
@@ -153,17 +173,23 @@ export default function AppHomeStudio() {
           </div>
 
           <div className="flex items-center gap-1 px-3 pt-3">
-            {(['html', 'css', 'js'] as CodeTab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`text-xs font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${tab === t ? 'bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'}`}>{t.toUpperCase()}</button>
+            {([['html', 'HTML'], ['css', 'CSS'], ['code', 'TypeScript']] as [CodeTab, string][]).map(([t, label]) => (
+              <button key={t} onClick={() => setTab(t)} className={`text-xs font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${tab === t ? 'bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'}`}>{label}</button>
             ))}
           </div>
-          <textarea
-            value={screen[tab] || ''}
-            onChange={(e) => editCode(tab, e.target.value)}
-            spellCheck={false}
-            placeholder={hasScreen ? '' : 'Generate a home screen above, or write code here. The app FormLogic SDK is injected automatically.'}
-            className="flex-1 m-3 mt-2 p-3 text-xs font-mono leading-relaxed bg-gray-900 text-gray-100 border border-gray-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 min-h-[200px]"
-          />
+          <div className="flex-1 m-3 mt-2 min-h-[260px] rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+            <CodeEditor
+              value={tab === 'code' ? (screen.ts || '') : (screen[tab] || '')}
+              onChange={(v) => editCode(tab, v)}
+              language={tab === 'code' ? 'typescript' : tab}
+              sdk="app"
+            />
+          </div>
+          {compileError && (
+            <div className="mx-3 mb-3 px-3 py-2 text-xs rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 font-mono">
+              {compileError}
+            </div>
+          )}
         </div>
 
         <div className="min-h-0 flex flex-col bg-white dark:bg-slate-900">
@@ -171,7 +197,7 @@ export default function AppHomeStudio() {
           <div className="flex-1 min-h-0">
             {!loaded ? (
               <div className="h-full flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary-500" /></div>
-            ) : (preview.html || preview.js) ? (
+            ) : (preview.html || preview.js || preview.ts) ? (
               // key on form ids so the preview re-mounts once forms resolve (records() needs them).
               <AppCustomScreenRuntime key={forms.map((f) => f.formId).join(',')} screen={preview} appSlug={slug} appName={name} forms={forms} className="w-full h-full border-0" />
             ) : (

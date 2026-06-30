@@ -387,7 +387,7 @@ export function AppSettings() {
               { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
               { label: 'Roles', desc: 'Configure roles and permissions', icon: Shield, path: 'roles' },
               { label: 'Relations', desc: 'Define links between forms', icon: Link2, path: 'relations' },
-              { label: 'Custom home', desc: 'A custom AI-built landing page (Beta)', icon: MonitorPlay, path: 'home/edit' },
+              { label: 'Custom', desc: 'Build a full custom frontend (HTML/CSS/TypeScript) over your forms (Beta)', icon: MonitorPlay, path: 'home/edit' },
               { label: 'Deploy', desc: 'Share link and PWA settings', icon: Rocket, path: 'deploy' },
             ].map((item) => (
               <button

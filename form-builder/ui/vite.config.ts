@@ -43,6 +43,9 @@ export default defineConfig({
       },
       workbox: {
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3 MiB for WASM
+        // The Monaco editor + esbuild-wasm compiler are large, lazy, Studio-only chunks — they load on
+        // demand (online authoring), so keep them OUT of the offline precache instead of bloating it.
+        globIgnores: ['**/esbuild-*.wasm', '**/ts.worker-*.js', '**/MonacoEditorImpl-*.js'],
         navigateFallback: '/index.html',
         // SPA fallback for all client routes (the whole app is one SPA), except
         // the API. Was limited to '/app/', which broke offline routing for the

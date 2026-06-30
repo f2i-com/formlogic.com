@@ -3,20 +3,22 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
+import { CodeEditor } from '../components/ui/CodeEditor';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
+import { compileScreenCode } from '../lib/screenCompile';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useAiAvailable } from '../hooks/useAiAvailable';
 import type { CustomScreen } from '../types/form';
 
-const EMPTY: CustomScreen = { enabled: true, html: '', css: '', js: '' };
+const EMPTY: CustomScreen = { enabled: true, html: '', css: '', js: '', ts: '' };
 const EXAMPLES = [
   'A Wordle clone that saves each finished game (word, guesses, won) and shows a leaderboard',
   'A reaction-time test: tap when the box turns green, save the best time, show fastest players',
   'A kanban board backed by this form, with drag-and-drop columns',
 ];
 
-type CodeTab = 'html' | 'css' | 'js';
+type CodeTab = 'html' | 'css' | 'code';
 
 export default function CustomScreenStudio() {
   const { formId } = useParams<{ formId: string }>();
@@ -26,10 +28,11 @@ export default function CustomScreenStudio() {
   const [prompt, setPrompt] = useState('');
   const [screen, setScreen] = useState<CustomScreen>(EMPTY);
   const [preview, setPreview] = useState<CustomScreen>(EMPTY);
-  const [tab, setTab] = useState<CodeTab>('html');
+  const [tab, setTab] = useState<CodeTab>('code');
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [compileError, setCompileError] = useState<string | null>(null);
   const previewTimer = useRef<number | undefined>(undefined);
   const aiAvailable = useAiAvailable();
   useDocumentTitle(`Custom screen — ${title || 'Form'}`);
@@ -43,8 +46,9 @@ export default function CustomScreenStudio() {
       if (!form) return;
       setTitle(form.title || '');
       setFields((form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
-      if (form.customScreen && (form.customScreen.html || form.customScreen.js)) {
-        const cs = { enabled: true, ...form.customScreen };
+      if (form.customScreen && (form.customScreen.html || form.customScreen.js || form.customScreen.ts)) {
+        // Legacy screens have only `js` — treat it as the editable `ts` source.
+        const cs = { enabled: true, ...form.customScreen, ts: form.customScreen.ts ?? form.customScreen.js ?? '' };
         setScreen(cs);
         setPreview(cs);
       }
@@ -52,37 +56,55 @@ export default function CustomScreenStudio() {
     return () => { cancelled = true; };
   }, [formId]);
 
-  const hasScreen = !!(screen.html || screen.js);
+  const hasScreen = !!(screen.html || screen.js || screen.ts);
 
   const generate = async () => {
     if (!prompt.trim() || generating) return;
     setGenerating(true);
-    const existing = hasScreen ? JSON.stringify({ html: screen.html, css: screen.css, js: screen.js }) : undefined;
+    const existing = hasScreen ? JSON.stringify({ html: screen.html, css: screen.css, js: screen.ts || screen.js }) : undefined;
     const res = await api.generateScreen(prompt.trim(), fields, existing);
     setGenerating(false);
     const g = res.data?.data;
     if (res.error || !g) { toast.error(typeof res.error === 'string' ? res.error : 'Could not generate the screen.'); return; }
-    const next = { enabled: true, html: g.html, css: g.css, js: g.js };
+    // The generator emits JS (valid TS) — use it as the editable source + compiled output.
+    const next = { ...screen, enabled: true, html: g.html, css: g.css, ts: g.js, js: g.js };
     setScreen(next);
     setPreview(next);
+    setCompileError(null);
     setDirty(true);
     toast.success('Screen generated — preview on the right.');
   };
 
   const editCode = (part: CodeTab, value: string) => {
-    const next = { ...screen, [part]: value };
+    const key = part === 'code' ? 'ts' : part;
+    const next = { ...screen, [key]: value };
     setScreen(next);
     setDirty(true);
     window.clearTimeout(previewTimer.current);
-    previewTimer.current = window.setTimeout(() => setPreview(next), 400);
+    previewTimer.current = window.setTimeout(async () => {
+      if (part === 'code') {
+        const r = await compileScreenCode(next.ts || '');
+        setCompileError(r.error || null);
+        const merged = { ...next, js: r.error ? next.js : r.js };
+        setScreen(merged);
+        setPreview(merged);
+      } else {
+        setPreview(next);
+      }
+    }, 450);
   };
 
   const save = async () => {
     if (!formId || saving) return;
+    const r = await compileScreenCode(screen.ts || '');
+    if (r.error) { setCompileError(r.error); toast.error('Fix the error before saving: ' + r.error); return; }
     setSaving(true);
-    const res = await api.updateForm(formId, { customScreen: { ...screen, enabled: true } });
+    const toSave: CustomScreen = { ...screen, ts: screen.ts || '', js: r.js, enabled: true };
+    const res = await api.updateForm(formId, { customScreen: toSave });
     setSaving(false);
     if (res.error) { toast.error('Could not save the screen.'); return; }
+    setScreen(toSave);
+    setCompileError(null);
     setDirty(false);
     toast.success('Custom screen saved.');
   };
@@ -184,24 +206,30 @@ export default function CustomScreenStudio() {
 
           {/* Code tabs */}
           <div className="flex items-center gap-1 px-3 pt-3">
-            {(['html', 'css', 'js'] as CodeTab[]).map((t) => (
-              <button key={t} onClick={() => setTab(t)} className={`text-xs font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${tab === t ? 'bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'}`}>{t.toUpperCase()}</button>
+            {([['html', 'HTML'], ['css', 'CSS'], ['code', 'TypeScript']] as [CodeTab, string][]).map(([t, label]) => (
+              <button key={t} onClick={() => setTab(t)} className={`text-xs font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${tab === t ? 'bg-gray-200 dark:bg-slate-700 text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'}`}>{label}</button>
             ))}
           </div>
-          <textarea
-            value={screen[tab] || ''}
-            onChange={(e) => editCode(tab, e.target.value)}
-            spellCheck={false}
-            placeholder={hasScreen ? '' : 'Generate a screen above, or write code here. The FormLogic SDK is injected automatically.'}
-            className="flex-1 m-3 mt-2 p-3 text-xs font-mono leading-relaxed bg-gray-900 text-gray-100 border border-gray-200 dark:border-slate-700 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/30 min-h-[200px]"
-          />
+          <div className="flex-1 m-3 mt-2 min-h-[260px] rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700">
+            <CodeEditor
+              value={tab === 'code' ? (screen.ts || '') : (screen[tab] || '')}
+              onChange={(v) => editCode(tab, v)}
+              language={tab === 'code' ? 'typescript' : tab}
+              sdk="form"
+            />
+          </div>
+          {compileError && (
+            <div className="mx-3 mb-3 px-3 py-2 text-xs rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 font-mono">
+              {compileError}
+            </div>
+          )}
         </div>
 
         {/* Preview */}
         <div className="min-h-0 flex flex-col bg-white dark:bg-slate-900">
           <div className="px-4 h-9 shrink-0 flex items-center text-xs font-medium text-gray-500 dark:text-slate-400 border-b border-gray-200 dark:border-slate-800">Live preview</div>
           <div className="flex-1 min-h-0">
-            {(preview.html || preview.js) ? (
+            {(preview.html || preview.js || preview.ts) ? (
               <CustomScreenRuntime key="preview" screen={preview} formId={formId!} formTitle={title} fields={fields} className="w-full h-full border-0" />
             ) : (
               <div className="h-full flex items-center justify-center text-center px-6">

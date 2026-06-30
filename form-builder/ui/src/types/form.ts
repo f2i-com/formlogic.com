@@ -117,7 +117,10 @@ export interface CustomScreen {
   enabled?: boolean;
   html?: string;
   css?: string;
+  /** Compiled, runnable JS (the artifact the sandbox executes). Produced from `ts` on save. */
   js?: string;
+  /** TypeScript/JS source authored in the editor. Compiled to `js`; the editable source of truth. */
+  ts?: string;
   /** When true, the screen's records() works on the public link (e.g. a leaderboard). */
   publicRecords?: boolean;
   /** Whitelist of field ids exposed publicly via records() — ONLY these answer keys are returned. */

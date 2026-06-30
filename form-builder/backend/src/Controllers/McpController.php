@@ -402,7 +402,7 @@ class McpController
     private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
-        $screen = ['type' => 'object', 'description' => 'Custom screen { enabled, html, css, js } — sandboxed UI over the form; talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
+        $screen = ['type' => 'object', 'description' => 'Custom screen { enabled, html, css, ts } — a sandboxed full frontend. `ts` is TypeScript (plain JS works too); it is compiled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
@@ -415,7 +415,7 @@ class McpController
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],
             ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
-            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom HOME screen (sandboxed UI; SDK spans the app's forms: submit(formId,answers)/records(formId)/navigate(formId)).", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom frontend — a full sandboxed app (HTML/CSS/TypeScript) over the app's forms. The SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
         ];
         $out = [];
