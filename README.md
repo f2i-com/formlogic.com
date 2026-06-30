@@ -301,6 +301,23 @@ finance.transferFee(amount, custodian)
 | GET | `/api/admin/audit/verify` | Yes | Verify audit chain integrity |
 | GET | `/api/health` | No | Health check |
 
+### Programmatic API (API keys)
+
+External REST API for accessing forms with an **API key** (created in **Settings → API keys**), sent
+as `Authorization: Bearer flk_…`. Submissions run the **full pipeline — validation, calculated
+fields, and your `onSubmit` script** — identical to a browser submission.
+
+| Method | Endpoint | Scope |
+|--------|----------|-------|
+| GET | `/api/v1/forms`, `/forms/{id}`, `/forms/{id}/fields` | `forms:read` |
+| POST | `/api/v1/forms/{id}/responses`, `/responses/batch` | `responses:write` |
+| GET | `/api/v1/forms/{id}/responses`, `/responses/{rid}`, `/analytics` | `responses:read` |
+| PUT, DELETE | `/api/v1/forms/{id}/responses/{rid}` | `responses:manage` |
+| GET, POST, PUT, DELETE | `/api/v1/forms/{id}/webhooks` | `webhooks:read` / `webhooks:write` |
+
+See **[docs/API.md](docs/API.md)** for the full reference — scopes, request/response shapes,
+examples, and error codes.
+
 ---
 
 ## Field Types

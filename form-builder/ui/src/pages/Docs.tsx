@@ -44,6 +44,7 @@ const SECTIONS = [
   { id: 'responses', title: 'Viewing responses', icon: Inbox },
   { id: 'exporting', title: 'Exporting data', icon: Download },
   { id: 'analytics', title: 'Analytics', icon: BarChart3 },
+  { id: 'api', title: 'API access', icon: Terminal },
   { id: 'cloud', title: 'Cloud & billing', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
   { id: 'packs', title: 'Packs & templates', icon: Package },
@@ -352,6 +353,34 @@ export function Docs() {
               <H2 id="analytics" icon={BarChart3}>Analytics</H2>
               <P>The analytics page shows the funnel for each form — <strong className="text-gray-900 dark:text-white">views → starts → responses</strong> — plus completion rate, average completion time, responses over time, and a per-field breakdown.</P>
               <Figure src="/screenshots/analytics.png" alt="Form analytics" caption="Built-in analytics — views, completion rate, trends, and field-level breakdowns." />
+            </section>
+
+            {/* API access */}
+            <section className="mb-14">
+              <H2 id="api" icon={Terminal}>API access</H2>
+              <P>Every form has a REST API, so you can use it programmatically — submit responses from your own app, script, or device, and read or manage the data. A submission made through the API runs the <strong className="text-gray-900 dark:text-white">same pipeline as filling out the form</strong>: server-side validation, calculated fields, and your <a href="#scripts" className="text-primary-600 dark:text-primary-400 hover:underline">backend <C>onSubmit</C> script</a> (including reject, set status, and add tags). Full scripting, over HTTP.</P>
+              <P>Create a key, then send it as a Bearer token on every request:</P>
+              <Steps items={[
+                <>Open <C>Settings → API keys</C> and click <strong className="text-gray-900 dark:text-white">Create key</strong>.</>,
+                <>Choose its <strong className="text-gray-900 dark:text-white">scopes</strong> (grant only what's needed), and optionally restrict it to specific forms or set an expiry.</>,
+                <>Copy the key (<C>flk_…</C>) — it's shown <strong className="text-gray-900 dark:text-white">once</strong> and stored hashed. Keep it secret.</>,
+              ]} />
+              <CodeBlock title="submit a response — runs validation + the onSubmit script">{`curl -X POST https://<your-api-host>/api/v1/forms/FORM_ID/responses \\
+  -H "Authorization: Bearer flk_xxx" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "answers": { "full_name": "Ada", "score": 80 } }'
+
+# 201 → { "response": { "status": "approved", "tags": ["high-score"],
+#          "answers": { "full_name": "Ada", "score": 80, "grade": 160 } } }
+# rejected by the script → 422 { "rejected": true, "message": "..." }`}</CodeBlock>
+              <P>What you can do — each route needs a matching scope:</P>
+              <ul className="space-y-1.5 text-gray-600 dark:text-slate-300 list-disc pl-5 my-4">
+                <li><strong className="text-gray-900 dark:text-white">Forms</strong> — list forms, read a form and its fields (<C>forms:read</C>)</li>
+                <li><strong className="text-gray-900 dark:text-white">Responses</strong> — submit single or in batches (<C>responses:write</C>), list/read (<C>responses:read</C>), update/delete (<C>responses:manage</C>)</li>
+                <li><strong className="text-gray-900 dark:text-white">Analytics</strong> — the per-form funnel and field breakdowns (<C>responses:read</C>)</li>
+                <li><strong className="text-gray-900 dark:text-white">Webhooks</strong> — list (<C>webhooks:read</C>), create/update/delete (<C>webhooks:write</C>)</li>
+              </ul>
+              <Tip>A key only ever reaches <strong className="text-gray-900 dark:text-white">your own</strong> forms, is rate-limited, and uses the base URL <C>https://&lt;your-api-host&gt;/api/v1</C>. The full endpoint reference with examples lives in <C>docs/API.md</C> in the repository.</Tip>
             </section>
 
             {/* Cloud & billing */}
