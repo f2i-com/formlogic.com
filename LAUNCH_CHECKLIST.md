@@ -70,8 +70,9 @@ Last reconciled against code: 2026-06-30.
 
 - [x] **Prelude sync checksum CI** — CI fails if the backend prelude is out of sync after the
   build's prebuild sync (tells the dev to run `npm run sync:prelude`). Done.
-- [ ] **Shared JSON error helper** — standardize `{ error, message, code?, details? }` /
-  `errors` across controllers; migrate gradually.
+- [x] **Shared JSON error helper** — `JsonResponseTrait` (jsonResponse + jsonError {error,message,code?,
+  details?}) extracted + adopted by all 15 controllers (removed the copy-pasted private copies, -108
+  lines). Error shape was already uniform; now formalized. Done.
 - [x] **Lint baseline to zero** — ESLint 47→0 across 27 files (justified inline disables for
   correct-but-flagged patterns + real type/memo fixes; fixed a TDZ crash in PackGalleryPage found en
   route). CI lint step is now a HARD GATE. Done.
