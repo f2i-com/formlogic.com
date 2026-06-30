@@ -249,4 +249,23 @@ class McpTest extends TestCase
         $r = $this->rpc($tok, $batch);
         $this->assertSame(-32600, $r['error']['code'] ?? null);
     }
+
+    public function testUpdateAppSlugUniquenessAndValid(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $bSlug = self::$pdo->query('SELECT slug FROM apps WHERE id = ' . self::$pdo->quote($this->appB))->fetchColumn();
+        $dup = $this->tool($tok, 'update_app', ['appId' => $this->appA, 'slug' => $bSlug]);
+        $this->assertTrue($dup['isError'], 'a duplicate slug must be rejected');
+        $fresh = $this->tool($tok, 'update_app', ['appId' => $this->appA, 'slug' => 'mcp-fresh-' . bin2hex(random_bytes(3))]);
+        $this->assertFalse($fresh['isError'], $fresh['text']);
+        $this->assertSame('Test App', $fresh['data']['name'] ?? null);
+    }
+
+    public function testUpdateAppHideNavPersists(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'update_app', ['appId' => $this->appA, 'hideNav' => true]);
+        $this->assertFalse($res['isError'], $res['text']);
+        $this->assertTrue(($res['data']['settings']['hideNav'] ?? null) === true, 'hideNav should persist in settings');
+    }
 }

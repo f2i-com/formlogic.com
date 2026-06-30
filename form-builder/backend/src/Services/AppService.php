@@ -210,7 +210,7 @@ class AppService
                 throw new \InvalidArgumentException('Invalid slug — use lowercase letters, digits, and hyphens (start alphanumeric, max 61 chars)');
             }
             $chk = $this->mysql->prepare("SELECT 1 FROM apps WHERE slug = :slug AND id != :id LIMIT 1");
-            $chk->execute(['slug' => $slug, 'id' => $id]);
+            $chk->execute(['slug' => $slug, 'id' => $appId]);
             if ($chk->fetch()) {
                 throw new \InvalidArgumentException('That slug is already taken — choose another');
             }
