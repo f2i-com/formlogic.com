@@ -37,6 +37,7 @@ interface AppRuntimeState {
   canEdit: (formId: string) => boolean;
   canDelete: (formId: string) => boolean;
   canExport: (formId: string) => boolean;
+  canViewAnalytics: (formId: string) => boolean;
 }
 
 let _appRuntimeSessionCallback: (() => void) | null = null;
@@ -200,6 +201,12 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const p = get().permissions;
         if (!p?.appLevel) return false;
         return p.appLevel.includes('export_responses') || (p.formLevel?.[formId]?.includes('export_responses') ?? false);
+      },
+
+      canViewAnalytics: (formId) => {
+        const p = get().permissions;
+        if (!p?.appLevel) return false;
+        return p.appLevel.includes('view_analytics') || (p.formLevel?.[formId]?.includes('view_analytics') ?? false);
       },
     }),
     {

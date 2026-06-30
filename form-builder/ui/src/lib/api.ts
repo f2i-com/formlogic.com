@@ -236,6 +236,23 @@ class ApiClient {
     URL.revokeObjectURL(url);
   }
 
+  /** Download an app form's responses as CSV (server-gated on the export_responses permission). */
+  async exportAppResponses(appSlug: string, formId: string, fileLabel: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/app/${encodeURIComponent(appSlug)}/forms/${encodeURIComponent(formId)}/export`, { credentials: 'include' });
+    if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
+      throw new Error(response.status === 403 ? 'You do not have permission to export responses.' : 'Failed to export responses');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const safe = (fileLabel || 'form').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'form';
+    a.download = `${safe}-responses.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async logout(): Promise<ApiResponse<{ message: string }>> {
     const result = await this.request<{ message: string }>('/auth/logout', {
       method: 'POST',
@@ -725,6 +742,10 @@ class ApiClient {
 
   async getAppForm(slug: string, formId: string): Promise<ApiResponse<{ form: unknown }>> {
     return this.request(`/app/${slug}/forms/${formId}`);
+  }
+
+  async getAppAnalytics(slug: string, formId: string): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
+    return this.request(`/app/${slug}/forms/${formId}/analytics`);
   }
 
   async createAppResponse(slug: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {

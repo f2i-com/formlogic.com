@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2, Columns3 } from 'lucide-react';
+import { ArrowLeft, Trash2, Columns3, Download } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { cn, parseServerDate } from '../../lib/utils';
+import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
@@ -12,7 +14,8 @@ const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement'
 export function AppDataTable() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
-  const { config, fetchResponses, deleteResponse, canDelete, canViewOwn, canViewAll } = useAppRuntimeStore();
+  const { config, fetchResponses, deleteResponse, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  const [exporting, setExporting] = useState(false);
   const [responses, setResponses] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -237,6 +240,32 @@ export function AppDataTable() {
     ...(visibleColumns.has('status') ? [statusCol] : []),
   ];
 
+  const handleExport = async () => {
+    if (!appSlug || !formId || exporting) return;
+    setExporting(true);
+    try {
+      await api.exportAppResponses(appSlug, formId, runtimeForm?.displayName || 'form');
+    } catch (e) {
+      toast.error('Export failed', e instanceof Error ? e.message : 'Could not export responses.');
+    }
+    setExporting(false);
+  };
+
+  // Only members granted the export_responses permission see the Export button (the
+  // server re-checks it too).
+  const exportButton = (formId && canExport(formId)) ? (
+    <button
+      type="button"
+      onClick={handleExport}
+      disabled={exporting || responses.length === 0}
+      className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+      aria-label="Export responses as CSV"
+    >
+      <Download className="h-4 w-4" />
+      <span className="hidden sm:inline">{exporting ? 'Exporting…' : 'Export'}</span>
+    </button>
+  ) : null;
+
   // Visible fields for mobile cards
   const columnVisibilityDropdown = (
     <div className="relative" ref={colDropdownRef}>
@@ -328,7 +357,7 @@ export function AppDataTable() {
           pageSize={15}
           totalCount={responses.length}
           emptyMessage="No responses yet"
-          searchBarExtra={columnVisibilityDropdown}
+          searchBarExtra={<>{exportButton}{columnVisibilityDropdown}</>}
           onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
           actions={formId && canDelete(formId) ? (r) => (
             <button

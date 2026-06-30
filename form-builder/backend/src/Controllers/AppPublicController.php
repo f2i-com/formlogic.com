@@ -431,6 +431,81 @@ class AppPublicController
         return $this->jsonResponse($response, ['responses' => $responses, 'count' => count($responses), 'scope' => $scope]);
     }
 
+    /**
+     * Export an app form's responses as CSV — gated on the EXPORT_RESPONSES permission
+     * (this is what makes that role permission actually enforce something in the runtime).
+     */
+    public function exportResponses(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $formId = $args['formId'];
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::EXPORT_RESPONSES, $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+
+        $safeTitle = preg_replace('/[^A-Za-z0-9_-]+/', '-', (string) ($form['title'] ?? 'form')) ?: 'form';
+        $filename = trim($safeTitle, '-') . '-responses.csv';
+        $stream = fopen('php://temp', 'r+');
+        $this->responseService->exportResponsesStreaming($formId, $form['fields'] ?? [], $stream);
+        rewind($stream);
+
+        return $response
+            ->withBody(new \Slim\Psr7\Stream($stream))
+            ->withHeader('Content-Type', 'text/csv; charset=utf-8')
+            ->withHeader('Content-Disposition', 'attachment; filename="' . $filename . '"');
+    }
+
+    /**
+     * Aggregate analytics for an app form — gated on the VIEW_ANALYTICS permission (so that
+     * role permission enforces something). Returns aggregates only, never individual answers.
+     */
+    public function analytics(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $formId = $args['formId'];
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ANALYTICS, $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+        $queryParams = $request->getQueryParams();
+        $analytics = $this->responseService->getFormAnalytics($formId, [
+            'from' => $queryParams['from'] ?? null,
+            'to' => $queryParams['to'] ?? null,
+        ]);
+        return $this->jsonResponse($response, ['analytics' => $analytics]);
+    }
+
     public function getResponseById(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];

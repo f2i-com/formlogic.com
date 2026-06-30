@@ -8,6 +8,7 @@ import { AppDashboard } from './AppDashboard';
 import { AppFormView } from './AppFormView';
 import { AppDataTable } from './AppDataTable';
 import { AppResponseDetail } from './AppResponseDetail';
+import { AppAnalytics } from './AppAnalytics';
 import { AppUserProfile } from './AppUserProfile';
 
 export function AppRuntimeRoot() {
@@ -91,6 +92,7 @@ export function AppRuntimeRoot() {
             <Route path="/form/:formId" element={<AppFormView />} />
             <Route path="/form/:formId/responses" element={<AppDataTable />} />
             <Route path="/form/:formId/responses/:responseId" element={<AppResponseDetail />} />
+            <Route path="/form/:formId/analytics" element={<AppAnalytics />} />
             <Route path="/profile" element={<AppUserProfile />} />
             <Route path="*" element={<Navigate to="." replace />} />
           </Routes>

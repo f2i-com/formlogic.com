@@ -1424,7 +1424,9 @@ class ResponseService
             }
             $headers[] = $label;
         }
-        fputcsv($outputStream, $headers);
+        // Pass the $escape arg explicitly: PHP 8.4 deprecates the implicit default, and ''
+        // (no backslash escaping) is the RFC-4180-correct behavior spreadsheets expect.
+        fputcsv($outputStream, $headers, ',', '"', '');
 
         $batchSize = 500;
         $offset = 0;
@@ -1500,7 +1502,7 @@ class ResponseService
                     }
                 }
                 unset($cell);
-                fputcsv($outputStream, $row);
+                fputcsv($outputStream, $row, ',', '"', '');
                 $totalWritten++;
             }
 

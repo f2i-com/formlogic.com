@@ -1210,6 +1210,16 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->listResponses($request, $response, $getArgs($request));
     })->add($authRequired);
 
+    // Export responses (CSV) — gated on the export_responses permission.
+    $group->get('/forms/{formId}/export', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->exportResponses($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Aggregate analytics — gated on the view_analytics permission.
+    $group->get('/forms/{formId}/analytics', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->analytics($request, $response, $getArgs($request));
+    })->add($authRequired);
+
     $group->get('/forms/{formId}/responses/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->getResponseById($request, $response, $getArgs($request));
     })->add($authRequired);

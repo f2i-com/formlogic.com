@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Send, Eye, LayoutGrid } from 'lucide-react';
+import { Send, Eye, LayoutGrid, BarChart3 } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { cn } from '../../lib/utils';
@@ -8,7 +8,7 @@ import { cn } from '../../lib/utils';
 export function AppDashboard() {
   const { appSlug } = useParams();
   const navigate = useNavigate();
-  const { config, canSubmit, canViewOwn, canViewAll } = useAppRuntimeStore();
+  const { config, canSubmit, canViewOwn, canViewAll, canViewAnalytics } = useAppRuntimeStore();
   const redirectedRef = useRef(false);
 
   const forms = useMemo(() => config?.forms || [], [config]);
@@ -62,6 +62,7 @@ export function AppDashboard() {
           {forms.map((form) => {
             const showSubmit = canSubmit(form.formId);
             const showView = canViewOwn(form.formId) || canViewAll(form.formId);
+            const showAnalytics = canViewAnalytics(form.formId);
 
             return (
               <div
@@ -101,7 +102,15 @@ export function AppDashboard() {
                       <Eye className="h-3.5 w-3.5" /> View Data
                     </button>
                   )}
-                  {!showSubmit && !showView && (
+                  {showAnalytics && (
+                    <button
+                      onClick={() => navigate(`/app/${appSlug}/form/${form.formId}/analytics`)}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-gray-200/80 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-all duration-200 cursor-pointer"
+                    >
+                      <BarChart3 className="h-3.5 w-3.5" /> Analytics
+                    </button>
+                  )}
+                  {!showSubmit && !showView && !showAnalytics && (
                     <span className="text-sm text-gray-400 dark:text-slate-500 italic">No actions available</span>
                   )}
                 </div>
