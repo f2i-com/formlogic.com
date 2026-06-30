@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   Undo2,
   Redo2,
+  MonitorPlay,
 } from 'lucide-react';
 import {
   DndContext,
@@ -664,6 +665,12 @@ export default function FormBuilder() {
           <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview" aria-label="Preview form">
             <Eye className="h-4 w-4" />
             <span className="hidden lg:inline ml-2">Preview</span>
+          </Button>
+
+          {/* Custom Screen (Beta) — AI-built sandboxed frontend over this form's data */}
+          <Button variant="outline" size="sm" onClick={() => navigate(`/forms/${form.id}/screen/edit`)} title="Custom screen (Beta)" aria-label="Custom screen">
+            <MonitorPlay className="h-4 w-4" />
+            <span className="hidden lg:inline ml-2">Screen</span>
           </Button>
 
           {/* Share - hidden on smallest screens */}

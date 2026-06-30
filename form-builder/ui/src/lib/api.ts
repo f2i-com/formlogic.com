@@ -510,6 +510,18 @@ class ApiClient {
     });
   }
 
+  /** Generate a custom screen ({ html, css, js }) for a form; data.data is the screen. */
+  async generateScreen(
+    prompt: string,
+    fields?: Array<{ id: string; label: string; type: string }>,
+    existing?: string,
+  ): Promise<ApiResponse<{ data: { html: string; css: string; js: string } }>> {
+    return this.request('/ai/generate-screen', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, fields, existing }),
+    });
+  }
+
   async generateFormFromFile(file: File, prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
     const url = `${this.baseUrl}/ai/generate-form-from-file`;
     const formData = new FormData();
