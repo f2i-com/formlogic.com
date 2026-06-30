@@ -24,7 +24,6 @@ export function AppsDashboard() {
   const [deleteTarget, setDeleteTarget] = useState<App | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showGenerate, setShowGenerate] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -64,40 +63,15 @@ export function AppsDashboard() {
     return map;
   }, [installedPacks]);
 
-  // Build appId → packId map for filtering
-  const appPackIdMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const pack of installedPacks) {
-      for (const appId of pack.appIds ?? []) {
-        map[appId] = pack.packId;
-      }
-    }
-    return map;
-  }, [installedPacks]);
-
-  // Unique pack names for filter options
-  const packOptions = useMemo(() => {
-    const packs = installedPacks
-      .filter((p) => (p.appIds ?? []).length > 0)
-      .map((p) => ({ id: p.packId, name: p.packName }));
-    const seen = new Set<string>();
-    return packs.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-  }, [installedPacks]);
-
-  // Filter apps by search + pack
-  const filteredApps = useMemo(() =>
-    apps.filter((app) => {
-      if (searchQuery && !app.name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-      if (packFilter === 'all') return true;
-      if (packFilter === 'none') return !appPackIdMap[app.id];
-      return appPackIdMap[app.id] === packFilter;
-    }),
-    [apps, searchQuery, packFilter, appPackIdMap]
-  );
+  // Filter apps by search — matches the app name OR its pack's name.
+  const filteredApps = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return apps;
+    return apps.filter((app) =>
+      app.name.toLowerCase().includes(q) ||
+      (appPackMap[app.id]?.toLowerCase().includes(q) ?? false)
+    );
+  }, [apps, searchQuery, appPackMap]);
 
   return (
     <div className="min-h-screen">
@@ -128,30 +102,16 @@ export function AppsDashboard() {
           <p className="text-gray-500 dark:text-slate-400">Build and manage deployable applications</p>
         </div>
 
-        {/* Search and Filter */}
+        {/* Search */}
         {apps.length > 0 && (
-          <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3 sm:items-center">
+          <div className="mb-4 sm:mb-6">
             <Input
-              placeholder="Search apps..."
+              placeholder={Object.keys(appPackMap).length > 0 ? 'Search apps or packs…' : 'Search apps…'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               leftIcon={<Search className="h-4 w-4" />}
               className="w-full sm:max-w-xs lg:max-w-md"
             />
-            {packOptions.length > 0 && (
-              <select
-                value={packFilter}
-                onChange={(e) => setPackFilter(e.target.value)}
-                aria-label="Filter by pack"
-                className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer w-full sm:w-auto"
-              >
-                <option value="all">All Packs</option>
-                <option value="none">No Pack</option>
-                {packOptions.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            )}
           </div>
         )}
 
@@ -173,11 +133,11 @@ export function AppsDashboard() {
         ) : filteredApps.length === 0 ? (
           <EmptyState
             icon={Search}
-            title="No apps match your filters"
-            description="Try a different search term, or clear the filters to see all your apps."
+            title="No apps match your search"
+            description="Try a different search term to see your apps."
             action={
-              <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
-                Clear filters
+              <Button variant="outline" onClick={() => setSearchQuery('')}>
+                Clear search
               </Button>
             }
           />
