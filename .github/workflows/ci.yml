@@ -86,6 +86,13 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
+      # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
+      # the committed backend copy was stale (someone forgot `npm run sync:prelude`).
+      - name: FormLogic prelude in sync (frontend ↔ backend)
+        run: |
+          git diff --exit-code ../backend/resources/formlogic-prelude.js \
+            || (echo "::error::backend prelude is out of sync — run 'npm run sync:prelude' in form-builder/ui and commit the result" && exit 1)
+
       # Hard gate: high/critical advisories fail CI. Run `npm audit fix` to resolve, or pin/
       # override intentionally. (Dev-only tooling advisories: prefer `npm audit fix`; if truly
       # unavoidable, document in LAUNCH_CHECKLIST.md.)

@@ -37,9 +37,9 @@ Last reconciled against code: 2026-06-30.
   (Per-route middleware enforcement + batch-limit E2E remain a nice follow-up.)
 - [x] **Webhook retry-worker health** — heartbeat in `system_meta` surfaced in `/api/health/deep`
   (`webhook_worker`: last-run age + stale/never-run warning); DEPLOYMENT.md §3 updated. Done.
-- [ ] **Dual-store (MySQL↔SQLite) reconcile doctor** — read-only report (+ optional `--fix`) for
-  missing SQLite files, orphaned metadata/uploads/`response_links`, `response_count` drift;
-  summarized in `/api/health/deep`.
+- [x] **Dual-store (MySQL↔SQLite) reconcile doctor** — `ReconcileService` + `bin/reconcile.php`
+  (`--fix` re-syncs counts + drops orphaned links); file-level drift summarized in
+  `/api/health/deep` (`dual_store`). Done.
 - [x] **Reconcile scripting/network docs** — README no longer says "no network access" (onSubmit
   has SSRF-guarded `ctx.http`). Done.
 - [ ] **Account export scope** — decide GDPR-complete vs lightweight; expand (apps/memberships/
@@ -59,13 +59,14 @@ Last reconciled against code: 2026-06-30.
   enforced explains limits/top-up; PayPal sandbox/live warnings admin-only.
 - [ ] **AI config states** — clear unavailable/misconfigured/local-model/insecure-transport;
   status in `/api/health/deep`; never expose keys.
-- [ ] **Doctor UI** — admin page over `/api/health/deep` (DB/storage/logs/QuickJS/billing/doc
-  converters/webhook worker/installer) with remediation hints, no secrets.
+- [x] **Doctor UI** — `/doctor` admin page over `/api/health/deep` (pass/warn/fail cards: DB,
+  storage, QuickJS, billing, doc converters, webhook worker, dual-store) with remediation hints,
+  no secrets. Done.
 
 ## Nice-to-have
 
-- [ ] **Prelude sync checksum CI** — fail if `ui/src/lib/formlogic/prelude.js` and
-  `backend/resources/formlogic-prelude.js` diverge (tell dev to run `npm run sync:prelude`).
+- [x] **Prelude sync checksum CI** — CI fails if the backend prelude is out of sync after the
+  build's prebuild sync (tells the dev to run `npm run sync:prelude`). Done.
 - [ ] **Shared JSON error helper** — standardize `{ error, message, code?, details? }` /
   `errors` across controllers; migrate gradually.
 - [ ] **Lint baseline to zero** — ~49 ESLint problems; drive down, then make lint a hard CI gate.
