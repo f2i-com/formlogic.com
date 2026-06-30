@@ -53,6 +53,7 @@ export function AppRoleEditor() {
     setSelectedRoleId(null);
     setPermissions([]);
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only on appId change; loadData is recreated every render so including it would re-fetch on each render (fetch storm)
   }, [appId]);
 
   useEffect(() => {

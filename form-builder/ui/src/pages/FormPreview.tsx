@@ -47,6 +47,7 @@ export default function FormPreview() {
   // calculated values from the previous form leak into the next form (fields
   // sharing a slug id render pre-filled with the wrong value).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- per-form reset: must clear answers/step/calculated state synchronously when the formId route param changes
     setAnswers({});
     setCalculatedValues({});
     setCurrentStep(0);
@@ -92,6 +93,7 @@ export default function FormPreview() {
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
     if (visibleFields.length > 0 && currentStep >= visibleFields.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clamp persisted step back into state when conditional logic shrinks the visible-field list
       setCurrentStep(visibleFields.length - 1);
     }
   }, [visibleFields.length, currentStep]);

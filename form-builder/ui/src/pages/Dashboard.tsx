@@ -373,6 +373,7 @@ export function Dashboard() {
       ? Math.round((formsWithResponses.length / forms.length) * 100)
       : 0;
     return { totalResponses, avgCompletionRate };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
 
   // Fetch stats from API when in API mode
@@ -486,6 +487,7 @@ export function Dashboard() {
     return allResponses
       .sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime())
       .slice(0, 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
   const recentResponses = storageMode === 'api' ? apiRecent : localRecentResponses;
 

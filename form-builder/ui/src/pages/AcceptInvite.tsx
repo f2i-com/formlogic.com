@@ -28,6 +28,7 @@ export function AcceptInvite() {
   useEffect(() => {
     if (!token || !user || attempted.current) return;
     attempted.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status must switch to 'accepting' synchronously before the async acceptInvitation call when token/user become available
     setStatus('accepting');
     acceptInvitation(token)
       .then(() => {

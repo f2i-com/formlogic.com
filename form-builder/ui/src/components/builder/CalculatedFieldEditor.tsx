@@ -38,6 +38,7 @@ export function CalculatedFieldEditor({
   // Initialize with variable names (convert IDs to variable names for display)
   useEffect(() => {
     const displayExpr = replaceIdsWithVariables(expression, idToVar);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local sync: reset displayed expression when the expression prop or id/var map changes externally
     setLocalExpression(displayExpr);
   }, [expression, idToVar]);
 

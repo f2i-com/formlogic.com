@@ -43,6 +43,7 @@ export function AppDataTable() {
   useEffect(() => {
     const initial = new Set<string>(['submittedAt', 'status']);
     fields.slice(0, 6).forEach((f) => initial.add(f.id));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset column visibility when the viewed form (formId) changes externally
     setVisibleColumns(initial);
   }, [formId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,6 +74,7 @@ export function AppDataTable() {
 
   useEffect(() => {
     if (formId && config && hasViewPermission) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: loading/error reset must be synchronous when deps change
       setLoading(true);
       setError(null);
       let cancelled = false;

@@ -217,7 +217,9 @@ export default function FormBuilder() {
   const [localTitle, setLocalTitle] = useState(form?.title ?? '');
   const titleSyncedFromForm = useRef(form?.title);
   // Sync local title when form title changes externally (e.g., AI generation, undo)
+  // eslint-disable-next-line react-hooks/refs -- official "adjust state during render" pattern: titleSyncedFromForm tracks the last-synced title to gate the re-seed, not read for render output
   if (form && form.title !== titleSyncedFromForm.current) {
+    // eslint-disable-next-line react-hooks/refs -- record the title we just synced so this block re-runs only on the next external title change
     titleSyncedFromForm.current = form.title;
     setLocalTitle(form.title);
   }
@@ -234,6 +236,7 @@ export default function FormBuilder() {
 
   // Flush title to store on unmount
   const flushRef = useRef(flushTitle);
+  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest flushTitle read only by the unmount effect below; not read during render output
   flushRef.current = flushTitle;
   useEffect(() => () => { flushRef.current(); }, []);
 
@@ -253,7 +256,7 @@ export default function FormBuilder() {
 
   const selectedField = form?.fields.find((f) => f.id === selectedFieldId);
   const selectedFieldIndex = form?.fields.findIndex((f) => f.id === selectedFieldId) ?? -1;
-  const formFields = form?.fields ?? [];
+  const formFields = useMemo(() => form?.fields ?? [], [form]);
 
   // Selecting a field opens its settings: the settings tab on mobile, or the docked
   // settings panel on desktop (un-collapse it).

@@ -39,6 +39,7 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
     if (open) {
       setTimeout(() => searchRef.current?.focus(), 50);
     } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset search draft synchronously when the picker closes (open state change)
       setSearch('');
     }
   }, [open]);

@@ -23,6 +23,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status reset must be synchronous when deps change
     setLoading(true);
     setError(null);
     setOffset(0);

@@ -138,6 +138,7 @@ export function LogicEditor({
   // Initialize from existing logic (convert IDs to variable names for display)
   useEffect(() => {
     if (field.conditionalLogic) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset the editor draft when the selected field prop changes
       setAction(field.conditionalLogic.action);
       // Convert field IDs to variable names for display
       const displayExpr = replaceIdsWithVariables(field.conditionalLogic.expression, idToVar);
@@ -162,6 +163,7 @@ export function LogicEditor({
   // is handled explicitly in handleRemoveCondition / handleClear.
   useEffect(() => {
     if (mode === 'simple' && conditions.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- derived expression must be regenerated synchronously when simple conditions/combinator change
       setExpression(simpleConditionToExpression(conditions, combinator, idToVar, numericFieldIds));
     }
   }, [conditions, combinator, mode, idToVar, numericFieldIds]);

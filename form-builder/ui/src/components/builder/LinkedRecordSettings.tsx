@@ -33,6 +33,7 @@ export function LinkedRecordSettings({
   // Load app forms list
   useEffect(() => {
     if (!appId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: loading spinner must show synchronously when appId/currentFormId change
     setLoading(true);
     api.getAppForms(appId).then((result) => {
       if (result.data?.forms) {
@@ -49,6 +50,7 @@ export function LinkedRecordSettings({
   // Load target form fields when target changes
   useEffect(() => {
     if (!targetFormId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: must clear stale target fields synchronously when targetFormId is cleared
       setTargetFields([]);
       return;
     }

@@ -28,6 +28,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
   // first-mount values and Save would clobber e.g. a version-restored settings).
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- re-seed draft from prop when modal opens; must run on open to avoid stale buffer
       setEditedSettings(settings);
       setActiveTab('presentation');
     }

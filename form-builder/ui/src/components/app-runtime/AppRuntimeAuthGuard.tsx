@@ -29,6 +29,7 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   useEffect(() => {
     if (user && !config && appSlug && !isLoading) {
       let cancelled = false;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: probe-resolved flag must reset synchronously when deps change before the async membership probe re-runs
       setMembershipChecked(false);
       api.getAppMembership(appSlug)
         .then((r) => { if (!cancelled && r.data) setMembershipInfo(r.data); })

@@ -63,6 +63,7 @@ export function Dropdown({
   // placed beneath it; recompute on scroll/resize while open.
   useEffect(() => {
     if (!isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- open/close effect: must clear the cached trigger rect synchronously when the menu closes
       setMenuRect(null);
       return;
     }
@@ -81,6 +82,7 @@ export function Dropdown({
   useEffect(() => {
     if (isOpen) {
       const selectedIdx = options.findIndex((opt) => opt.value === value);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- open effect: focus must reset to the selected option synchronously when the menu opens or its options/value change
       setFocusedIndex(selectedIdx >= 0 ? selectedIdx : 0);
     } else {
       setFocusedIndex(-1);

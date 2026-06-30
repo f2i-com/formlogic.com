@@ -824,6 +824,7 @@ export default function FormResponse() {
     })();
 
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally narrow deps: only re-fetch when the form id or whether fields are loaded changes; depending on the whole storeForm object would re-run on every unrelated store mutation and cause redundant fetches
   }, [formId, storeForm?.id, storeForm?.fields.length]);
 
   // Use store form (with fields) if available, otherwise fetched form

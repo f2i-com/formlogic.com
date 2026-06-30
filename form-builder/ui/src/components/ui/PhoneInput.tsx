@@ -90,6 +90,7 @@ export function PhoneInput({
 
     // Handle cleared/empty value (form reset)
     if (!value) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: external value clears (form reset/programmatic set) must re-sync local input
       setNationalNumber('');
       return;
     }

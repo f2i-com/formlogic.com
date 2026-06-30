@@ -100,6 +100,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
       loadCatalog();
       loadInstallations();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open-effect: catalog+installations load only when modal opens or storage mode changes; loadCatalog identity tracks searchQuery/sortBy and is handled by the debounced effect below, so excluding it here prevents loadInstallations re-firing on every search keystroke
   }, [isOpen, storageMode]);
 
   // Debounced search (API-only, mirroring the load effect above)
@@ -108,6 +109,7 @@ export function PackImportModal({ isOpen, onClose }: PackImportModalProps) {
     searchTimerRef.current = setTimeout(() => {
       if (isOpen && storageMode === 'api') loadCatalog();
     }, 300);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounced search: loadCatalog only closes over searchQuery/sortBy which are already deps, so its identity is fully covered; listing the explicit values keeps the debounce reset tied to the actual search inputs
   }, [searchQuery, sortBy, isOpen, storageMode]);
 
   const [seeding, setSeeding] = useState(false);

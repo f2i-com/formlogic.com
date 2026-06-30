@@ -133,6 +133,7 @@ export function useNigoDashboard(
 
   useEffect(() => {
     // Mark as validating during debounce
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- validation effect: isValidating flag must flip synchronously when deps change before the debounced compute
     setState((prev) => ({ ...prev, isValidating: true }));
 
     if (debounceTimer.current) {

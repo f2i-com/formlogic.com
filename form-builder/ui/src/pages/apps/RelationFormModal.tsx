@@ -30,6 +30,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
   // Reset form when opening
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- modal-open reset: draft state must re-sync synchronously when isOpen flips
       setSourceFormId('');
       setTargetFormId('');
       setLabel('');
@@ -42,6 +43,7 @@ export function RelationFormModal({ isOpen, onClose, onSave, appForms }: Relatio
   // Load target form fields when target changes
   useEffect(() => {
     if (!targetFormId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: target fields must reset synchronously when targetFormId clears
       setTargetFields([]);
       return;
     }

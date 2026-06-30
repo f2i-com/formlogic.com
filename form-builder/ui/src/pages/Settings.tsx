@@ -31,7 +31,7 @@ import {
   AlertTriangle,
   Download,
 } from 'lucide-react';
-import { useUIStore } from '../stores/uiStore';
+import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated } from '../lib/api';
 
@@ -200,7 +200,7 @@ export function Settings() {
     }
 
     setIsChangingPassword(true);
-    const result = await updateProfile({ currentPassword, password: newPassword } as any);
+    const result = await updateProfile({ currentPassword, password: newPassword } as Parameters<typeof updateProfile>[0]);
     setIsChangingPassword(false);
 
     if (result.success) {
@@ -472,7 +472,7 @@ export function Settings() {
                         aria-label={`Select ${theme.label} accent color`}
                         aria-pressed={isSelected}
                         onClick={() => {
-                          useUIStore.getState().setThemeColor(theme.id as any);
+                          useUIStore.getState().setThemeColor(theme.id as ThemeColor);
                           toast.success('Theme Updated', `Accent color changed to ${theme.label}`);
                         }}
                         className={`group relative flex flex-col items-center gap-2 p-3 rounded-xl border transition-all duration-200 cursor-pointer ${isSelected

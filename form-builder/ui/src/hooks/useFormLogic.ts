@@ -33,6 +33,7 @@ export function useConditionalLogic(
   useEffect(() => {
     if (seededKeyRef.current === fieldIdsKey) return;
     seededKeyRef.current = fieldIdsKey;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- re-seed effect: the field SET changed externally (async form load); must re-seed all-visible synchronously to avoid a flash of empty form
     setVisibleFields(new Set(fields.map((f) => f.id)));
     setRequiredFields(new Set(fields.filter((f) => f.required).map((f) => f.id)));
   }, [fieldIdsKey, fields]);
@@ -119,6 +120,7 @@ export function useConditionalLogic(
     // debounce subsequent re-evals so typing doesn't fire a QuickJS round-trip per keystroke.
     if (firstEvalRef.current) {
       firstEvalRef.current = false;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: kick off the async evaluation (which sets isEvaluating) synchronously on first run so on-load visibility is correct with no flash
       evaluateAllConditions();
       return;
     }
@@ -286,6 +288,7 @@ export function useCalculatedField(
   // Use a ref for formData to avoid re-creating calculate on every formData change.
   // The dependencyKey already tracks the relevant dependency values.
   const formDataRef = useRef(formData);
+  // eslint-disable-next-line react-hooks/refs -- mirror ref for latest value in callbacks; not read during render output
   formDataRef.current = formData;
 
   const calculate = useCallback(async () => {

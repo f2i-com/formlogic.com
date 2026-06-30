@@ -40,18 +40,8 @@ export default function PackGalleryPage() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadSeqRef = useRef(0);
 
-  useEffect(() => {
-    loadFeatured();
-  }, []);
-
-  useEffect(() => {
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => {
-      loadPacks();
-    }, 300);
-    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
-  }, [searchQuery, sortBy, categoryFilter, page]);
-
+  // Declared before the effects below so the effects' dependency arrays can reference them
+  // without hitting the const temporal dead zone (ReferenceError on mount).
   const loadFeatured = useCallback(async () => {
     try {
       const result = await api.browsePacks({ sort: 'popular', limit: 6 });
@@ -90,6 +80,18 @@ export default function PackGalleryPage() {
       if (seq === loadSeqRef.current) setLoading(false);
     }
   }, [searchQuery, sortBy, categoryFilter, page]);
+
+  useEffect(() => {
+    loadFeatured();
+  }, [loadFeatured]);
+
+  useEffect(() => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      loadPacks();
+    }, 300);
+    return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
+  }, [searchQuery, sortBy, categoryFilter, page, loadPacks]);
 
   const renderStars = (rating: number) => (
     <div className="flex items-center gap-0.5" role="img" aria-label={`Rated ${rating.toFixed(1)} out of 5`}>

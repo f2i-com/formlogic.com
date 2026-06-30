@@ -32,6 +32,7 @@ export function AppResponseDetail() {
 
   useEffect(() => {
     if (appSlug && formId && responseId && config) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status reset must be synchronous when deps change
       setLoading(true);
       setFetchError(null);
       let cancelled = false;

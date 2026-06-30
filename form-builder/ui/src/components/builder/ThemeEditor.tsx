@@ -151,6 +151,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   // stale theme data after the form's theme changed underneath it.
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->draft re-sync: reset edited theme when modal opens or theme prop changes underneath
       setEditedTheme(theme);
       setActivePreset(null);
     }

@@ -19,6 +19,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
 
 // Retry wrapper for lazy imports — handles stale chunk references after deploys
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- React.lazy requires ComponentType<any> to accept components with arbitrary, mutually-incompatible prop shapes; narrowing to unknown breaks every call site
 function lazyWithRetry(factory: () => Promise<{ default: React.ComponentType<any> }>) {
   return React.lazy(() =>
     factory()

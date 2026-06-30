@@ -43,6 +43,7 @@ export default function FormAnalytics() {
   }, [formId, loadFullForm]);
 
   const form = formId ? getForm(formId) : undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId returns a fresh .filter() array each call and its action ref is stable; recomputing per render is required so localAnalytics reflects live store data — memoizing here would freeze stale responses
   const localResponses = formId ? getResponsesByFormId(formId) : [];
   // Use server-fetched responses in API mode (local store is empty in cloud mode),
   // so the field breakdown and Recent Responses table reflect real data.
@@ -169,6 +170,7 @@ export default function FormAnalytics() {
     };
   }, [exportMenuOpen]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived inline from the live `form` store object so fieldBreakdown recomputes whenever the form's fields change; the array is only newly allocated in the undefined-form branch
   const formFields = form?.fields ?? [];
 
   // Calculate field breakdown statistics
