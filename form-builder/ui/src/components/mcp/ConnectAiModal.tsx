@@ -4,7 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
-import { formatRelativeTime } from '../../lib/utils';
+import { formatRelativeTime, copyToClipboard } from '../../lib/utils';
 
 type Session = { id: string; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
 type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout: number };
@@ -38,7 +38,10 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName }: { isOpen: bo
     setSessions((s) => s.filter((x) => x.id !== id));
   };
 
-  const copy = (text: string, label: string) => { navigator.clipboard?.writeText(text); toast.success(`${label} copied`); };
+  const copy = async (text: string, label: string) => {
+    if (await copyToClipboard(text)) toast.success(`${label} copied`);
+    else toast.error('Copy failed', 'Select the text and copy it manually.');
+  };
 
   const configJson = fresh ? JSON.stringify({ mcpServers: { formlogic: { url: fresh.mcpUrl, headers: { Authorization: `Bearer ${fresh.token}` } } } }, null, 2) : '';
 
