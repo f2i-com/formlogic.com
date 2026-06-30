@@ -225,18 +225,28 @@ export function AppUserManager() {
             searchable
             isLoading={loading}
             searchPlaceholder="Search users..."
-            actions={(user) => (
+            actions={(user) => {
+              const u = user as unknown as AppUser;
+              // The Owner can't be edited or removed (the API always rejects it), so don't
+              // offer affordances that do nothing.
+              const isOwner = u.roleName === 'Owner';
+              return (
               <div className="flex items-center justify-end gap-1">
-                {(user as unknown as AppUser).status === 'pending' && (
-                  <button onClick={() => handleApprove(user as unknown as AppUser)}
+                {u.status === 'pending' && (
+                  <button onClick={() => handleApprove(u)}
                     className="p-1.5 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer" aria-label="Approve member"><Check className="h-4 w-4" /></button>
                 )}
-                <button onClick={() => openEditUser(user as unknown as AppUser)}
-                  className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Edit member role and status"><Pencil className="h-4 w-4" /></button>
-                <button onClick={() => setConfirmAction({ type: 'removeUser', id: (user as unknown as AppUser).id, label: String((user as unknown as AppUser).name || (user as unknown as AppUser).email) })}
-                  className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+                {!isOwner && (
+                  <button onClick={() => openEditUser(u)}
+                    className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer" aria-label="Edit member role and status"><Pencil className="h-4 w-4" /></button>
+                )}
+                {!isOwner && (
+                  <button onClick={() => setConfirmAction({ type: 'removeUser', id: u.id, label: String(u.name || u.email) })}
+                    className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Remove user"><Trash2 className="h-4 w-4" /></button>
+                )}
               </div>
-            )}
+              );
+            }}
           />
         </TabsContent>
 
@@ -330,7 +340,7 @@ export function AppUserManager() {
             <select value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
               <option value="">Select role...</option>
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
@@ -390,7 +400,7 @@ export function AppUserManager() {
             <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
             <select value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
-              {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
           <div>

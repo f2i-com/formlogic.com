@@ -33,6 +33,42 @@ interface AuthState {
 
 let _authSessionCallback: (() => void) | null = null;
 
+/**
+ * Purge all user-specific in-memory state + persisted localStorage + cached app data.
+ * Shared by logout() AND the session-expired (401) path, so an expired session can't
+ * leave a previous user's forms/apps/responses to flash to the next user on a shared device.
+ */
+async function clearUserSessionData(): Promise<void> {
+  // Cancel pending debounced saves so stale callbacks can't fire after the purge.
+  clearAllDebounceTimers();
+
+  useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
+  useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
+  useAppUserStore.getState().reset();
+  useAppRuntimeStore.getState().reset();
+  useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
+
+  try {
+    localStorage.removeItem('formlogic-auth');
+    localStorage.removeItem('formlogic-forms');
+    localStorage.removeItem('formlogic-apps');
+    localStorage.removeItem('formlogic-responses');
+    localStorage.removeItem('formlogic-app-runtime');
+    localStorage.removeItem('formlogic_storage_mode');
+  } catch {
+    // localStorage may be unavailable (e.g. private browsing)
+  }
+
+  try {
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
+    }
+  } catch {
+    // Cache API may be unavailable; non-fatal.
+  }
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -53,6 +89,9 @@ export const useAuthStore = create<AuthState>()(
           const current = get();
           if (current.user) {
             set({ user: null, error: null });
+            // Purge the same data logout() does, so an expired session doesn't leave the
+            // previous user's forms/apps/responses to flash to the next person.
+            void clearUserSessionData();
             // Tell the user why they were bounced to the landing page.
             toast.warning('Session expired', 'Please sign in again to continue.');
           }
@@ -144,43 +183,9 @@ export const useAuthStore = create<AuthState>()(
         }
         set({ user: null, error: null });
 
-        // Cancel pending debounced saves before clearing state to prevent
-        // stale callbacks from firing after logout
-        clearAllDebounceTimers();
-
-        // Clear in-memory state of all user-specific stores immediately
-        // so stale data never leaks between sessions
-        useFormStore.setState({ forms: [], isInitialized: false, isLoading: false, activeFormId: null, selectedFieldId: null, error: null, savingFormIds: {} });
-        useAppStore.setState({ apps: [], activeAppId: null, isLoading: false, _loadingCount: 0, error: null });
-        useAppUserStore.getState().reset();
-        useAppRuntimeStore.getState().reset();
-        useResponseStore.setState({ responses: [], currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
-
-        // Clear persisted data from localStorage to prevent data
-        // leakage if another user logs in on the same browser
-        try {
-          localStorage.removeItem('formlogic-auth');
-          localStorage.removeItem('formlogic-forms');
-          localStorage.removeItem('formlogic-apps');
-          localStorage.removeItem('formlogic-responses');
-          localStorage.removeItem('formlogic-app-runtime');
-          localStorage.removeItem('formlogic_storage_mode');
-        } catch {
-          // localStorage may be unavailable (e.g. private browsing)
-        }
-
-        // Purge service-worker Cache Storage so a previous session's app/manifest
-        // data can't be served to the next user on a shared device (defense in
-        // depth — authenticated API responses are no longer cached, but old SW
-        // versions or the manifest cache may still hold entries).
-        try {
-          if (typeof caches !== 'undefined') {
-            const keys = await caches.keys();
-            await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
-          }
-        } catch {
-          // Cache API may be unavailable; non-fatal.
-        }
+        // Purge all user-specific in-memory + persisted + cached data (shared with the
+        // session-expired path) so nothing leaks between sessions on a shared device.
+        await clearUserSessionData();
       },
 
       updateProfile: async (data: Partial<User>) => {
