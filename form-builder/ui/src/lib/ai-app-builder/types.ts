@@ -4,7 +4,11 @@ export interface PlannedForm {
   key: string;
   title: string;
   purpose: string;
+  /** Optional: a description of a custom interactive screen to generate for this form. */
+  screen?: string;
 }
+
+export interface ScreenContent { enabled: boolean; html: string; css: string; js: string }
 
 export interface PlannedRelation {
   from: string;
@@ -40,6 +44,7 @@ export interface GeneratedField {
 export interface GeneratedForm {
   fields: GeneratedField[];
   logicScript?: string;
+  customScreen?: ScreenContent;
 }
 
 /** Progress events emitted during a build, for the UI. */
@@ -73,6 +78,7 @@ export interface PackForm {
   settings: Record<string, unknown>;
   theme: Record<string, unknown>;
   logicScript?: string;
+  customScreen?: ScreenContent;
   fields: PackField[];
 }
 export interface PackApp {

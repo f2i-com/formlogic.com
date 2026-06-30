@@ -96,6 +96,7 @@ class PackService
                     'settings' => $importSettings,
                     'theme' => $packForm['theme'] ?? [],
                     'logicScript' => $packForm['logicScript'] ?? null,
+                    'customScreen' => !empty($packForm['customScreen']) ? $packForm['customScreen'] : null,
                     'icon' => $packForm['icon'] ?? null,
                     'fields' => $fields,
                 ];
@@ -589,6 +590,12 @@ class PackService
                 $themeJson = json_encode($form['theme']);
                 if ($themeJson !== false && strlen($themeJson) > 10240) {
                     throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 10KB limit");
+                }
+            }
+            if (isset($form['customScreen'])) {
+                $screenJson = json_encode($form['customScreen']);
+                if ($screenJson !== false && strlen($screenJson) > 524288) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' custom screen exceeds 512KB limit");
                 }
             }
             if (isset($seenFormIds[$form['packFormId']])) {

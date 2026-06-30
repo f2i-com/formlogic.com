@@ -21,12 +21,21 @@ export async function buildAppFromPlan(
       throw new Error(`Couldn't generate “${f.title}”${res.error ? `: ${res.error}` : ''}`);
     }
     generated[f.key] = { fields: (data.fields || []) as GeneratedForm['fields'] };
+    const fieldProjection = (data.fields || []).map((x) => ({ id: x.id, label: x.label, type: x.type }));
     if (data.needsScript && (data.suggestedScript || '').trim()) {
       try {
-        const fieldProjection = (data.fields || []).map((x) => ({ id: x.id, label: x.label, type: x.type }));
         const sres = await api.generateScript(data.suggestedScript as string, fieldProjection as unknown as FormField[]);
         if (sres.data?.data?.script) generated[f.key].logicScript = sres.data.data.script;
       } catch { /* script is best-effort — never block the build */ }
+    }
+    // Generate a custom screen when the plan flagged this form for one (best-effort).
+    if (f.screen && f.screen.trim()) {
+      try {
+        onProgress({ stage: 'generating', message: `Designing the “${f.title}” screen…`, current: i + 1, total });
+        const sc = await api.generateScreen(f.screen.trim(), fieldProjection);
+        const g = sc.data?.data;
+        if (g && (g.html || g.js)) generated[f.key].customScreen = { enabled: true, html: g.html, css: g.css, js: g.js };
+      } catch { /* screen is best-effort — never block the build */ }
     }
   }
 

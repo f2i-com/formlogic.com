@@ -418,7 +418,7 @@ You are an application architect for FormLogic, a platform where an "app" bundle
 Given a description, design a coherent multi-form app and respond with ONLY a JSON object:
 {
   "app": { "name": "Short App Name", "description": "One sentence." },
-  "forms": [ { "key": "snake_case_id", "title": "Form Title", "purpose": "what this form captures + any logic it needs" } ],
+  "forms": [ { "key": "snake_case_id", "title": "Form Title", "purpose": "what this form captures + any logic it needs", "screen": "OPTIONAL: describe a custom interactive UI for this form (e.g. a game board, a dashboard, a kanban) — omit for plain data-entry forms" } ],
   "relations": [ { "from": "child_form_key", "to": "parent_form_key", "label": "Linked Field Label" } ],
   "roles": [ { "name": "Role Name", "level": "admin" } ]
 }
@@ -427,6 +427,7 @@ Rules:
 - "key" is a unique snake_case slug per form. Relations reference forms by their "key".
 - A relation means the "from" form has a field linking to a record in the "to" form (e.g. an Interview links to a Candidate). Point child -> parent. Only include relations that make real sense.
 - "level" is one of: "admin" (full control), "contributor" (submit + see own), "viewer" (read all). Include 2-4 roles.
+- Only add "screen" to a form when a custom interactive frontend genuinely adds value (games, dashboards, leaderboards, boards). Most forms should NOT have one.
 - Respond with ONLY the JSON object, no prose.
 PROMPT;
     }
@@ -464,7 +465,12 @@ PROMPT;
                 continue;
             }
             $keys[] = $key;
-            $forms[] = ['key' => $key, 'title' => $title, 'purpose' => trim((string) ($f['purpose'] ?? ''))];
+            $forms[] = [
+                'key' => $key,
+                'title' => $title,
+                'purpose' => trim((string) ($f['purpose'] ?? '')),
+                'screen' => trim((string) ($f['screen'] ?? '')),
+            ];
         }
         if (empty($forms)) {
             throw new \Exception('Plan produced no usable forms');

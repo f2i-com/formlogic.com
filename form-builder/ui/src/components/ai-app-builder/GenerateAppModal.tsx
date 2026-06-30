@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText } from 'lucide-react';
+import { Sparkles, Wand2, ArrowRight, ArrowLeft, RefreshCw, Check, GitBranch, Users, Loader2, AlertCircle, Boxes, FileText, MonitorPlay } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -107,7 +107,12 @@ export function GenerateAppModal({ isOpen, onClose }: { isOpen: boolean; onClose
                 <div key={f.key} className="p-3.5 flex items-start gap-2.5">
                   <FileText className="h-4 w-4 text-gray-400 dark:text-slate-500 mt-0.5 shrink-0" />
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{f.title}</p>
+                    <p className="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
+                      {f.title}
+                      {f.screen && f.screen.trim() && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300"><MonitorPlay className="h-3 w-3" /> Screen</span>
+                      )}
+                    </p>
                     <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 leading-relaxed">{f.purpose}</p>
                   </div>
                 </div>

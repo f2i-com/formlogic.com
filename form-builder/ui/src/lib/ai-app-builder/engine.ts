@@ -75,6 +75,7 @@ export function assemblePack(plan: AppPlan, generated: Record<string, GeneratedF
       settings: {},
       theme: {},
       ...(generated[f.key]?.logicScript ? { logicScript: generated[f.key].logicScript } : {}),
+      ...(generated[f.key]?.customScreen ? { customScreen: generated[f.key].customScreen } : {}),
       fields: [...baseFields, ...linkFields],
     };
   });
