@@ -9,6 +9,7 @@ import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { GenerateAppModal } from '../../components/ai-app-builder/GenerateAppModal';
+import { useAiAvailable } from '../../hooks/useAiAvailable';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
@@ -24,6 +25,7 @@ export function AppsDashboard() {
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showGenerate, setShowGenerate] = useState(false);
+  const aiAvailable = useAiAvailable();
 
   useEffect(() => {
     fetchApps();
@@ -90,9 +92,11 @@ export function AppsDashboard() {
         title="Apps"
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setShowGenerate(true)} leftIcon={<Wand2 className="h-4 w-4" />}>
-              Generate with AI
-            </Button>
+            {aiAvailable && (
+              <Button variant="outline" size="sm" onClick={() => setShowGenerate(true)} leftIcon={<Wand2 className="h-4 w-4" />}>
+                Generate with AI
+              </Button>
+            )}
             <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
               Create App
             </Button>

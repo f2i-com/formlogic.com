@@ -63,7 +63,17 @@ class AIService
      */
     public function isConfigured(): bool
     {
-        return $this->apiKey !== '' || $this->isCustomEndpoint();
+        return $this->isEnabled() && ($this->apiKey !== '' || $this->isCustomEndpoint());
+    }
+
+    /**
+     * Whether the in-app (local) AI is turned on. Set AI_ENABLED=false in .env to disable all built-in
+     * AI generation — useful when steering users to an external AI via the MCP server instead.
+     */
+    public function isEnabled(): bool
+    {
+        $v = strtolower(trim((string) ($_ENV['AI_ENABLED'] ?? 'true')));
+        return !in_array($v, ['false', '0', 'no', 'off'], true);
     }
 
     /** True when pointed at a non-OpenAI (e.g. local / self-hosted) OpenAI-compatible endpoint. */
@@ -532,6 +542,9 @@ PROMPT;
      */
     private function chatCompletion(array $messages, ?string $model = null, int $maxTokens = 4096): string
     {
+        if (!$this->isEnabled()) {
+            throw new \Exception('The in-app AI is disabled (AI_ENABLED=false). Use an external AI via the MCP server instead.');
+        }
         if (!$this->isConfigured()) {
             throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
         }

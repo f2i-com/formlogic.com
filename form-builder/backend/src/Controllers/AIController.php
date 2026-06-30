@@ -46,13 +46,17 @@ class AIController
      */
     public function status(Request $request, Response $response): Response
     {
+        $enabled = $this->aiService->isEnabled();
         $isConfigured = $this->aiService->isConfigured();
 
         return $this->jsonResponse($response, [
             'available' => $isConfigured,
-            'message' => $isConfigured
-                ? 'AI service is configured and ready'
-                : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.',
+            'enabled' => $enabled,
+            'message' => !$enabled
+                ? 'The in-app AI is turned off (AI_ENABLED=false). Connect an external AI via the MCP server instead.'
+                : ($isConfigured
+                    ? 'AI service is configured and ready'
+                    : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.'),
         ]);
     }
 
