@@ -28,6 +28,7 @@ export function AppSettings() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [slugError, setSlugError] = useState<string | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   // Snapshot of the persisted state; anything diverging from it is unsaved.
@@ -92,7 +93,12 @@ export function AppSettings() {
       setNameError('Name must be at least 2 characters');
       return;
     }
+    if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(app.slug)) {
+      setSlugError('Use lowercase letters, digits, and hyphens (start with a letter or digit).');
+      return;
+    }
     setNameError(null);
+    setSlugError(null);
     setSaving(true);
     setSaveSuccess(false);
     const ok = await updateApp(appId, app);
@@ -152,9 +158,28 @@ export function AppSettings() {
             </div>
             <div>
               <label htmlFor="app-slug" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Public URL slug</label>
-              <input id="app-slug" type="text" value={app.slug} readOnly aria-readonly="true"
-                className="w-full px-3.5 py-2.5 border border-gray-200/80 dark:border-slate-700/60 rounded-xl bg-gray-50 dark:bg-slate-800/60 text-gray-500 dark:text-slate-400 font-mono text-sm cursor-default focus:outline-none" />
-              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Permanent — set when the app was created. Your app is served at <span className="font-mono">/app/{app.slug}</span>.</p>
+              <input
+                id="app-slug"
+                type="text"
+                value={app.slug}
+                onChange={(e) => {
+                  // Normalize as you type: lowercase, non-alphanumerics → hyphens, collapse repeats.
+                  const s = e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-{2,}/g, '-').slice(0, 61);
+                  setApp({ ...app, slug: s });
+                  if (slugError) setSlugError(null);
+                }}
+                onBlur={(e) => {
+                  const s = e.target.value.replace(/^-+|-+$/g, '');
+                  if (s !== app.slug) setApp({ ...app, slug: s });
+                  setSlugError(s && !/^[a-z0-9][a-z0-9-]{0,60}$/.test(s) ? 'Use lowercase letters, digits, and hyphens.' : null);
+                }}
+                aria-invalid={slugError ? true : undefined}
+                aria-describedby={slugError ? 'app-slug-error' : undefined}
+                className={cn('w-full px-3.5 py-2.5 border rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200', slugError ? 'border-red-400 dark:border-red-500/60' : 'border-gray-300 dark:border-slate-600')}
+              />
+              {slugError
+                ? <p id="app-slug-error" className="mt-1 text-sm text-red-600 dark:text-red-400">{slugError}</p>
+                : <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Your app is served at <span className="font-mono">/app/{app.slug || '…'}</span>. Must be unique — changing it breaks old links.</p>}
             </div>
             <div>
               <label htmlFor="app-description" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Description</label>
