@@ -21,6 +21,8 @@ import {
   EyeOff,
   Package,
   FileText,
+  Boxes,
+  ChevronRight,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -286,6 +288,9 @@ export function FormsList() {
   const [showPackImport, setShowPackImport] = useState(false);
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
+  // App grouping: which forms belong to which app, and the current drill-in.
+  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [appGroups, setAppGroups] = useState<Array<{ id: string; name: string; formIds: string[] }>>([]);
 
   // Build formId → packName map from installed packs
   const formPackMap = useMemo(() => {
@@ -329,6 +334,41 @@ export function FormsList() {
       }
     });
   }, []);
+
+  // Load apps + their form memberships so My Forms can group forms by app (cloud mode only).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (storageMode !== 'api') { if (!cancelled) setAppGroups([]); return; }
+      const res = await api.getApps();
+      const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
+      const groups = await Promise.all(apps.map(async (a) => {
+        const fr = await api.getAppForms(a.id);
+        const formIds = ((fr.data?.forms || []) as Array<{ formId: string }>).map((f) => f.formId);
+        return { id: a.id, name: a.name, formIds };
+      }));
+      if (!cancelled) setAppGroups(groups);
+    })();
+    return () => { cancelled = true; };
+  }, [storageMode]);
+
+  // formId → its app (for grouping standalone vs in-app forms).
+  const formToApp = useMemo(() => {
+    const map: Record<string, { id: string; name: string }> = {};
+    for (const g of appGroups) for (const fid of g.formIds) map[fid] = { id: g.id, name: g.name };
+    return map;
+  }, [appGroups]);
+
+  // The forms to show in the current view: a drilled-in app's forms, or top-level standalone forms.
+  const viewForms = useMemo(() => {
+    if (selectedAppId) {
+      const ids = new Set(appGroups.find((g) => g.id === selectedAppId)?.formIds ?? []);
+      return forms.filter((f) => ids.has(f.id));
+    }
+    return forms.filter((f) => !formToApp[f.id]);
+  }, [forms, selectedAppId, appGroups, formToApp]);
+
+  const selectedApp = selectedAppId ? appGroups.find((g) => g.id === selectedAppId) : null;
 
   // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning
   useEffect(() => {
@@ -391,7 +431,7 @@ export function FormsList() {
   }, [updateForm]);
 
   const filteredForms = useMemo(() =>
-    forms
+    viewForms
       .filter((form) => {
         if (!form.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
         if (packFilter === 'all') return true;
@@ -412,7 +452,7 @@ export function FormsList() {
             return parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime();
         }
       }),
-    [forms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap, storageMode]
+    [viewForms, searchQuery, sortBy, getResponsesByFormId, packFilter, formPackIdMap, storageMode]
   );
 
   const draftForms = useMemo(() => filteredForms.filter((f) => f.status === 'draft'), [filteredForms]);
@@ -455,6 +495,41 @@ export function FormsList() {
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+        {/* Breadcrumb when drilled into an app */}
+        {selectedAppId && (
+          <nav className="mb-4 flex items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+            <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">My Forms</button>
+            <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600" />
+            <span className="font-medium text-gray-900 dark:text-white inline-flex items-center gap-1.5"><Boxes className="h-4 w-4 text-primary-600 dark:text-primary-400" />{selectedApp?.name ?? 'App'}</span>
+          </nav>
+        )}
+
+        {/* Apps grouping (top level only) */}
+        {!selectedAppId && appGroups.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5">Apps</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {appGroups.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
+                  className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+                >
+                  <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors shrink-0">
+                    <Boxes className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{g.name}</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
+                </button>
+              ))}
+            </div>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-1">Standalone forms</h2>
+          </div>
+        )}
+
         {/* Search and Sort */}
         <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3">
           <Input
