@@ -13,6 +13,20 @@ interface ApiResponse<T> {
 }
 
 /** Result of running an onSubmit script via the test endpoint (mirrors ScriptResult). */
+export interface DeepHealthCheck {
+  ok: boolean;
+  critical: boolean;
+  detail: string;
+  warning?: string;
+}
+
+export interface DeepHealth {
+  status: string; // 'ok' | 'degraded'
+  checks: Record<string, DeepHealthCheck>;
+  info?: Record<string, unknown>;
+  timestamp: string;
+}
+
 export interface ScriptTestResult {
   success: boolean;
   error: string | null;
@@ -454,6 +468,20 @@ class ApiClient {
   // Health check
   async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string }>> {
     return this.request('/health');
+  }
+
+  /**
+   * Authenticated deep health ("Doctor"). Returns the body even on 503 (degraded) so the UI can
+   * render the failing checks. Null on auth failure / network error.
+   */
+  async getDeepHealth(): Promise<DeepHealth | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health/deep`, { credentials: 'include' });
+      if (res.status === 401) { this.handleUnauthorized(); return null; }
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 
   // AI endpoints

@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe,
+  Stethoscope,
   Cloud,
   HardDrive,
 } from 'lucide-react';
@@ -22,6 +23,7 @@ const navItems = [
   { path: '/forms', icon: FileText, label: 'My Forms' },
   { path: '/apps', icon: Globe, label: 'Apps' },
   { path: '/settings', icon: Settings, label: 'Settings' },
+  { path: '/doctor', icon: Stethoscope, label: 'Doctor' },
 ];
 
 export function Sidebar({ offline = false }: { offline?: boolean }) {
