@@ -213,7 +213,8 @@ Scripts and expressions are plain JavaScript, evaluated in the QuickJS sandbox d
 - **Conditional visibility** -- Show/hide fields based on expressions (`age >= 18 && country === "US"`)
 - **Custom validation** -- Validate fields with expressions that return error messages
 - **Calculated fields** -- Compute values from other fields (`price * quantity * (1 + tax_rate)`)
-- **Post-submission scripts** -- An `onSubmit` script runs after a submission to compute derived fields, set tags, or reject the submission
+- **Post-submission scripts** -- An `onSubmit` script runs after a submission to read the record (`ctx.answers` / `ctx.db.getField`), compute and write derived fields (`ctx.db.setField`), set tags/status, or reject the submission. Scripts run **synchronously** (don't `await` `ctx.http`/`ctx.db`).
+- **Hidden fields** -- A `hidden` field stores a default, computed, or script-set value that respondents never see, but that's saved with the response and included in exports — the natural home for `onSubmit`/calculated output.
 
 The shared prelude provides domain helper modules:
 ```
@@ -309,6 +310,8 @@ finance.transferFee(amount, custodian)
 | `signature` | Signature pad |
 | `calculated` | Computed from expression |
 | `linked_record` | Reference to another form's response |
+| `location` | Latitude / longitude capture |
+| `hidden` | Stores a default, computed, or script-set value — never shown to respondents, saved with the response and included in exports |
 | `statement` | Display-only text/media |
 | `welcome_screen` | Form intro screen |
 | `thank_you` | Form completion screen |

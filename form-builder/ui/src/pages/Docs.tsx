@@ -256,7 +256,7 @@ export function Docs() {
             <section className="mb-14">
               <H2 id="logic" icon={GitBranch}>Validation &amp; conditional logic</H2>
               <P>Open a field's settings and switch to the <strong className="text-gray-900 dark:text-white">Validation</strong> tab to add rules — minimum / maximum length, a numeric range, or a regular-expression pattern. Rules run both in the browser and on the server, so they can't be bypassed.</P>
-              <P>The <strong className="text-gray-900 dark:text-white">Logic</strong> tab lets a field appear only when earlier answers meet a condition — for example, show a “Which competitor?” field only when someone answers “Yes, I switched”. Hidden fields are skipped during validation and submission.</P>
+              <P>The <strong className="text-gray-900 dark:text-white">Logic</strong> tab lets a field appear only when earlier answers meet a condition — for example, show a “Which competitor?” field only when someone answers “Yes, I switched”. A field that's conditionally hidden is skipped during validation and submission.</P>
               <Tip>For anything beyond simple show/hide — scoring, cross-field checks, or calling another service — use a <a href="#scripts" className="text-primary-600 dark:text-primary-400 hover:underline">backend script</a>.</Tip>
             </section>
 
