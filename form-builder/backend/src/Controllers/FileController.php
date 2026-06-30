@@ -59,14 +59,32 @@ class FileController
      *
      * @return array{maxFileSize: ?int, acceptedTypes: string[]}|null
      */
-    private function fileUploadConstraints(array $form): ?array
+    private function fileUploadConstraints(array $form, ?string $fieldId = null): ?array
     {
-        $uploadFields = array_filter(
-            $form['fields'] ?? [],
-            fn ($f) => ($f['type'] ?? '') === 'file_upload'
-        );
-        if (empty($uploadFields)) {
-            return null;
+        // Field-aware path: when the client names the target field, enforce ONLY that
+        // field's constraints (not the union), and reject if it isn't a real upload field.
+        if ($fieldId !== null && $fieldId !== '') {
+            $target = null;
+            foreach ($form['fields'] ?? [] as $f) {
+                if (($f['id'] ?? null) === $fieldId) {
+                    $target = $f;
+                    break;
+                }
+            }
+            if ($target === null || ($target['type'] ?? '') !== 'file_upload') {
+                return null; // unknown field or not a file_upload target → reject
+            }
+            $uploadFields = [$target];
+        } else {
+            // Legacy/union path (client didn't name the field): widest constraints across
+            // all upload fields. Submission-time re-validation still pins each file to its field.
+            $uploadFields = array_filter(
+                $form['fields'] ?? [],
+                fn ($f) => ($f['type'] ?? '') === 'file_upload'
+            );
+            if (empty($uploadFields)) {
+                return null;
+            }
         }
 
         $maxFileSize = 0;
@@ -102,6 +120,14 @@ class FileController
         ];
     }
 
+    /** The target file_upload field id, from the multipart body or query string (optional). */
+    private function uploadFieldId(Request $request): ?string
+    {
+        $body = $request->getParsedBody();
+        $fid = (is_array($body) ? ($body['fieldId'] ?? null) : null) ?? ($request->getQueryParams()['fieldId'] ?? null);
+        return (is_string($fid) && $fid !== '') ? $fid : null;
+    }
+
     /**
      * Upload a file for a form (standalone form context).
      * POST /api/forms/{formId}/upload
@@ -135,10 +161,11 @@ class FileController
         }
 
         // Reject uploads to forms with no file_upload field — otherwise any
-        // published form is an anonymous file-storage endpoint.
-        $constraints = $this->fileUploadConstraints($form);
+        // published form is an anonymous file-storage endpoint. When the client names the
+        // target field, only THAT field's type/size constraints apply.
+        $constraints = $this->fileUploadConstraints($form, $this->uploadFieldId($request));
         if ($constraints === null) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads at the requested field'], 400);
         }
 
         try {
@@ -239,9 +266,9 @@ class FileController
         // Reject uploads to forms with no file_upload field, and derive the
         // per-field type/size constraints to enforce server-side.
         $form = $this->formService->getForm($formId);
-        $constraints = $form ? $this->fileUploadConstraints($form) : null;
+        $constraints = $form ? $this->fileUploadConstraints($form, $this->uploadFieldId($request)) : null;
         if ($constraints === null) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads'], 400);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not accept file uploads at the requested field'], 400);
         }
 
         try {

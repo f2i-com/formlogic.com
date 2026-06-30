@@ -117,6 +117,10 @@ class ExternalApiController
         $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
         $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+        if (!empty($__fe)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+        }
         if ($this->responseService->answersTooLarge($data['answers'])) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
         }
@@ -245,6 +249,11 @@ class ExternalApiController
             $item['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $item['answers'] ?? []);
             $item['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
             $item['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $item['answers']);
+            $itemFileErrors = $this->responseService->validateFileAnswers($form['fields'] ?? [], $item['answers'], (string) ($form['id'] ?? ''));
+            if (!empty($itemFileErrors)) {
+                $results[] = ['index' => $index, 'success' => false, 'errors' => $itemFileErrors];
+                continue;
+            }
             if ($this->responseService->answersTooLarge($item['answers'])) {
                 $results[] = ['index' => $index, 'success' => false, 'errors' => ['Submission is too large.']];
                 continue;
@@ -349,6 +358,10 @@ class ExternalApiController
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            if (!empty($__fe)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+            }
             if ($this->responseService->answersTooLarge($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
             }

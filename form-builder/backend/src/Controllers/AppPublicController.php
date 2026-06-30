@@ -318,6 +318,10 @@ class AppPublicController
             // client-sent values) so app-runtime submissions persist them too —
             // parity with the standalone and External API submission paths.
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            if (!empty($__fe)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+            }
             if ($this->responseService->answersTooLarge($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
             }
@@ -617,6 +621,10 @@ class AppPublicController
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
                 $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
                 $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+                $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+                if (!empty($__fe)) {
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+                }
                 if ($this->responseService->answersTooLarge($data['answers'])) {
                     return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
                 }

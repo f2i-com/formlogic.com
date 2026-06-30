@@ -102,8 +102,8 @@ export function FileUploadField({ field, value, onChange, primaryColor, formId, 
     const newFiles: FileMetadata[] = [];
     for (const file of files) {
       const result = appSlug
-        ? await api.uploadAppFile(appSlug, formId, file)
-        : await api.uploadFile(formId, file);
+        ? await api.uploadAppFile(appSlug, formId, file, field.id)
+        : await api.uploadFile(formId, file, field.id);
 
       if (result.error) {
         toast.error('Upload Failed', result.error);

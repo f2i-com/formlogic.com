@@ -246,7 +246,7 @@ class FileStorageService
      * Does the file match at least one of the field's accepted types? Accepts
      * extensions ('.pdf'), wildcard MIME ('image/*'), or exact MIME.
      */
-    private function matchesAcceptedType(string $mimeType, string $originalName, array $accepted): bool
+    public function matchesAcceptedType(string $mimeType, string $originalName, array $accepted): bool
     {
         $mime = strtolower($mimeType);
         $name = strtolower($originalName);

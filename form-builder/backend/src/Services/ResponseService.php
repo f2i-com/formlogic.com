@@ -357,6 +357,66 @@ class ResponseService
     }
 
     /**
+     * Re-validate each submitted file_upload answer against the constraints of the SPECIFIC
+     * field it's attached to, by re-reading the stored file (server-detected MIME + real size).
+     * This pins a file to its field at submission time, so a file accepted by a lax upload
+     * field can't be reused under a stricter field, and forged/cross-form file ids are rejected.
+     * Returns a map of fieldId => error message (empty when all files pass).
+     *
+     * @return array<string, string>
+     */
+    public function validateFileAnswers(array $fields, array $answers, string $formId): array
+    {
+        $errors = [];
+        if ($this->fileStorageService === null) {
+            return $errors; // no storage access here; the upload-time check already ran
+        }
+        foreach ($fields as $field) {
+            $id = $field['id'] ?? null;
+            if (($field['type'] ?? '') !== 'file_upload' || !$id) {
+                continue;
+            }
+            $value = $answers[$id] ?? null;
+            if (!is_array($value) || $value === []) {
+                continue;
+            }
+            $props = $field['properties'] ?? [];
+            $accepted = is_array($props['acceptedFileTypes'] ?? null) ? $props['acceptedFileTypes'] : [];
+            $maxSize = (int) ($props['maxFileSize'] ?? 0);
+            // maxFileSize is bytes from the builder but MB from templates/packs (same heuristic
+            // as FileController::fileUploadConstraints).
+            if ($maxSize > 0 && $maxSize < 1024) {
+                $maxSize *= 1024 * 1024;
+            }
+            $label = (string) ($field['label'] ?? 'File');
+            foreach ($value as $item) {
+                if (!is_array($item) || empty($item['id'])) {
+                    continue; // metadata shape is validated separately
+                }
+                $path = $this->fileStorageService->getFilePath($formId, (string) $item['id']);
+                if ($path === null) {
+                    $errors[$id] = "$label: uploaded file could not be found";
+                    break;
+                }
+                $size = @filesize($path);
+                if ($maxSize > 0 && $size !== false && $size > $maxSize) {
+                    $errors[$id] = "$label: file exceeds the size limit for this field";
+                    break;
+                }
+                if (!empty($accepted)) {
+                    $mime = $this->fileStorageService->getMimeType($path);
+                    $name = (string) ($item['originalFilename'] ?? '');
+                    if (!$this->fileStorageService->matchesAcceptedType($mime, $name, $accepted)) {
+                        $errors[$id] = "$label: file type is not allowed for this field";
+                        break;
+                    }
+                }
+            }
+        }
+        return $errors;
+    }
+
+    /**
      * Get all responses for a form
      */
     public function getFormResponses(string $formId, array $options = []): array

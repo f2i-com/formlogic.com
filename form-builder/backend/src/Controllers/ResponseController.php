@@ -225,6 +225,10 @@ class ResponseController
         // round-trip into storage/export/analytics and are available to
         // conditional-logic evaluation during validation.
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+        $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+        if (!empty($__fe)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+        }
 
         // Hard-cap the total serialized answer size before we persist it (defends the
         // unauthenticated endpoint against disk-exhaustion via oversized answers).
@@ -653,6 +657,10 @@ class ResponseController
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+            $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
+            if (!empty($__fe)) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+            }
             if ($this->responseService->answersTooLarge($data['answers'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
             }

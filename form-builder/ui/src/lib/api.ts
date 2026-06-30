@@ -972,10 +972,11 @@ class ApiClient {
   }
 
   // File upload for form responses
-  async uploadFile(formId: string, file: File): Promise<ApiResponse<UploadedFileMetadata>> {
+  async uploadFile(formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
     const url = `${this.baseUrl}/forms/${formId}/upload`;
     const formData = new FormData();
     formData.append('file', file);
+    if (fieldId) formData.append('fieldId', fieldId);
 
     try {
       const fetchHeaders: Record<string, string> = {};
@@ -1002,10 +1003,11 @@ class ApiClient {
     }
   }
 
-  async uploadAppFile(slug: string, formId: string, file: File): Promise<ApiResponse<UploadedFileMetadata>> {
+  async uploadAppFile(slug: string, formId: string, file: File, fieldId?: string): Promise<ApiResponse<UploadedFileMetadata>> {
     const url = `${this.baseUrl}/app/${slug}/forms/${formId}/upload`;
     const formData = new FormData();
     formData.append('file', file);
+    if (fieldId) formData.append('fieldId', fieldId);
 
     try {
       const fetchHeaders: Record<string, string> = {};
