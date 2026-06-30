@@ -98,7 +98,7 @@ interface FormState {
   updateFormTheme: (formId: string, theme: Partial<FormTheme>) => void;
 
   // Sync
-  syncToApi: () => Promise<{ success: boolean; synced: number; errors: string[] }>;
+  syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; errors: string[] }>;
   saveFormToApi: (formId: string) => Promise<boolean>;
 }
 
@@ -898,35 +898,47 @@ export const useFormStore = create<FormState>()(
         const state = get();
         const errors: string[] = [];
         let synced = 0;
+        let unchanged = 0;
 
         for (const form of state.forms) {
           try {
-            // Check if form exists on server
+            // Check if the form exists on the server.
             const existingResult = await api.getForm(form.id);
+            const serverForm = existingResult.data?.form;
 
-            if (existingResult.error || !existingResult.data) {
-              // Create new form on server
+            if (existingResult.error || !serverForm) {
+              // New form made offline → create it on the server.
               const createResult = await api.createForm(form);
               if (createResult.error) {
                 errors.push(`Failed to sync "${form.title}": ${createResult.error}`);
               } else {
                 synced++;
               }
+              continue;
+            }
+
+            // Exists on both. Push ONLY if it actually changed offline. A form left untouched keeps
+            // the exact server `updatedAt` string it was loaded with, so an identical timestamp means
+            // "not edited offline" — skip it, so we don't overwrite the cloud copy or bump its
+            // last-edited time. (String compare is timezone-safe; any local edit re-stamps updatedAt
+            // to a new ISO value, which won't match.)
+            if ((form.updatedAt || '') === (serverForm.updatedAt || '')) {
+              unchanged++;
+              continue;
+            }
+
+            const updateResult = await api.updateForm(form.id, form);
+            if (updateResult.error) {
+              errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
             } else {
-              // Update existing form
-              const updateResult = await api.updateForm(form.id, form);
-              if (updateResult.error) {
-                errors.push(`Failed to update "${form.title}": ${updateResult.error}`);
-              } else {
-                synced++;
-              }
+              synced++;
             }
           } catch (error) {
             errors.push(`Error syncing "${form.title}": ${error}`);
           }
         }
 
-        return { success: errors.length === 0, synced, errors };
+        return { success: errors.length === 0, synced, unchanged, errors };
       },
 
       // Save a specific form to API

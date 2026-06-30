@@ -77,11 +77,12 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
           return;
         }
         setStorageMode('api');
+        const parts: string[] = [];
+        if (result.synced > 0) parts.push(`${result.synced} synced`);
+        if (result.unchanged > 0) parts.push(`${result.unchanged} already up to date`);
         toast.success(
           'Cloud storage enabled',
-          result.synced > 0
-            ? `${result.synced} form${result.synced === 1 ? '' : 's'} synced to your account.`
-            : 'Your forms are now stored in your account.'
+          parts.length ? `${parts.join(', ')}.` : 'Your forms are now stored in your account.'
         );
       } catch {
         toast.error('Switch to Cloud failed', 'Could not sync your forms. Cloud storage was not enabled.');
@@ -110,7 +111,10 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
     try {
       const result = await syncToApi();
       if (result.success) {
-        toast.success('Sync Complete', `Successfully synced ${result.synced} forms to cloud`);
+        const parts: string[] = [];
+        if (result.synced > 0) parts.push(`${result.synced} synced`);
+        if (result.unchanged > 0) parts.push(`${result.unchanged} unchanged`);
+        toast.success('Sync Complete', parts.length ? parts.join(', ') : 'Everything is already up to date');
       } else {
         toast.warning('Sync Completed with Errors', result.errors.join(', '));
       }
