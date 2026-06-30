@@ -484,7 +484,7 @@ class ResponseService
         }
 
         // 2. Determine initial status (may be overridden by script)
-        $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'];
+        $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
         $status = 'submitted'; // Always default to 'submitted' — ignore client-supplied status
         if ($scriptResult !== null && $scriptResult->success && $scriptResult->status !== null) {
             $status = in_array($scriptResult->status, $allowedStatuses, true) ? $scriptResult->status : 'submitted';
@@ -790,7 +790,10 @@ class ResponseService
             $stmt->execute([
                 'response_id' => $responseId,
                 'field_name' => $name,
-                'field_value' => is_scalar($value) ? (string)$value : json_encode($value),
+                // JSON-encode ALL values (not (string)$value for scalars) so the type
+                // round-trips through the json_decode read path — otherwise a bool becomes
+                // 1/'' and a leading-zero/"true"-like string is reinterpreted on read.
+                'field_value' => json_encode($value),
             ]);
         }
 
@@ -870,7 +873,7 @@ class ResponseService
         }
 
         if (isset($data['status'])) {
-            $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'];
+            $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
             if (!in_array($data['status'], $allowedStatuses, true)) {
                 throw new \RuntimeException('Invalid status. Allowed: ' . implode(', ', $allowedStatuses));
             }

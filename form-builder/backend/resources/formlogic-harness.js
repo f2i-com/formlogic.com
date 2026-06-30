@@ -224,6 +224,15 @@
       return;
     }
 
+    // onSubmit must be synchronous. ctx.db/ctx.http are synchronous host RPCs, so async is
+    // never needed — and we deliberately do NOT drain the microtask queue (sandbox-escape
+    // defense), so a returned Promise would silently lose all post-await work (computed
+    // fields, tags, status) AND a post-await {reject:true}. Fail loudly instead.
+    if (ret && (typeof ret === "object" || typeof ret === "function") && typeof ret.then === "function") {
+      write({ type: "done", error: "onSubmit must be synchronous — async/await is not supported (ctx.db and ctx.http are synchronous; don't await them)" });
+      return;
+    }
+
     if (ret && typeof ret === "object" && ret.reject === true) {
       var msg = String(ret.message || "Submission rejected");
       if (msg.length > 500) msg = msg.substring(0, 500);

@@ -309,7 +309,7 @@ export function Docs() {
                 <>An <strong className="text-gray-900 dark:text-white">API Reference</strong> tab with every function, and a <strong className="text-gray-900 dark:text-white">Form Fields</strong> tab listing your field IDs.</>,
               ]} />
               <Figure src="/screenshots/script-editor.png" alt="The backend script editor's AI Generate tab" caption="The script editor — describe the logic and AI writes it using your form's fields." />
-              <Tip>Scripts run in a secure sandbox with strict limits (instruction count, wall-clock time, memory, no filesystem). A script error never blocks a submission — it's recorded and the response is still saved.</Tip>
+              <Tip>Scripts run in a secure sandbox with strict limits (instruction count, wall-clock time, memory, no filesystem). <C>ctx.http</C> and <C>ctx.db</C> are <strong className="text-gray-900 dark:text-white">synchronous</strong> — call them directly, don't use <C>async</C>/<C>await</C>. A script error never blocks a submission — it's recorded and the response is still saved.</Tip>
             </section>
 
             {/* Publishing */}
