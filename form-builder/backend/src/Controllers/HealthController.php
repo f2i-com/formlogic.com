@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Database\SQLiteConnection;
+use FormLogic\Services\ReconcileService;
 use FormLogic\Services\QuickJsRunner;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\DocumentConverter;
@@ -122,6 +124,29 @@ class HealthController
             }
         } catch (\Throwable $e) {
             $checks['webhook_worker'] = ['ok' => true, 'critical' => false, 'detail' => 'heartbeat unavailable'];
+        }
+
+        // Dual-store (MySQL ↔ per-form SQLite) drift — cheap file-level check only (forms rows vs
+        // SQLite files vs upload dirs); the full per-form count reconcile is `bin/reconcile.php`.
+        try {
+            $formsPath = $this->settings['sqlite']['storage_path'] ?? ($base . '/storage/forms');
+            $uploadsPath = $this->settings['uploads']['storagePath'] ?? ($base . '/storage/uploads');
+            $recon = new ReconcileService($this->db->getConnection(), new SQLiteConnection($formsPath), $formsPath, $uploadsPath);
+            $drift = $recon->fileDrift();
+            $total = count($drift['missingSqlite']) + count($drift['orphanedSqlite']) + count($drift['orphanedUploads']);
+            $checks['dual_store'] = [
+                'ok' => true, // non-critical: drift is a maintenance issue, not an outage
+                'critical' => false,
+                'detail' => $total === 0 ? 'no file-level drift' : sprintf(
+                    '%d missing SQLite, %d orphaned SQLite, %d orphaned upload dirs',
+                    count($drift['missingSqlite']), count($drift['orphanedSqlite']), count($drift['orphanedUploads'])
+                ),
+            ];
+            if ($total > 0) {
+                $checks['dual_store']['warning'] = 'run bin/reconcile.php to review/repair store drift';
+            }
+        } catch (\Throwable $e) {
+            $checks['dual_store'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }
 
         $ok = true;

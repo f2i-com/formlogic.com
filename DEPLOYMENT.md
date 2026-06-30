@@ -136,9 +136,22 @@ Without credentials the `/billing` page degrades to "not configured" and no char
 - `GET /api/health` — public heartbeat (`{status, timestamp}`); use it for uptime/load-balancer checks.
 - `GET /api/health/deep` — **authenticated** "Doctor": checks DB connectivity, writable
   `storage/`+`logs/` dirs, the QuickJS runtime (binary + harness + prelude), billing config
-  (critical only when plan enforcement is on; warns on sandbox / missing webhook id), and the
-  document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`). Returns `200` when all
-  critical checks pass, `503` otherwise. Run it after every deploy/restore.
+  (critical only when plan enforcement is on; warns on sandbox / missing webhook id), the
+  document-conversion tools (`pdftoppm`, `ghostscript`, `libreoffice`), the webhook retry-worker
+  heartbeat, and dual-store file drift. Returns `200` when all critical checks pass, `503`
+  otherwise. Run it after every deploy/restore.
 
 > Rate limiting fails *open* if its table is unwritable (availability over strictness) — the
 > Doctor's `writable:*` checks make that condition visible.
+
+### Dual-store reconcile
+
+MySQL (metadata) and the per-form SQLite files (responses) can drift after a partial failure.
+`GET /api/health/deep` surfaces file-level drift cheaply; for a full report/repair run:
+
+```bash
+php form-builder/backend/bin/reconcile.php        # read-only report
+php form-builder/backend/bin/reconcile.php --fix  # re-sync forms.response_count + drop orphaned response_links
+```
+
+Orphaned SQLite files / upload dirs are reported but never auto-deleted — remove them by hand after review.
