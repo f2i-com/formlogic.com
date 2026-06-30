@@ -183,6 +183,17 @@ class McpController
                     $data = $this->appService->createApp(['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null], $userId);
                     $this->audit($request, 'mcp.create_app');
                     break;
+                case 'update_app':
+                    $this->ownApp((string) ($args['appId'] ?? ''), $userId);
+                    $upd = [];
+                    foreach (['name', 'description', 'status'] as $k) {
+                        if (array_key_exists($k, $args)) {
+                            $upd[$k] = $args[$k];
+                        }
+                    }
+                    $data = $this->appService->updateApp((string) $args['appId'], $upd);
+                    $this->audit($request, 'mcp.update_app');
+                    break;
                 case 'add_form_to_app':
                     $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
@@ -260,6 +271,7 @@ class McpController
             ['name' => 'update_form', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
             ['name' => 'list_apps', 'description' => "List the owner's apps.", 'inputSchema' => $obj([])],
             ['name' => 'create_app', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
+            ['name' => 'update_app', 'description' => 'Update an app: rename it, set its description, or publish it (status: draft|published|archived).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['appId'])],
             ['name' => 'add_form_to_app', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
             ['name' => 'set_app_home', 'description' => "Set the app's custom HOME screen (sandboxed UI; SDK spans the app's forms: submit(formId,answers)/records(formId)/navigate(formId)).", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'list_responses', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
