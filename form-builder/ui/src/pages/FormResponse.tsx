@@ -664,7 +664,7 @@ export function FieldResponse({
           {field.label}
           {required && <span className="text-red-500 ml-1">*</span>}
         </h2>
-        {field.description && (
+        {field.description && field.type !== 'statement' && field.type !== 'welcome_screen' && (
           <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
         )}
       </div>
@@ -674,10 +674,12 @@ export function FieldResponse({
 }
 
 // Success Screen
-function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string } }) {
+function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string; properties?: { mediaUrl?: string; mediaType?: 'image' | 'video' } } }) {
   // Use a thank_you field's content as the completion message when the form defines one.
   const heading = thankYou?.label?.trim() || 'Thank you!';
   const subtext = thankYou?.description?.trim() || 'Your response has been submitted successfully.';
+  const mediaUrl = thankYou?.properties?.mediaUrl;
+  const mediaType = thankYou?.properties?.mediaType || 'image';
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
@@ -690,6 +692,11 @@ function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: strin
       >
         <Check className="h-10 w-10" style={{ color: readableForegroundColor(form.theme.primaryColor) }} />
       </div>
+      {mediaUrl && (mediaType === 'video' ? (
+        <video src={mediaUrl} controls className="w-full max-w-md mx-auto rounded-xl max-h-64 mb-6" />
+      ) : (
+        <img src={mediaUrl} alt="" className="w-full max-w-md mx-auto rounded-xl max-h-64 object-contain mb-6" />
+      ))}
       <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>{heading}</h1>
       <p className="text-xl whitespace-pre-line" style={{ color: form.theme.textColor, opacity: 0.7 }}>{subtext}</p>
       {isRedirecting && (

@@ -71,8 +71,9 @@ export default function FormPreview() {
   const visibleFields = useMemo(() => {
     if (!form) return [];
     return form.fields.filter((f) => {
-      // Always hide welcome/thank_you screens + hidden fields from the main flow
-      if (['welcome_screen', 'thank_you', 'hidden'].includes(f.type)) return false;
+      // Hide the thank_you (post-submit) screen + hidden fields; welcome_screen IS a leading
+      // step in both runtimes, so show it here too for true WYSIWYG.
+      if (['thank_you', 'hidden'].includes(f.type)) return false;
       // Check conditional logic
       return isFieldVisible(f.id);
     });

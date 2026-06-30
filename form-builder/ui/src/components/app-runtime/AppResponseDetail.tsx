@@ -482,9 +482,15 @@ export function AppResponseDetail() {
                           const loc = val as { latitude: number; longitude: number };
                           return `${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}`;
                         }
-                        // Signature: render the image (was a raw base64 blob)
-                        if (field.type === 'signature' && typeof val === 'string' && val.startsWith('data:image')) {
-                          return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                        // Signature: render the drawn image, or show the typed name (never the raw "typed:" prefix)
+                        if (field.type === 'signature' && typeof val === 'string') {
+                          if (val.startsWith('data:image')) {
+                            return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                          }
+                          if (val.startsWith('typed:')) {
+                            const n = val.slice(6).trim();
+                            return n ? <span style={{ fontFamily: 'cursive' }}>{n}</span> : '—';
+                          }
                         }
                         // Choice fields: map stored option values (e.g. "option_2") to
                         // their human labels.

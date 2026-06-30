@@ -622,6 +622,15 @@ function validateField(field: FormField, value: unknown): string | null {
     }
   }
 
+  // Email/URL format — the public form enforces these; mirror them here so the app
+  // runtime doesn't accept malformed values the native input type would have caught.
+  if (field.type === 'email' && typeof value === 'string' && value.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) {
+    return 'Please enter a valid email address';
+  }
+  if (field.type === 'url' && typeof value === 'string' && value.trim() && !/^https?:\/\/.+\..+/.test(value.trim())) {
+    return 'Please enter a valid URL (starting with http:// or https://)';
+  }
+
   const validations = field.validation;
   if (!validations?.length) return null;
 
@@ -1099,7 +1108,7 @@ export function AppFormView() {
                   {currentField.label}
                   {isFieldRequired(currentField.id) && <span className="text-red-500 ml-1">*</span>}
                 </h2>
-                {currentField.description && (
+                {currentField.description && currentField.type !== 'statement' && currentField.type !== 'welcome_screen' && (
                   <p className="text-base md:text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
                     {currentField.description}
                   </p>
@@ -1246,7 +1255,7 @@ export function AppFormView() {
                       {field.label}
                       {isFieldRequired(field.id) && <span className="text-red-500 ml-1">*</span>}
                     </h2>
-                    {field.description && (
+                    {field.description && field.type !== 'statement' && field.type !== 'welcome_screen' && (
                       <p className="text-sm md:text-base text-gray-500 dark:text-slate-400 leading-relaxed">
                         {field.description}
                       </p>

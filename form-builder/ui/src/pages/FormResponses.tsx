@@ -453,8 +453,20 @@ function FormResponses() {
     if (fieldType === 'file_upload' && Array.isArray(value)) {
       return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
     }
-    // Signature: never dump the raw data:image base64 into the grid/detail/CSV cell.
-    if (fieldType === 'signature') return value ? '[signature]' : '-';
+    // Signature: a typed signature is stored as "typed:<name>" — show the name; a drawn
+    // signature is a data:image URL — show a marker, never the raw base64.
+    if (fieldType === 'signature') {
+      if (typeof value === 'string' && value.startsWith('typed:')) {
+        const name = value.slice(6).trim();
+        return name || '-';
+      }
+      return value ? '[signature]' : '-';
+    }
+    // Linked record: stored as the target response id(s) — don't show a raw UUID.
+    if (fieldType === 'linked_record') {
+      const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
+      return n === 0 ? '-' : n === 1 ? '[linked record]' : `[${n} linked records]`;
+    }
     // Choice fields: map stored option values (e.g. "option_2") to their human labels.
     if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
       const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
@@ -465,14 +477,18 @@ function FormResponses() {
       const loc = value as Record<string, number>;
       return `${loc.latitude?.toFixed(6)}, ${loc.longitude?.toFixed(6)}`;
     }
-    // Date/time locale formatting
+    // Date/time locale formatting (guard against Invalid Date rather than swallowing it)
     if (typeof value === 'string' && value) {
       if (fieldType === 'date') {
-        try { return new Date(value + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch { /* fall through */ }
+        const d = new Date(value + 'T00:00:00');
+        return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
       } else if (fieldType === 'time') {
-        try { const [h, m] = value.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } catch { /* fall through */ }
+        const [h, m] = value.split(':').map(Number);
+        const d = new Date(2000, 0, 1, h, m);
+        return isNaN(d.getTime()) ? value : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
       } else if (fieldType === 'datetime') {
-        try { return new Date(value).toLocaleString(); } catch { /* fall through */ }
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? value : d.toLocaleString();
       }
     }
     if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
@@ -1228,6 +1244,17 @@ function renderEditField(
             <p className="text-xs text-gray-400 dark:text-slate-500 italic">Signatures can't be edited here — value preserved.</p>
           </div>
         );
+      }
+      if (typeof currentValue === 'string' && currentValue.startsWith('typed:')) {
+        const typedName = currentValue.slice(6).trim();
+        if (typedName) {
+          return (
+            <div className="space-y-1">
+              <p className="text-base text-gray-900 dark:text-white" style={{ fontFamily: 'cursive' }}>{typedName}</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500 italic">Typed signature — value preserved.</p>
+            </div>
+          );
+        }
       }
       return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No signature captured</p>;
 
