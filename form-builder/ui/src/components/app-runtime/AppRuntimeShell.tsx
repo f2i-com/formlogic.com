@@ -53,6 +53,16 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
 
   if (!config) return null;
 
+  // Chromeless mode: a self-contained app (e.g. a custom-home dashboard) can hide the sidebar/header/nav.
+  const hideNav = (config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
+  if (hideNav) {
+    return (
+      <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
+        {children}
+      </main>
+    );
+  }
+
   const forms = config.forms || [];
   const basePath = `/app/${appSlug}`;
 

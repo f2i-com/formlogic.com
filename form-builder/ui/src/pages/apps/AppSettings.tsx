@@ -226,6 +226,17 @@ export function AppSettings() {
                 <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Where members land when they open the app.</p>
               </div>
             </div>
+
+            {/* Layout */}
+            <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
+              <h3 className="text-sm font-medium text-gray-900 dark:text-white">Layout</h3>
+              <Switch
+                checked={app.settings?.hideNav === true}
+                onChange={(checked) => updateSetting('hideNav', checked)}
+                label="Hide app navigation"
+                description="Render the app full-screen without the sidebar and menu — for self-contained apps (e.g. a single custom home screen). Members navigate from within the screen."
+              />
+            </div>
           </div>
           </TabsContent>
 

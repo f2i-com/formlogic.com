@@ -22,6 +22,8 @@ export interface AppSettings {
   enablePwa: boolean;
   pwaShortName?: string;
   pwaThemeColor?: string;
+  /** Render the app runtime full-screen without the sidebar/menu (self-contained custom-home apps). */
+  hideNav?: boolean;
 }
 
 export interface AppNavItem {

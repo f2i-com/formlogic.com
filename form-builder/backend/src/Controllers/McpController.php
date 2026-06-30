@@ -214,12 +214,17 @@ class McpController
                     break;
                 case 'update_app':
                     $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
-                    $this->ownApp((string) ($args['appId'] ?? ''), $userId);
+                    $app = $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                     $upd = [];
                     foreach (['name', 'description', 'status', 'slug'] as $k) {
                         if (array_key_exists($k, $args)) {
                             $upd[$k] = $args[$k];
                         }
+                    }
+                    if (array_key_exists('hideNav', $args)) {
+                        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+                        $settings['hideNav'] = (bool) $args['hideNav'];
+                        $upd['settings'] = $settings;
                     }
                     $data = $this->appService->updateApp((string) $args['appId'], $upd);
                     $this->audit($request, 'mcp.update_app', $userId, ['appId' => $args['appId'] ?? null]);
@@ -345,7 +350,7 @@ class McpController
             ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
             ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
-            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, or publish (status: draft|published|archived).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']]], ['appId'])],
+            ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],
             ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom HOME screen (sandboxed UI; SDK spans the app's forms: submit(formId,answers)/records(formId)/navigate(formId)).", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
