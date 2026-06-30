@@ -615,6 +615,11 @@ $app->group('/api/ai', function (RouteCollectorProxy $group) use ($container, $a
     $group->post('/improve-script', function ($request, $response) use ($container) {
         return $container->get(AIController::class)->improveScript($request, $response);
     });
+
+    // App plan generation (AI App Builder) — turns a prompt into a multi-form app plan.
+    $group->post('/generate-app-plan', function ($request, $response) use ($container) {
+        return $container->get(AIController::class)->generateAppPlan($request, $response);
+    });
 })->add($aiRateLimiter)->add($authRequired);
 
 // Helper function to get route args

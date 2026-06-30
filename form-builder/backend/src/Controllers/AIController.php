@@ -116,6 +116,34 @@ class AIController
     }
 
     /**
+     * Generate a multi-form APP PLAN from a prompt (AI App Builder).
+     * POST /api/ai/generate-app-plan  Body: { "prompt": "...", "maxForms"?: number }
+     */
+    public function generateAppPlan(Request $request, Response $response): Response
+    {
+        $body = $request->getParsedBody();
+        $prompt = $body['prompt'] ?? '';
+        if (empty($prompt) || !is_string($prompt)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt is required'], 400);
+        }
+        if (strlen($prompt) > 10000) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Prompt must be text no longer than 10000 characters'], 400);
+        }
+        $maxForms = max(1, min(10, (int) ($body['maxForms'] ?? 6)));
+
+        try {
+            $plan = $this->aiService->generateAppPlan($prompt, $maxForms);
+            return $this->jsonResponse($response, ['success' => true, 'data' => $plan]);
+        } catch (\Throwable $e) {
+            $this->logger->error('AI app-plan error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Could not generate an app plan — try rephrasing your description.',
+            ], 500);
+        }
+    }
+
+    /**
      * Generate form from uploaded document or image
      * POST /api/ai/generate-form-from-file
      *

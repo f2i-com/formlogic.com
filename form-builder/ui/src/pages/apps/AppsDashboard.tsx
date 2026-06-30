@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Wand2 } from 'lucide-react';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { GenerateAppModal } from '../../components/ai-app-builder/GenerateAppModal';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
@@ -22,6 +23,7 @@ export function AppsDashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [packFilter, setPackFilter] = useState<string>('all');
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
+  const [showGenerate, setShowGenerate] = useState(false);
 
   useEffect(() => {
     fetchApps();
@@ -87,9 +89,14 @@ export function AppsDashboard() {
       <Header
         title="Apps"
         actions={
-          <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
-            Create App
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowGenerate(true)} leftIcon={<Wand2 className="h-4 w-4" />}>
+              Generate with AI
+            </Button>
+            <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
+              Create App
+            </Button>
+          </div>
         }
       />
 
@@ -181,6 +188,8 @@ export function AppsDashboard() {
         variant="danger"
         isLoading={deleting}
       />
+
+      <GenerateAppModal isOpen={showGenerate} onClose={() => { setShowGenerate(false); fetchApps(); }} />
     </div>
   );
 }

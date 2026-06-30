@@ -502,6 +502,14 @@ class ApiClient {
     });
   }
 
+  /** AI App Builder: turn a prompt into a multi-form app plan (data.data is the AppPlan). */
+  async generateAppPlan(prompt: string, maxForms = 6): Promise<ApiResponse<{ data: import('./ai-app-builder/types').AppPlan }>> {
+    return this.request('/ai/generate-app-plan', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, maxForms }),
+    });
+  }
+
   async generateFormFromFile(file: File, prompt?: string): Promise<ApiResponse<AIFormGenerationResult>> {
     const url = `${this.baseUrl}/ai/generate-form-from-file`;
     const formData = new FormData();

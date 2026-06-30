@@ -8,7 +8,7 @@ import { lockBodyScroll, unlockBodyScroll } from '../../lib/scrollLock';
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  title?: string;
+  title?: React.ReactNode;
   description?: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';

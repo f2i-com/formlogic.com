@@ -239,6 +239,111 @@ class AIService
     }
 
     /**
+     * Generate a multi-form APP PLAN from a prompt (AI App Builder). Returns a normalized plan:
+     * { app:{name,description}, forms:[{key,title,purpose}], relations:[{from,to,label}], roles:[{name,level}] }.
+     */
+    public function generateAppPlan(string $prompt, int $maxForms = 6): array
+    {
+        $response = $this->chatCompletion([
+            ['role' => 'system', 'content' => $this->getAppPlanSystemPrompt()],
+            ['role' => 'user', 'content' => $prompt . "\n\nDesign up to {$maxForms} forms."],
+        ]);
+        return $this->parseAppPlan($response, $maxForms);
+    }
+
+    private function getAppPlanSystemPrompt(): string
+    {
+        return <<<'PROMPT'
+You are an application architect for FormLogic, a platform where an "app" bundles several linked forms.
+Given a description, design a coherent multi-form app and respond with ONLY a JSON object:
+{
+  "app": { "name": "Short App Name", "description": "One sentence." },
+  "forms": [ { "key": "snake_case_id", "title": "Form Title", "purpose": "what this form captures + any logic it needs" } ],
+  "relations": [ { "from": "child_form_key", "to": "parent_form_key", "label": "Linked Field Label" } ],
+  "roles": [ { "name": "Role Name", "level": "admin" } ]
+}
+Rules:
+- Design the forms a real team would use for this domain — distinct, non-overlapping, in a sensible workflow order.
+- "key" is a unique snake_case slug per form. Relations reference forms by their "key".
+- A relation means the "from" form has a field linking to a record in the "to" form (e.g. an Interview links to a Candidate). Point child -> parent. Only include relations that make real sense.
+- "level" is one of: "admin" (full control), "contributor" (submit + see own), "viewer" (read all). Include 2-4 roles.
+- Respond with ONLY the JSON object, no prose.
+PROMPT;
+    }
+
+    /** Parse + normalize the app plan: slugify keys, cap forms, dedup, drop dangling relations. */
+    private function parseAppPlan(string $response, int $maxForms): array
+    {
+        if (!preg_match('/\{[\s\S]*\}/', $response, $matches)) {
+            throw new \Exception('Could not parse plan as JSON');
+        }
+        $data = json_decode($matches[0], true);
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($data)) {
+            throw new \Exception('Invalid plan JSON: ' . json_last_error_msg());
+        }
+
+        $slugify = static function (string $s): string {
+            $s = strtolower(trim(preg_replace('/[^a-z0-9]+/i', '_', $s), '_'));
+            return substr($s, 0, 48);
+        };
+
+        $appName = trim((string) ($data['app']['name'] ?? ''));
+        if ($appName === '') {
+            throw new \Exception('Plan has no app name');
+        }
+
+        $forms = [];
+        $keys = [];
+        foreach (array_slice(is_array($data['forms'] ?? null) ? $data['forms'] : [], 0, $maxForms) as $f) {
+            if (!is_array($f)) {
+                continue;
+            }
+            $key = $slugify((string) ($f['key'] ?? $f['title'] ?? ''));
+            $title = trim((string) ($f['title'] ?? ''));
+            if ($key === '' || $title === '' || in_array($key, $keys, true)) {
+                continue;
+            }
+            $keys[] = $key;
+            $forms[] = ['key' => $key, 'title' => $title, 'purpose' => trim((string) ($f['purpose'] ?? ''))];
+        }
+        if (empty($forms)) {
+            throw new \Exception('Plan produced no usable forms');
+        }
+
+        $relations = [];
+        foreach (is_array($data['relations'] ?? null) ? $data['relations'] : [] as $r) {
+            if (!is_array($r)) {
+                continue;
+            }
+            $from = $slugify((string) ($r['from'] ?? ''));
+            $to = $slugify((string) ($r['to'] ?? ''));
+            if ($from === $to || !in_array($from, $keys, true) || !in_array($to, $keys, true)) {
+                continue;
+            }
+            $relations[] = ['from' => $from, 'to' => $to, 'label' => trim((string) ($r['label'] ?? 'Linked record')) ?: 'Linked record'];
+        }
+
+        $roles = [];
+        foreach (is_array($data['roles'] ?? null) ? $data['roles'] : [] as $r) {
+            if (!is_array($r) || trim((string) ($r['name'] ?? '')) === '') {
+                continue;
+            }
+            $level = strtolower((string) ($r['level'] ?? 'viewer'));
+            if (!in_array($level, ['admin', 'contributor', 'viewer'], true)) {
+                $level = 'viewer';
+            }
+            $roles[] = ['name' => trim((string) $r['name']), 'level' => $level];
+        }
+
+        return [
+            'app' => ['name' => $appName, 'description' => trim((string) ($data['app']['description'] ?? ''))],
+            'forms' => $forms,
+            'relations' => $relations,
+            'roles' => $roles,
+        ];
+    }
+
+    /**
      * Make a chat completion request to the API
      */
     private function chatCompletion(array $messages, ?string $model = null): string
