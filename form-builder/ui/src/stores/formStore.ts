@@ -67,6 +67,8 @@ interface FormState {
   isLoading: boolean;
   error: string | null;
   storageMode: StorageMode;
+  // Forms deleted while offline — deleted from the server on the next sync so they don't reappear.
+  pendingDeletions: string[];
   isInitialized: boolean;
   // Per-form count of in-flight saves (field/settings/theme/meta can overlap)
   savingFormIds: Record<string, number>;
@@ -107,7 +109,7 @@ interface FormState {
   updateFormTheme: (formId: string, theme: Partial<FormTheme>) => void;
 
   // Sync
-  syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; conflicts: SyncConflict[]; errors: string[] }>;
+  syncToApi: () => Promise<{ success: boolean; synced: number; unchanged: number; deleted: number; conflicts: SyncConflict[]; errors: string[] }>;
   saveFormToApi: (formId: string) => Promise<boolean>;
   // Reconnect conflict resolution (set when syncToApi finds forms changed both offline + in cloud)
   syncConflicts: SyncConflict[] | null;
@@ -260,6 +262,7 @@ export const useFormStore = create<FormState>()(
       isLoading: false,
       error: null,
       storageMode: 'local' as StorageMode,
+      pendingDeletions: [],
       isInitialized: false,
       savingFormIds: {} as Record<string, number>,
 
@@ -479,6 +482,12 @@ export const useFormStore = create<FormState>()(
             logger.error('Failed to delete form on server:', error);
             toast.error('Failed to delete form', 'Please try again');
           }
+        } else {
+          // Offline: queue the deletion so the next sync removes it from the server too — otherwise
+          // the reload after reconnecting would bring the deleted form back.
+          set((s) => ({
+            pendingDeletions: s.pendingDeletions.includes(id) ? s.pendingDeletions : [...s.pendingDeletions, id],
+          }));
         }
       },
 
@@ -977,7 +986,23 @@ export const useFormStore = create<FormState>()(
           }
         }
 
-        return { success: errors.length === 0, synced, unchanged, conflicts, errors };
+        // Propagate offline deletions: remove from the server the forms deleted while offline, so
+        // they don't reappear on reload. A non-2xx (e.g. 404 — never reached the server) still counts
+        // as handled and is cleared; only a network failure keeps it queued for the next sync.
+        let deleted = 0;
+        const stillPending: string[] = [];
+        for (const delId of get().pendingDeletions) {
+          try {
+            const res = await api.deleteForm(delId);
+            if (!res.error) deleted++;
+          } catch (e) {
+            stillPending.push(delId);
+            errors.push(`Error removing a deleted form: ${e}`);
+          }
+        }
+        set({ pendingDeletions: stillPending });
+
+        return { success: errors.length === 0, synced, unchanged, deleted, conflicts, errors };
       },
 
       syncConflicts: null,
@@ -1041,6 +1066,8 @@ export const useFormStore = create<FormState>()(
         // Only persist forms in local mode — API mode data is server-backed
         forms: state.storageMode === 'local' ? state.forms : [],
         storageMode: state.storageMode,
+        // Persist offline deletions so they survive a refresh until the next sync propagates them.
+        pendingDeletions: state.pendingDeletions,
       }),
       onRehydrateStorage: () => {
         return (state) => {

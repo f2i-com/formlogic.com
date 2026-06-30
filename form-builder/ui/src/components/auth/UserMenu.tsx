@@ -86,6 +86,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         setStorageMode('api');
         const parts: string[] = [];
         if (result.synced > 0) parts.push(`${result.synced} synced`);
+        if (result.deleted > 0) parts.push(`${result.deleted} removed`);
         if (result.unchanged > 0) parts.push(`${result.unchanged} already up to date`);
         toast.success(
           'Cloud storage enabled',
@@ -126,6 +127,7 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
         }
         const parts: string[] = [];
         if (result.synced > 0) parts.push(`${result.synced} synced`);
+        if (result.deleted > 0) parts.push(`${result.deleted} removed`);
         if (result.unchanged > 0) parts.push(`${result.unchanged} unchanged`);
         toast.success('Sync Complete', parts.length ? parts.join(', ') : 'Everything is already up to date');
       } else {
