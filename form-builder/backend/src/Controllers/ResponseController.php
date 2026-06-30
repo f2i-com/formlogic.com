@@ -219,7 +219,7 @@ class ResponseController
 
         // Re-derive file URLs server-side so a submitter can't store an attacker-chosen
         // link that later renders as a clickable anchor to reviewers.
-        $data['answers'] = $this->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
+        $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
 
         // Recompute calculated fields server-side and merge them in so they
         // round-trip into storage/export/analytics and are available to
@@ -350,34 +350,7 @@ class ResponseController
      * only ever see links that point at this form's own file-serving route — never an
      * attacker-supplied phishing or `javascript:` link.
      */
-    private function normalizeFileAnswers(array $fields, array $answers, string $formId): array
-    {
-        $fileFieldIds = [];
-        foreach ($fields as $field) {
-            if (($field['type'] ?? '') === 'file_upload' && isset($field['id'])) {
-                $fileFieldIds[$field['id']] = true;
-            }
-        }
-        if (empty($fileFieldIds)) {
-            return $answers;
-        }
-
-        foreach ($answers as $fieldId => $value) {
-            if (!isset($fileFieldIds[$fieldId]) || !is_array($value)) {
-                continue;
-            }
-            foreach ($value as $i => $item) {
-                if (!is_array($item) || !isset($item['id'], $item['originalFilename'])) {
-                    continue;
-                }
-                $answers[$fieldId][$i]['url'] = '/api/files/' . rawurlencode($formId)
-                    . '/' . rawurlencode((string) $item['id'])
-                    . '/' . rawurlencode((string) $item['originalFilename']);
-            }
-        }
-
-        return $answers;
-    }
+    // normalizeFileAnswers moved to ResponseService (shared across all write paths).
 
     /**
      * Validate answers against form field definitions
@@ -404,7 +377,7 @@ class ResponseController
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) {
                 continue;
             }
 
@@ -672,7 +645,11 @@ class ResponseController
         // update path previously stripped without recomputing).
         if (isset($data['answers']) && is_array($data['answers'])) {
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+            $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+            if ($this->responseService->answersTooLarge($data['answers'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
+            }
         }
 
         try {

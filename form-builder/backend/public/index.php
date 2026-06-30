@@ -541,11 +541,15 @@ $app->get('/api/health', function ($request, $response) {
 // Deep diagnostics ("Doctor") — protected; surfaces broken DB / unwritable dirs / missing
 // QuickJS / billing misconfig that would otherwise fail silently.
 $container->set(\FormLogic\Controllers\HealthController::class, function (Container $c) {
+    // DocumentConverter's constructor can throw on a misconfigured temp dir; the Doctor
+    // endpoint must degrade gracefully, so pass null on failure (deep() rebuilds defensively).
+    $docs = null;
+    try { $docs = $c->get(DocumentConverter::class); } catch (\Throwable $e) { $docs = null; }
     return new \FormLogic\Controllers\HealthController(
         $c->get(MySQLConnection::class),
         $c->get('settings'),
         $c->get(\FormLogic\Services\PayPalService::class),
-        $c->get(DocumentConverter::class)
+        $docs
     );
 });
 $app->get('/api/health/deep', function ($request, $response) use ($container) {

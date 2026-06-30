@@ -87,14 +87,20 @@ class HealthController
         $checks['paypal'] = $paypal;
 
         // Document-conversion tools — non-critical (AI document upload degrades without them).
-        $docs = $this->docs ?? new DocumentConverter();
-        foreach (['pdftoppm', 'gs', 'libreoffice'] as $tool) {
-            $present = $docs->commandExists($tool);
-            $checks["tool:$tool"] = [
-                'ok' => $present,
-                'critical' => false,
-                'detail' => $present ? 'available' : 'not found (AI document conversion limited)',
-            ];
+        // Defensive: a misconfigured temp dir makes DocumentConverter's constructor throw, which
+        // must degrade the report rather than 500 the whole diagnostics endpoint.
+        try {
+            $docs = $this->docs ?? new DocumentConverter();
+            foreach (['pdftoppm', 'gs', 'libreoffice'] as $tool) {
+                $present = $docs->commandExists($tool);
+                $checks["tool:$tool"] = [
+                    'ok' => $present,
+                    'critical' => false,
+                    'detail' => $present ? 'available' : 'not found (AI document conversion limited)',
+                ];
+            }
+        } catch (\Throwable $e) {
+            $checks['document_converter'] = ['ok' => false, 'critical' => false, 'detail' => 'unavailable: ' . $e->getMessage()];
         }
 
         $ok = true;

@@ -311,10 +311,16 @@ class AppPublicController
             // Drop answers for non-input/unknown fields (e.g. forged calculated
             // values or arbitrary field IDs) before validating and persisting.
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers'] ?? []);
+            // Re-derive file URLs server-side (don't trust client-supplied url) — parity
+            // with the standalone path; prevents stored reviewer-facing phishing links.
+            $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
             // Recompute calculated fields server-side (sanitize just stripped any
             // client-sent values) so app-runtime submissions persist them too —
             // parity with the standalone and External API submission paths.
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+            if ($this->responseService->answersTooLarge($data['answers'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
+            }
 
             // Validate answers against form fields
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
@@ -534,7 +540,11 @@ class AppPublicController
             if ($form) {
                 // Drop non-input/unknown field answers before validating/persisting
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
+                $data['answers'] = $this->responseService->normalizeFileAnswers($form['fields'] ?? [], $data['answers'], $formId);
                 $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
+                if ($this->responseService->answersTooLarge($data['answers'])) {
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
+                }
                 $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
                 if (!empty($validationErrors)) {
                     return $this->jsonResponse($response, [
@@ -1179,7 +1189,7 @@ class AppPublicController
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated'], true)) {
+            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) {
                 continue;
             }
 

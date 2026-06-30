@@ -188,6 +188,47 @@ class ResponseService
         return $answers;
     }
 
+    /** Aggregate answer-size cap (~2 MB) — bounds DB rows + script/runtime memory. */
+    public const MAX_ANSWER_BYTES = 2_000_000;
+
+    /** True if the answers payload exceeds the size cap. */
+    public function answersTooLarge(array $answers): bool
+    {
+        return strlen((string) json_encode($answers)) > self::MAX_ANSWER_BYTES;
+    }
+
+    /**
+     * Re-derive each file_upload answer's `url` from the trusted formId + id + filename, so a
+     * submitter can't store an attacker-chosen link that is later rendered to reviewers.
+     * Shared by every write path (public form, app runtime, external API).
+     */
+    public function normalizeFileAnswers(array $fields, array $answers, string $formId): array
+    {
+        $fileFieldIds = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'file_upload' && isset($field['id'])) {
+                $fileFieldIds[$field['id']] = true;
+            }
+        }
+        if (empty($fileFieldIds)) {
+            return $answers;
+        }
+        foreach ($answers as $fieldId => $value) {
+            if (!isset($fileFieldIds[$fieldId]) || !is_array($value)) {
+                continue;
+            }
+            foreach ($value as $i => $item) {
+                if (!is_array($item) || !isset($item['id'], $item['originalFilename'])) {
+                    continue;
+                }
+                $answers[$fieldId][$i]['url'] = '/api/files/' . rawurlencode($formId)
+                    . '/' . rawurlencode((string) $item['id'])
+                    . '/' . rawurlencode((string) $item['originalFilename']);
+            }
+        }
+        return $answers;
+    }
+
     /**
      * Get all responses for a form
      */
