@@ -81,8 +81,26 @@ class AIController
             ], 400);
         }
 
+        // Optional context for EDITING an existing form: the current fields + script. Sanitized and
+        // bounded — only id/label/type/required are used to ground the model's modification.
+        $existingFields = [];
+        if (is_array($body['existingFields'] ?? null)) {
+            foreach (array_slice($body['existingFields'], 0, 300) as $f) {
+                if (!is_array($f)) {
+                    continue;
+                }
+                $existingFields[] = [
+                    'id' => substr((string) ($f['id'] ?? ''), 0, 120),
+                    'label' => substr((string) ($f['label'] ?? ''), 0, 300),
+                    'type' => substr((string) ($f['type'] ?? ''), 0, 40),
+                    'required' => !empty($f['required']),
+                ];
+            }
+        }
+        $existingScript = is_string($body['existingScript'] ?? null) ? substr($body['existingScript'], 0, 20000) : '';
+
         try {
-            $result = $this->aiService->generateFormFromPrompt($prompt);
+            $result = $this->aiService->generateFormFromPrompt($prompt, $existingFields, $existingScript);
 
             return $this->jsonResponse($response, [
                 'success' => true,

@@ -10,15 +10,29 @@ import { toast } from '../../stores/toastStore';
 import type { FormField } from '../../types/form';
 import { v4 as uuidv4 } from 'uuid';
 
+export interface AIGenerateResult {
+  title: string;
+  description: string;
+  fields: FormField[];
+  prompt?: string;
+  logicScript?: string;
+  logicPrompt?: string;
+  /** Edit mode: replace the form's fields/script instead of appending. */
+  replaceFields?: boolean;
+}
+
 interface AIFormGeneratorProps {
   isOpen: boolean;
   onClose: () => void;
-  onGenerate: (title: string, description: string, fields: FormField[], prompt?: string, logicScript?: string, logicPrompt?: string) => void;
+  onGenerate: (result: AIGenerateResult) => void;
+  /** Current form context — when present (and non-empty), a text prompt EDITS this form. */
+  existingFields?: Array<{ id: string; label: string; type: string; required?: boolean }>;
+  existingScript?: string;
 }
 
 type TabType = 'prompt' | 'document' | 'image';
 
-export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGeneratorProps) {
+export function AIFormGenerator({ isOpen, onClose, onGenerate, existingFields, existingScript }: AIFormGeneratorProps) {
   const [activeTab, setActiveTab] = useState<TabType>('prompt');
   const [prompt, setPrompt] = useState('');
   const [additionalPrompt, setAdditionalPrompt] = useState('');
@@ -126,8 +140,16 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
     try {
       let result;
 
+      // Edit mode: a text prompt on a form that already has fields → the AI modifies the existing
+      // form (fields + script) instead of generating from scratch. (Document/image tabs always add.)
+      const editMode = activeTab === 'prompt' && (existingFields?.length ?? 0) > 0;
+
       if (activeTab === 'prompt') {
-        result = await api.generateFormFromPrompt(prompt);
+        result = await api.generateFormFromPrompt(
+          prompt,
+          editMode ? existingFields : undefined,
+          editMode ? existingScript : undefined,
+        );
       } else {
         result = await api.generateFormFromFile(selectedFile!, additionalPrompt || undefined);
       }
@@ -165,11 +187,12 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       if (autoScript && needsScript && scriptDesc) {
         setGenStage('script');
         try {
-          // Pass the minimal field projection the script generator needs (matches ScriptEditor).
-          const scriptRes = await api.generateScript(
-            scriptDesc,
-            formFields.map((f) => ({ id: f.id, label: f.label, type: f.type })),
-          );
+          // Minimal field projection the script generator needs (matches ScriptEditor).
+          const fieldProjection = formFields.map((f) => ({ id: f.id, label: f.label, type: f.type }));
+          // Editing a form that already has a script → MODIFY it; otherwise generate a fresh one.
+          const scriptRes = editMode && (existingScript || '').trim()
+            ? await api.improveScript(existingScript as string, scriptDesc, fieldProjection)
+            : await api.generateScript(scriptDesc, fieldProjection);
           if (scriptRes.data?.data?.script) {
             logicScript = scriptRes.data.data.script;
           }
@@ -179,19 +202,20 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
       }
 
       toast.success(
-        'Form Generated',
-        logicScript
-          ? `Created ${formFields.length} fields + backend logic`
-          : `Created ${formFields.length} fields`
+        editMode ? 'Form Updated' : 'Form Generated',
+        editMode
+          ? (logicScript ? `${formFields.length} fields + backend logic updated` : `${formFields.length} fields updated`)
+          : (logicScript ? `Created ${formFields.length} fields + backend logic` : `Created ${formFields.length} fields`)
       );
-      onGenerate(
+      onGenerate({
         title,
-        description || '',
-        formFields,
-        activeTab === 'prompt' ? prompt : additionalPrompt,
+        description: description || '',
+        fields: formFields,
+        prompt: activeTab === 'prompt' ? prompt : additionalPrompt,
         logicScript,
-        logicScript ? scriptDesc : undefined,
-      );
+        logicPrompt: logicScript ? scriptDesc : undefined,
+        replaceFields: editMode,
+      });
       resetAndClose();
     } catch (error) {
       logger.error('AI generation error:', error);
@@ -219,6 +243,8 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
     { key: 'document', label: 'Document', icon: FileText },
     { key: 'image', label: 'Photo', icon: Image },
   ];
+
+  const editing = (existingFields?.length ?? 0) > 0;
 
   return (
     <Modal isOpen={isOpen} onClose={resetAndClose} title="Create with AI" size="lg">
@@ -256,12 +282,19 @@ export function AIFormGenerator({ isOpen, onClose, onGenerate }: AIFormGenerator
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
-                Describe your form
+                {editing ? 'Describe the change' : 'Describe your form'}
               </label>
+              {editing && (
+                <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">
+                  This form has {existingFields!.length} field{existingFields!.length === 1 ? '' : 's'}. The AI will modify the existing form{existingScript ? ' and its script' : ''} from your instructions — it won't start over.
+                </p>
+              )}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Example: Create a customer feedback form with ratings for service quality, product satisfaction, and a text area for additional comments. Include fields for name and email."
+                placeholder={editing
+                  ? 'Example: Add a phone number field, make email required, and reject submissions where guests is over 10.'
+                  : 'Example: Create a customer feedback form with ratings for service quality, product satisfaction, and a text area for additional comments. Include fields for name and email.'}
                 className="w-full h-36 px-3 py-2.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 resize-none text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
             </div>

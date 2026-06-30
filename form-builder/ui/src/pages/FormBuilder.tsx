@@ -44,7 +44,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconPicker } from '../components/ui/IconPicker';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
-import { AIFormGenerator } from '../components/builder/AIFormGenerator';
+import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
 import { type PackData } from '../lib/api';
@@ -139,6 +139,7 @@ export default function FormBuilder() {
     updateForm,
     addField,
     addFields,
+    setFields,
     updateField,
     deleteField,
     reorderFields,
@@ -536,31 +537,33 @@ export default function FormBuilder() {
     }
   };
 
-  const handleAIGenerate = (title: string, description: string, fields: FormField[], prompt?: string, logicScript?: string, logicPrompt?: string) => {
-    // Update form title and description. If the generator also produced a backend script, set it —
-    // but never clobber a script the user already has (they can regenerate from the Script section).
-    // The Script tab badge then shows that logic was added.
-    const applyScript = !!logicScript && !form.logicScript;
+  const handleAIGenerate = (r: AIGenerateResult) => {
+    // Edit mode (replaceFields): the AI saw the existing form, so its script is a MODIFICATION →
+    // apply it. Create mode: don't clobber a script the user already wrote.
+    const applyScript = !!r.logicScript && (r.replaceFields || !form.logicScript);
     updateForm(form.id, {
-      title: title || form.title,
-      description: description || form.description,
-      ...(applyScript ? { logicScript } : {}),
-      logicPrompt: (applyScript ? logicPrompt : undefined) ?? prompt,
+      title: r.title || form.title,
+      description: r.description || form.description,
+      ...(applyScript ? { logicScript: r.logicScript } : {}),
+      logicPrompt: (applyScript ? r.logicPrompt : undefined) ?? r.prompt,
     });
 
-    // Add generated fields as ONE undo step (not one per field).
-    const created = addFields(form.id, fields.map((field) => ({
-      type: field.type,
-      label: field.label,
-      description: field.description,
-      placeholder: field.placeholder,
-      required: field.required,
-      properties: field.properties || {},
-    })));
-
-    // Select the first generated field
-    if (created.length > 0) {
-      setSelectedField(created[0].id);
+    if (r.replaceFields) {
+      // Edit: replace the whole field set as one undo step (the AI returned the full modified list,
+      // preserving ids for fields it kept so responses/logic stay valid).
+      setFields(form.id, r.fields);
+      if (r.fields.length > 0) setSelectedField(r.fields[0].id);
+    } else {
+      // Create/append: add generated fields as ONE undo step (not one per field).
+      const created = addFields(form.id, r.fields.map((field) => ({
+        type: field.type,
+        label: field.label,
+        description: field.description,
+        placeholder: field.placeholder,
+        required: field.required,
+        properties: field.properties || {},
+      })));
+      if (created.length > 0) setSelectedField(created[0].id);
     }
   };
 
@@ -1031,6 +1034,8 @@ export default function FormBuilder() {
         isOpen={activeModal === 'ai'}
         onClose={closeModal}
         onGenerate={handleAIGenerate}
+        existingFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type, required: f.required }))}
+        existingScript={form.logicScript || ''}
       />
 
       {/* Theme Editor Modal */}

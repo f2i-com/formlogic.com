@@ -82,6 +82,8 @@ interface FormState {
   addField: (formId: string, field: Omit<FormField, 'id' | 'order'>) => FormField;
   // Append several fields as ONE undo step (e.g. AI generation / template apply)
   addFields: (formId: string, fields: Omit<FormField, 'id' | 'order'>[]) => FormField[];
+  // Replace the entire field set as ONE undo step, preserving caller-supplied ids (AI edit mode)
+  setFields: (formId: string, fields: FormField[]) => void;
   updateField: (formId: string, fieldId: string, updates: Partial<FormField>) => void;
   deleteField: (formId: string, fieldId: string) => void;
   duplicateField: (formId: string, fieldId: string) => FormField | null;
@@ -638,6 +640,25 @@ export const useFormStore = create<FormState>()(
         syncFormField(formId, 'fields');
 
         return newFields;
+      },
+
+      setFields: (formId, fields) => {
+        const form = get().forms.find((f) => f.id === formId);
+        if (!form) throw new Error('Form not found');
+
+        // One undo step; replaces the whole field set. Used by AI edit mode — the AI returns the
+        // full modified list, preserving ids for fields it kept so responses/logic stay valid.
+        pushHistory(formId);
+        historyCoalesceKey = null;
+
+        const normalized = fields.map((f, i) => ({ ...f, order: i }));
+        set((state) => ({
+          forms: state.forms.map((f) =>
+            f.id === formId ? { ...f, fields: normalized, updatedAt: new Date().toISOString() } : f
+          ),
+        }));
+
+        syncFormField(formId, 'fields');
       },
 
       updateField: (formId, fieldId, updates) => {

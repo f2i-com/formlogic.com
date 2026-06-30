@@ -489,10 +489,16 @@ class ApiClient {
     return this.request('/ai/status');
   }
 
-  async generateFormFromPrompt(prompt: string): Promise<ApiResponse<AIFormGenerationResult>> {
+  async generateFormFromPrompt(
+    prompt: string,
+    existingFields?: Array<{ id: string; label: string; type: string; required?: boolean }>,
+    existingScript?: string,
+  ): Promise<ApiResponse<AIFormGenerationResult>> {
+    // existingFields/existingScript make this an EDIT of the current form (the AI modifies it,
+    // preserving field ids) rather than a from-scratch generation.
     return this.request('/ai/generate-form', {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, existingFields, existingScript }),
     });
   }
 

@@ -74,24 +74,64 @@ class AIService
     }
 
     /**
-     * Generate form fields from a text prompt
+     * Generate form fields from a text prompt. When $existingFields is provided, the prompt is
+     * treated as an EDIT to that form (the model sees the current fields + script and modifies them,
+     * preserving field ids) rather than a fresh generation.
+     *
+     * @param array<int,array<string,mixed>> $existingFields Current fields ({id,label,type,required}).
      */
-    public function generateFormFromPrompt(string $prompt): array
+    public function generateFormFromPrompt(string $prompt, array $existingFields = [], string $existingScript = ''): array
     {
-        $systemPrompt = $this->getFormGenerationSystemPrompt();
+        $editing = !empty($existingFields);
+        $systemPrompt = $this->getFormGenerationSystemPrompt()
+            . ($editing ? $this->buildEditContext($existingFields, $existingScript) : '');
+
+        $userMessage = $editing
+            ? "Apply this change to the existing form described above. Return the COMPLETE updated form:\n\n" . $prompt
+            : "Create a form based on this description:\n\n" . $prompt;
 
         $response = $this->chatCompletion([
-            [
-                'role' => 'system',
-                'content' => $systemPrompt
-            ],
-            [
-                'role' => 'user',
-                'content' => "Create a form based on this description:\n\n" . $prompt
-            ]
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => $userMessage],
         ]);
 
         return $this->parseFormResponse($response);
+    }
+
+    /**
+     * Build the "you are editing an existing form" addendum to the form-generation system prompt:
+     * the current fields (with ids) + script, plus modification rules (preserve ids, full set back).
+     *
+     * @param array<int,array<string,mixed>> $existingFields
+     */
+    private function buildEditContext(array $existingFields, string $existingScript): string
+    {
+        $lines = '';
+        foreach ($existingFields as $f) {
+            if (!is_array($f)) {
+                continue;
+            }
+            $lines .= sprintf(
+                "- id=%s | %s (%s)%s\n",
+                (string) ($f['id'] ?? '?'),
+                (string) ($f['label'] ?? ''),
+                (string) ($f['type'] ?? ''),
+                !empty($f['required']) ? ' [required]' : ''
+            );
+        }
+
+        $ctx = "\n\n---\nYOU ARE EDITING AN EXISTING FORM. Its current fields are:\n" . $lines;
+        if (trim($existingScript) !== '') {
+            $ctx .= "\nIts current onSubmit script:\n```\n" . $existingScript . "\n```\n";
+        }
+        $ctx .= "\nThe user's message is a CHANGE REQUEST, not a new form. Rules:\n"
+            . "- Return the COMPLETE updated field list (every field the form should end up with), not just the change.\n"
+            . "- PRESERVE the exact \"id\" of every existing field you keep or modify (responses and logic reference these ids); give a new id ONLY to genuinely new fields.\n"
+            . "- Keep fields the user didn't ask to change. Remove a field only if explicitly asked.\n"
+            . "- Preserve a sensible field order.\n"
+            . "- If the form has an existing script and the change affects on-submit logic, set \"needsScript\": true and, in \"suggestedScript\", describe the MODIFICATION to make to the current script (what to add/change relative to it) rather than a rewrite from scratch. If no logic change is needed, set \"needsScript\": false.";
+
+        return $ctx;
     }
 
     /**
