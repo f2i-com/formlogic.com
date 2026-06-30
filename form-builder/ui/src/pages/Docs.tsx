@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
@@ -45,6 +45,7 @@ const SECTIONS = [
   { id: 'exporting', title: 'Exporting data', icon: Download },
   { id: 'analytics', title: 'Analytics', icon: BarChart3 },
   { id: 'api', title: 'API access', icon: Terminal },
+  { id: 'mcp', title: 'Build with your AI (MCP)', icon: Plug },
   { id: 'cloud', title: 'Cloud & billing', icon: Cloud },
   { id: 'apps', title: 'Apps & permissions', icon: Boxes },
   { id: 'packs', title: 'Packs & templates', icon: Package },
@@ -381,6 +382,33 @@ export function Docs() {
                 <li><strong className="text-gray-900 dark:text-white">Webhooks</strong> — list (<C>webhooks:read</C>), create/update/delete (<C>webhooks:write</C>)</li>
               </ul>
               <Tip>A key only ever reaches <strong className="text-gray-900 dark:text-white">your own</strong> forms, is rate-limited, and uses the base URL <C>https://&lt;your-api-host&gt;/api/v1</C>. The full endpoint reference with examples lives in <C>docs/API.md</C> in the repository.</Tip>
+            </section>
+
+            {/* MCP */}
+            <section className="mb-14">
+              <H2 id="mcp" icon={Plug}>Build with your AI (MCP)</H2>
+              <P>Point your <strong className="text-gray-900 dark:text-white">own</strong> AI — Claude Desktop, Claude Code, Cursor, anything that speaks <strong className="text-gray-900 dark:text-white">MCP</strong> (Model Context Protocol) — at FormLogic and let it build and edit forms, write <a href="#apps" className="text-primary-600 dark:text-primary-400 hover:underline">custom screens</a>, and wire up an app. Bring your own (frontier) model instead of the built-in one. It works over a <strong className="text-gray-900 dark:text-white">temporary, scoped connection</strong> you can revoke any time.</P>
+              <Steps items={[
+                <>Open <strong className="text-gray-900 dark:text-white">Connect an AI</strong> — from <C>Settings</C> (all your apps), an app's <C>Manage</C> tab (that app only), or <strong className="text-gray-900 dark:text-white">"Hand to an AI"</strong> on the Apps page (creates a blank app + a link to it).</>,
+                <>Click <strong className="text-gray-900 dark:text-white">Generate connection</strong> and copy the URL + token (shown <strong className="text-gray-900 dark:text-white">once</strong>).</>,
+                <>Add it to your MCP client as a <strong className="text-gray-900 dark:text-white">remote / HTTP MCP server</strong> using the generated config.</>,
+              ]} />
+              <CodeBlock title="client config — add as a remote/HTTP MCP server">{`{
+  "mcpServers": {
+    "formlogic": {
+      "url": "https://<your-api-host>/api/mcp",
+      "headers": { "Authorization": "Bearer flm_xxx" }
+    }
+  }
+}`}</CodeBlock>
+              <P>The connection is deliberately short-lived — a <strong className="text-gray-900 dark:text-white">1-hour</strong> expiry, a <strong className="text-gray-900 dark:text-white">15-minute</strong> idle timeout, and one-click revoke. The token is stored hashed and shown only once.</P>
+              <P>Tokens carry <strong className="text-gray-900 dark:text-white">scopes</strong>. The default "builder" token can manage apps, forms, and screens — but <strong className="text-gray-900 dark:text-white">cannot read submission data</strong> (<C>responses:read</C> is opt-in). Tools the AI can call:</P>
+              <ul className="space-y-1.5 text-gray-600 dark:text-slate-300 list-disc pl-5 my-4">
+                <li><strong className="text-gray-900 dark:text-white">Forms</strong> — <C>list_forms</C>, <C>get_form</C>, <C>create_form</C>, <C>update_form</C> (fields, onSubmit script, custom screen)</li>
+                <li><strong className="text-gray-900 dark:text-white">Apps</strong> — <C>list_apps</C>, <C>create_app</C>, <C>update_app</C> (name, slug, publish), <C>add_form_to_app</C>, <C>set_app_home</C> (custom home screen)</li>
+                <li><strong className="text-gray-900 dark:text-white">Responses</strong> — <C>list_responses</C> (only with the <C>responses:read</C> scope)</li>
+              </ul>
+              <Tip>An <strong className="text-gray-900 dark:text-white">app-scoped</strong> link is enforced: the AI only ever sees that one app's forms and can't reach anything else. To turn the <strong className="text-gray-900 dark:text-white">built-in</strong> AI off and steer everyone to bring-your-own, set <C>AI_ENABLED=false</C>. Full reference: <C>docs/MCP.md</C>.</Tip>
             </section>
 
             {/* Cloud & billing */}

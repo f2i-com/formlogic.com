@@ -318,6 +318,18 @@ fields, and your `onSubmit` script** — identical to a browser submission.
 See **[docs/API.md](docs/API.md)** for the full reference — scopes, request/response shapes,
 examples, and error codes.
 
+### Build with your own AI (MCP)
+
+FormLogic also ships an **MCP server** (Model Context Protocol, over HTTP) so you can point your own AI
+— Claude Desktop, Claude Code, Cursor, … — at FormLogic and have it build/edit forms, write custom
+screens, and wire up an app. Start from **Connect an AI** (Settings, an app's *Manage* tab, or
+*"Hand to an AI"* on the Apps page): you get a short‑lived, scoped bearer token (1h TTL, 15m idle,
+revocable) and a ready‑to‑paste client config pointing at `/api/mcp`. Default tokens can build but
+**cannot read submission data**; app‑scoped tokens are restricted to that one app. Set `AI_ENABLED=false`
+to disable the built‑in AI and steer everyone to bring‑your‑own.
+
+See **[docs/MCP.md](docs/MCP.md)** for the connection steps, scopes, and the full tool list.
+
 ---
 
 ## Field Types
