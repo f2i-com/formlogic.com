@@ -352,7 +352,7 @@ export function AppResponseDetail() {
                   // Structured (object/array/data-URL) values can't be safely edited
                   // as text — feeding them into a text input stringifies and corrupts
                   // them. Keep them read-only; the original (seeded) value is preserved.
-                  if (field.type === 'location' || field.type === 'file_upload' || field.type === 'signature' || field.type === 'calculated') {
+                  if (field.type === 'location' || field.type === 'file_upload' || field.type === 'signature' || field.type === 'calculated' || field.type === 'hidden') {
                     return (
                       <p className="text-sm text-gray-400 dark:text-slate-500 italic px-3.5 py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-700">
                         This field can't be edited here — its existing value is preserved on save.

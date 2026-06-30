@@ -199,12 +199,12 @@ export function Billing() {
           <span className="text-sm font-medium text-gray-700 dark:text-slate-300">30-day periods</span>
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => setMonths((m) => Math.max(1, m - 1))} disabled={months <= 1}
-              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" aria-label="Fewer months">
+              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" aria-label="Fewer 30-day periods">
               <Minus className="h-4 w-4" />
             </button>
             <span className="w-10 text-center text-lg font-semibold text-gray-900 dark:text-white tabular-nums">{months}</span>
             <button type="button" onClick={() => setMonths((m) => Math.min(max, m + 1))} disabled={months >= max}
-              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" aria-label="More months">
+              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors" aria-label="More 30-day periods">
               <Plus className="h-4 w-4" />
             </button>
           </div>

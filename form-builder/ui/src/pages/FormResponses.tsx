@@ -1097,8 +1097,8 @@ function renderEditField(
   const inputClasses = "w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white";
   const disabledClasses = "w-full px-3 py-2.5 bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg text-gray-500 dark:text-slate-400 cursor-not-allowed";
 
-  // Read-only for calculated fields
-  if (field.type === 'calculated') {
+  // Read-only for calculated + hidden fields (values are computed/script-set, not user-edited)
+  if (field.type === 'calculated' || field.type === 'hidden') {
     return (
       <input
         type="text"

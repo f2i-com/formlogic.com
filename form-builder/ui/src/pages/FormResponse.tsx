@@ -635,6 +635,10 @@ export function FieldResponse({
           </p>
         );
 
+      // Hidden fields are never a form step; render nothing if one ever reaches here.
+      case 'hidden':
+        return null;
+
       default:
         return <p className="opacity-50">Field type not supported</p>;
     }
@@ -1163,7 +1167,7 @@ export default function FormResponse() {
           : `Please fill in: ${shown} and ${names.length - 3} more`
       );
       // Scroll the first missing field into view so the user knows where to look.
-      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
       return;
     }
 
@@ -1210,12 +1214,12 @@ export default function FormResponse() {
       if (typeof answer === 'string' && answer !== '') {
         if (f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answer)) {
           setSubmitError(`${f.label}: please enter a valid email address`);
-          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
           return;
         }
         if (f.type === 'url' && !/^https?:\/\/.+\..+/.test(answer)) {
           setSubmitError(`${f.label}: please enter a valid URL (starting with http:// or https://)`);
-          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
           return;
         }
       }
