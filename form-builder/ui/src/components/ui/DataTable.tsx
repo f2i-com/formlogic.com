@@ -150,6 +150,8 @@ export function DataTable<T extends Record<string, unknown>>({
                 key={String(item[keyField])}
                 onClick={() => onRowClick?.(item)}
                 tabIndex={onRowClick ? 0 : undefined}
+                role={onRowClick ? 'button' : undefined}
+                aria-label={onRowClick ? `Open ${String(item[columns[0]?.key] ?? 'item')}` : undefined}
                 onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(item); } } : undefined}
                 className={cn(
                   'rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4 flex items-start justify-between gap-3',
@@ -238,6 +240,7 @@ export function DataTable<T extends Record<string, unknown>>({
                   key={String(item[keyField])}
                   onClick={() => onRowClick?.(item)}
                   tabIndex={onRowClick ? 0 : undefined}
+                  aria-label={onRowClick ? `Open ${String(item[columns[0]?.key] ?? 'row')}` : undefined}
                   // Only act when the row itself is the target — so Enter/Space on a
                   // row-action button (Delete etc.) isn't hijacked into row navigation.
                   onKeyDown={onRowClick ? (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onRowClick(item); } } : undefined}

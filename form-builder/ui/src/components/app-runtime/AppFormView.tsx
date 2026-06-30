@@ -197,6 +197,7 @@ function FieldInput({
   onCalculated,
   error,
   autoFocus = true,
+  isRequired,
 }: {
   field: FormField;
   value: unknown;
@@ -209,7 +210,10 @@ function FieldInput({
   onCalculated?: (fieldId: string, value: unknown) => void;
   error?: string;
   autoFocus?: boolean;
+  isRequired?: boolean;
 }) {
+  // Conditional logic can make a field required dynamically; fall back to the static flag.
+  const required = isRequired ?? field.required;
   // Associate a validation error with the rendered control (aria-invalid +
   // aria-describedby) so screen readers announce it as part of the field. The body
   // uses early returns, so render first then clone the top element (input, or the
@@ -225,7 +229,7 @@ function FieldInput({
         onChange={(val) => onChange(val)}
         primaryColor={primaryColor}
         autoFocus={autoFocus}
-        required={field.required}
+        required={required}
       />
     );
   }
@@ -237,7 +241,7 @@ function FieldInput({
         inputMode={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
         autoComplete={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : undefined}
         aria-label={field.label}
-        aria-required={field.required || undefined}
+        aria-required={required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder || 'Type your answer here...'}
@@ -252,7 +256,7 @@ function FieldInput({
     return (
       <textarea
         aria-label={field.label}
-        aria-required={field.required || undefined}
+        aria-required={required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder || 'Type your answer here...'}
@@ -270,7 +274,7 @@ function FieldInput({
         type="number"
         inputMode="decimal"
         aria-label={field.label}
-        aria-required={field.required || undefined}
+        aria-required={required || undefined}
         min={field.properties?.min as number | undefined}
         max={field.properties?.max as number | undefined}
         step={(field.properties?.step as number | undefined) ?? 'any'}
@@ -292,7 +296,7 @@ function FieldInput({
       <input
         type={field.type === 'datetime' ? 'datetime-local' : field.type}
         aria-label={field.label}
-        aria-required={field.required || undefined}
+        aria-required={required || undefined}
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
@@ -308,7 +312,7 @@ function FieldInput({
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     const radioFocusIdx = Math.max(0, options.findIndex((o) => o.value === value));
     return (
-      <div className="space-y-3" role="radiogroup" aria-label={field.label} aria-required={field.required || undefined}>
+      <div className="space-y-3" role="radiogroup" aria-label={field.label} aria-required={required || undefined}>
         {options.map((option, index) => {
           const selected = value === option.value;
           return (
@@ -352,6 +356,7 @@ function FieldInput({
         value={(value as string) || ''}
         onChange={(e) => onChange(e.target.value)}
         aria-label={field.label}
+        aria-required={required || undefined}
         className="w-full bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 outline-none py-3 px-4 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white transition-colors"
         style={{ borderColor: (value !== undefined && value !== null && value !== '') ? primaryColor : undefined }}
       >
@@ -368,7 +373,7 @@ function FieldInput({
     const current = (value as string[]) ?? [];
     if (options.length === 0) return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No options configured</p>;
     return (
-      <div className="space-y-3" role="group" aria-label={field.label} aria-required={field.required || undefined}>
+      <div className="space-y-3" role="group" aria-label={field.label} aria-required={required || undefined}>
         {options.map((option, index) => {
           const checked = current.includes(option.value);
           return (
@@ -410,7 +415,7 @@ function FieldInput({
     const maxStars = (field.properties?.maxStars as number) ?? 5;
     const currentRating = (value as number) ?? 0;
     return (
-      <div className="flex gap-2" role="radiogroup" aria-label={field.label}>
+      <div className="flex gap-2" role="radiogroup" aria-label={field.label} aria-required={required || undefined}>
         {Array.from({ length: maxStars }, (_, i) => (
           <button
             key={i}
@@ -447,7 +452,7 @@ function FieldInput({
     const range = Math.max(1, max - min + 1);
     return (
       <div className="space-y-3">
-        <div role="radiogroup" aria-label={field.label} className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
+        <div role="radiogroup" aria-label={field.label} aria-required={required || undefined} className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
           {Array.from({ length: range }, (_, i) => {
             const num = min + i;
             const selected = value === num;
@@ -498,7 +503,7 @@ function FieldInput({
         {mediaUrl && (mediaType === 'video' ? (
           <video src={mediaUrl} controls className="w-full rounded-xl max-h-80" />
         ) : (
-          <img src={mediaUrl} alt="" className="w-full rounded-xl max-h-80 object-contain" />
+          <img src={mediaUrl} alt={(field.properties?.mediaAlt as string | undefined) || field.label || ''} className="w-full rounded-xl max-h-80 object-contain" />
         ))}
         {field.description && (
           <p className="text-lg text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description}</p>
@@ -678,6 +683,9 @@ export function AppFormView() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // In classic mode, the id of the field the current error belongs to — drives the
+  // per-control aria-invalid/aria-describedby wiring so AT users land on the right field.
+  const [errorFieldId, setErrorFieldId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showNigo, setShowNigo] = useState(false);
@@ -811,7 +819,16 @@ export function AppFormView() {
     setAnswers((prev) => ({ ...prev, [fieldId]: val }));
     // Clear a stale validation error once the user edits the field.
     setError(null);
+    setErrorFieldId(null);
   }, []);
+
+  // Move scroll + keyboard focus to a field's first control (classic-mode error handling),
+  // so a keyboard/SR user lands on the offending field instead of staying on Submit.
+  const focusField = useCallback((id: string) => {
+    const el = document.getElementById(`field-${id}`);
+    el?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+    (el?.querySelector('input,textarea,select,[role="radiogroup"],[role="group"],button') as HTMLElement | null)?.focus();
+  }, [reduceMotion]);
 
   // Use refs to avoid stale closure when handleSubmit is called from memoized handleNext
   const answersRef = useRef(answers);
@@ -902,7 +919,8 @@ export function AppFormView() {
       const names = missingFields.map(f => f.label).filter(Boolean);
       const shown = names.slice(0, 3).join(', ');
       setError(names.length <= 3 ? `Please fill in: ${shown}` : `Please fill in: ${shown} and ${names.length - 3} more`);
-      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+      setErrorFieldId(missingFields[0].id);
+      focusField(missingFields[0].id);
       return;
     }
     // Validate all fields against their validation rules
@@ -911,12 +929,13 @@ export function AppFormView() {
       const validationError = validateField(f, answer);
       if (validationError) {
         setError(`${f.label}: ${validationError}`);
-        document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+        setErrorFieldId(f.id);
+        focusField(f.id);
         return;
       }
     }
     handleSubmit();
-  }, [fields, handleSubmit, isFieldRequired, reduceMotion]);
+  }, [fields, handleSubmit, isFieldRequired, focusField]);
 
   if (!formId || !config) return null;
 
@@ -972,7 +991,7 @@ export function AppFormView() {
             );
             return (thankYouField?.properties?.mediaType as string | undefined) === 'video'
               ? <video src={m} controls className="w-full rounded-xl max-h-64 mb-6" />
-              : <img src={m} alt="" className="w-full rounded-xl max-h-64 object-contain mb-6" />;
+              : <img src={m} alt={(thankYouField?.properties?.mediaAlt as string | undefined) || thankYouField?.label || ''} className="w-full rounded-xl max-h-64 object-contain mb-6" />;
           })()}
           <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
@@ -1039,9 +1058,10 @@ export function AppFormView() {
           <ArrowLeft className="h-4 w-4" /> {runtimeForm?.displayName || 'Back'}
         </button>
         {showModeToggle && (
-          <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5">
+          <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5" role="group" aria-label="Presentation mode">
             <button
               onClick={() => setViewMode('focused')}
+              aria-pressed={effectiveMode === 'focused'}
               className={cn(
                 'px-2.5 py-1 text-xs rounded-md transition-all cursor-pointer',
                 effectiveMode === 'focused'
@@ -1053,6 +1073,7 @@ export function AppFormView() {
             </button>
             <button
               onClick={() => setViewMode('classic')}
+              aria-pressed={effectiveMode === 'classic'}
               className={cn(
                 'px-2.5 py-1 text-xs rounded-md transition-all cursor-pointer',
                 effectiveMode === 'classic'
@@ -1127,6 +1148,7 @@ export function AppFormView() {
                 allFieldIds={fields.map(f => f.id)}
                 onCalculated={handleCalculated}
                 error={error || undefined}
+                isRequired={isFieldRequired(currentField.id)}
               />
 
               {/* Error */}
@@ -1272,6 +1294,8 @@ export function AppFormView() {
                     onCalculated={handleCalculated}
                     allFieldIds={fields.map(f => f.id)}
                     autoFocus={false}
+                    isRequired={isFieldRequired(field.id)}
+                    error={errorFieldId === field.id ? (error || undefined) : undefined}
                   />
                 </div>
               ))}

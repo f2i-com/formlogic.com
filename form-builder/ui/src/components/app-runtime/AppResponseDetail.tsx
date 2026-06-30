@@ -258,10 +258,11 @@ export function AppResponseDetail() {
           const isLinked = field.type === 'linked_record';
           const resolved = response._resolved as Record<string, unknown> | undefined;
           const targetFormId = field.properties?.targetFormId as string | undefined;
+          const inputId = `resp-edit-${field.id}`;
 
           return (
             <div key={field.id} className="px-5 py-4">
-              <label className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
+              <label htmlFor={inputId} className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
                 {isLinked && <Link2 className="inline h-3 w-3 mr-1" />}
                 {field.label}
               </label>
@@ -273,6 +274,7 @@ export function AppResponseDetail() {
                   if (field.type === 'number') {
                     return (
                       <input
+                        id={inputId}
                         type="number"
                         step="any"
                         value={editVal != null ? String(editVal) : ''}
@@ -285,21 +287,21 @@ export function AppResponseDetail() {
                     );
                   }
                   if (field.type === 'date') {
-                    return <input type="date" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                    return <input id={inputId} type="date" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
                   }
                   if (field.type === 'time') {
-                    return <input type="time" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                    return <input id={inputId} type="time" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
                   }
                   if (field.type === 'datetime') {
-                    return <input type="datetime-local" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                    return <input id={inputId} type="datetime-local" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
                   }
                   if (field.type === 'long_text') {
-                    return <textarea value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} rows={4} className={cn(editInputClass, 'resize-none')} />;
+                    return <textarea id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} rows={4} className={cn(editInputClass, 'resize-none')} />;
                   }
                   if (field.type === 'dropdown') {
                     const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
                     return (
-                      <select value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass}>
+                      <select id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass}>
                         <option value="">Select...</option>
                         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
@@ -338,6 +340,7 @@ export function AppResponseDetail() {
                   if (field.type === 'rating' || field.type === 'scale') {
                     return (
                       <input
+                        id={inputId}
                         type="number"
                         step="1"
                         value={editVal != null ? String(editVal) : ''}
@@ -362,6 +365,7 @@ export function AppResponseDetail() {
                   // Default: text input for short_text, email, phone, url, etc.
                   return (
                     <input
+                      id={inputId}
                       type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
                       value={String(editVal ?? '')}
                       onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}

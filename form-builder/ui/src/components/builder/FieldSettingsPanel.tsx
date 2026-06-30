@@ -306,17 +306,28 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
                 placeholder="https://… image or video URL"
               />
               {field.properties.mediaUrl && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Media type</label>
-                  <select
-                    value={field.properties.mediaType || 'image'}
-                    onChange={(e) => onUpdate({ properties: { ...field.properties, mediaType: e.target.value as 'image' | 'video' } })}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
-                  >
-                    <option value="image">Image</option>
-                    <option value="video">Video</option>
-                  </select>
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Media type</label>
+                    <select
+                      value={field.properties.mediaType || 'image'}
+                      onChange={(e) => onUpdate({ properties: { ...field.properties, mediaType: e.target.value as 'image' | 'video' } })}
+                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                      <option value="image">Image</option>
+                      <option value="video">Video</option>
+                    </select>
+                  </div>
+                  {(field.properties.mediaType || 'image') !== 'video' && (
+                    <Input
+                      label="Image alt text"
+                      value={field.properties.mediaAlt || ''}
+                      onChange={(e) => onUpdate({ properties: { ...field.properties, mediaAlt: e.target.value } })}
+                      placeholder="Describe the image for screen readers"
+                      hint="Leave blank if the image is purely decorative."
+                    />
+                  )}
+                </>
               )}
               {field.type === 'welcome_screen' && (
                 <Input

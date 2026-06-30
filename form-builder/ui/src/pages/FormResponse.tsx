@@ -380,7 +380,7 @@ export function FieldResponse({
             {mediaUrl && (mediaType === 'video' ? (
               <video src={mediaUrl} controls className="w-full rounded-xl max-h-80" />
             ) : (
-              <img src={mediaUrl} alt="" className="w-full rounded-xl max-h-80 object-contain" />
+              <img src={mediaUrl} alt={field.properties.mediaAlt || field.label || ''} className="w-full rounded-xl max-h-80 object-contain" />
             ))}
             {field.description && (
               <p className="text-lg opacity-70 whitespace-pre-line">{field.description}</p>
@@ -674,7 +674,7 @@ export function FieldResponse({
 }
 
 // Success Screen
-function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string; properties?: { mediaUrl?: string; mediaType?: 'image' | 'video' } } }) {
+function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: string; theme: { primaryColor: string; textColor: string } }; isRedirecting?: boolean; thankYou?: { label?: string; description?: string; properties?: { mediaUrl?: string; mediaType?: 'image' | 'video'; mediaAlt?: string } } }) {
   // Use a thank_you field's content as the completion message when the form defines one.
   const heading = thankYou?.label?.trim() || 'Thank you!';
   const subtext = thankYou?.description?.trim() || 'Your response has been submitted successfully.';
@@ -695,7 +695,7 @@ function SuccessScreen({ form, isRedirecting, thankYou }: { form: { title: strin
       {mediaUrl && (mediaType === 'video' ? (
         <video src={mediaUrl} controls className="w-full max-w-md mx-auto rounded-xl max-h-64 mb-6" />
       ) : (
-        <img src={mediaUrl} alt="" className="w-full max-w-md mx-auto rounded-xl max-h-64 object-contain mb-6" />
+        <img src={mediaUrl} alt={thankYou?.properties?.mediaAlt || thankYou?.label || ''} className="w-full max-w-md mx-auto rounded-xl max-h-64 object-contain mb-6" />
       ))}
       <h1 className="text-4xl font-bold mb-4" style={{ color: form.theme.textColor }}>{heading}</h1>
       <p className="text-xl whitespace-pre-line" style={{ color: form.theme.textColor, opacity: 0.7 }}>{subtext}</p>
@@ -747,6 +747,10 @@ export default function FormResponse() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Classic mode: id of the field the current error belongs to, so the per-control
+  // aria-invalid/aria-describedby wiring (already supported by FieldResponse) activates
+  // and keyboard/SR focus can land on the offending field.
+  const [errorFieldId, setErrorFieldId] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
@@ -1154,9 +1158,18 @@ export default function FormResponse() {
     }
   };
 
+  const failClassic = (fieldId: string, message: string) => {
+    setSubmitError(message);
+    setErrorFieldId(fieldId);
+    const el = document.getElementById(`field-${fieldId}`);
+    el?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+    (el?.querySelector('input,textarea,select,[role="radiogroup"],[role="group"],button') as HTMLElement | null)?.focus();
+  };
+
   const handleClassicSubmit = () => {
     setSubmitError(null);
     setFieldError(null);
+    setErrorFieldId(null);
     const missingFields = visibleFields.filter(f => {
       if (!getFieldRequired(f)) return false;
       if (['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) return false;
@@ -1168,13 +1181,7 @@ export default function FormResponse() {
     if (missingFields.length > 0) {
       const names = missingFields.map(f => f.label).filter(Boolean);
       const shown = names.slice(0, 3).join(', ');
-      setSubmitError(
-        names.length <= 3
-          ? `Please fill in: ${shown}`
-          : `Please fill in: ${shown} and ${names.length - 3} more`
-      );
-      // Scroll the first missing field into view so the user knows where to look.
-      document.getElementById(`field-${missingFields[0].id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+      failClassic(missingFields[0].id, names.length <= 3 ? `Please fill in: ${shown}` : `Please fill in: ${shown} and ${names.length - 3} more`);
       return;
     }
 
@@ -1220,13 +1227,11 @@ export default function FormResponse() {
       // Format check for email/url (parity with the server + focused mode).
       if (typeof answer === 'string' && answer !== '') {
         if (f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answer)) {
-          setSubmitError(`${f.label}: please enter a valid email address`);
-          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+          failClassic(f.id, `${f.label}: please enter a valid email address`);
           return;
         }
         if (f.type === 'url' && !/^https?:\/\/.+\..+/.test(answer)) {
-          setSubmitError(`${f.label}: please enter a valid URL (starting with http:// or https://)`);
-          document.getElementById(`field-${f.id}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+          failClassic(f.id, `${f.label}: please enter a valid URL (starting with http:// or https://)`);
           return;
         }
       }
@@ -1284,9 +1289,10 @@ export default function FormResponse() {
 
       {/* Mode Toggle */}
       {showModeToggle && (
-        <div className="fixed top-3 right-4 z-20 flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }}>
+        <div className="fixed top-3 right-4 z-20 flex items-center rounded-lg p-0.5" style={{ backgroundColor: `${form.theme.textColor}15` }} role="group" aria-label="Presentation mode">
           <button
             onClick={() => setResponseMode('focused')}
+            aria-pressed={effectiveMode === 'focused'}
             className={cn(
               'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
               effectiveMode === 'focused' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
@@ -1297,6 +1303,7 @@ export default function FormResponse() {
           </button>
           <button
             onClick={() => setResponseMode('classic')}
+            aria-pressed={effectiveMode === 'classic'}
             className={cn(
               'px-3 py-1 text-xs rounded-md transition-all cursor-pointer',
               effectiveMode === 'classic' ? 'shadow-sm' : 'opacity-50 hover:opacity-80'
@@ -1372,7 +1379,7 @@ export default function FormResponse() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex items-center justify-center p-4 md:p-8">
+      <main id="form-main" className="flex-1 flex items-center justify-center p-4 md:p-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentField.id}
@@ -1443,7 +1450,7 @@ export default function FormResponse() {
             )}
           </motion.div>
         </AnimatePresence>
-      </div>
+      </main>
 
       {/* Navigation */}
       {form.settings.allowBackNavigation && (
@@ -1474,7 +1481,7 @@ export default function FormResponse() {
       </>
       ) : (
         /* Classic Mode */
-        <div className="flex-1 overflow-y-auto">
+        <main id="form-main" className="flex-1 overflow-y-auto">
           <div className="max-w-xl mx-auto px-4 py-12 w-full">
             <div className="text-center mb-10">
               {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" style={{ color: form.theme.textColor }} />}
@@ -1501,6 +1508,7 @@ export default function FormResponse() {
                     onCalculated={handleCalculated}
                     formId={formId}
                     autoFocus={false}
+                    error={errorFieldId === field.id ? (submitError || undefined) : undefined}
                   />
                 </div>
               ))}
@@ -1523,7 +1531,7 @@ export default function FormResponse() {
               </Button>
             </div>
           </div>
-        </div>
+        </main>
       )}
     </div>
   );

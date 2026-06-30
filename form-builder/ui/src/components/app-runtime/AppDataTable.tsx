@@ -244,14 +244,14 @@ export function AppDataTable() {
         onClick={() => setColDropdownOpen((v) => !v)}
         className="flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
         aria-label="Toggle columns"
-        aria-haspopup="true"
+        aria-controls="col-vis-panel"
         aria-expanded={colDropdownOpen}
       >
         <Columns3 className="h-4 w-4" />
         <span className="hidden sm:inline">Columns</span>
       </button>
       {colDropdownOpen && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
+        <div id="col-vis-panel" role="group" aria-label="Toggle columns" className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
           {/* Fixed columns */}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
             <input type="checkbox" checked={visibleColumns.has('submittedAt')} onChange={() => toggleColumn('submittedAt')} className="app-accent rounded" />

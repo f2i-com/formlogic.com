@@ -61,6 +61,7 @@ export interface FieldProperties {
   defaultValue?: string;
   mediaUrl?: string;
   mediaType?: 'image' | 'video';
+  mediaAlt?: string;
   buttonText?: string;
   // Linked record properties
   targetFormId?: string;
