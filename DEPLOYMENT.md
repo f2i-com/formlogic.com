@@ -38,8 +38,13 @@ Work top to bottom before exposing the app publicly. Most of these live in
 - [ ] `MAIL_FROM_ADDRESS` (+ SMTP_* if using SMTP) set, and a test email sent (password reset / invite)
 
 **AI (optional)**
-- [ ] If using cloud AI, `OPENAI_API_URL` is `https://…` (in production the key is never sent over
-      plaintext `http://`; a local model needs `ALLOW_INSECURE_LOCAL_AI=1`)
+- [ ] AI uses any OpenAI-compatible API via `AI_BASE_URL` (LM Studio / Ollama / vLLM / self-hosted /
+      OpenAI). `AI_API_KEY` is optional — blank for a keyless local server; set it only if required.
+      Enabled when a key is set **or** `AI_BASE_URL` points at a non-OpenAI endpoint. Legacy
+      `OPENAI_*` names still work. `GET /api/health/deep` → `ai` shows the resolved status.
+- [ ] If sending a KEY to cloud AI, `AI_BASE_URL` is `https://…` (in production a key is never sent
+      over plaintext `http://`; a keyed loopback model needs `ALLOW_INSECURE_LOCAL_AI=1`; a keyless
+      local server over `http` is always fine)
 
 **Billing & plans (hosted SaaS only)**
 - [ ] See the PayPal go-live checklist in §4

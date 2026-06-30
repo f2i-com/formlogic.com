@@ -150,23 +150,29 @@ class HealthController
         }
 
         // AI — optional feature; report config status WITHOUT exposing the key (host/scheme only).
-        $aiKey = (string) ($_ENV['OPENAI_API_KEY'] ?? '');
-        $aiUrl = (string) ($_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1');
+        // Provider-neutral AI_* names take precedence over the legacy OPENAI_* names.
+        $aiKey = (string) ($_ENV['AI_API_KEY'] ?? $_ENV['OPENAI_API_KEY'] ?? '');
+        $aiUrl = (string) ($_ENV['AI_BASE_URL'] ?? $_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1');
         $aiScheme = strtolower((string) parse_url($aiUrl, PHP_URL_SCHEME));
         $aiHost = (string) parse_url($aiUrl, PHP_URL_HOST);
         $isProd = (bool) ($this->settings['isProduction'] ?? true);
+        $isCustom = $aiHost !== '' && stripos($aiHost, 'openai.com') === false;
+        // A custom (local/self-hosted) endpoint may run keyless; the default OpenAI endpoint needs a key.
+        $configured = $aiKey !== '' || $isCustom;
         $insecureAi = $isProd && $aiKey !== '' && $aiScheme === 'http'
             && !in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true);
-        if ($aiKey === '') {
+        if (!$configured) {
             $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => 'not configured (AI features disabled)'];
         } elseif ($insecureAi) {
             $checks['ai'] = [
                 'ok' => true, 'critical' => false, 'detail' => 'configured but blocked',
-                'warning' => 'AI URL is http:// in production — disabled for safety. Use https, or set ALLOW_INSECURE_LOCAL_AI for a trusted local model.',
+                'warning' => 'AI key would be sent over http:// in production — key disabled for safety. Use https, set ALLOW_INSECURE_LOCAL_AI for a loopback model, or run the local endpoint keyless.',
             ];
         } else {
-            $local = $aiHost !== '' && stripos($aiHost, 'openai.com') === false;
-            $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => $local ? "configured (local/self-hosted model: {$aiHost})" : 'configured (OpenAI)'];
+            $detail = $isCustom
+                ? ('configured (local/self-hosted: ' . $aiHost . ($aiKey === '' ? ', keyless' : '') . ')')
+                : 'configured (OpenAI)';
+            $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => $detail];
         }
 
         $ok = true;

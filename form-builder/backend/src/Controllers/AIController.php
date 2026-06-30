@@ -49,7 +49,7 @@ class AIController
             'available' => $isConfigured,
             'message' => $isConfigured
                 ? 'AI service is configured and ready'
-                : 'AI service is not configured. Set OPENAI_API_KEY in environment.',
+                : 'AI service is not configured. Set AI_BASE_URL to a local/OpenAI-compatible server (LM Studio, Ollama, …) — add AI_API_KEY only if your provider requires one.',
         ]);
     }
 

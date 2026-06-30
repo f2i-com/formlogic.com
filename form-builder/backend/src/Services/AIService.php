@@ -17,32 +17,44 @@ class AIService
 
     public function __construct()
     {
-        $this->apiKey = $_ENV['OPENAI_API_KEY'] ?? '';
-        $this->apiUrl = $_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1';
-        $this->model = $_ENV['OPENAI_MODEL'] ?? 'gpt-4o';
-        $this->visionModel = $_ENV['OPENAI_VISION_MODEL'] ?? 'gpt-4o';
+        // Provider-neutral AI_* names take precedence (point these at LM Studio / Ollama / any
+        // OpenAI-compatible local server); the OPENAI_* names remain as fallbacks for back-compat.
+        $this->apiKey = (string) ($_ENV['AI_API_KEY'] ?? $_ENV['OPENAI_API_KEY'] ?? '');
+        $this->apiUrl = rtrim((string) ($_ENV['AI_BASE_URL'] ?? $_ENV['OPENAI_API_URL'] ?? 'https://api.openai.com/v1'), '/');
+        $this->model = (string) ($_ENV['AI_MODEL'] ?? $_ENV['OPENAI_MODEL'] ?? 'gpt-4o');
+        // Default the vision model to the main model so a single-model local server works out of the box.
+        $this->visionModel = (string) ($_ENV['AI_VISION_MODEL'] ?? $_ENV['OPENAI_VISION_MODEL'] ?? $this->model);
 
-        // In production, never send the API key over plaintext HTTP. Allow http only for an
-        // explicitly-enabled loopback model (ALLOW_INSECURE_LOCAL_AI=1). Otherwise disable
-        // AI rather than leak credentials over an insecure channel.
+        // Never send an API KEY over plaintext HTTP in production (credential leak). A KEYLESS local
+        // endpoint over HTTP is fine — there's no secret to leak — so this guard only fires when a key
+        // is set. Allow a keyed http endpoint only for an explicitly-enabled loopback model.
         $isProduction = (($_ENV['APP_ENV'] ?? 'production') !== 'development');
         if ($isProduction && $this->apiKey !== '' && strtolower((string) parse_url($this->apiUrl, PHP_URL_SCHEME)) === 'http') {
             $host = strtolower((string) parse_url($this->apiUrl, PHP_URL_HOST));
             $allowInsecureLocal = in_array(strtolower((string) ($_ENV['ALLOW_INSECURE_LOCAL_AI'] ?? '')), ['1', 'true', 'yes'], true)
                 && in_array($host, ['127.0.0.1', '::1', 'localhost'], true);
             if (!$allowInsecureLocal) {
-                error_log('FormLogic AIService: refusing plaintext-HTTP OPENAI_API_URL in production; AI disabled. Use HTTPS, or set ALLOW_INSECURE_LOCAL_AI=1 for a loopback model.');
+                error_log('FormLogic AIService: refusing to send the API key over plaintext HTTP in production; key cleared. Use HTTPS, or set ALLOW_INSECURE_LOCAL_AI=1 for a loopback model.');
                 $this->apiKey = '';
             }
         }
     }
 
     /**
-     * Check if AI service is configured
+     * Check if AI service is configured. A key is REQUIRED for the default OpenAI endpoint, but a
+     * custom endpoint (a local server such as LM Studio / Ollama, or any self-hosted OpenAI-compatible
+     * API) may run KEYLESS — so a custom base URL alone is enough.
      */
     public function isConfigured(): bool
     {
-        return !empty($this->apiKey);
+        return $this->apiKey !== '' || $this->isCustomEndpoint();
+    }
+
+    /** True when pointed at a non-OpenAI (e.g. local / self-hosted) OpenAI-compatible endpoint. */
+    private function isCustomEndpoint(): bool
+    {
+        $host = strtolower((string) parse_url($this->apiUrl, PHP_URL_HOST));
+        return $host !== '' && $host !== 'api.openai.com';
     }
 
     /**
@@ -176,7 +188,7 @@ class AIService
     private function chatCompletion(array $messages, ?string $model = null): string
     {
         if (!$this->isConfigured()) {
-            throw new \Exception('AI service is not configured. Please set OPENAI_API_KEY.');
+            throw new \Exception('AI service is not configured. Set AI_BASE_URL (and AI_API_KEY if your provider requires one).');
         }
 
         $model = $model ?? $this->model;
@@ -188,14 +200,18 @@ class AIService
             'max_tokens' => 4096,
         ];
 
+        // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)
+        // can reject or mishandle an empty bearer token.
+        $headers = ['Content-Type: application/json'];
+        if ($this->apiKey !== '') {
+            $headers[] = 'Authorization: Bearer ' . $this->apiKey;
+        }
+
         $ch = curl_init($this->apiUrl . '/chat/completions');
         $aiCurlOpts = [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_POST => true,
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'Authorization: Bearer ' . $this->apiKey,
-            ],
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_TIMEOUT => 120,
             CURLOPT_CONNECTTIMEOUT => 10,
