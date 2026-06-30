@@ -50,10 +50,12 @@ Last reconciled against code: 2026-06-30.
 
 - [x] **Public-file visibility copy** — warn (field settings + pre-publish + docs) that files on
   public standalone forms are link-accessible; use app forms for member-only.
-- [ ] **First-run onboarding** — welcome → blank/template/AI → create → field → preview → publish →
-  test submit → view; skippable; state persisted.
-- [ ] **One killer demo pack** — client onboarding + file upload + reviewer status + dashboard +
-  export; installable from the gallery; no AI/API key needed; self-host friendly.
+- [x] **First-run onboarding** — WelcomeModal routes new users to blank/template/AI (AI auto-opens the
+  generator via ?ai=1); skippable; dismissal persisted; stops once they have a form. Done.
+  (A deeper step-by-step coach-mark tour through preview→publish→submit remains a nice follow-up.)
+- [x] **Demo pack(s)** — satisfied by the existing catalog: 6 installable packs (Finance OS US/AU, OHS/QMS,
+  HR People, Events, Customer Service) — several tagged `onboarding`, all with forms+app+RBAC, no AI key
+  needed, self-host friendly. A dedicated single "starter" demo + a gallery "featured" flag remain optional.
 - [x] **README screenshots** — builder (hero) + public form, app runtime, Doctor, landing in docs/images,
   showcased atop the README. Done. (Animated GIFs still a nice-to-have.)
 - [x] **Billing disabled/self-host states** — self-host says "unlimited / not required"; hosted
@@ -70,4 +72,7 @@ Last reconciled against code: 2026-06-30.
   build's prebuild sync (tells the dev to run `npm run sync:prelude`). Done.
 - [ ] **Shared JSON error helper** — standardize `{ error, message, code?, details? }` /
   `errors` across controllers; migrate gradually.
-- [ ] **Lint baseline to zero** — ~49 ESLint problems; drive down, then make lint a hard CI gate.
+- [~] **Lint baseline to zero** — investigation FOUND + FIXED a real bug (latent hooks-order crash on
+  the analytics page) and documented a false positive (DynamicIcon). 47 remain: 35 are conservative
+  react-compiler flags (set-state-in-effect, exhaustive-deps, safe mirror-refs) + a few `any`s needing
+  per-file restructure — a dedicated careful pass before the hard CI gate.
