@@ -59,6 +59,7 @@ const Billing = lazyWithRetry(() => import('./pages/Billing').then(m => ({ defau
 const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
 const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
 const FormAnalytics = lazyWithRetry(() => import('./pages/FormAnalytics'));
+const CustomScreenPlay = lazyWithRetry(() => import('./pages/CustomScreenPlay'));
 const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
 const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
@@ -273,6 +274,7 @@ function AppRoutes() {
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
+        <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
         <Route path="/responses/:formId" element={<FormResponses />} />
         {/* App admin routes */}
         <Route path="/apps" element={<AppsDashboard />} />
