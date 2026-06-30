@@ -204,11 +204,10 @@ class BillingController
         $pdo = $this->db->getConnection();
 
         if ($type === 'PAYMENT.CAPTURE.COMPLETED' && $captureId !== '') {
-            // Find the payment by capture id (set when we recorded the PENDING/processing
-            // capture). Credit it idempotently.
-            $stmt = $pdo->prepare('SELECT * FROM payments WHERE capture_id = ?');
-            $stmt->execute([$captureId]);
-            $payment = $stmt->fetch(\PDO::FETCH_ASSOC);
+            // Resolve by capture id, falling back to the parent order id — a lost capture
+            // response leaves the row 'pending' with capture_id NULL, so this webhook is the
+            // only path that can still credit it. Credit idempotently.
+            $payment = $this->findPaymentForCapture($captureId, $resource);
             if ($payment && $payment['status'] !== 'completed') {
                 try { $this->creditPayment($payment, $captureId); } catch (\Throwable $e) {
                     $this->logger->error('Webhook credit failed', ['capture' => $captureId, 'error' => $e->getMessage()]);
@@ -216,9 +215,70 @@ class BillingController
                 }
             }
         } elseif (in_array($type, ['PAYMENT.CAPTURE.DENIED', 'PAYMENT.CAPTURE.REVERSED'], true) && $captureId !== '') {
-            $pdo->prepare("UPDATE payments SET status = 'failed' WHERE capture_id = ? AND status <> 'completed'")->execute([$captureId]);
+            $payment = $this->findPaymentForCapture($captureId, $resource);
+            if ($payment && $payment['status'] === 'completed') {
+                // Chargeback/clawback of an already-credited payment — revoke the cloud time
+                // it granted and flag the account (audit), instead of silently ignoring it.
+                try { $this->reversePayment($payment, $captureId); } catch (\Throwable $e) {
+                    $this->logger->error('Webhook reversal failed', ['capture' => $captureId, 'error' => $e->getMessage()]);
+                    return $response->withStatus(500);
+                }
+            } else {
+                // Not yet credited (a pending/processing eCheck that bounced): mark failed.
+                $pdo->prepare("UPDATE payments SET status = 'failed' WHERE capture_id = ? AND status NOT IN ('completed','reversed')")->execute([$captureId]);
+            }
         }
         return $response->withStatus(200);
+    }
+
+    /** Resolve a payment from a webhook capture: by capture_id, else by the parent order id. */
+    private function findPaymentForCapture(string $captureId, array $resource): ?array
+    {
+        $pdo = $this->db->getConnection();
+        $stmt = $pdo->prepare('SELECT * FROM payments WHERE capture_id = ?');
+        $stmt->execute([$captureId]);
+        $payment = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if ($payment) {
+            return $payment;
+        }
+        $orderId = (string) ($resource['supplementary_data']['related_ids']['order_id'] ?? '');
+        if ($orderId !== '') {
+            $stmt = $pdo->prepare('SELECT * FROM payments WHERE order_id = ?');
+            $stmt->execute([$orderId]);
+            $payment = $stmt->fetch(\PDO::FETCH_ASSOC);
+            return $payment ?: null;
+        }
+        return null;
+    }
+
+    /** Revoke the cloud time granted by a now-reversed/charged-back payment (idempotent). */
+    private function reversePayment(array $payment, string $captureId): void
+    {
+        $pdo = $this->db->getConnection();
+        try {
+            $pdo->beginTransaction();
+            // Only a completed payment can be reversed, and only once.
+            $upd = $pdo->prepare("UPDATE payments SET status = 'reversed' WHERE id = ? AND status = 'completed'");
+            $upd->execute([$payment['id']]);
+            if ($upd->rowCount() === 0) {
+                $pdo->rollBack();
+                return;
+            }
+            // Claw back the granted days, never moving the expiry earlier than now.
+            $pdo->prepare('UPDATE users SET cloud_until = GREATEST(NOW(), DATE_SUB(COALESCE(cloud_until, NOW()), INTERVAL ? DAY)) WHERE id = ?')
+                ->execute([(int) $payment['months'] * 30, $payment['user_id']]);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+        if ($this->auditService) {
+            try {
+                $this->auditService->log('billing.reversal', 'payment', $captureId, (string) $payment['user_id'], null, ['months' => (int) $payment['months'], 'amountCents' => (int) $payment['amount_cents']]);
+            } catch (\Throwable $e) { /* audit is non-critical */ }
+        }
     }
 
     /** Credit a verified-completed payment exactly once (idempotent). Returns true if THIS

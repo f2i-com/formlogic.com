@@ -442,7 +442,7 @@ CREATE TABLE `payments` (
   `amount_cents` int NOT NULL,
   `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'USD',
   `months` int NOT NULL,
-  `status` enum('pending','processing','completed','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `status` enum('pending','processing','completed','failed','reversed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

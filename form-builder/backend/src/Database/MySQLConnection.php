@@ -721,11 +721,12 @@ class MySQLConnection
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 
-        // Add the 'processing' state to existing payments tables (eCheck/review holds that
-        // settle asynchronously — must not be marked terminal 'failed').
+        // Payment states beyond the original 3: 'processing' (eCheck/review holds that
+        // settle async — never terminal 'failed') and 'reversed' (chargeback/clawback of a
+        // previously-completed payment — distinct from a never-credited 'failed').
         $col = $pdo->query("SHOW COLUMNS FROM payments LIKE 'status'")->fetch(PDO::FETCH_ASSOC);
-        if ($col && stripos($col['Type'], "'processing'") === false) {
-            $pdo->exec("ALTER TABLE payments MODIFY COLUMN status ENUM('pending','processing','completed','failed') NOT NULL DEFAULT 'pending'");
+        if ($col && stripos($col['Type'], "'reversed'") === false) {
+            $pdo->exec("ALTER TABLE payments MODIFY COLUMN status ENUM('pending','processing','completed','failed','reversed') NOT NULL DEFAULT 'pending'");
         }
     }
 }
