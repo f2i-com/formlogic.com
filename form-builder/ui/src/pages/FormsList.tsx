@@ -519,7 +519,7 @@ export function FormsList() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate(`/app/${selectedApp.slug}`)}
+                  onClick={() => window.open(`/app/${selectedApp.slug}`, '_blank', 'noopener')}
                   leftIcon={<ExternalLink className="h-4 w-4" />}
                 >
                   Open app

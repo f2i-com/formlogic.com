@@ -1153,15 +1153,18 @@ export function AppFormView() {
                 lastFocusedStepRef.current = safeStep;
                 const TEXTUAL = ['short_text', 'long_text', 'email', 'url', 'number', 'phone', 'date', 'time', 'datetime', 'dropdown'];
                 if (currentField && !TEXTUAL.includes((currentField as { type: string }).type)) el.focus({ preventScroll: true });
-                el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+                // The field area is already vertically centred by flex, so only scroll when the field
+                // is genuinely off-screen ('nearest'); 'center' forced a scroll on every open/step and
+                // made the question look like it jumped/slid down into place.
+                el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'nearest' });
               }}
               tabIndex={-1}
               role="group"
               aria-label={(currentField as { label?: string }).label}
-              initial={{ opacity: 0, y: reduceMotion ? 0 : 30 }}
+              initial={{ opacity: 0, y: reduceMotion ? 0 : 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
-              transition={{ duration: reduceMotion ? 0 : 0.35 }}
+              exit={{ opacity: 0, y: reduceMotion ? 0 : -8 }}
+              transition={{ duration: reduceMotion ? 0 : 0.2 }}
               className="w-full outline-none"
             >
               {/* Field label & description */}
