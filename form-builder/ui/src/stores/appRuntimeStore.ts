@@ -26,6 +26,7 @@ interface AppRuntimeState {
 
   // Response CRUD
   fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean }) => Promise<unknown[]>;
+  fetchResponsePage: (formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean }) => Promise<{ rows: unknown[]; total: number }>;
   createResponse: (formId: string, answers: Record<string, unknown>) => Promise<unknown>;
   updateResponse: (formId: string, responseId: string, data: Record<string, unknown>) => Promise<unknown>;
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
@@ -136,6 +137,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const result = await api.getAppResponses(slug, formId, options);
         if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load responses');
         return result.data?.responses ?? [];
+      },
+
+      fetchResponsePage: async (formId, options) => {
+        const slug = get().appSlug;
+        if (!slug) return { rows: [], total: 0 };
+        const result = await api.getAppResponsesPage(slug, formId, options);
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load responses');
+        return { rows: result.data?.responses ?? [], total: result.data?.total ?? 0 };
       },
 
       createResponse: async (formId, answers) => {

@@ -886,6 +886,19 @@ class ApiClient {
     return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
   }
 
+  /**
+   * Server-paginated + searchable page of an app form's responses (returns the total matching count).
+   * Used by the records grid for fast, large-dataset browsing. Non-demo only (no browser overlay).
+   */
+  async getAppResponsesPage(slug: string, formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean }): Promise<ApiResponse<{ responses: unknown[]; count: number; total: number; scope: string }>> {
+    const params = new URLSearchParams();
+    params.set('limit', String(options.limit));
+    params.set('offset', String(options.offset));
+    if (options.search) params.set('search', options.search);
+    if (options.resolve) params.set('resolve', 'linked');
+    return this.request(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+  }
+
   async getAppResponseById(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
     if (this._demoMode && isDemoLocalId(responseId)) {
       const response = await getDemoRecord(formId, responseId);

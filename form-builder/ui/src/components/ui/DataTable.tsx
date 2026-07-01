@@ -30,6 +30,18 @@ interface DataTableProps<T> {
   columnMinWidth?: number;
   /** Container width below which rows render as stacked cards instead of a table. */
   cardBreakpoint?: number;
+  /**
+   * Server-driven mode: `data` is the CURRENT page only; searching + paging + counts are controlled
+   * externally. Requires `totalCount`, `page`, `onPageChange`, `searchValue`, `onSearchChange`. Client
+   * sort is disabled (a single page can't be sorted meaningfully). Defaults off (fully client-side).
+   */
+  serverMode?: boolean;
+  /** Controlled 0-based page index (server mode). */
+  page?: number;
+  onPageChange?: (page: number) => void;
+  /** Controlled search value (server mode). */
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
 }
 
 export function DataTable<T extends Record<string, unknown>>({
@@ -48,6 +60,11 @@ export function DataTable<T extends Record<string, unknown>>({
   isLoading = false,
   columnMinWidth = 160,
   cardBreakpoint = 560,
+  serverMode = false,
+  page: serverPage,
+  onPageChange,
+  searchValue,
+  onSearchChange,
 }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -98,7 +115,15 @@ export function DataTable<T extends Record<string, unknown>>({
 
   const totalPages = Math.ceil(sorted.length / pageSize);
   const safePage = totalPages > 0 ? Math.min(page, totalPages - 1) : 0;
-  const paged = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
+  const clientPaged = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
+
+  // Server mode: `data` IS the current page; paging/counts come from props. Client mode: derive locally.
+  const paged = serverMode ? data : clientPaged;
+  const displayTotal = serverMode ? (totalCount ?? data.length) : sorted.length;
+  const displayTotalPages = serverMode ? Math.max(1, Math.ceil(displayTotal / pageSize)) : totalPages;
+  const displayPage = serverMode ? Math.min(Math.max(0, serverPage ?? 0), displayTotalPages - 1) : safePage;
+  const goToPage = (p: number) => { if (serverMode) { onPageChange?.(p); } else { setPage(p); } };
+  const searchVal = serverMode ? (searchValue ?? '') : search;
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -118,8 +143,8 @@ export function DataTable<T extends Record<string, unknown>>({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
             <input
               type="text"
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+              value={searchVal}
+              onChange={(e) => { if (serverMode) { onSearchChange?.(e.target.value); } else { setSearch(e.target.value); setPage(0); } }}
               placeholder={searchPlaceholder}
               aria-label="Search table"
               className="w-full pl-9 pr-3.5 py-2 border border-gray-200 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200"
@@ -187,10 +212,10 @@ export function DataTable<T extends Record<string, unknown>>({
                   key={col.key}
                   // Keep the columnheader role so aria-sort is honored; the sort
                   // control is an inner <button> (so the header isn't a role=button).
-                  aria-sort={col.sortable ? (sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
+                  aria-sort={col.sortable && !serverMode ? (sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
                   className={cn('px-4 py-3 text-left font-medium text-gray-600 dark:text-slate-400 truncate', col.className)}
                 >
-                  {col.sortable ? (
+                  {col.sortable && !serverMode ? (
                     <button
                       type="button"
                       onClick={() => handleSort(col.key)}
@@ -267,24 +292,24 @@ export function DataTable<T extends Record<string, unknown>>({
       </div>
       )}
 
-      {totalPages > 1 && (
+      {displayTotalPages > 1 && (
         <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-slate-400">
           <span>
-            Showing {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, sorted.length)} of {sorted.length}{totalCount != null && sorted.length !== totalCount ? ` (${totalCount} total)` : ''}
+            Showing {displayTotal === 0 ? 0 : displayPage * pageSize + 1}–{Math.min((displayPage + 1) * pageSize, displayTotal)} of {displayTotal}
           </span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage(Math.max(0, safePage - 1))}
-              disabled={safePage === 0}
+              onClick={() => goToPage(Math.max(0, displayPage - 1))}
+              disabled={displayPage === 0}
               aria-label="Previous page"
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <span className="tabular-nums">Page {safePage + 1} of {totalPages}</span>
+            <span className="tabular-nums">Page {displayPage + 1} of {displayTotalPages}</span>
             <button
-              onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
-              disabled={safePage >= totalPages - 1}
+              onClick={() => goToPage(Math.min(displayTotalPages - 1, displayPage + 1))}
+              disabled={displayPage >= displayTotalPages - 1}
               aria-label="Next page"
               className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
             >

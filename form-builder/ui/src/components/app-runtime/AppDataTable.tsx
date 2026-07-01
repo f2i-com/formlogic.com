@@ -10,20 +10,55 @@ import { toast } from '../../stores/toastStore';
 
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
+const SERVER_PAGE = 25; // rows per fetch in server mode — small so queries stay fast
+
+/** Flatten answers + resolved linked-record display onto each row so columns can render/sort by key. */
+function flattenResponses(data: Record<string, unknown>[]): Record<string, unknown>[] {
+  return data.map((r) => {
+    const flat: Record<string, unknown> = { ...r };
+    const answers = r.answers as Record<string, unknown> | undefined;
+    if (answers) {
+      for (const [key, value] of Object.entries(answers)) flat[`answer_${key}`] = value;
+    }
+    const resolved = r._resolved as Record<string, unknown> | undefined;
+    if (resolved) {
+      for (const [fieldId, rv] of Object.entries(resolved)) {
+        flat[`answer_${fieldId}`] = Array.isArray(rv)
+          ? (rv as Array<{ display?: string }>).map((v) => v.display || '').join(', ')
+          : ((rv as { display?: string })?.display || '');
+      }
+    }
+    return flat;
+  });
+}
 
 export function AppDataTable() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
-  const { config, fetchResponses, deleteResponse, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  const { config, fetchResponses, fetchResponsePage, deleteResponse, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  // Demo keeps a browser-local overlay of records, so it fetches everything and searches/paginates
+  // client-side. Real apps use fast server-side pagination + search (limited rows per query).
+  const serverMode = !api.isDemoMode();
   const [exporting, setExporting] = useState(false);
   const [responses, setResponses] = useState<Record<string, unknown>[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [colDropdownOpen, setColDropdownOpen] = useState(false);
   const colDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Debounce the search box so we fetch a few times/sec, not per keystroke (server mode).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = useMemo(() =>
@@ -45,6 +80,10 @@ export function AppDataTable() {
     fields.slice(0, 6).forEach((f) => initial.add(f.id));
     // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->local-state sync: reset column visibility when the viewed form (formId) changes externally
     setVisibleColumns(initial);
+    // Reset paging + search when switching forms.
+    setPage(0);
+    setSearchInput('');
+    setDebouncedSearch('');
   }, [formId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close dropdown on click outside or Escape (keyboard-dismissible)
@@ -73,61 +112,48 @@ export function AppDataTable() {
   const hasViewPermission = formId ? (canViewOwn(formId) || canViewAll(formId)) : false;
 
   useEffect(() => {
-    if (formId && config && hasViewPermission) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: loading/error reset must be synchronous when deps change
-      setLoading(true);
-      setError(null);
-      let cancelled = false;
-      // Fetch ALL pages — the API caps each page (default 100), which would
-      // otherwise silently hide records beyond the first page and misreport the
-      // total count. Loop until a short page is returned.
-      const loadAll = async () => {
-        const PAGE = 1000;
-        const MAX_PAGES = 100; // 100k safety cap
-        const all: Record<string, unknown>[] = [];
-        for (let page = 0; page < MAX_PAGES; page++) {
-          const batch = (await fetchResponses(formId, {
-            resolve: hasLinkedFields,
-            limit: PAGE,
-            offset: page * PAGE,
-          })) as Record<string, unknown>[];
-          all.push(...batch);
-          if (batch.length < PAGE) break;
-        }
-        return all;
-      };
-      loadAll().then((data) => {
-        if (cancelled) return;
-        const flattenedData = data.map((r: Record<string, unknown>) => {
-          const flat: Record<string, unknown> = { ...r };
-          const answers = r.answers as Record<string, unknown> | undefined;
-          if (answers) {
-            for (const [key, value] of Object.entries(answers)) {
-              flat[`answer_${key}`] = value;
-            }
-          }
-          // Make linked_record columns searchable/sortable by their resolved
-          // display text (the column renders from _resolved, not answer_*).
-          const resolved = r._resolved as Record<string, unknown> | undefined;
-          if (resolved) {
-            for (const [fieldId, rv] of Object.entries(resolved)) {
-              flat[`answer_${fieldId}`] = Array.isArray(rv)
-                ? (rv as Array<{ display?: string }>).map((v) => v.display || '').join(', ')
-                : ((rv as { display?: string })?.display || '');
-            }
-          }
-          return flat;
+    if (!formId || !config || !hasViewPermission) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: loading/error reset must be synchronous when deps change
+    setLoading(true);
+    setError(null);
+    let cancelled = false;
+
+    const run = async () => {
+      if (serverMode) {
+        // One limited page from the server, with server-side search across all rows.
+        const { rows, total: t } = await fetchResponsePage(formId, {
+          limit: SERVER_PAGE,
+          offset: page * SERVER_PAGE,
+          search: debouncedSearch || undefined,
+          resolve: hasLinkedFields,
         });
-        setResponses(flattenedData);
-        setLoading(false);
-      }).catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load responses');
-        setLoading(false);
-      });
-      return () => { cancelled = true; };
-    }
-  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, reloadKey]);
+        return { data: rows as Record<string, unknown>[], total: t };
+      }
+      // Demo: fetch every page (browser overlay is merged in), search/paginate client-side.
+      const PAGE = 1000;
+      const MAX_PAGES = 100; // 100k safety cap
+      const all: Record<string, unknown>[] = [];
+      for (let p = 0; p < MAX_PAGES; p++) {
+        const batch = (await fetchResponses(formId, { resolve: hasLinkedFields, limit: PAGE, offset: p * PAGE })) as Record<string, unknown>[];
+        all.push(...batch);
+        if (batch.length < PAGE) break;
+      }
+      return { data: all, total: all.length };
+    };
+
+    run().then(({ data, total: t }) => {
+      if (cancelled) return;
+      setResponses(flattenResponses(data));
+      setTotal(t);
+      setLoading(false);
+      setLoadedOnce(true);
+    }).catch((err) => {
+      if (cancelled) return;
+      setError(err instanceof Error ? err.message : 'Failed to load responses');
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch]);
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;
@@ -135,6 +161,9 @@ export function AppDataTable() {
     const success = await deleteResponse(formId, deleteId);
     if (success) {
       setResponses((prev) => prev.filter((r) => r.id !== deleteId));
+      setTotal((t) => Math.max(0, t - 1));
+      // Server mode: refetch so the page backfills from the next page and the count stays exact.
+      if (serverMode) setReloadKey((k) => k + 1);
     }
     setDeleting(false);
     setDeleteId(null);
@@ -324,12 +353,12 @@ export function AppDataTable() {
         <div className="flex-1">
           <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Responses'}</h1>
         </div>
-        {!loading && !error && (
+        {loadedOnce && !error && (
           <span className={cn(
             'text-xs font-medium px-2.5 py-1 rounded-full tabular-nums',
             'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
           )}>
-            {responses.length} {responses.length === 1 ? 'response' : 'responses'}
+            {total} {total === 1 ? 'response' : 'responses'}
           </span>
         )}
       </div>
@@ -345,20 +374,28 @@ export function AppDataTable() {
             Try again
           </button>
         </div>
-      ) : loading ? (
+      ) : loading && !loadedOnce ? (
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading responses" />
         </div>
       ) : (
         /* The shared DataTable fits columns to the available width and collapses to
-           stacked cards on narrow screens, so no separate mobile layout is needed. */
+           stacked cards on narrow screens, so no separate mobile layout is needed.
+           Server mode: paging + search are controlled here and run against the backend. */
         <DataTable
           data={responses}
           columns={columns}
           searchable
-          pageSize={15}
-          totalCount={responses.length}
-          emptyMessage="No responses yet"
+          searchPlaceholder="Search records…"
+          pageSize={serverMode ? SERVER_PAGE : 15}
+          totalCount={total}
+          isLoading={serverMode && loading}
+          emptyMessage={debouncedSearch ? 'No records match your search' : 'No responses yet'}
+          serverMode={serverMode}
+          page={serverMode ? page : undefined}
+          onPageChange={serverMode ? setPage : undefined}
+          searchValue={serverMode ? searchInput : undefined}
+          onSearchChange={serverMode ? ((v) => { setSearchInput(v); setPage(0); }) : undefined}
           searchBarExtra={<>{exportButton}{columnVisibilityDropdown}</>}
           onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
           actions={formId && canDelete(formId) ? (r) => (

@@ -421,13 +421,22 @@ class AppPublicController
         $scope = $canViewAll ? 'all' : 'own';
         $queryParams = $request->getQueryParams();
         $options = [
-            'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 1000)),
+            'limit' => max(1, min((int)($queryParams['limit'] ?? 100), 200)),
             'offset' => max(0, (int)($queryParams['offset'] ?? 0)),
         ];
+        // Own-scope callers only see their own rows — pushed into SQL for correct pagination + count.
+        if ($scope === 'own') {
+            $options['submittedByUserId'] = $userId;
+        }
 
-        $responses = $this->appResponseService->getResponses($formId, $scope, $userId, $options);
+        // Server-side search + total (so the records grid paginates + searches across ALL rows, fast).
+        // Empty search field list → the searchable query falls back to matching the whole answers JSON.
+        $search = trim((string)($queryParams['search'] ?? ''));
+        $result = $this->responseService->getFormResponsesSearchable($formId, $search, [], $options);
+        $responses = $result['responses'];
+        $total = (int) ($result['total'] ?? count($responses));
 
-        // Resolve linked records if requested
+        // Resolve linked records if requested (only for the current page).
         if (($queryParams['resolve'] ?? '') === 'linked') {
             $form = $this->formService->getForm($formId);
             if ($form) {
@@ -436,7 +445,7 @@ class AppPublicController
         }
 
         $responses = array_map([$this, 'stripSensitiveMetadata'], $responses);
-        return $this->jsonResponse($response, ['responses' => $responses, 'count' => count($responses), 'scope' => $scope]);
+        return $this->jsonResponse($response, ['responses' => $responses, 'count' => count($responses), 'total' => $total, 'scope' => $scope]);
     }
 
     /**
