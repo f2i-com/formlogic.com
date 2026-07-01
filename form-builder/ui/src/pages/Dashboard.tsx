@@ -28,6 +28,7 @@ import {
   Zap,
   TrendingUp,
   Package,
+  Boxes,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -310,6 +311,8 @@ export function Dashboard() {
   // 0 / "No submissions yet" while the Total Responses stat shows the real number).
   const [responseCounts, setResponseCounts] = useState<Record<string, number>>({});
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
+  // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is part of.
+  const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -472,6 +475,23 @@ export function Dashboard() {
 
   const totalResponses = stats.totalResponses;
   const avgCompletionRate = stats.avgCompletionRate;
+
+  // Load which app each form belongs to (cloud mode) so Recent Forms can tag it.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (storageMode !== 'api') { if (!cancelled) setAppOfForm({}); return; }
+      const res = await api.getApps();
+      const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
+      const map: Record<string, string> = {};
+      await Promise.all(apps.map(async (a) => {
+        const fr = await api.getAppForms(a.id);
+        for (const f of (fr.data?.forms || []) as Array<{ formId: string }>) { map[f.formId] = a.name; }
+      }));
+      if (!cancelled) setAppOfForm(map);
+    })();
+    return () => { cancelled = true; };
+  }, [storageMode]);
 
   // Get recent forms
   const recentForms = [...forms]
@@ -700,6 +720,11 @@ export function Dashboard() {
                                 >
                                   {form.status}
                                 </Badge>
+                                {appOfForm[form.id] && (
+                                  <Badge variant="info" size="sm" className="inline-flex items-center gap-1" title={`In the ${appOfForm[form.id]} app`}>
+                                    <Boxes className="h-3 w-3" />{appOfForm[form.id]}
+                                  </Badge>
+                                )}
                               </div>
                               <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400">
                                 <span className="flex items-center gap-1">
