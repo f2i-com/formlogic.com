@@ -359,6 +359,9 @@ class FormController
      */
     public function delete(Request $request, Response $response, array $args): Response
     {
+        if ($blocked = $this->blockIfDemo($request, $response, 'This is a shared live demo — forms can\'t be deleted here.')) {
+            return $blocked;
+        }
         $formId = $args['id'];
 
         // Authorization check - user must own the form

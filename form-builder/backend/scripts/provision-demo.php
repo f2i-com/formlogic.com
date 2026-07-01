@@ -154,7 +154,10 @@ foreach ($sources as $s) {
     }
 
     if ($packs->isCatalogPackInstalled($catalogId, $demoId)) {
-        out("  demo: already installed");
+        // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
+        // re-authoring dashboards) without wiping the seeded response data.
+        $updated = refreshDemoScreens($pdo, $demoId, $s['pack']);
+        out("  demo: already installed (refreshed $updated screen(s))");
         continue;
     }
 
@@ -172,6 +175,23 @@ foreach ($sources as $s) {
 }
 
 out("\nDone. Demo apps: " . count($apps->getAllApps($demoId)));
+
+/** Update the demo apps' custom screens to match the pack (by app name), without touching data. */
+function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
+{
+    $n = 0;
+    foreach ($pack['apps'] ?? [] as $app) {
+        $cs = $app['customScreen'] ?? null;
+        $name = $app['name'] ?? null;
+        if (!$cs || !$name) {
+            continue;
+        }
+        $stmt = $pdo->prepare("UPDATE apps SET custom_screen = ? WHERE owner_id = ? AND name = ?");
+        $stmt->execute([json_encode($cs), $demoId, $name]);
+        $n += $stmt->rowCount();
+    }
+    return $n;
+}
 
 // ── Generic seeder ──────────────────────────────────────────────────────────
 

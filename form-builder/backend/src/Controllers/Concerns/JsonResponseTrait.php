@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers\Concerns;
 
 use Psr\Http\Message\ResponseInterface as Response;
+use Psr\Http\Message\ServerRequestInterface as Request;
 
 /**
  * Shared JSON response helpers for controllers. Previously every controller carried a private
@@ -15,6 +16,26 @@ use Psr\Http\Message\ResponseInterface as Response;
  */
 trait JsonResponseTrait
 {
+    /** True when the request is authenticated as the shared public "Demo" account. */
+    protected function isDemoRequest(Request $request): bool
+    {
+        $user = $request->getAttribute('user');
+        $email = $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local';
+        return $user !== null && isset($user->email) && $user->email === $email;
+    }
+
+    /**
+     * Guard destructive actions on the shared demo account so visitors can't break the demo.
+     * Returns a 403 Response to return from the caller, or null when the action is allowed.
+     */
+    protected function blockIfDemo(Request $request, Response $response, string $message = 'This is a shared live demo — that action is disabled here.'): ?Response
+    {
+        if ($this->isDemoRequest($request)) {
+            return $this->jsonError($response, $message, 403, 'demo_readonly');
+        }
+        return null;
+    }
+
     /**
      * Write $data as a JSON response with the given status. Falls back to a 500 error body if the
      * payload can't be encoded.

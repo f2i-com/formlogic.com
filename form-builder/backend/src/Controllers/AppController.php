@@ -170,6 +170,9 @@ class AppController
 
     public function delete(Request $request, Response $response, array $args): Response
     {
+        if ($blocked = $this->blockIfDemo($request, $response, 'This is a shared live demo — apps can\'t be deleted here.')) {
+            return $blocked;
+        }
         $app = $this->authorizeAppOwnership($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
@@ -243,6 +246,9 @@ class AppController
 
     public function removeForm(Request $request, Response $response, array $args): Response
     {
+        if ($blocked = $this->blockIfDemo($request, $response, 'This is a shared live demo — forms can\'t be removed here.')) {
+            return $blocked;
+        }
         $app = $this->authorizeAppOwnership($request, $args['id']);
         if (!$app) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);

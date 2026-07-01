@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
+import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -146,18 +147,21 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           ))}
         </nav>
         <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
-          <button
-            onClick={() => navigate(`${basePath}/profile`)}
-            className={cn(
-              'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer',
-              'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
-              sidebarCollapsed && 'justify-center px-0'
-            )}
-            title={sidebarCollapsed ? 'Profile' : undefined}
-          >
-            <User className="h-4 w-4" />
-            {!sidebarCollapsed && <span>Profile</span>}
-          </button>
+          <div className={cn('flex gap-1', sidebarCollapsed ? 'flex-col items-center' : 'items-center')}>
+            <button
+              onClick={() => navigate(`${basePath}/profile`)}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer',
+                'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+                sidebarCollapsed ? 'justify-center px-0' : 'flex-1'
+              )}
+              title={sidebarCollapsed ? 'Profile' : undefined}
+            >
+              <User className="h-4 w-4" />
+              {!sidebarCollapsed && <span>Profile</span>}
+            </button>
+            <ThemeToggle />
+          </div>
         </div>
       </aside>
 
@@ -174,13 +178,16 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             <Menu className="h-5 w-5" />
           </button>
           <h2 className="ml-3 font-semibold truncate app-text-primary text-sm tracking-tight">{config.app.name}</h2>
-          <button
-            onClick={() => navigate(`${basePath}/profile`)}
-            aria-label="Profile"
-            className="ml-auto -mr-1.5 min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
-          >
-            <User className="h-5 w-5" />
-          </button>
+          <div className="ml-auto -mr-1.5 flex items-center">
+            <ThemeToggle />
+            <button
+              onClick={() => navigate(`${basePath}/profile`)}
+              aria-label="Profile"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+            >
+              <User className="h-5 w-5" />
+            </button>
+          </div>
         </header>
 
         {/* Offline banner */}

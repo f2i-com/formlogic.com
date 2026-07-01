@@ -51,67 +51,57 @@ export function LiveDemoSection() {
 
   return (
     <section id="demo" className="relative px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
-      <div className="max-w-6xl mx-auto">
-        <div
-          data-reveal
-          className="fl-reveal relative overflow-hidden rounded-3xl border border-primary-500/20 bg-gradient-to-br from-primary-600 via-primary-700 to-slate-900 p-8 sm:p-12"
-        >
-          {/* ambient glow */}
-          <div className="pointer-events-none absolute -top-24 -right-24 h-64 w-64 rounded-full bg-primary-400/20 blur-3xl" />
-          <div className="relative">
-            <div className="fl-mono inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-medium text-primary-foreground/90 backdrop-blur">
-              <span className="fl-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-300" />
-              Live demo · no signup
-            </div>
+      <div data-reveal className="fl-reveal max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="fl-mono inline-flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-primary-600 dark:text-primary-400">
+          <span className="fl-dot inline-block h-1.5 w-1.5 rounded-full bg-primary-500" />
+          Live demo · no signup
+        </div>
+        <h2 className="fl-display mt-4 text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
+          Try a real internal app <span className="fl-grad">right now</span>
+        </h2>
+        <p className="mt-3 max-w-2xl text-gray-500 dark:text-slate-400 leading-relaxed">
+          Jump into a live workspace as <strong className="text-gray-900 dark:text-white">Demo</strong> — no account,
+          no setup. Explore real data, custom dashboards, forms and roles. Like it? Sign up to build your own.
+        </p>
 
-            <h2 className="fl-display mt-5 text-3xl sm:text-4xl font-bold tracking-tight text-primary-foreground">
-              Try a real internal app — right now
-            </h2>
-            <p className="mt-3 max-w-2xl text-primary-foreground/80 leading-relaxed">
-              Jump into a live workspace as <strong className="text-primary-foreground">Demo</strong> — no account, no
-              setup. Explore the apps below with real data, custom dashboards, forms and roles. Like it? Sign up
-              anytime to build your own.
-            </p>
+        <div className="mt-6 flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            onClick={() => launch()}
+            disabled={anyLaunching}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {launching === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            Launch the live demo
+          </button>
+          <span className="text-xs text-gray-400 dark:text-slate-500">Opens in a new tab with sample data.</span>
+        </div>
 
-            <div className="mt-7 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => launch()}
-                disabled={anyLaunching}
-                className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-primary-700 shadow-lg shadow-black/10 transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {launching === '__all__' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Launch the live demo
-              </button>
-              <span className="text-xs text-primary-foreground/70">Opens the full product with sample data.</span>
-            </div>
-
-            {/* App cards */}
-            <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {apps.slice(0, 9).map((app) => (
-                <button
-                  key={app.slug}
-                  type="button"
-                  onClick={() => launch(app.slug)}
-                  disabled={anyLaunching}
-                  className="group flex cursor-pointer items-start gap-3 rounded-2xl border border-white/15 bg-white/[0.06] p-4 text-left backdrop-blur transition hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-white/15 text-primary-foreground">
-                    {launching === app.slug ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-sm font-semibold text-primary-foreground">{app.name}</span>
-                      <ArrowRight className="h-3.5 w-3.5 flex-none text-primary-foreground/50 transition group-hover:translate-x-0.5 group-hover:text-primary-foreground" />
-                    </div>
-                    {app.description && (
-                      <p className="mt-0.5 line-clamp-2 text-xs text-primary-foreground/70">{app.description}</p>
-                    )}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* App tiles */}
+        <div className="mt-9 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {apps.slice(0, 9).map((app) => (
+            <button
+              key={app.slug}
+              type="button"
+              onClick={() => launch(app.slug)}
+              disabled={anyLaunching}
+              className="group flex cursor-pointer items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4 text-left transition hover:border-primary-400 hover:shadow-md hover:shadow-primary-500/5 dark:border-slate-800 dark:bg-slate-900/50 dark:hover:border-primary-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              <div className="flex h-9 w-9 flex-none items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
+                {launching === app.slug ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">{app.name}</span>
+                  <ArrowRight className="h-3.5 w-3.5 flex-none text-gray-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500 dark:text-slate-600" />
+                </div>
+                {app.description && (
+                  <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-slate-400">{app.description}</p>
+                )}
+              </div>
+            </button>
+          ))}
         </div>
       </div>
     </section>

@@ -24,6 +24,7 @@ export function AppHomeScreen() {
         appSlug={config.app.slug}
         appName={config.app.name}
         forms={config.forms}
+        accent={config.app.theme?.primaryColor}
         onNavigate={(target) => {
           if (config.forms.some((f) => f.formId === target)) navigate(`form/${target}`);
           else if (target) navigate(target.startsWith('/') ? target : `${target}`);

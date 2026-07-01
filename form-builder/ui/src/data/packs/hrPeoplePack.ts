@@ -990,52 +990,52 @@ export const hrPeoplePack: PackData = {
         html: `<div id="app"><div class="wrap"><div class="empty">Loading your people dashboard…</div></div></div>`,
         css: `
 *{box-sizing:border-box;margin:0;padding:0}
-#app{min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e2e8f0;
-  background:radial-gradient(1200px 600px at 12% -12%,rgba(124,58,237,.20),transparent 60%),radial-gradient(900px 520px at 112% 8%,rgba(34,211,238,.12),transparent 55%),#0f172a}
+#app{min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fl-text);
+  background:radial-gradient(1200px 600px at 12% -12%,color-mix(in srgb,var(--fl-accent) 14%,transparent),transparent 60%),radial-gradient(900px 520px at 112% 8%,color-mix(in srgb,var(--fl-accent) 8%,transparent),transparent 55%)}
 .wrap{max-width:1140px;margin:0 auto;padding:28px 24px 52px}
-.empty{padding:72px 20px;text-align:center;color:#94a3b8;font-size:14px}
+.empty{padding:72px 20px;text-align:center;color:var(--fl-muted);font-size:14px}
 .hd{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:26px;flex-wrap:wrap}
 .hd-l{display:flex;align-items:center;gap:14px}
-.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;color:#fff;
-  background:linear-gradient(135deg,#7c3aed,#a855f7);box-shadow:0 8px 24px rgba(124,58,237,.42)}
+.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;color:var(--fl-accent-contrast);
+  background:var(--fl-accent);box-shadow:0 8px 24px color-mix(in srgb,var(--fl-accent) 40%,transparent)}
 .logo svg{width:25px;height:25px}
-.hd h1{font-size:22px;font-weight:700;letter-spacing:-.02em;color:#f8fafc}
-.sub{font-size:13px;color:#94a3b8;margin-top:2px}
+.hd h1{font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--fl-text)}
+.sub{font-size:13px;color:var(--fl-muted);margin-top:2px}
 .btn{border:0;cursor:pointer;font:inherit;font-weight:600;border-radius:10px;padding:11px 18px;font-size:14px;transition:transform .12s ease,box-shadow .2s ease}
-.btn.primary{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;box-shadow:0 6px 18px rgba(124,58,237,.42)}
-.btn.primary:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(124,58,237,.52)}
-.card{background:rgba(30,41,59,.6);border:1px solid rgba(148,163,184,.14);border-radius:16px}
+.btn.primary{background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 6px 18px color-mix(in srgb,var(--fl-accent) 40%,transparent)}
+.btn.primary:hover{transform:translateY(-1px);box-shadow:0 10px 26px color-mix(in srgb,var(--fl-accent) 50%,transparent)}
+.card{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow)}
 .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
 .stat{padding:18px}
 .stat-ic{width:34px;height:34px;margin-bottom:11px}
 .stat-ic svg{width:27px;height:27px}
-.stat-v{font-size:27px;font-weight:750;color:#f8fafc;letter-spacing:-.02em;line-height:1}
-.stat-l{font-size:13px;color:#cbd5e1;margin-top:7px;font-weight:600}
-.stat-s{font-size:11.5px;color:#8598ad;margin-top:3px}
+.stat-v{font-size:27px;font-weight:750;color:var(--fl-text);letter-spacing:-.02em;line-height:1}
+.stat-l{font-size:13px;color:var(--fl-muted);margin-top:7px;font-weight:600}
+.stat-s{font-size:11.5px;color:var(--fl-faint);margin-top:3px}
 .panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
 .panel{padding:18px 20px 20px}
 .panel-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px}
-.panel-h h2{font-size:14px;font-weight:700;color:#f1f5f9;letter-spacing:-.01em}
-.link{background:none;border:0;color:#a78bfa;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;padding:0}
-.link:hover{color:#c4b5fd;text-decoration:underline}
+.panel-h h2{font-size:14px;font-weight:700;color:var(--fl-text);letter-spacing:-.01em}
+.link{background:none;border:0;color:var(--fl-accent);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;padding:0}
+.link:hover{color:color-mix(in srgb,var(--fl-accent) 78%,var(--fl-text));text-decoration:underline}
 .bars{display:flex;flex-direction:column;gap:11px}
 .bar-row{display:grid;grid-template-columns:112px 1fr 52px;align-items:center;gap:12px}
-.bar-name{font-size:12.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar-track{height:9px;background:rgba(148,163,184,.14);border-radius:6px;overflow:hidden}
+.bar-name{font-size:12.5px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:9px;background:var(--fl-track);border-radius:6px;overflow:hidden}
 .bar-fill{height:100%;width:0;border-radius:6px;transition:width .95s cubic-bezier(.22,1,.36,1)}
-.bar-val{font-size:12.5px;color:#e2e8f0;font-weight:600;text-align:right}
+.bar-val{font-size:12.5px;color:var(--fl-text);font-weight:600;text-align:right}
 .list{list-style:none;display:flex;flex-direction:column}
-.li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10)}
+.li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--fl-border)}
 .li:last-child{border-bottom:0}
 .li-main{display:flex;align-items:center;gap:9px;min-width:0}
-.li-title{font-size:13.5px;color:#f1f5f9;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:rgba(124,58,237,.18);color:#c4b5fd;white-space:nowrap}
-.li-date{font-size:12px;color:#94a3b8;white-space:nowrap}
-.empty-sm{padding:24px 6px;text-align:center;color:#8598ad;font-size:13px}
+.li-title{font-size:13.5px;color:var(--fl-text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--fl-accent) 16%,transparent);color:var(--fl-accent);white-space:nowrap}
+.li-date{font-size:12px;color:var(--fl-muted);white-space:nowrap}
+.empty-sm{padding:24px 6px;text-align:center;color:var(--fl-faint);font-size:13px}
 .qa{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
 .qa-btn{display:flex;flex-direction:column;align-items:center;gap:9px;padding:16px 8px;cursor:pointer;font:inherit;
-  background:rgba(30,41,59,.5);border:1px solid rgba(148,163,184,.14);border-radius:14px;color:#cbd5e1;font-size:12.5px;font-weight:600;text-align:center;transition:transform .12s ease,border-color .2s ease,background .2s ease}
-.qa-btn:hover{transform:translateY(-2px);border-color:rgba(124,58,237,.5);background:rgba(124,58,237,.10);color:#f1f5f9}
+  background:var(--fl-surface-2);border:1px solid var(--fl-border);border-radius:14px;color:var(--fl-muted);font-size:12.5px;font-weight:600;text-align:center;transition:transform .12s ease,border-color .2s ease,background .2s ease}
+.qa-btn:hover{transform:translateY(-2px);border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);background:color-mix(in srgb,var(--fl-accent) 10%,transparent);color:var(--fl-text)}
 .qa-ic{width:22px;height:22px}
 .qa-ic svg{width:22px;height:22px}
 @media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.panels{grid-template-columns:1fr}.qa{grid-template-columns:repeat(3,1fr)}}
@@ -1043,8 +1043,7 @@ export const hrPeoplePack: PackData = {
 `,
         js: `
 var FL = window.FormLogic;
-var PRIMARY = '#7c3aed', ACCENT = '#22d3ee';
-var PALETTE = ['#7c3aed','#a855f7','#22d3ee','#38bdf8','#34d399','#f59e0b','#f472b6','#fb7185'];
+var PRIMARY = 'var(--fl-accent)', ACCENT = 'var(--fl-accent)';
 var IC = {
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>',
@@ -1097,7 +1096,7 @@ function bars(counts, lm, fmt){
   for (var i=0;i<keys.length;i++){
     var k=keys[i], c=counts[k];
     var pct = max>0 ? Math.max(6, Math.round(c/max*100)) : 0;
-    var color = PALETTE[i % PALETTE.length];
+    var color = 'var(--fl-accent)';
     var label = lm[k] || k;
     var val = fmt ? fmt(c) : num(c);
     html += '<div class="bar-row"><span class="bar-name" title="'+h(label)+'">'+h(label)+'</span>'
@@ -1160,9 +1159,9 @@ async function main(){
   html += '<div class="stats">'
     + stat(IC.doc, num(apps.length), 'Applicants', monthCount(apps)+' this month', PRIMARY)
     + stat(IC.check, num(onb.length), 'Onboarding', monthCount(onb)+' new this month', ACCENT)
-    + stat(IC.cal, num(leave.length), 'Leave Requests', num(totalLeaveDays)+' days total', '#f59e0b')
-    + stat(IC.star, num(perf.length), 'Reviews', (avgRating ? avgRating+' avg rating' : 'no ratings yet'), '#34d399')
-    + stat(IC.receipt, money(totalExpense), 'Expenses', num(exp.length)+' claims', '#f472b6')
+    + stat(IC.cal, num(leave.length), 'Leave Requests', num(totalLeaveDays)+' days total', 'var(--fl-accent)')
+    + stat(IC.star, num(perf.length), 'Reviews', (avgRating ? avgRating+' avg rating' : 'no ratings yet'), 'var(--fl-accent)')
+    + stat(IC.receipt, money(totalExpense), 'Expenses', num(exp.length)+' claims', 'var(--fl-accent)')
     + '</div>';
 
   html += '<div class="panels">';
@@ -1201,10 +1200,10 @@ async function main(){
   html += '<div class="qa">'
     + qa(fApp, 'New application', IC.doc, PRIMARY)
     + qa(fOnb, 'Onboard employee', IC.check, ACCENT)
-    + qa(fLeave, 'Log leave', IC.cal, '#f59e0b')
-    + qa(fExp, 'Submit expense', IC.receipt, '#f472b6')
-    + qa(fTrain, 'Request training', IC.book, '#38bdf8')
-    + qa(fPerf, 'Performance review', IC.star, '#34d399')
+    + qa(fLeave, 'Log leave', IC.cal, 'var(--fl-accent)')
+    + qa(fExp, 'Submit expense', IC.receipt, 'var(--fl-accent)')
+    + qa(fTrain, 'Request training', IC.book, 'var(--fl-accent)')
+    + qa(fPerf, 'Performance review', IC.star, 'var(--fl-accent)')
     + '</div>';
 
   html += '</div>';

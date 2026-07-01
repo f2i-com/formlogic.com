@@ -21,8 +21,6 @@ export function AppRuntimeThemeProvider({ theme, children }: AppRuntimeThemeProv
   const style = useMemo(() => ({
     '--app-primary': mergedTheme.primaryColor,
     '--app-on-primary': onPrimary,
-    '--app-bg': mergedTheme.backgroundColor,
-    '--app-text': mergedTheme.textColor,
     '--app-font': mergedTheme.fontFamily,
   } as React.CSSProperties), [mergedTheme, onPrimary]);
 
@@ -31,8 +29,6 @@ export function AppRuntimeThemeProvider({ theme, children }: AppRuntimeThemeProv
       <style>{`
         [data-app-runtime] {
           font-family: var(--app-font), system-ui, sans-serif;
-          color: var(--app-text);
-          background-color: var(--app-bg);
         }
         [data-app-runtime] .app-btn-primary {
           background-color: var(--app-primary);

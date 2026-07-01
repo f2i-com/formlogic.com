@@ -443,6 +443,9 @@ class AuthController
      */
     public function deleteAccount(Request $request, Response $response): Response
     {
+        if ($blocked = $this->blockIfDemo($request, $response, 'This is a shared live demo — the demo account can\'t be deleted.')) {
+            return $blocked;
+        }
         $userId = $request->getAttribute('userId');
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Not authenticated'], 401);
