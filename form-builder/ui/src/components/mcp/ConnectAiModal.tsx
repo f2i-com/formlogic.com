@@ -4,7 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
-import { formatRelativeTime, copyToClipboard } from '../../lib/utils';
+import { formatRelativeTime, formatTimeUntil, copyToClipboard } from '../../lib/utils';
 
 type Session = { id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
 type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout: number };
@@ -113,7 +113,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                         ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads submissions</span>
                         : <span className="text-gray-400 dark:text-slate-500"> · no submission data</span>}
                     </p>
-                    <p className="text-gray-400 dark:text-slate-500">Created {formatRelativeTime(s.createdAt)} · expires {formatRelativeTime(s.expiresAt)} · idle {Math.round(s.idleTimeout / 60)} min</p>
+                    <p className="text-gray-400 dark:text-slate-500">Created {formatRelativeTime(s.createdAt)} · expires {formatTimeUntil(s.expiresAt)} · idle {Math.round(s.idleTimeout / 60)} min</p>
                   </div>
                   <button onClick={() => revoke(s.id)} className="text-gray-400 hover:text-red-500 cursor-pointer shrink-0" aria-label="Revoke connection"><Trash2 className="h-4 w-4" /></button>
                 </div>

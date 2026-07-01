@@ -86,6 +86,20 @@ export function formatRelativeTime(date: string | Date): string {
   return formatDate(d);
 }
 
+/** Relative time for a FUTURE date, e.g. "in 45m" / "in 12h" (or "expired" if it's already past). */
+export function formatTimeUntil(date: string | Date): string {
+  const d = parseServerDate(date);
+  if (isNaN(d.getTime())) return 'unknown';
+  const diffMs = d.getTime() - Date.now();
+  if (diffMs <= 0) return 'expired';
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'in under a minute';
+  if (min < 60) return `in ${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `in ${hr}h`;
+  return `in ${Math.floor(hr / 24)}d`;
+}
+
 export function debounce<T extends (...args: unknown[]) => unknown>(
   fn: T,
   delay: number
