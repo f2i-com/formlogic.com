@@ -18,10 +18,12 @@ export function exportReportPdf(report: AppReport, result: AppReportResult, appN
     body = `<div class="kpi">${fmt(result.value)}</div>`;
   } else if ((result.viz === 'bar' || result.viz === 'pie') && result.series) {
     const max = Math.max(1, ...result.series.map((s) => s.value));
+    const isPie = result.viz === 'pie';
+    const total = result.series.reduce((a, s) => a + s.value, 0) || 1;
     body = `<table class="t"><tbody>${result.series
       .map(
         (s) =>
-          `<tr><td>${esc(s.label)}</td><td class="barcell"><div class="bar" style="width:${Math.max(2, Math.round((s.value / max) * 100))}%"></div></td><td class="num">${fmt(s.value)}</td></tr>`
+          `<tr><td>${esc(s.label)}</td><td class="barcell"><div class="bar" style="width:${Math.max(2, Math.round((s.value / max) * 100))}%"></div></td><td class="num">${fmt(s.value)}</td>${isPie ? `<td class="num pct">${Math.round((s.value / total) * 100)}%</td>` : ''}</tr>`
       )
       .join('')}</tbody></table>`;
   } else {
@@ -39,7 +41,7 @@ export function exportReportPdf(report: AppReport, result: AppReportResult, appN
     table.t{border-collapse:collapse;width:100%;font-size:13px;}
     .t th,.t td{border-bottom:1px solid #e5e7eb;padding:8px 10px;text-align:left;vertical-align:middle;}
     .t th{color:#6b7280;font-weight:600;}
-    .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;} .barcell{width:55%;}
+    .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;} .barcell{width:55%;} .pct{color:#6b7280;}
     .bar{height:10px;border-radius:5px;background:#6366f1;min-width:2px;}
     @media print{body{margin:12mm;}}
   </style></head><body>

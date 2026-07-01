@@ -67,11 +67,17 @@ export interface AppReportSpec {
   viz: 'table' | 'bar' | 'pie' | 'kpi';
   /** Cross-form joins along linked_record relationships. Joined fields are referenced as "<formId>::<fieldId>". */
   joins?: Array<{ via: string; formId: string; type: 'inner' | 'left' }>;
+  /** Field refs may be a base field id, "<formId>::<fieldId>" (joined), or pseudo-fields "__submitted_at"/"__status". */
   filters?: Array<{ field: string; op: string; value?: string }>;
   groupBy?: { field: string; bucket?: 'none' | 'day' | 'month' | 'year' };
-  measure?: { fn: 'count' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
+  measure?: { fn: 'count' | 'countDistinct' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
   columns?: string[];
-  sort?: 'asc' | 'desc';
+  /** How to order chart series (value = largest first, label = alphabetical/chronological). */
+  seriesSort?: 'value' | 'label';
+  /** Series value direction ('asc'|'desc'); for tables, the sort column + direction. */
+  sort?: 'asc' | 'desc' | { by: string; dir: 'asc' | 'desc' };
+  /** Filter grouped results by the aggregate value. */
+  having?: { op: string; value: string | number };
   limit?: number;
 }
 
