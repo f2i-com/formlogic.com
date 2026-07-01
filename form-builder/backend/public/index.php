@@ -797,6 +797,12 @@ $app->get('/api/forms/{formId}/analytics', function ($request, $response) use ($
     return $container->get(ResponseController::class)->analytics($request, $response, $getArgs($request));
 })->add($authRequired);
 
+// Owner-scoped linked-record lookup (protected) — lets linked_record fields work on standalone /
+// pack forms that aren't inside an app. Returns only the caller's own data.
+$app->get('/api/forms/{formId}/lookup', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(ResponseController::class)->lookupOwnedRecords($request, $response, $getArgs($request));
+})->add($authRequired);
+
 // Test an onSubmit script against sample answers without persisting (protected,
 // rate-limited per user — runs sandboxed user code + may make ctx.http calls)
 $app->post('/api/forms/{formId}/script/test', function ($request, $response) use ($container, $getArgs) {

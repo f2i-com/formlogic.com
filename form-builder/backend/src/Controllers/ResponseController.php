@@ -860,6 +860,114 @@ class ResponseController
     }
 
     /**
+     * Owner-scoped linked-record lookup: fetch selectable records from a target form for a
+     * linked_record field, WITHOUT an app context. Powers linked records on standalone / pack forms
+     * (e.g. a form installed by a pack but not placed in an app, which previously showed
+     * "available in published apps only"). Safe: it only ever returns the caller's OWN data — the
+     * caller must own BOTH the source and target forms, and the source form must actually declare a
+     * linked_record pointing at the target.
+     *
+     * GET /api/forms/{formId}/lookup?targetFormId=&q=&displayFieldIds=&searchFieldIds=&ids=&limit=&offset=
+     */
+    public function lookupOwnedRecords(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $formId = $args['formId'] ?? '';
+        $q = $request->getQueryParams();
+        $targetFormId = $q['targetFormId'] ?? '';
+        if ($targetFormId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'targetFormId is required'], 400);
+        }
+
+        // Ownership: the caller must own BOTH forms (no cross-tenant access).
+        $sourceForm = $this->formService->getForm($formId);
+        if (!$sourceForm || ($sourceForm['userId'] ?? null) !== $userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+        $targetForm = $this->formService->getForm($targetFormId);
+        if (!$targetForm || ($targetForm['userId'] ?? null) !== $userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Target form not found'], 404);
+        }
+
+        // The source form must actually link to the target (prevents using this as a generic reader).
+        $declared = false;
+        foreach ($sourceForm['fields'] ?? [] as $f) {
+            if (($f['type'] ?? '') === 'linked_record' && ($f['properties']['targetFormId'] ?? '') === $targetFormId) {
+                $declared = true;
+                break;
+            }
+        }
+        if (!$declared) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'This form does not link to the requested form'], 403);
+        }
+
+        $displayFieldIds = !empty($q['displayFieldIds']) ? explode(',', (string)$q['displayFieldIds']) : [];
+        $searchFieldIds = !empty($q['searchFieldIds']) ? explode(',', (string)$q['searchFieldIds']) : [];
+        $searchQuery = (string)($q['q'] ?? '');
+        $idsParam = (string)($q['ids'] ?? '');
+        $limit = max(1, min((int)($q['limit'] ?? 20), 100));
+        $offset = max(0, (int)($q['offset'] ?? 0));
+
+        // Validate requested field ids belong to the target form
+        $validFieldIds = array_column($targetForm['fields'] ?? [], 'id');
+        if (!empty($displayFieldIds)) {
+            $displayFieldIds = array_values(array_intersect($displayFieldIds, $validFieldIds));
+        }
+        if (!empty($searchFieldIds)) {
+            $searchFieldIds = array_values(array_intersect($searchFieldIds, $validFieldIds));
+        }
+
+        // Owner sees ALL records of their own target form.
+        if ($idsParam !== '') {
+            $requestedIds = array_slice(array_values(array_filter(array_map('trim', explode(',', $idsParam)), fn($id) => $id !== '')), 0, 500);
+            $matched = $this->responseService->getResponsesByIds($targetFormId, $requestedIds);
+            $totalCount = count($matched);
+        } elseif ($searchQuery !== '') {
+            $result = $this->responseService->getFormResponsesSearchable($targetFormId, $searchQuery, $searchFieldIds, ['limit' => $limit, 'offset' => $offset]);
+            $matched = $result['responses'];
+            $totalCount = $result['total'];
+        } else {
+            $matched = $this->responseService->getFormResponses($targetFormId, ['limit' => $limit, 'offset' => $offset]);
+            $totalCount = $this->responseService->getResponseCount($targetFormId, null);
+        }
+
+        $records = [];
+        foreach ($matched as $resp) {
+            $answers = $resp['answers'] ?? [];
+            if (!empty($displayFieldIds)) {
+                $displayParts = [];
+                foreach ($displayFieldIds as $fid) {
+                    $val = $answers[$fid] ?? null;
+                    if ($val !== null && $val !== '') {
+                        $displayParts[] = is_array($val) ? implode(', ', $val) : (string)$val;
+                    }
+                }
+                $display = implode(' - ', $displayParts);
+            } else {
+                // Smart single-name label (name fields → first+last → any name → first text), matching
+                // how linked records read elsewhere in the app.
+                $display = \FormLogic\Helpers\RecordLabel::guess($targetForm['fields'] ?? [], $answers) ?? '';
+            }
+            $fieldData = [];
+            foreach ($displayFieldIds as $fid) {
+                $fieldData[$fid] = $answers[$fid] ?? null;
+            }
+            $records[] = [
+                'id' => $resp['id'],
+                'display' => $display !== '' ? $display : ('Record ' . substr((string)$resp['id'], 0, 8)),
+                'fields' => $fieldData,
+                'submittedAt' => $resp['submittedAt'] ?? '',
+            ];
+        }
+
+        return $this->jsonResponse($response, ['records' => array_values($records), 'count' => $totalCount]);
+    }
+
+    /**
      * Get form analytics
      * GET /api/forms/{formId}/analytics
      */

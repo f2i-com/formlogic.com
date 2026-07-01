@@ -13,6 +13,11 @@ interface LinkedRecordInputProps {
   value: unknown;
   onChange: (val: unknown) => void;
   primaryColor: string;
+  /**
+   * Optional lookup override. In the app runtime this defaults to the app-scoped store lookup;
+   * standalone/pack forms pass an owner-scoped lookup so linked records work without an app.
+   */
+  lookup?: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }) => Promise<LinkedRecord[]>;
 }
 
 export function LinkedRecordInput({
@@ -24,8 +29,10 @@ export function LinkedRecordInput({
   value,
   onChange,
   primaryColor,
+  lookup: lookupProp,
 }: LinkedRecordInputProps) {
-  const { lookupRecords } = useAppRuntimeStore();
+  const storeLookup = useAppRuntimeStore((s) => s.lookupRecords);
+  const lookup = lookupProp ?? storeLookup;
   const listId = useId();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<LinkedRecord[]>([]);
@@ -50,7 +57,7 @@ export function LinkedRecordInput({
     if (unresolvedIds.length === 0) return;
 
     // Resolve specific IDs via the ids parameter
-    lookupRecords(formId, {
+    lookup(formId, {
       targetFormId,
       displayFieldIds,
       searchFieldIds,
@@ -79,7 +86,7 @@ export function LinkedRecordInput({
       const thisSearchId = ++searchIdRef.current;
       setLoading(true);
       try {
-        const records = await lookupRecords(formId, {
+        const records = await lookup(formId, {
           targetFormId,
           displayFieldIds,
           searchFieldIds,
@@ -100,7 +107,7 @@ export function LinkedRecordInput({
         setLoading(false);
       }
     }, 300);
-  }, [lookupRecords, formId, targetFormId, displayFieldIds, searchFieldIds]);
+  }, [lookup, formId, targetFormId, displayFieldIds, searchFieldIds]);
 
   // Load initial results when opening
   useEffect(() => {

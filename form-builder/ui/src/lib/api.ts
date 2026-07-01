@@ -933,6 +933,25 @@ class ApiClient {
     return this.request(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
   }
 
+  /**
+   * Owner-scoped linked-record lookup (no app context) — powers linked_record fields on standalone /
+   * pack forms. Returns only the caller's own records.
+   */
+  async lookupOwnedRecords(
+    formId: string,
+    options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }
+  ): Promise<ApiResponse<{ records: LinkedRecord[]; count: number }>> {
+    const params = new URLSearchParams();
+    params.set('targetFormId', options.targetFormId);
+    if (options.displayFieldIds?.length) params.set('displayFieldIds', options.displayFieldIds.join(','));
+    if (options.searchFieldIds?.length) params.set('searchFieldIds', options.searchFieldIds.join(','));
+    if (options.q) params.set('q', options.q);
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.offset) params.set('offset', String(options.offset));
+    if (options.ids?.length) params.set('ids', options.ids.join(','));
+    return this.request(`/forms/${formId}/lookup?${params.toString()}`);
+  }
+
   // Related records (inverse relations)
   async getRelatedRecords(slug: string, formId: string, responseId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
     const params = new URLSearchParams();

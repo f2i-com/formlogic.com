@@ -10,7 +10,9 @@ import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn } from '../lib/utils';
 import { readableForegroundColor, parseHex, luminance } from '../lib/color';
 import { useUIStore } from '../stores/uiStore';
-import { api } from '../lib/api';
+import { useAuthStore } from '../stores/authStore';
+import { api, type LinkedRecord } from '../lib/api';
+import { LinkedRecordInput } from '../components/app-runtime/LinkedRecordInput';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
@@ -52,6 +54,18 @@ export function FieldResponse({
   autoFocus?: boolean;
 }) {
   const required = isRequired ?? field.required;
+
+  // Linked records work outside an app for the form OWNER: an authenticated viewer can pick from
+  // records they own (incl. pack-sibling forms). Anonymous public viewers still see the notice.
+  const currentUser = useAuthStore((s) => s.user);
+  const ownedLookup = useCallback(
+    async (fid: string, opts: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }): Promise<LinkedRecord[]> => {
+      const r = await api.lookupOwnedRecords(fid, opts);
+      if (r.error) throw new Error(typeof r.error === 'string' ? r.error : 'Lookup failed');
+      return r.data?.records ?? [];
+    },
+    [],
+  );
 
   // Restore a previously-drawn signature onto the canvas after (re)mount — in
   // focused mode FieldResponse remounts per step, so navigating back to a
@@ -630,12 +644,36 @@ export function FieldResponse({
           </CalculatedFieldDisplay>
         );
 
-      case 'linked_record':
+      case 'linked_record': {
+        const lrProps = (field.properties ?? {}) as {
+          targetFormId?: string;
+          displayFieldIds?: string[];
+          searchFieldIds?: string[];
+          allowMultiple?: boolean;
+        };
+        // Owner (authenticated) gets a working picker scoped to their own records; anonymous public
+        // viewers still see the notice (they have no records to reference).
+        if (currentUser && formId && lrProps.targetFormId) {
+          return (
+            <LinkedRecordInput
+              formId={formId}
+              targetFormId={lrProps.targetFormId}
+              displayFieldIds={lrProps.displayFieldIds}
+              searchFieldIds={lrProps.searchFieldIds}
+              allowMultiple={lrProps.allowMultiple}
+              value={value}
+              onChange={onChange}
+              primaryColor={primaryColor}
+              lookup={ownedLookup}
+            />
+          );
+        }
         return (
           <p className="opacity-50 text-sm">
             Linked record fields are available in published apps only.
           </p>
         );
+      }
 
       // Hidden fields are never a form step; render nothing if one ever reaches here.
       case 'hidden':
