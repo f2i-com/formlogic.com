@@ -25,6 +25,7 @@ class AppExportTest extends TestCase
     private static ?PDO $pdo = null;
     private static FormService $forms;
     private static AppService $apps;
+    private static AppUserService $appUsers;
     private static PackService $packs;
 
     private string $userId = '';
@@ -57,7 +58,8 @@ class AppExportTest extends TestCase
         $sqlite = new SQLiteConnection(sys_get_temp_dir() . '/formlogic-appexport-' . bin2hex(random_bytes(4)));
         self::$forms = new FormService($conn, $sqlite);
         self::$apps = new AppService($conn, self::$forms);
-        self::$packs = new PackService($conn, self::$forms, self::$apps, new AppUserService($conn));
+        self::$appUsers = new AppUserService($conn);
+        self::$packs = new PackService($conn, self::$forms, self::$apps, self::$appUsers);
     }
 
     protected function setUp(): void
@@ -119,12 +121,22 @@ class AppExportTest extends TestCase
             'name' => 'Shop',
             'description' => 'Test shop',
             'customScreen' => ['enabled' => true, 'html' => '<h1>Home</h1>', 'css' => 'h1{color:red}', 'js' => 'init();'],
-            'settings' => ['hideNav' => true],
+            'settings' => ['hideNav' => true, 'landingPage' => $formAId], // landingPage references a form id
+            'navConfig' => [['formId' => $formAId, 'label' => 'Orders', 'icon' => 'FileText']],
         ], $this->userId);
         $appId = $app['id'];
         self::$apps->addFormToApp($appId, $formAId, 'Orders');
         self::$apps->addFormToApp($appId, $formBId, 'Customers');
         self::$apps->updateAppForm($appId, $formBId, ['isVisible' => false]);
+
+        // A custom role (form-scoped permission) + a customized Admin system role (app-level permission).
+        $reviewer = self::$appUsers->createRole($appId, ['name' => 'Reviewer', 'description' => 'read-only']);
+        self::$appUsers->setRolePermissions($reviewer['id'], [['formId' => $formAId, 'permission' => 'view_all_responses']], true);
+        foreach (self::$appUsers->getRoles($appId) as $r) {
+            if (($r['name'] ?? '') === 'Admin' && !empty($r['isSystem'])) {
+                self::$appUsers->setRolePermissions($r['id'], [['formId' => null, 'permission' => 'view_analytics']], true);
+            }
+        }
 
         return [$appId, $formAId, $formBId];
     }
@@ -208,5 +220,52 @@ class AppExportTest extends TestCase
         }
         $this->assertNotNull($link);
         $this->assertSame($newCustomersId, $link['properties']['targetFormId'], 'linked_record must remap to the new form');
+    }
+
+    public function testNavLandingRolesAndJsonShapesRoundTrip(): void
+    {
+        [$appId, $formAId, ] = $this->buildSampleApp();
+        $pack = self::$packs->exportApp($appId, $this->userId);
+
+        // Object-shaped empty fields export as {} not [] — the Customers form has empty settings + theme.
+        $json = json_encode($pack);
+        $this->assertStringNotContainsString('"theme":[]', $json, 'empty theme must export as {} not []');
+        $this->assertStringNotContainsString('"settings":[]', $json, 'empty settings must export as {} not []');
+
+        // navConfig + landingPage reference the form as a portable @pack: key (no real id).
+        $packApp = $pack['apps'][0];
+        $this->assertStringStartsWith('@pack:', $packApp['navConfig'][0]['formId']);
+        $this->assertStringStartsWith('@pack:', $packApp['settings']['landingPage']);
+        $this->assertStringNotContainsString($formAId, $json, 'no real form id may leak');
+
+        // Roles: the custom "Reviewer" + the customized system "Admin" both export (Admin flagged system).
+        $roleNames = array_map(static fn ($r) => $r['name'], $packApp['roles']);
+        $this->assertContains('Reviewer', $roleNames);
+        $this->assertContains('Admin', $roleNames);
+        $this->assertNotContains('Owner', $roleNames, 'Owner is never exported');
+
+        // Import through JSON (as a real upload would) → assert remaps + role application.
+        $imported = json_decode($json, true);
+        $result = self::$packs->importPack($imported, $this->userId);
+        $newAppId = $result['apps'][0]['id'];
+        $newFormA = null;
+        foreach ($result['forms'] as $f) {
+            if ($f['title'] === 'Orders') { $newFormA = $f['id']; }
+        }
+
+        $newApp = self::$apps->getApp($newAppId);
+        $this->assertSame($newFormA, $newApp['navConfig'][0]['formId'] ?? null, 'navConfig formId must remap to the new form');
+        $this->assertSame($newFormA, $newApp['settings']['landingPage'] ?? null, 'landingPage must remap to the new form');
+
+        $roles = self::$appUsers->getRoles($newAppId);
+        $reviewer = null; $admin = null;
+        foreach ($roles as $r) {
+            if (($r['name'] ?? '') === 'Reviewer') { $reviewer = $r; }
+            if (($r['name'] ?? '') === 'Admin') { $admin = $r; }
+        }
+        $this->assertNotNull($reviewer, 'custom Reviewer role recreated');
+        $this->assertNotEmpty($reviewer['permissions'], 'Reviewer keeps its permission');
+        $this->assertNotNull($admin);
+        $this->assertContains('view_analytics', array_map(static fn ($p) => $p['permission'], $admin['permissions']), 'Admin override applied to the system role');
     }
 }

@@ -1159,6 +1159,10 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->get('/{id}/export', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportApp($request, $response, $getArgs($request));
     });
+    // Same, but as a downloadable .formlogic-app.json attachment (for API users).
+    $group->get('/{id}/export/download', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(PackController::class)->exportAppDownload($request, $response, $getArgs($request));
+    });
 
     // App form management
     $group->get('/{id}/forms', function ($request, $response) use ($container, $getArgs) {

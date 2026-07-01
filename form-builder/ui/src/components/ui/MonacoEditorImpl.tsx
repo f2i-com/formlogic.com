@@ -31,6 +31,8 @@ interface FlFormSdk {
   /** This screen's context. */
   context(): Promise<{ formId: string; title: string; fields: FlField[] }>;
   toast: FlToast;
+  /** Escape a value for safe innerHTML interpolation (use for any record/user data). */
+  escapeHtml(v: unknown): string;
 }
 declare const FormLogic: FlFormSdk;
 `;
@@ -50,6 +52,8 @@ interface FlAppSdk {
   /** Navigate the app to a form (or 'dashboard'). */
   navigate(target: string): void;
   toast: FlToast;
+  /** Escape a value for safe innerHTML interpolation (use for any record/user data). */
+  escapeHtml(v: unknown): string;
 }
 declare const FormLogic: FlAppSdk;
 `;

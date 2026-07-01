@@ -47,6 +47,8 @@ const APP_SDK_SHIM = `
       success: function(msg){ return call('toast', { type: 'success', msg: String(msg) }); },
       error: function(msg){ return call('toast', { type: 'error', msg: String(msg) }); },
     },
+    /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
+    escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
 })();
 `;

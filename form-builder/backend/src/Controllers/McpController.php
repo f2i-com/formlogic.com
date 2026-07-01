@@ -161,7 +161,7 @@ class McpController
     // Which scope each tool requires (a token without it can't see or call the tool).
     private const TOOL_SCOPES = [
         'list_forms' => 'forms:read', 'get_form' => 'forms:read',
-        'create_form' => 'forms:write', 'update_form' => 'forms:write',
+        'create_form' => 'forms:write', 'update_form' => 'forms:write', 'create_app_form' => 'forms:write',
         'list_apps' => 'apps:read', 'create_app' => 'apps:write',
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
         'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
@@ -206,6 +206,29 @@ class McpController
                     }
                     $this->audit($request, 'mcp.create_form', $userId, ['formId' => $data['id'] ?? null, 'appId' => $scopedApp]);
                     break;
+                case 'create_app_form': {
+                    // Create a form AND attach it to an app in one call (preferred for app building).
+                    $target = (string) ($args['appId'] ?? '');
+                    if ($target === '' && $scopedApp !== null) {
+                        $target = $scopedApp;
+                    }
+                    if ($target === '' && $creatorMode && count($session['created']['apps'] ?? []) === 1) {
+                        $target = (string) $session['created']['apps'][0];
+                    }
+                    $this->requireScope($session, 'apps:write');
+                    $this->assertAppScope($session, $target);
+                    $this->ownApp($target, $userId);
+                    $this->validateFormInput($args);
+                    $form = $this->formService->createForm(array_merge($this->formInput($args), ['userId' => $userId]));
+                    $this->appService->addFormToApp($target, (string) $form['id'], $args['displayName'] ?? null);
+                    if ($creatorMode && !empty($form['id'])) {
+                        $session['created']['forms'][] = (string) $form['id'];
+                        $this->tokens->recordCreated((string) $session['id'], 'forms', (string) $form['id']);
+                    }
+                    $data = ['form' => $form, 'appId' => $target];
+                    $this->audit($request, 'mcp.create_app_form', $userId, ['formId' => $form['id'] ?? null, 'appId' => $target]);
+                    break;
+                }
                 case 'update_form':
                     $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
@@ -349,16 +372,52 @@ class McpController
     }
 
     /** Size caps for MCP-created/updated forms (MCP bypasses FormController, so enforce here). */
+    /** Mirror FormController's shape/type/size rules (MCP bypasses that controller, calling services directly). */
     private function validateFormInput(array $args): void
     {
-        if (isset($args['logicScript']) && is_string($args['logicScript']) && strlen($args['logicScript']) > 102400) {
-            throw new \Exception('logicScript exceeds the 100KB limit');
+        if (array_key_exists('title', $args) && (!is_string($args['title']) || strlen($args['title']) > 500)) {
+            throw new \Exception('title must be a string up to 500 characters');
         }
-        if (isset($args['fields']) && is_array($args['fields']) && strlen((string) json_encode($args['fields'])) > 512000) {
-            throw new \Exception('fields exceed the 500KB limit');
+        if (array_key_exists('description', $args) && $args['description'] !== null && !is_string($args['description'])) {
+            throw new \Exception('description must be a string or null');
         }
-        if (isset($args['customScreen']) && is_array($args['customScreen']) && strlen((string) json_encode($args['customScreen'])) > 524288) {
-            throw new \Exception('customScreen exceeds the 512KB limit');
+        if (array_key_exists('status', $args) && !in_array($args['status'], ['draft', 'published', 'archived'], true)) {
+            throw new \Exception('status must be draft, published, or archived');
+        }
+        if (array_key_exists('icon', $args) && $args['icon'] !== null && (!is_string($args['icon']) || strlen($args['icon']) > 100)) {
+            throw new \Exception('icon must be a string up to 100 characters');
+        }
+        if (isset($args['logicScript']) && (!is_string($args['logicScript']) || strlen($args['logicScript']) > 102400)) {
+            throw new \Exception('logicScript must be a string up to 100KB');
+        }
+        if (array_key_exists('fields', $args)) {
+            if (!is_array($args['fields'])) {
+                throw new \Exception('fields must be an array');
+            }
+            if (count($args['fields']) > 200) {
+                throw new \Exception('a form cannot have more than 200 fields');
+            }
+            foreach ($args['fields'] as $i => $f) {
+                if (!is_array($f) || !isset($f['type'])) {
+                    throw new \Exception("field at index {$i} is malformed (must be an object with a type)");
+                }
+            }
+            if (strlen((string) json_encode($args['fields'])) > 512000) {
+                throw new \Exception('fields exceed the 500KB limit');
+            }
+        }
+        if (isset($args['customScreen'])) {
+            if (!is_array($args['customScreen'])) {
+                throw new \Exception('customScreen must be an object');
+            }
+            $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields'];
+            $unknown = array_diff(array_keys($args['customScreen']), $allowed);
+            if (!empty($unknown)) {
+                throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown));
+            }
+            if (strlen((string) json_encode($args['customScreen'])) > 524288) {
+                throw new \Exception('customScreen exceeds the 512KB limit');
+            }
         }
     }
 
@@ -411,6 +470,7 @@ class McpController
             ['name' => 'get_form', 'scope' => 'forms:read', 'description' => 'Get one form (fields, logicScript, customScreen).', 'inputSchema' => $obj(['formId' => ['type' => 'string']], ['formId'])],
             ['name' => 'create_form', 'scope' => 'forms:write', 'description' => 'Create a form. Provide title and optional fields[], logicScript (QuickJS onSubmit), customScreen, status.', 'inputSchema' => $obj(['title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
+            ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
             ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],

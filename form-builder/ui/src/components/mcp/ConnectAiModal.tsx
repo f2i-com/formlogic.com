@@ -6,7 +6,7 @@ import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { formatRelativeTime, copyToClipboard } from '../../lib/utils';
 
-type Session = { id: string; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
+type Session = { id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
 type NewToken = { token: string; mcpUrl: string; expiresAt: string; idleTimeout: number };
 
 export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = false }: { isOpen: boolean; onClose: () => void; appId?: string; appName?: string; creator?: boolean }) {
@@ -107,8 +107,13 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
               {sessions.map((s) => (
                 <div key={s.id} className="p-3 flex items-center justify-between gap-2">
                   <div className="min-w-0 text-xs">
-                    <p className="text-gray-700 dark:text-slate-200">Created {formatRelativeTime(s.createdAt)}{s.lastUsedAt ? ` · last used ${formatRelativeTime(s.lastUsedAt)}` : ' · never used'}</p>
-                    <p className="text-gray-400 dark:text-slate-500">Expires {formatRelativeTime(s.expiresAt)} · idle timeout {Math.round(s.idleTimeout / 60)} min</p>
+                    <p className="text-gray-700 dark:text-slate-200">
+                      {s.creator ? 'New apps only' : s.appId ? 'One app' : 'All apps'}
+                      {(s.scopes || []).includes('responses:read')
+                        ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads submissions</span>
+                        : <span className="text-gray-400 dark:text-slate-500"> · no submission data</span>}
+                    </p>
+                    <p className="text-gray-400 dark:text-slate-500">Created {formatRelativeTime(s.createdAt)} · expires {formatRelativeTime(s.expiresAt)} · idle {Math.round(s.idleTimeout / 60)} min</p>
                   </div>
                   <button onClick={() => revoke(s.id)} className="text-gray-400 hover:text-red-500 cursor-pointer shrink-0" aria-label="Revoke connection"><Trash2 className="h-4 w-4" /></button>
                 </div>

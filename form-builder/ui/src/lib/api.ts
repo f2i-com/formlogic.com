@@ -639,7 +639,7 @@ class ApiClient {
   async createMcpToken(appId?: string, creator = false): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
     return this.request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ appId, creator }) });
   }
-  async listMcpTokens(appId?: string): Promise<ApiResponse<{ sessions: Array<{ id: string; appId: string | null; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string }> }>> {
+  async listMcpTokens(appId?: string): Promise<ApiResponse<{ sessions: Array<{ id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string }> }>> {
     return this.request(`/mcp/tokens${appId ? `?appId=${appId}` : ''}`);
   }
   async revokeMcpToken(id: string): Promise<ApiResponse<{ success: boolean }>> {

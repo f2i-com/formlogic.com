@@ -302,6 +302,32 @@ class McpTest extends TestCase
         $this->assertSame($newAppId, $list[0]['id']);
     }
 
+    public function testIdleTimedOutTokenFails(): void
+    {
+        $t = self::$tokens->create($this->userId);
+        self::$pdo->prepare('UPDATE mcp_sessions SET last_used_at = ? WHERE id = ?')
+            ->execute([date('Y-m-d H:i:s', time() - 100000), $t['id']]);
+        $this->assertNull(self::$tokens->validate($t['token']), 'idle-timed-out token must not validate');
+    }
+
+    public function testCreateAppFormCreatesAndAttaches(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'create_app_form', ['title' => 'Attached', 'fields' => []]);
+        $this->assertFalse($res['isError'], $res['text']);
+        $newId = $res['data']['form']['id'] ?? '';
+        $this->assertNotSame('', $newId);
+        $this->assertTrue(self::$apps->formBelongsToApp($this->appA, $newId), 'create_app_form must attach to the scoped app');
+    }
+
+    public function testCreateFormRejectsInvalidInput(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'X', 'status' => 'bogus'])['isError'], 'invalid status rejected');
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'X', 'fields' => ['not-an-object']])['isError'], 'malformed field rejected');
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'X', 'customScreen' => ['danger' => 1]])['isError'], 'unknown customScreen key rejected');
+    }
+
     public function testExpiredAndRevokedSessionsArePurged(): void
     {
         // Create all three first (create() auto-purges, but nothing is dead yet), then kill two.

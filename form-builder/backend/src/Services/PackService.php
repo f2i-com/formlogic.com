@@ -171,37 +171,47 @@ class PackService
                     }
                 }
 
-                // 5. Create custom roles and set permissions
+                // 5. Roles: custom roles are created; a `system` role (Admin/Member) applies its permission
+                //    overrides to the same-named system role createApp already made (so customizations
+                //    round-trip). Owner is never in the pack (recreated with all permissions).
+                $sysRolesByName = null; // lazily fetched map name => role
                 foreach ($packApp['roles'] ?? [] as $packRole) {
-                    $role = $this->appUserService->createRole($appId, [
-                        'name' => $packRole['name'],
-                        'description' => $packRole['description'] ?? null,
-                    ]);
-
                     $permissions = [];
                     foreach ($packRole['permissions'] ?? [] as $perm) {
                         if (isset($perm['packFormId']) && $perm['packFormId'] !== null) {
                             $realFormId = $formIdMap[$perm['packFormId']] ?? null;
                             if ($realFormId) {
-                                $permissions[] = [
-                                    'formId' => $realFormId,
-                                    'permission' => $perm['permission'],
-                                ];
+                                $permissions[] = ['formId' => $realFormId, 'permission' => $perm['permission']];
                             }
                         } else {
-                            $permissions[] = [
-                                'formId' => null,
-                                'permission' => $perm['permission'],
-                            ];
+                            $permissions[] = ['formId' => null, 'permission' => $perm['permission']];
                         }
                     }
 
+                    if (!empty($packRole['system'])) {
+                        if ($sysRolesByName === null) {
+                            $sysRolesByName = [];
+                            foreach ($this->appUserService->getRoles($appId) as $sr) {
+                                if (!empty($sr['isSystem'])) {
+                                    $sysRolesByName[$sr['name']] = $sr;
+                                }
+                            }
+                        }
+                        $target = $sysRolesByName[$packRole['name'] ?? ''] ?? null;
+                        // Never let an import escalate Owner; only Admin/Member overrides apply.
+                        if ($target && ($target['name'] ?? '') !== 'Owner' && !empty($permissions)) {
+                            $this->appUserService->setRolePermissions($target['id'], $permissions, true);
+                        }
+                        continue;
+                    }
+
+                    $role = $this->appUserService->createRole($appId, [
+                        'name' => $packRole['name'],
+                        'description' => $packRole['description'] ?? null,
+                    ]);
                     if (!empty($permissions)) {
-                        // The importer is the owner of the freshly created app, so they
-                        // are allowed to grant app-level permissions the pack defines.
-                        // Without this flag, any pack containing an admin-style role
-                        // (e.g. one with view_analytics/manage_users) would be
-                        // uninstallable for everyone.
+                        // The importer owns the freshly created app, so they may grant the app-level
+                        // permissions the pack defines (else an admin-style role would be uninstallable).
                         $this->appUserService->setRolePermissions($role['id'], $permissions, true);
                     }
                 }
@@ -312,8 +322,8 @@ class PackService
                 'title' => $form['title'] ?? 'Untitled',
                 'description' => $form['description'] ?? null,
                 'icon' => $form['icon'] ?? null,
-                'settings' => $settings,
-                'theme' => $form['theme'] ?? [],
+                'settings' => $this->jsonObject($settings),
+                'theme' => $this->jsonObject($form['theme'] ?? []),
                 'fields' => $this->packifyFieldReferences($form['fields'] ?? [], $realToPackKey),
             ];
             if (!empty($form['logicScript'])) {
@@ -372,14 +382,15 @@ class PackService
                 'displayName' => $af['displayName'] ?? null,
                 'sortOrder' => $af['sortOrder'] ?? 0,
                 'isVisible' => $af['isVisible'] ?? true,
-                'settings' => $af['settings'] ?? [],
+                'settings' => $this->jsonObject($af['settings'] ?? []),
             ];
         }
 
-        // Custom roles only (system Owner/Admin/Member are recreated by createApp).
+        // Custom roles + non-Owner system roles (Admin/Member) so permission customizations round-trip.
+        // Owner is skipped (recreated with all permissions; never an import-escalation path).
         $packRoles = [];
         foreach ($roles as $r) {
-            if (!empty($r['isSystem'])) {
+            if (!empty($r['isSystem']) && ($r['name'] ?? '') === 'Owner') {
                 continue;
             }
             $perms = [];
@@ -397,6 +408,7 @@ class PackService
             $packRoles[] = [
                 'name' => $r['name'] ?? 'Role',
                 'description' => $r['description'] ?? null,
+                'system' => !empty($r['isSystem']),
                 'permissions' => $perms,
             ];
         }
@@ -406,8 +418,8 @@ class PackService
             'name' => $app['name'] ?? 'App',
             'description' => $app['description'] ?? null,
             'logoUrl' => $app['logoUrl'] ?? null,
-            'settings' => $appSettings,
-            'theme' => $app['theme'] ?? [],
+            'settings' => $this->jsonObject($appSettings),
+            'theme' => $this->jsonObject($app['theme'] ?? []),
             'navConfig' => $navConfig,
             'forms' => $packAppForms,
             'roles' => $packRoles,
@@ -889,9 +901,23 @@ class PackService
                     }
                 }
             }
+            // Empty properties should export as `{}`, not `[]`.
+            if (array_key_exists('properties', $field)) {
+                $field['properties'] = $this->jsonObject($field['properties']);
+            }
         }
         unset($field);
         return $fields;
+    }
+
+    /**
+     * Object-shaped fields (settings/theme/properties) must serialize as a JSON object, but an empty PHP
+     * array encodes as `[]`. Force empty maps to a stdClass so they export as `{}` (cleaner for validators
+     * / external AI / JSON Schema). Non-empty assoc arrays already encode as objects. Lists stay arrays.
+     */
+    private function jsonObject(mixed $v): mixed
+    {
+        return (is_array($v) && $v === []) ? new \stdClass() : $v;
     }
 
     /** Slugify a name into a pack key (lowercase, hyphenated, max 50 chars). */

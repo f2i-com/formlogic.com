@@ -275,6 +275,7 @@ global `FormLogic` SDK, which is already injected (do not redefine it):
   await FormLogic.currentUser()        -> { id, name, email } | null
   FormLogic.toast.success(message)     // small success toast
   FormLogic.toast.error(message)       // small error toast
+  FormLogic.escapeHtml(value)          // -> HTML-escaped string; use for ANY record/user data put into innerHTML
 
 This form's fields (submit using these EXACT ids):
 {$fieldList}
@@ -286,6 +287,7 @@ Requirements:
 - To save data call FormLogic.submit({ ...fieldId: value }); to show a leaderboard/history call FormLogic.records().
 - Wrap async calls in try/catch and use FormLogic.toast.error on failure.
 - Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
+- SECURITY: never interpolate record/user data straight into innerHTML — use textContent, or FormLogic.escapeHtml(value) when building HTML strings, so submitted values can't inject markup.
 - Keep total output reasonable so it isn't truncated; put ALL behaviour in the js block.
 
 Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):
@@ -337,6 +339,7 @@ This SDK is APP-scoped — it spans the app's forms, so data calls take a formId
   await FormLogic.navigate(formId)           -> open that form inside the app
   await FormLogic.currentUser()              -> { id, name, email } | null
   FormLogic.toast.success(message) / FormLogic.toast.error(message)
+  FormLogic.escapeHtml(value)                -> HTML-escaped string; use for ANY record/user data put into innerHTML
 
 This app's forms (use these EXACT formId values and field ids):
 {$formList}
@@ -346,6 +349,7 @@ Requirements:
 - Use ONLY FormLogic for data — never fetch(). Pass the correct formId to submit/records/navigate.
 - Make it a genuinely useful, polished landing (responsive, looks good on its own) — e.g. a dashboard, a game, a launcher.
 - Attach event handlers in the JS with addEventListener (give elements ids). Do NOT use inline onclick="..." attributes.
+- SECURITY: never interpolate record/user data straight into innerHTML — use textContent or FormLogic.escapeHtml(value).
 - Wrap async calls in try/catch and use FormLogic.toast.error on failure. Put ALL behaviour in the js block.
 
 Respond with EXACTLY three fenced code blocks, in this order and NOTHING else (no prose, no JSON wrapper):

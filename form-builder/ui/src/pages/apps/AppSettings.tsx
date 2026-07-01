@@ -117,6 +117,8 @@ export function AppSettings() {
 
   const handleExport = async () => {
     if (!appId || exporting) return;
+    // Export comes from the server (the saved version) — warn if there are unsaved edits.
+    if (dirty && !window.confirm('You have unsaved changes. Export the last saved version? Click Cancel to go back and Save first.')) return;
     setExporting(true);
     try {
       const r = await api.exportApp(appId);
@@ -426,7 +428,7 @@ export function AppSettings() {
               </div>
               <div>
                 <span className="block text-sm font-medium text-gray-900 dark:text-white">{exporting ? 'Exporting…' : 'Export app'}</span>
-                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Download all forms, screens &amp; scripts as a portable .json</span>
+                <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">Portable .json: forms, screens, scripts &amp; roles. Not responses, members, or secrets.</span>
               </div>
             </button>
           </div>

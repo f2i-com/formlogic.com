@@ -143,6 +143,38 @@ class PackController
     }
 
     /**
+     * GET /api/apps/{id}/export/download
+     * Same as export, but streams the pack as a downloadable .formlogic-app.json attachment (for API users).
+     */
+    public function exportAppDownload(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $appId = $args['id'] ?? '';
+        if (!$appId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App ID is required'], 400);
+        }
+        try {
+            $pack = $this->packService->exportApp($appId, $userId);
+            $slug = preg_replace('/[^a-z0-9-]/', '', strtolower((string) ($pack['apps'][0]['packAppId'] ?? 'app')));
+            $slug = $slug !== '' ? $slug : 'app';
+            if ($this->auditService) {
+                $this->auditService->log('app.export', 'app', $appId, $userId, $this->ipResolver->getClientIp($request), ['appName' => $pack['packMeta']['name'] ?? null, 'download' => true]);
+            }
+            $response->getBody()->write((string) json_encode($pack, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $response
+                ->withHeader('Content-Type', 'application/json')
+                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic-app.json"');
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to export app'], 500);
+        }
+    }
+
+    /**
      * POST /api/packs/adopt
      * Retroactively register an existing pack installation by matching form titles
      */
