@@ -327,6 +327,17 @@ export function FormsList() {
     return map;
   }, [installedPacks]);
 
+  // Build appId → packName map so each app card can show which pack it came from
+  const appPackMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const appId of pack.appIds ?? []) {
+        map[appId] = pack.packName;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
   // Fetch installed packs on mount
   useEffect(() => {
     api.getInstalledPacks().then((result) => {
@@ -573,6 +584,12 @@ export function FormsList() {
                       <div className="min-w-0 flex-1">
                         <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{g.name}</span>
                         <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
+                        {appPackMap[g.id] && (
+                          <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500" title={`From the ${appPackMap[g.id]} pack`}>
+                            <Package className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{appPackMap[g.id]}</span>
+                          </span>
+                        )}
                       </div>
                       <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
                     </button>
