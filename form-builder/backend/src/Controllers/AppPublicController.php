@@ -993,6 +993,8 @@ class AppPublicController
                 'formId' => $jFormId,
                 'via' => $via,
                 'type' => (($j['type'] ?? 'left') === 'inner') ? 'inner' : 'left',
+                // A view-own caller must only see their own rows of the joined form too.
+                'scope' => $jViewAll ? 'all' : 'own',
                 'fields' => $jForm['fields'] ?? [],
                 'path' => $this->sqlite->getFormDbPath($jFormId),
             ];

@@ -13,31 +13,37 @@ use PDO;
  * chart series / a single KPI value).
  *
  * SAFE BY CONSTRUCTION — there is NO user SQL:
- *  - field ids are validated against the form definitions (base + each joined form),
- *  - joins are only allowed along a real linked_record relationship (validated by the caller),
- *  - operators / aggregate functions / date buckets / join types are whitelisted,
- *  - every value is bound as a parameter; the only interpolated identifiers are validated field ids
- *    (quotes/backslashes stripped) and internal alias names,
- *  - results are row-capped, and attached databases are DETACHed afterwards.
+ *  - field ids are whitelisted (`[A-Za-z0-9_]`) and validated against the form definitions; a ref whose
+ *    sanitised form differs is rejected,
+ *  - joins are only allowed along a real linked_record relationship (validated by the caller), and joined
+ *    rows are status-filtered AND permission-scoped in the ON clause (a view-own caller only sees theirs),
+ *  - operators / aggregates / date-buckets / relative-date ops / join types are whitelisted,
+ *  - every value is bound as a parameter; comparisons are type-aware (numeric CAST, date normalisation),
+ *  - results are row-capped and attached databases are DETACHed afterwards.
  *
- * A field is referenced by id for the base form, or "<joinFormId>::<fieldId>" for a joined form.
- * Joins are cross-file, so each joined form's SQLite is ATTACHed and joined on
- * `<joinAlias>.id = json_extract(r.answers, '$.<viaField>')`.
+ * Field refs: "<fieldId>" (base), "<joinFormId>::<fieldId>" (joined), or the pseudo-fields
+ * "__submitted_at" (submission time) and "__status" (workflow status).
  */
 class ReportService
 {
     private const OPS = ['eq' => '=', 'ne' => '!=', 'gt' => '>', 'lt' => '<', 'gte' => '>=', 'lte' => '<='];
-    private const AGGS = ['count', 'sum', 'avg', 'min', 'max'];
+    private const DATE_OPS = ['last_n_days', 'this_month', 'this_year', 'today'];
+    private const AGGS = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'];
     private const BUCKETS = ['none', 'day', 'month', 'year'];
     private const VIZ = ['table', 'bar', 'pie', 'kpi'];
     private const SKIP_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
+    private const NUMERIC_TYPES = ['number', 'rating', 'scale'];
+    private const DATE_TYPES = ['date', 'datetime'];
+    private const MAX_FILTERS = 25;
+    // Drafts + archived never appear in reports; everything else (submitted, reviewed, approved, …) does.
+    private const HIDDEN_STATUSES = "('draft', 'archived')";
 
     public function __construct(private SQLiteConnection $sqlite) {}
 
     /**
-     * @param array  $spec   { viz, filters, groupBy, measure, columns, joins?, sort?, limit? }
-     * @param array  $fields the base form's field definitions
-     * @param array  $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', fields, path }]
+     * @param array $spec  { viz, filters, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit? }
+     * @param array $fields the base form's field definitions
+     * @param array $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', scope:'all'|'own', fields, path }]
      */
     public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = []): array
     {
@@ -48,15 +54,20 @@ class ReportService
         }
         $db = $this->sqlite->getFormDatabase($formId);
 
-        $safe = static fn (string $k): string => str_replace(['"', '\\'], '', $k);
+        $baseFieldById = [];
+        foreach ($fields as $f) {
+            if (!empty($f['id'])) { $baseFieldById[$f['id']] = $f; }
+        }
 
         // ── ATTACH joined databases ──
-        $joinDefs = []; // joinFormId => ['alias','via','type','fieldById']
+        $joinDefs = []; // joinFormId => ['alias','via','type','multi','scope','fieldById']
         $attached = [];
         $ai = 0;
         foreach ($joins as $j) {
             $path = (string) ($j['path'] ?? '');
             if ($path === '' || !is_file($path)) { continue; }
+            $via = (string) ($j['via'] ?? '');
+            if ($this->clean($via) !== $via || $via === '') { continue; }
             $alias = 'j' . $ai++;
             try {
                 $db->exec("ATTACH DATABASE '" . str_replace("'", "''", $path) . "' AS $alias");
@@ -70,31 +81,31 @@ class ReportService
             }
             $joinDefs[(string) $j['formId']] = [
                 'alias' => $alias,
-                'via' => $safe((string) ($j['via'] ?? '')),
+                'via' => $via,
                 'type' => (($j['type'] ?? 'left') === 'inner') ? 'INNER' : 'LEFT',
+                'multi' => ($baseFieldById[$via]['properties']['allowMultiple'] ?? false) === true,
+                'scope' => (($j['scope'] ?? 'all') === 'own') ? 'own' : 'all',
                 'fieldById' => $fb,
             ];
         }
 
         try {
-            $baseFieldById = [];
-            foreach ($fields as $f) {
-                if (!empty($f['id'])) { $baseFieldById[$f['id']] = $f; }
-            }
-
-            // Resolve a field ref → SQL expression, or null if invalid.
-            $refExpr = static function (string $ref) use ($baseFieldById, $joinDefs, $safe): ?string {
+            // Resolve a field ref → SQL expression (or null if invalid), and → its field definition.
+            $refExpr = function (string $ref) use ($baseFieldById, $joinDefs): ?string {
+                if ($ref === '__submitted_at') { return 'r.submitted_at'; }
+                if ($ref === '__status') { return 'r.status'; }
                 if (str_contains($ref, '::')) {
                     [$jf, $fid] = explode('::', $ref, 2);
                     $jd = $joinDefs[$jf] ?? null;
-                    if (!$jd || !isset($jd['fieldById'][$fid])) { return null; }
-                    return "json_extract({$jd['alias']}.answers, '$.\"" . $safe($fid) . "\"')";
+                    if (!$jd || !isset($jd['fieldById'][$fid]) || $this->clean($fid) !== $fid) { return null; }
+                    return "json_extract({$jd['alias']}.answers, '$.\"$fid\"')";
                 }
-                if (!isset($baseFieldById[$ref])) { return null; }
-                return "json_extract(r.answers, '$.\"" . $safe($ref) . "\"')";
+                if (!isset($baseFieldById[$ref]) || $this->clean($ref) !== $ref) { return null; }
+                return "json_extract(r.answers, '$.\"$ref\"')";
             };
-            // Resolve a field ref → its field definition (for option labels / display).
             $refField = static function (string $ref) use ($baseFieldById, $joinDefs): ?array {
+                if ($ref === '__submitted_at') { return ['type' => 'datetime', 'label' => 'Submitted']; }
+                if ($ref === '__status') { return ['type' => 'short_text', 'label' => 'Status']; }
                 if (str_contains($ref, '::')) {
                     [$jf, $fid] = explode('::', $ref, 2);
                     return $joinDefs[$jf]['fieldById'][$fid] ?? null;
@@ -102,26 +113,59 @@ class ReportService
                 return $baseFieldById[$ref] ?? null;
             };
 
-            // ── FROM + JOINs ──
+            $params = [];
+
+            // ── FROM + JOINs (joined rows are status-filtered + own-scoped IN THE ON CLAUSE) ──
             $from = 'responses r';
+            $ji = 0;
             foreach ($joinDefs as $jd) {
-                $from .= " {$jd['type']} JOIN {$jd['alias']}.responses {$jd['alias']} ON {$jd['alias']}.id = json_extract(r.answers, '$.\"{$jd['via']}\"')";
+                $link = $jd['multi']
+                    ? "{$jd['alias']}.id IN (SELECT value FROM json_each(r.answers, '$.\"{$jd['via']}\"'))"
+                    : "{$jd['alias']}.id = json_extract(r.answers, '$.\"{$jd['via']}\"')";
+                $on = "$link AND {$jd['alias']}.status NOT IN " . self::HIDDEN_STATUSES;
+                if ($jd['scope'] === 'own' && $userId) {
+                    $jp = ':juid' . $ji++;
+                    $on .= " AND json_extract({$jd['alias']}.metadata, '$.submittedByUserId') = $jp";
+                    $params[$jp] = $userId;
+                }
+                $from .= " {$jd['type']} JOIN {$jd['alias']}.responses {$jd['alias']} ON $on";
             }
 
             // ── WHERE (base status + scope + validated filters) ──
-            $where = ["r.status = 'submitted'"];
-            $params = [];
+            $where = ['r.status NOT IN ' . self::HIDDEN_STATUSES];
             if ($scope === 'own' && $userId) {
                 $where[] = "json_extract(r.metadata, '$.submittedByUserId') = :uid";
                 $params[':uid'] = $userId;
             }
             $pi = 0;
-            foreach ($spec['filters'] ?? [] as $flt) {
-                $expr = $refExpr((string) ($flt['field'] ?? ''));
+            foreach (array_slice((array) ($spec['filters'] ?? []), 0, self::MAX_FILTERS) as $flt) {
+                if (!is_array($flt)) { continue; }
+                $ref = (string) ($flt['field'] ?? '');
+                $expr = $refExpr($ref);
                 if ($expr === null) { continue; }
+                $fdef = $refField($ref);
+                $isNumeric = in_array($fdef['type'] ?? '', self::NUMERIC_TYPES, true);
+                $isDate = in_array($fdef['type'] ?? '', self::DATE_TYPES, true) || $ref === '__submitted_at';
                 $op = (string) ($flt['op'] ?? 'eq');
-                if ($op === 'empty') { $where[] = "($expr IS NULL OR $expr = '')"; continue; }
-                if ($op === 'notempty') { $where[] = "($expr IS NOT NULL AND $expr != '')"; continue; }
+
+                if ($op === 'empty') { $where[] = "($expr IS NULL OR $expr = '' OR $expr = '[]')"; continue; }
+                if ($op === 'notempty') { $where[] = "($expr IS NOT NULL AND $expr != '' AND $expr != '[]')"; continue; }
+
+                // Relative date filters (no client date math; only a clamped integer is interpolated).
+                if (in_array($op, self::DATE_OPS, true)) {
+                    if ($op === 'last_n_days') {
+                        $n = max(1, min((int) ($flt['value'] ?? 30), 3650));
+                        $where[] = "date($expr) >= date('now', '-$n days')";
+                    } elseif ($op === 'this_month') {
+                        $where[] = "strftime('%Y-%m', $expr) = strftime('%Y-%m', 'now')";
+                    } elseif ($op === 'this_year') {
+                        $where[] = "strftime('%Y', $expr) = strftime('%Y', 'now')";
+                    } elseif ($op === 'today') {
+                        $where[] = "date($expr) = date('now')";
+                    }
+                    continue;
+                }
+
                 if ($op === 'contains') {
                     $p = ':p' . $pi++;
                     $where[] = "$expr LIKE $p ESCAPE '!'";
@@ -130,19 +174,30 @@ class ReportService
                 }
                 if (isset(self::OPS[$op])) {
                     $p = ':p' . $pi++;
-                    $where[] = "$expr " . self::OPS[$op] . " $p";
                     $params[$p] = (string) ($flt['value'] ?? '');
+                    if ($isNumeric) {
+                        $where[] = "CAST($expr AS REAL) " . self::OPS[$op] . " CAST($p AS REAL)";
+                    } elseif ($isDate) {
+                        $where[] = "date($expr) " . self::OPS[$op] . " date($p)";
+                    } else {
+                        $where[] = "$expr " . self::OPS[$op] . " $p";
+                    }
                 }
             }
             $whereSql = implode(' AND ', $where);
             $limit = max(1, min((int) ($spec['limit'] ?? 100), 1000));
 
-            $aggExpr = function (array $measure) use ($refExpr): string {
+            // Aggregate expression. Numeric aggregates only apply to numeric fields (else degrade to
+            // COUNT); empty strings become NULL so they don't count as 0 in AVG/MIN.
+            $aggExpr = function (array $measure) use ($refExpr, $refField): string {
                 $fn = in_array($measure['fn'] ?? 'count', self::AGGS, true) ? (string) $measure['fn'] : 'count';
                 if ($fn === 'count') { return 'COUNT(*)'; }
-                $mexpr = $refExpr((string) ($measure['field'] ?? ''));
+                $mref = (string) ($measure['field'] ?? '');
+                $mexpr = $refExpr($mref);
                 if ($mexpr === null) { return 'COUNT(*)'; }
-                return strtoupper($fn) . "(CAST($mexpr AS REAL))";
+                if ($fn === 'countDistinct') { return "COUNT(DISTINCT $mexpr)"; }
+                if (!in_array($refField($mref)['type'] ?? '', self::NUMERIC_TYPES, true)) { return 'COUNT(*)'; }
+                return strtoupper($fn) . "(CAST(NULLIF($mexpr, '') AS REAL))";
             };
 
             // ── KPI ──
@@ -152,35 +207,53 @@ class ReportService
                 return ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
             }
 
-            // ── bar / pie ──
+            // ── bar / pie (group + aggregate; array group-by values are unnested via json_each) ──
             if (($viz === 'bar' || $viz === 'pie') && !empty($spec['groupBy']['field'])) {
                 $gref = (string) $spec['groupBy']['field'];
                 $gcol = $refExpr($gref);
                 if ($gcol === null) { return ['viz' => $viz, 'series' => []]; }
                 $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
                 if (!in_array($bucket, self::BUCKETS, true)) { $bucket = 'none'; }
-                $grp = match ($bucket) {
-                    'month' => "strftime('%Y-%m', $gcol)",
-                    'year'  => "strftime('%Y', $gcol)",
-                    'day'   => "date($gcol)",
-                    default => $gcol,
+                // Normalise to a JSON array so multi-select answers group per-option and scalars stay 1:1.
+                $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
+                $groupFrom = "$from, json_each($normArr) ge";
+                $key = match ($bucket) {
+                    'month' => "strftime('%Y-%m', ge.value)",
+                    'year'  => "strftime('%Y', ge.value)",
+                    'day'   => "date(ge.value)",
+                    default => 'ge.value',
                 };
-                $order = (($spec['sort'] ?? 'desc') === 'asc') ? 'ASC' : 'DESC';
-                $stmt = $db->prepare("SELECT $grp AS k, " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS v FROM $from WHERE $whereSql GROUP BY k ORDER BY v $order LIMIT :lim");
+                $agg = $aggExpr($spec['measure'] ?? ['fn' => 'count']);
+                // Chronological order for date buckets; else by label if asked, else by value.
+                $seriesSort = (string) ($spec['seriesSort'] ?? '');
+                if ($bucket !== 'none' || $seriesSort === 'label') {
+                    $orderBy = 'k ASC';
+                } else {
+                    $dir = (($spec['sort'] ?? 'desc') === 'asc') ? 'ASC' : 'DESC';
+                    $orderBy = "v $dir";
+                }
+                $havingSql = '';
+                if (isset($spec['having']['op']) && isset(self::OPS[$spec['having']['op']])) {
+                    $hp = ':hv';
+                    $havingSql = " HAVING $agg " . self::OPS[$spec['having']['op']] . " CAST($hp AS REAL)";
+                    $params[$hp] = (string) ($spec['having']['value'] ?? 0);
+                }
+                $stmt = $db->prepare("SELECT $key AS k, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k$havingSql ORDER BY $orderBy LIMIT :lim");
                 foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
                 $stmt->bindValue(':lim', min($limit, 50), PDO::PARAM_INT);
                 $stmt->execute();
                 $gfield = $refField($gref);
                 $series = [];
                 foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $rrow) {
-                    $key = ($rrow['k'] === null || $rrow['k'] === '') ? '—' : $this->optLabel($gfield, (string) $rrow['k']);
-                    $series[] = ['label' => $key, 'value' => (float) $rrow['v']];
+                    $label = ($rrow['k'] === null || $rrow['k'] === '') ? '—' : $this->optLabel($gfield, (string) $rrow['k']);
+                    $series[] = ['label' => $label, 'value' => (float) $rrow['v']];
                 }
                 return ['viz' => $viz, 'series' => $series];
             }
 
             // ── table ──
             $refs = array_values(array_filter((array) ($spec['columns'] ?? []), fn ($ref) => $refExpr((string) $ref) !== null));
+            $refs = array_slice($refs, 0, 30);
             if (empty($refs)) {
                 foreach ($fields as $f) {
                     if (count($refs) >= 5) { break; }
@@ -191,11 +264,19 @@ class ReportService
             $columns = [];
             foreach ($refs as $i => $ref) {
                 $selects[] = $refExpr((string) $ref) . " AS c$i";
-                $fdef = $refField((string) $ref);
-                $columns[] = ['id' => "c$i", 'label' => $fdef['label'] ?? (string) $ref];
+                $columns[] = ['id' => "c$i", 'label' => $refField((string) $ref)['label'] ?? (string) $ref];
             }
             $selectSql = empty($selects) ? 'r.id AS c0' : implode(', ', $selects);
-            $stmt = $db->prepare("SELECT $selectSql, r.submitted_at AS _sa FROM $from WHERE $whereSql ORDER BY r.submitted_at DESC LIMIT :lim");
+            // Sort: a chosen column/direction, else newest first.
+            $orderSql = 'r.submitted_at DESC';
+            if (isset($spec['sort']['by'])) {
+                $sortExpr = $refExpr((string) $spec['sort']['by']);
+                if ($sortExpr !== null) {
+                    $sdir = (($spec['sort']['dir'] ?? 'asc') === 'desc') ? 'DESC' : 'ASC';
+                    $orderSql = "$sortExpr $sdir";
+                }
+            }
+            $stmt = $db->prepare("SELECT $selectSql, r.submitted_at AS _sa FROM $from WHERE $whereSql ORDER BY $orderSql LIMIT :lim");
             foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
             $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
             $stmt->execute();
@@ -215,6 +296,12 @@ class ReportService
         }
     }
 
+    /** Whitelist an identifier to safe chars (matches the field-id rules enforced on write). */
+    private function clean(string $id): string
+    {
+        return preg_replace('/[^A-Za-z0-9_]/', '', $id) ?? '';
+    }
+
     /** Map a stored value to its option label (choice fields) or the value itself. */
     private function optLabel(?array $field, string $val): string
     {
@@ -227,7 +314,6 @@ class ReportService
     private function displayValue(?array $field, mixed $val): string
     {
         if ($val === null) { return ''; }
-        // json_extract returns a JSON array string for array answers; decode for display.
         if (is_string($val) && str_starts_with($val, '[')) {
             $decoded = json_decode($val, true);
             if (is_array($decoded)) {
