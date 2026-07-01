@@ -1,7 +1,7 @@
 import { useMemo, cloneElement, type ReactElement } from 'react';
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area,
-  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList,
+  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList,
 } from 'recharts';
 import type { AppReportResult } from '../../types/app';
 
@@ -142,7 +142,11 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
 
   if (result.viz === 'pie' || result.viz === 'donut') {
     const total = series.reduce((a, s) => a + s.value, 0) || 1;
-    const height = print ? 280 : 300;
+    const height = print ? 240 : 260;
+    // The legend is rendered as HTML below the chart (not recharts' <Legend>), so it can never
+    // overlap the circle — important for the fixed-height PDF export.
+    const legendText = print ? 'text-gray-700' : 'text-gray-600 dark:text-slate-300';
+    const legendValue = print ? 'text-gray-500' : 'text-gray-400 dark:text-slate-500';
     return (
       <div className={print ? '' : 'py-1'}>
         {frame(height, (
@@ -154,7 +158,7 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
               cx="50%"
               cy="50%"
               innerRadius={result.viz === 'donut' ? '55%' : 0}
-              outerRadius="80%"
+              outerRadius="82%"
               paddingAngle={series.length > 1 ? 2 : 0}
               isAnimationActive={anim}
               animationDuration={600}
@@ -166,9 +170,17 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
               {series.map((_, i) => <Cell key={i} fill={t.palette[i % t.palette.length]} />)}
             </Pie>
             <Tooltip contentStyle={t.tooltip} formatter={(v) => `${fmt(v)} · ${Math.round((Number(v) / total) * 100)}%`} />
-            <Legend iconType="circle" wrapperStyle={{ fontSize: 12, color: t.axis }} />
           </PieChart>
         ))}
+        <ul className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5" style={print ? { maxWidth: PRINT_WIDTH } : undefined}>
+          {series.map((s, i) => (
+            <li key={s.label + i} className="inline-flex items-center gap-1.5 text-xs">
+              <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: t.palette[i % t.palette.length] }} />
+              <span className={legendText}>{s.label}</span>
+              <span className={`tabular-nums ${legendValue}`}>{fmt(s.value)} · {Math.round((s.value / total) * 100)}%</span>
+            </li>
+          ))}
+        </ul>
       </div>
     );
   }
