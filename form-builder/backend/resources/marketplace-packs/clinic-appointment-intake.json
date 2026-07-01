@@ -1,0 +1,809 @@
+{
+  "id": "clinic-appointment-intake",
+  "name": "Clinic Appointment & Intake",
+  "description": "A light front-desk toolkit for a small clinic: register patients, manage providers, book and track appointments, capture patient intake and consent, and schedule follow-ups from one linked dashboard. Includes 5 forms and 1 app.",
+  "tags": [
+    "clinic",
+    "appointments",
+    "intake",
+    "patients",
+    "front-desk"
+  ],
+  "icon": "🩺",
+  "pack": {
+    "formatVersion": 1,
+    "packMeta": {
+      "id": "clinic-appointment-intake",
+      "name": "Clinic Appointment & Intake",
+      "description": "A light front-desk toolkit for a small clinic: register patients, manage providers, book and track appointments, collect patient intake details and consent, and schedule follow-ups — all linked together on one dashboard. Administrative only; no diagnoses or treatment records.",
+      "version": "1.0.0",
+      "author": "FormLogic",
+      "tags": [
+        "clinic",
+        "appointments",
+        "intake",
+        "patients",
+        "front-desk"
+      ]
+    },
+    "forms": [
+      {
+        "packFormId": "patient",
+        "title": "Patient",
+        "icon": "User",
+        "description": "Register a patient with their contact details, date of birth and emergency contact.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "Register a Patient",
+            "description": "Capture the patient details so you can book appointments and record intake.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "full_name",
+            "type": "short_text",
+            "label": "Full Name",
+            "required": true,
+            "properties": {
+              "placeholder": "First and last name"
+            }
+          },
+          {
+            "id": "date_of_birth",
+            "type": "date",
+            "label": "Date of Birth",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": true,
+            "properties": {
+              "placeholder": "(555) 555-5555"
+            }
+          },
+          {
+            "id": "email",
+            "type": "email",
+            "label": "Email Address",
+            "required": false,
+            "properties": {
+              "placeholder": "you@example.com"
+            }
+          },
+          {
+            "id": "address",
+            "type": "long_text",
+            "label": "Address",
+            "required": false,
+            "properties": {
+              "placeholder": "Street, suburb, state, postcode"
+            }
+          },
+          {
+            "id": "emergency_contact_name",
+            "type": "short_text",
+            "label": "Emergency Contact Name",
+            "required": false,
+            "properties": {
+              "placeholder": "Full name of emergency contact"
+            }
+          },
+          {
+            "id": "emergency_contact_phone",
+            "type": "phone",
+            "label": "Emergency Contact Phone",
+            "required": false,
+            "properties": {
+              "placeholder": "(555) 555-5555"
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "provider",
+        "title": "Provider",
+        "icon": "Stethoscope",
+        "description": "Add a clinician or practitioner with their role and availability status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "full_name",
+            "type": "short_text",
+            "label": "Provider Name",
+            "required": true,
+            "properties": {
+              "placeholder": "e.g. Dr. Alex Morgan"
+            }
+          },
+          {
+            "id": "role",
+            "type": "dropdown",
+            "label": "Specialty / Role",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "gp",
+                  "label": "General Practitioner",
+                  "value": "gp"
+                },
+                {
+                  "id": "nurse",
+                  "label": "Nurse",
+                  "value": "nurse"
+                },
+                {
+                  "id": "physiotherapist",
+                  "label": "Physiotherapist",
+                  "value": "physiotherapist"
+                },
+                {
+                  "id": "dentist",
+                  "label": "Dentist",
+                  "value": "dentist"
+                },
+                {
+                  "id": "psychologist",
+                  "label": "Psychologist",
+                  "value": "psychologist"
+                },
+                {
+                  "id": "specialist",
+                  "label": "Specialist",
+                  "value": "specialist"
+                }
+              ]
+            }
+          },
+          {
+            "id": "email",
+            "type": "email",
+            "label": "Email Address",
+            "required": false,
+            "properties": {
+              "placeholder": "provider@clinic.example"
+            }
+          },
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": false,
+            "properties": {
+              "placeholder": "(555) 555-5555"
+            }
+          },
+          {
+            "id": "active",
+            "type": "checkbox",
+            "label": "Availability",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "active",
+                  "label": "Currently accepting appointments",
+                  "value": "active"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "appointment",
+        "title": "Appointment",
+        "icon": "CalendarClock",
+        "description": "Book an appointment for a patient with a provider, including type, date, time and status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "patient",
+            "type": "linked_record",
+            "label": "Patient",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:patient"
+            }
+          },
+          {
+            "id": "provider",
+            "type": "linked_record",
+            "label": "Provider",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:provider"
+            }
+          },
+          {
+            "id": "appt_date",
+            "type": "date",
+            "label": "Appointment Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "appt_time",
+            "type": "time",
+            "label": "Appointment Time",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "appt_type",
+            "type": "dropdown",
+            "label": "Appointment Type",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "new-patient",
+                  "label": "New Patient",
+                  "value": "new-patient"
+                },
+                {
+                  "id": "follow-up",
+                  "label": "Follow-up",
+                  "value": "follow-up"
+                },
+                {
+                  "id": "consultation",
+                  "label": "Consultation",
+                  "value": "consultation"
+                },
+                {
+                  "id": "procedure",
+                  "label": "Procedure",
+                  "value": "procedure"
+                },
+                {
+                  "id": "telehealth",
+                  "label": "Telehealth",
+                  "value": "telehealth"
+                }
+              ]
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "scheduled",
+                  "label": "Scheduled",
+                  "value": "scheduled"
+                },
+                {
+                  "id": "confirmed",
+                  "label": "Confirmed",
+                  "value": "confirmed"
+                },
+                {
+                  "id": "arrived",
+                  "label": "Arrived",
+                  "value": "arrived"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "no-show",
+                  "label": "No-show",
+                  "value": "no-show"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Scheduling notes, reason for visit, room…"
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "intake-form",
+        "title": "Intake Form",
+        "icon": "ClipboardList",
+        "description": "Collect patient intake details before a visit: reason, symptoms, medications and consent.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "patient",
+            "type": "linked_record",
+            "label": "Patient",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:patient"
+            }
+          },
+          {
+            "id": "reason_for_visit",
+            "type": "long_text",
+            "label": "Reason for Visit",
+            "required": true,
+            "properties": {
+              "placeholder": "Why are you coming in today?"
+            }
+          },
+          {
+            "id": "symptoms",
+            "type": "long_text",
+            "label": "Current Symptoms",
+            "required": false,
+            "properties": {
+              "placeholder": "Describe any symptoms you are experiencing…"
+            }
+          },
+          {
+            "id": "current_medications",
+            "type": "long_text",
+            "label": "Current Medications",
+            "required": false,
+            "properties": {
+              "placeholder": "List any medications you are currently taking…"
+            }
+          },
+          {
+            "id": "preferred_contact",
+            "type": "dropdown",
+            "label": "Preferred Contact Method",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "phone",
+                  "label": "Phone Call",
+                  "value": "phone"
+                },
+                {
+                  "id": "sms",
+                  "label": "Text Message",
+                  "value": "sms"
+                },
+                {
+                  "id": "email",
+                  "label": "Email",
+                  "value": "email"
+                }
+              ]
+            }
+          },
+          {
+            "id": "consent",
+            "type": "checkbox",
+            "label": "Consent",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "consent-to-treat",
+                  "label": "I consent to be seen and treated by the clinic",
+                  "value": "consent-to-treat"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "follow-up",
+        "title": "Follow-up",
+        "icon": "CalendarPlus",
+        "description": "Schedule a follow-up against an appointment with the next action and its status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "appointment",
+            "type": "linked_record",
+            "label": "Appointment",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:appointment"
+            }
+          },
+          {
+            "id": "followup_date",
+            "type": "date",
+            "label": "Follow-up Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "action",
+            "type": "long_text",
+            "label": "Action / Next Steps",
+            "required": true,
+            "properties": {
+              "placeholder": "What needs to happen at or before the follow-up…"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "pending",
+                  "label": "Pending",
+                  "value": "pending"
+                },
+                {
+                  "id": "scheduled",
+                  "label": "Scheduled",
+                  "value": "scheduled"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "apps": [
+      {
+        "packAppId": "front-desk",
+        "name": "Front Desk",
+        "description": "A front-desk hub for a small clinic: register patients, manage providers, book appointments, capture intake and consent, and schedule follow-ups from one dashboard.",
+        "settings": {},
+        "theme": {
+          "primaryColor": "#0891b2",
+          "backgroundColor": "#0f172a",
+          "textColor": "#f8fafc",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "forms": [
+          {
+            "packFormId": "patient",
+            "displayName": "Patients",
+            "sortOrder": 1,
+            "isVisible": true
+          },
+          {
+            "packFormId": "provider",
+            "displayName": "Providers",
+            "sortOrder": 2,
+            "isVisible": true
+          },
+          {
+            "packFormId": "appointment",
+            "displayName": "Appointments",
+            "sortOrder": 3,
+            "isVisible": true
+          },
+          {
+            "packFormId": "intake-form",
+            "displayName": "Intake Forms",
+            "sortOrder": 4,
+            "isVisible": true
+          },
+          {
+            "packFormId": "follow-up",
+            "displayName": "Follow-ups",
+            "sortOrder": 5,
+            "isVisible": true
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"empty\">Loading Front Desk…</div></div></div>",
+          "css": "\n:root{color-scheme:light dark;}\n*{box-sizing:border-box;}\n#app{font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif;color:var(--fl-text);min-height:100vh;padding:28px 22px;background:radial-gradient(1100px 560px at 12% -12%,color-mix(in srgb,var(--fl-accent) 16%,transparent),transparent 60%),radial-gradient(900px 520px at 108% -6%,color-mix(in srgb,var(--fl-accent) 8%,transparent),transparent 55%),transparent;}\n.wrap{max-width:1080px;margin:0 auto;}\n.empty{padding:64px 0;text-align:center;color:var(--fl-muted);}\n.hd{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap;}\n.hd-left{display:flex;align-items:center;gap:14px;}\n.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 6px 18px color-mix(in srgb,var(--fl-accent) 35%,transparent);}\n.hd h1{margin:0;font-size:21px;font-weight:700;letter-spacing:-.01em;color:var(--fl-text);}\n.hd .sub{margin:2px 0 0;font-size:13px;color:var(--fl-muted);}\n.btn{font:inherit;cursor:pointer;border-radius:10px;border:1px solid transparent;padding:10px 16px;font-weight:600;font-size:13.5px;color:var(--fl-text);background:var(--fl-surface-2);transition:transform .12s ease,background .2s ease,border-color .2s ease;}\n.btn:hover{transform:translateY(-1px);}\n.btn:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;}\n.btn.primary{background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 6px 16px color-mix(in srgb,var(--fl-accent) 32%,transparent);}\n.btn.ghost{background:var(--fl-surface-2);border-color:var(--fl-border);}\n.btn.sm{padding:7px 12px;font-size:12.5px;}\n.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px;}\n.card{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px;box-shadow:var(--fl-shadow);}\n.stat-top{display:flex;align-items:center;gap:8px;}\n.dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 0 3px var(--fl-track);}\n.stat-label{font-size:11.5px;color:var(--fl-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;}\n.stat-val{font-size:29px;font-weight:750;color:var(--fl-text);margin-top:8px;line-height:1;}\n.stat-hint{font-size:12px;color:var(--fl-faint);margin-top:6px;}\n.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:18px;box-shadow:var(--fl-shadow);}\n.panel h2{margin:0 0 14px;font-size:14px;font-weight:700;color:var(--fl-text);display:flex;align-items:center;gap:8px;}\n.panel h2 .tag{margin-left:auto;font-size:11px;font-weight:600;color:var(--fl-muted);background:var(--fl-surface-2);padding:3px 8px;border-radius:20px;}\n.bar-row{display:grid;grid-template-columns:92px 1fr 34px;align-items:center;gap:10px;margin-bottom:12px;}\n.bar-row:last-child{margin-bottom:0;}\n.bar-name{font-size:12.5px;color:var(--fl-text);text-transform:capitalize;}\n.bar-track{height:9px;border-radius:6px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;border-radius:6px;transition:width 1s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;color:var(--fl-muted);text-align:right;font-variant-numeric:tabular-nums;}\n.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--fl-border);}\n.item:last-child{border-bottom:none;}\n.item-main{min-width:0;flex:1;}\n.item-title{display:block;font-size:13.5px;color:var(--fl-text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.item-meta{display:block;font-size:11.5px;color:var(--fl-faint);margin-top:2px;text-transform:capitalize;}\n.badge{flex:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;border:1px solid;text-transform:capitalize;}\n.empty-panel{text-align:center;color:var(--fl-muted);font-size:13px;padding:26px 0;display:flex;flex-direction:column;align-items:center;gap:12px;}\n.actions{display:flex;flex-wrap:wrap;gap:10px;}\n.actions .btn{display:flex;align-items:center;gap:8px;}\n@media(max-width:860px){.stats{grid-template-columns:repeat(2,1fr);}.panels{grid-template-columns:1fr;}}\n@media(max-width:460px){.stats{grid-template-columns:1fr;}}\n",
+          "js": "\nvar FL = window.FormLogic;\nfunction h(s){ return FL.escapeHtml(s == null ? '' : String(s)); }\nfunction findForm(ctx, name){\n  var t = String(name).toLowerCase();\n  for (var i=0;i<ctx.forms.length;i++){ if (String(ctx.forms[i].displayName||'').toLowerCase()===t) return ctx.forms[i]; }\n  return null;\n}\nfunction fieldOptions(form, fieldId){\n  if(!form) return [];\n  for (var i=0;i<form.fields.length;i++){ var f=form.fields[i]; if(f.id===fieldId && f.properties && f.properties.options) return f.properties.options; }\n  return [];\n}\nfunction optLabel(opts, val){\n  for (var i=0;i<opts.length;i++){ if(opts[i].value===val) return opts[i].label; }\n  return val ? String(val) : '';\n}\nfunction recs(form){ return form ? FL.records(form.formId, { limit: 500 }).catch(function(){ return []; }) : Promise.resolve([]); }\nfunction recId(r){ return r ? (r.id || (r.answers ? r.answers.id : '') || '') : ''; }\nfunction linkId(v){\n  if(v == null) return '';\n  if(Array.isArray(v)) return v.length ? linkId(v[0]) : '';\n  if(typeof v === 'object') return v.id || v.recordId || v.value || '';\n  return String(v);\n}\nfunction startOfToday(){ var n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); }\nfunction isToday(s){\n  if(!s) return false;\n  var d = new Date(s); if(isNaN(d.getTime())) return false;\n  var now = new Date();\n  return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();\n}\nfunction fmtDate(s){\n  if(!s) return '';\n  var d = new Date(s); if(isNaN(d.getTime())) return '';\n  var diff = Math.floor((d.getTime() - startOfToday())/86400000);\n  if(diff === 0) return 'today';\n  if(diff === 1) return 'tomorrow';\n  if(diff === -1) return 'yesterday';\n  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });\n}\nfunction fmtTime(s){\n  if(!s) return '';\n  var m = String(s).match(/^(\\d{1,2}):(\\d{2})/);\n  if(!m) return String(s);\n  var hr = parseInt(m[1],10); var mn = m[2];\n  var ap = hr >= 12 ? 'PM' : 'AM';\n  var h12 = hr % 12; if(h12===0) h12 = 12;\n  return h12 + ':' + mn + ' ' + ap;\n}\nfunction statCard(label, value, hint, color){\n  return '<div class=\"card stat\">'\n    + '<div class=\"stat-top\"><span class=\"dot\" style=\"background:'+color+'\"></span><span class=\"stat-label\">'+h(label)+'</span></div>'\n    + '<div class=\"stat-val\">'+h(value)+'</div>'\n    + '<div class=\"stat-hint\">'+h(hint)+'</div>'\n    + '</div>';\n}\nfunction bar(label, count, max, color){\n  var pct = max>0 ? Math.max(4, Math.round(count/max*100)) : 0;\n  return '<div class=\"bar-row\"><span class=\"bar-name\">'+h(label)+'</span>'\n    + '<div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"width:0;background:'+color+'\"></div></div>'\n    + '<span class=\"bar-val\">'+count+'</span></div>';\n}\nasync function main(){\n  var root = document.getElementById('app');\n  var ctx;\n  try { ctx = await FL.context(); } catch(e){ root.innerHTML = '<div class=\"wrap\"><div class=\"empty\">Could not load the dashboard.</div></div>'; return; }\n  var user = await FL.currentUser().catch(function(){ return null; });\n\n  var patientForm = findForm(ctx, 'Patients');\n  var providerForm = findForm(ctx, 'Providers');\n  var apptForm = findForm(ctx, 'Appointments');\n  var intakeForm = findForm(ctx, 'Intake Forms');\n  var followupForm = findForm(ctx, 'Follow-ups');\n\n  var out = await Promise.all([recs(apptForm), recs(patientForm), recs(intakeForm)]);\n  var appts = out[0], patients = out[1], intakes = out[2];\n\n  // Patient id -> name map for resolving linked records.\n  var patientMap = {};\n  for (var i=0;i<patients.length;i++){\n    var pid = recId(patients[i]);\n    if(pid) patientMap[pid] = (patients[i].answers||{}).full_name || 'Patient';\n  }\n\n  var statusOpts = fieldOptions(apptForm, 'status');\n  var typeOpts = fieldOptions(apptForm, 'appt_type');\n\n  var statusColors = {\n    'scheduled':'#38bdf8',\n    'confirmed':'var(--fl-accent)',\n    'arrived':'#a78bfa',\n    'completed':'var(--fl-good)',\n    'no-show':'var(--fl-bad)',\n    'cancelled':'var(--fl-warn)'\n  };\n  var statusOrder = ['scheduled','confirmed','arrived','completed','no-show','cancelled'];\n  var statusCounts = { 'scheduled':0, 'confirmed':0, 'arrived':0, 'completed':0, 'no-show':0, 'cancelled':0 };\n\n  var start = startOfToday();\n  var todayCount = 0, upcomingCount = 0, noShowCount = 0;\n  var upcoming = [];\n  for (var i=0;i<appts.length;i++){\n    var a = appts[i].answers || {};\n    var st = a.status;\n    if(statusCounts[st]!=null) statusCounts[st]++;\n    if(isToday(a.appt_date)) todayCount++;\n    if(st==='no-show') noShowCount++;\n    var d = new Date(a.appt_date).getTime();\n    if(!isNaN(d) && d >= start && st!=='cancelled' && st!=='completed'){\n      upcomingCount++;\n      upcoming.push({ a:a, d:d });\n    }\n  }\n  upcoming.sort(function(x,y){ return x.d - y.d; });\n\n  // New patients registered in the last 30 days.\n  var newPatients = 0, cutoff = Date.now() - 30*86400000;\n  for (var i=0;i<patients.length;i++){\n    var t = new Date(patients[i].submittedAt).getTime();\n    if(!isNaN(t) && t >= cutoff) newPatients++;\n  }\n\n  // Patients still awaiting an intake form.\n  var intakeSet = {};\n  for (var i=0;i<intakes.length;i++){\n    var ipid = linkId((intakes[i].answers||{}).patient);\n    if(ipid) intakeSet[ipid] = true;\n  }\n  var pendingIntakes = 0;\n  for (var i=0;i<patients.length;i++){\n    var ppid = recId(patients[i]);\n    if(ppid && !intakeSet[ppid]) pendingIntakes++;\n  }\n\n  var head = '<header class=\"hd\"><div class=\"hd-left\"><div class=\"logo\">🩺</div>'\n    + '<div><h1>'+h(ctx.appName || 'Front Desk')+'</h1>'\n    + '<p class=\"sub\">'+ (user ? 'Signed in as '+h(user.name || user.email || 'staff') : 'Clinic front desk') +' · '+patients.length+' patients</p></div>'\n    + '</div><button class=\"btn primary\" data-nav=\"appointment\">+ New Appointment</button></header>';\n\n  var stats = '<div class=\"stats\">'\n    + statCard('Today', todayCount.toLocaleString(), 'appointments today', 'var(--fl-accent)')\n    + statCard('New Patients', newPatients.toLocaleString(), 'last 30 days', '#38bdf8')\n    + statCard('Upcoming', upcomingCount.toLocaleString(), appts.length + ' total appts', '#a78bfa')\n    + statCard('No-shows', noShowCount.toLocaleString(), (noShowCount>0 ? 'to follow up' : 'all clear'), 'var(--fl-bad)')\n    + statCard('Pending Intakes', pendingIntakes.toLocaleString(), (pendingIntakes>0 ? 'awaiting intake' : 'all complete'), 'var(--fl-warn)')\n    + '</div>';\n\n  var maxStatus = 0;\n  for (var si=0; si<statusOrder.length; si++){ if(statusCounts[statusOrder[si]] > maxStatus) maxStatus = statusCounts[statusOrder[si]]; }\n  var barsHtml = '';\n  if(appts.length === 0){\n    barsHtml = '<div class=\"empty-panel\">No appointments yet<button class=\"btn primary sm\" data-nav=\"appointment\">Book an appointment</button></div>';\n  } else {\n    for (var si=0; si<statusOrder.length; si++){\n      var sk = statusOrder[si];\n      barsHtml += bar(optLabel(statusOpts, sk) || sk, statusCounts[sk], maxStatus, statusColors[sk]);\n    }\n  }\n  var statusPanel = '<div class=\"panel\"><h2>Appointments by status<span class=\"tag\">'+appts.length+' total</span></h2>'+barsHtml+'</div>';\n\n  var itemsHtml = '';\n  if(upcoming.length === 0){\n    itemsHtml = '<div class=\"empty-panel\">No upcoming appointments<button class=\"btn ghost sm\" data-nav=\"patient\">Register a patient</button></div>';\n  } else {\n    var n = Math.min(6, upcoming.length);\n    for (var ri=0; ri<n; ri++){\n      var a = upcoming[ri].a;\n      var patName = patientMap[linkId(a.patient)] || 'Unassigned patient';\n      var typeL = optLabel(typeOpts, a.appt_type) || 'Appointment';\n      var sk2 = a.status;\n      var statusL = optLabel(statusOpts, sk2) || 'Unset';\n      var sc = statusColors[sk2] || 'var(--fl-faint)';\n      var meta = typeL;\n      var dt = fmtDate(a.appt_date);\n      var tm = fmtTime(a.appt_time);\n      if(dt) meta += ' · ' + dt;\n      if(tm) meta += ' · ' + tm;\n      itemsHtml += '<div class=\"item\"><div class=\"item-main\">'\n        + '<span class=\"item-title\">'+h(patName)+'</span>'\n        + '<span class=\"item-meta\">'+h(meta)+'</span></div>'\n        + '<span class=\"badge\" style=\"color:'+sc+';border-color:color-mix(in srgb,'+sc+' 40%,transparent);background:color-mix(in srgb,'+sc+' 13%,transparent)\">'+h(statusL)+'</span>'\n        + '</div>';\n    }\n  }\n  var recentPanel = '<div class=\"panel\"><h2>Today &amp; upcoming<span class=\"tag\">next up</span></h2>'+itemsHtml+'</div>';\n\n  var actionDefs = [\n    { key:'appointment', form:apptForm, label:'New Appointment', icon:'📅' },\n    { key:'patient', form:patientForm, label:'Register Patient', icon:'👤' },\n    { key:'intake', form:intakeForm, label:'New Intake', icon:'📝' },\n    { key:'provider', form:providerForm, label:'Add Provider', icon:'🩺' },\n    { key:'followup', form:followupForm, label:'New Follow-up', icon:'🔁' }\n  ];\n  var actionsHtml = '';\n  for (var ai=0; ai<actionDefs.length; ai++){\n    if(!actionDefs[ai].form) continue;\n    actionsHtml += '<button class=\"btn ghost\" data-nav=\"'+actionDefs[ai].key+'\"><span aria-hidden=\"true\">'+actionDefs[ai].icon+'</span>'+h(actionDefs[ai].label)+'</button>';\n  }\n  var actions = '<div class=\"panel\"><h2>Quick actions</h2><div class=\"actions\">'+actionsHtml+'</div></div>';\n\n  var navMap = {};\n  if(apptForm) navMap.appointment = apptForm.formId;\n  if(patientForm) navMap.patient = patientForm.formId;\n  if(intakeForm) navMap.intake = intakeForm.formId;\n  if(providerForm) navMap.provider = providerForm.formId;\n  if(followupForm) navMap.followup = followupForm.formId;\n\n  root.innerHTML = '<div class=\"wrap\">'+head+stats+'<div class=\"panels\">'+statusPanel+recentPanel+'</div>'+actions+'</div>';\n\n  var btns = root.querySelectorAll('[data-nav]');\n  for (var bi=0; bi<btns.length; bi++){\n    btns[bi].addEventListener('click', function(){\n      var id = navMap[this.getAttribute('data-nav')];\n      if(id) FL.navigate(id); else FL.toast.error('That form is not available.');\n    });\n  }\n\n  requestAnimationFrame(function(){ setTimeout(function(){\n    var els = root.querySelectorAll('.bar-fill');\n    for (var i=0;i<els.length;i++){ els[i].style.width = (els[i].getAttribute('data-pct')||0)+'%'; }\n  }, 60); });\n}\nmain();\n"
+        },
+        "roles": [
+          {
+            "name": "Clinic Administrator",
+            "description": "Full access to all front-desk forms.",
+            "permissions": [
+              {
+                "packFormId": "patient",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "export_responses"
+              }
+            ]
+          },
+          {
+            "name": "Front Desk",
+            "description": "Reception staff who register patients, book appointments and capture intake.",
+            "permissions": [
+              {
+                "packFormId": "patient",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "patient",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "provider",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "view_all_responses"
+              }
+            ]
+          },
+          {
+            "name": "Provider",
+            "description": "Clinicians who view their patients, appointments and intake, and log follow-ups.",
+            "permissions": [
+              {
+                "packFormId": "patient",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointment",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "intake-form",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "follow-up",
+                "permission": "edit_responses"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

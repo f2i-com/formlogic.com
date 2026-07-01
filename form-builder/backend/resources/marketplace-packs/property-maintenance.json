@@ -1,0 +1,832 @@
+{
+  "id": "property-maintenance",
+  "name": "Property Maintenance & Handyman",
+  "description": "A maintenance-request and work-order tracker for property managers and handymen: manage properties and tenants, log maintenance requests, schedule and track work orders, and record inspections. Includes 5 forms and 1 app.",
+  "tags": [
+    "property",
+    "maintenance",
+    "handyman",
+    "jobs",
+    "landlord"
+  ],
+  "icon": "🏠",
+  "pack": {
+    "formatVersion": 1,
+    "packMeta": {
+      "id": "property-maintenance",
+      "name": "Property Maintenance & Handyman",
+      "description": "A maintenance-request and work-order tracker for property managers and handymen: manage properties and tenants, log maintenance requests, schedule and track work orders, and record inspections — all linked together.",
+      "version": "1.0.0",
+      "author": "FormLogic",
+      "tags": [
+        "property",
+        "maintenance",
+        "handyman",
+        "jobs",
+        "landlord"
+      ]
+    },
+    "forms": [
+      {
+        "packFormId": "property",
+        "title": "Property",
+        "icon": "Home",
+        "description": "Add a property with its address, type, owner or manager, and on-site access notes.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Property",
+            "description": "Capture the property details so you can track tenants, requests and inspections.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "address",
+            "type": "long_text",
+            "label": "Address",
+            "required": true,
+            "properties": {
+              "placeholder": "Street, suburb, state, postcode"
+            }
+          },
+          {
+            "id": "property_type",
+            "type": "dropdown",
+            "label": "Property Type",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "house",
+                  "label": "House",
+                  "value": "house"
+                },
+                {
+                  "id": "apartment",
+                  "label": "Apartment",
+                  "value": "apartment"
+                },
+                {
+                  "id": "commercial",
+                  "label": "Commercial",
+                  "value": "commercial"
+                },
+                {
+                  "id": "strata",
+                  "label": "Strata / Body Corporate",
+                  "value": "strata"
+                }
+              ]
+            }
+          },
+          {
+            "id": "owner_manager",
+            "type": "short_text",
+            "label": "Owner / Manager Name",
+            "required": true,
+            "properties": {
+              "placeholder": "Landlord or managing agent"
+            }
+          },
+          {
+            "id": "manager_phone",
+            "type": "phone",
+            "label": "Contact Phone",
+            "required": false,
+            "properties": {
+              "placeholder": "(555) 555-5555"
+            }
+          },
+          {
+            "id": "access_notes",
+            "type": "long_text",
+            "label": "Access Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Gate codes, lockbox, parking, pets, preferred entry times…"
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "tenant",
+        "title": "Tenant",
+        "icon": "User",
+        "description": "Register a tenant against a property with their contact details.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "property",
+            "type": "linked_record",
+            "label": "Property",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:property"
+            }
+          },
+          {
+            "id": "name",
+            "type": "short_text",
+            "label": "Tenant Name",
+            "required": true,
+            "properties": {
+              "placeholder": "Full name"
+            }
+          },
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": true,
+            "properties": {
+              "placeholder": "(555) 555-5555"
+            }
+          },
+          {
+            "id": "email",
+            "type": "email",
+            "label": "Email Address",
+            "required": false,
+            "properties": {
+              "placeholder": "you@example.com"
+            }
+          },
+          {
+            "id": "unit",
+            "type": "short_text",
+            "label": "Unit / Room",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Unit 3, Room B"
+            }
+          },
+          {
+            "id": "lease_start",
+            "type": "date",
+            "label": "Lease Start Date",
+            "required": false,
+            "properties": {}
+          }
+        ]
+      },
+      {
+        "packFormId": "maintenance-request",
+        "title": "Maintenance Request",
+        "icon": "Wrench",
+        "description": "Log a maintenance issue reported for a property by a tenant, with category, priority and status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "property",
+            "type": "linked_record",
+            "label": "Property",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:property"
+            }
+          },
+          {
+            "id": "tenant",
+            "type": "linked_record",
+            "label": "Tenant",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:tenant"
+            }
+          },
+          {
+            "id": "category",
+            "type": "dropdown",
+            "label": "Category",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "plumbing",
+                  "label": "Plumbing",
+                  "value": "plumbing"
+                },
+                {
+                  "id": "electrical",
+                  "label": "Electrical",
+                  "value": "electrical"
+                },
+                {
+                  "id": "appliance",
+                  "label": "Appliance",
+                  "value": "appliance"
+                },
+                {
+                  "id": "structural",
+                  "label": "Structural",
+                  "value": "structural"
+                },
+                {
+                  "id": "garden",
+                  "label": "Garden / Grounds",
+                  "value": "garden"
+                },
+                {
+                  "id": "other",
+                  "label": "Other",
+                  "value": "other"
+                }
+              ]
+            }
+          },
+          {
+            "id": "priority",
+            "type": "dropdown",
+            "label": "Priority",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low",
+                  "value": "low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "value": "medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "value": "high"
+                },
+                {
+                  "id": "urgent",
+                  "label": "Urgent",
+                  "value": "urgent"
+                }
+              ]
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "new",
+                  "label": "New",
+                  "value": "new"
+                },
+                {
+                  "id": "scheduled",
+                  "label": "Scheduled",
+                  "value": "scheduled"
+                },
+                {
+                  "id": "in-progress",
+                  "label": "In Progress",
+                  "value": "in-progress"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "closed",
+                  "label": "Closed",
+                  "value": "closed"
+                }
+              ]
+            }
+          },
+          {
+            "id": "description",
+            "type": "long_text",
+            "label": "Description",
+            "required": true,
+            "properties": {
+              "placeholder": "Describe the issue and its location within the property…"
+            }
+          },
+          {
+            "id": "reported_date",
+            "type": "date",
+            "label": "Reported Date",
+            "required": true,
+            "properties": {}
+          }
+        ]
+      },
+      {
+        "packFormId": "work-order",
+        "title": "Work Order",
+        "icon": "ClipboardCheck",
+        "description": "Schedule and track the work to resolve a maintenance request, with assignee, hours and cost.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "request",
+            "type": "linked_record",
+            "label": "Maintenance Request",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:maintenance-request"
+            }
+          },
+          {
+            "id": "assigned_to",
+            "type": "short_text",
+            "label": "Assigned To",
+            "required": true,
+            "properties": {
+              "placeholder": "Handyman or contractor name"
+            }
+          },
+          {
+            "id": "scheduled_date",
+            "type": "date",
+            "label": "Scheduled Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "hours",
+            "type": "number",
+            "label": "Hours",
+            "required": false,
+            "properties": {
+              "placeholder": "0",
+              "min": 0,
+              "step": 0.25
+            }
+          },
+          {
+            "id": "cost",
+            "type": "number",
+            "label": "Cost ($)",
+            "required": false,
+            "properties": {
+              "placeholder": "0.00",
+              "min": 0
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "scheduled",
+                  "label": "Scheduled",
+                  "value": "scheduled"
+                },
+                {
+                  "id": "in-progress",
+                  "label": "In Progress",
+                  "value": "in-progress"
+                },
+                {
+                  "id": "on-hold",
+                  "label": "On Hold",
+                  "value": "on-hold"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "invoiced",
+                  "label": "Invoiced",
+                  "value": "invoiced"
+                }
+              ]
+            }
+          },
+          {
+            "id": "work_done",
+            "type": "long_text",
+            "label": "Work Done",
+            "required": false,
+            "properties": {
+              "placeholder": "Describe the work performed and any parts used…"
+            }
+          }
+        ]
+      },
+      {
+        "packFormId": "inspection",
+        "title": "Inspection",
+        "icon": "Search",
+        "description": "Record a property inspection with its type, overall condition rating and notes.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "property",
+            "type": "linked_record",
+            "label": "Property",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:property"
+            }
+          },
+          {
+            "id": "inspection_type",
+            "type": "dropdown",
+            "label": "Inspection Type",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "routine",
+                  "label": "Routine",
+                  "value": "routine"
+                },
+                {
+                  "id": "move-in",
+                  "label": "Move-in",
+                  "value": "move-in"
+                },
+                {
+                  "id": "move-out",
+                  "label": "Move-out",
+                  "value": "move-out"
+                },
+                {
+                  "id": "safety",
+                  "label": "Safety / Compliance",
+                  "value": "safety"
+                },
+                {
+                  "id": "final",
+                  "label": "Final",
+                  "value": "final"
+                }
+              ]
+            }
+          },
+          {
+            "id": "inspection_date",
+            "type": "date",
+            "label": "Inspection Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "condition",
+            "type": "rating",
+            "label": "Overall Condition",
+            "required": true,
+            "properties": {
+              "max": 5
+            }
+          },
+          {
+            "id": "inspector",
+            "type": "short_text",
+            "label": "Inspector",
+            "required": false,
+            "properties": {
+              "placeholder": "Who carried out the inspection"
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Findings, defects, follow-up actions…"
+            }
+          }
+        ]
+      }
+    ],
+    "apps": [
+      {
+        "packAppId": "maintenance",
+        "name": "Maintenance",
+        "description": "A property-maintenance operations hub for property managers and handymen: track properties, tenants, maintenance requests, work orders and inspections from one dashboard.",
+        "settings": {},
+        "theme": {
+          "primaryColor": "#0d9488",
+          "backgroundColor": "#0f172a",
+          "textColor": "#f8fafc",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "forms": [
+          {
+            "packFormId": "property",
+            "displayName": "Properties",
+            "sortOrder": 1,
+            "isVisible": true
+          },
+          {
+            "packFormId": "tenant",
+            "displayName": "Tenants",
+            "sortOrder": 2,
+            "isVisible": true
+          },
+          {
+            "packFormId": "maintenance-request",
+            "displayName": "Maintenance Requests",
+            "sortOrder": 3,
+            "isVisible": true
+          },
+          {
+            "packFormId": "work-order",
+            "displayName": "Work Orders",
+            "sortOrder": 4,
+            "isVisible": true
+          },
+          {
+            "packFormId": "inspection",
+            "displayName": "Inspections",
+            "sortOrder": 5,
+            "isVisible": true
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"empty\">Loading Maintenance…</div></div></div>",
+          "css": "\n:root{color-scheme:light dark;}\n*{box-sizing:border-box;}\n#app{font-family:system-ui,-apple-system,\"Segoe UI\",Roboto,sans-serif;color:var(--fl-text);min-height:100vh;padding:28px 22px;background:radial-gradient(1100px 560px at 12% -12%,color-mix(in srgb,var(--fl-accent) 16%,transparent),transparent 60%),radial-gradient(900px 520px at 108% -6%,color-mix(in srgb,var(--fl-accent) 8%,transparent),transparent 55%),transparent;}\n.wrap{max-width:1080px;margin:0 auto;}\n.empty{padding:64px 0;text-align:center;color:var(--fl-muted);}\n.hd{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap;}\n.hd-left{display:flex;align-items:center;gap:14px;}\n.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 6px 18px color-mix(in srgb,var(--fl-accent) 35%,transparent);}\n.hd h1{margin:0;font-size:21px;font-weight:700;letter-spacing:-.01em;color:var(--fl-text);}\n.hd .sub{margin:2px 0 0;font-size:13px;color:var(--fl-muted);}\n.btn{font:inherit;cursor:pointer;border-radius:10px;border:1px solid transparent;padding:10px 16px;font-weight:600;font-size:13.5px;color:var(--fl-text);background:var(--fl-surface-2);transition:transform .12s ease,background .2s ease,border-color .2s ease;}\n.btn:hover{transform:translateY(-1px);}\n.btn:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;}\n.btn.primary{background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 6px 16px color-mix(in srgb,var(--fl-accent) 32%,transparent);}\n.btn.ghost{background:var(--fl-surface-2);border-color:var(--fl-border);}\n.btn.sm{padding:7px 12px;font-size:12.5px;}\n.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px;}\n.card{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px;box-shadow:var(--fl-shadow);}\n.stat-top{display:flex;align-items:center;gap:8px;}\n.dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 0 3px var(--fl-track);}\n.stat-label{font-size:11.5px;color:var(--fl-muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;}\n.stat-val{font-size:29px;font-weight:750;color:var(--fl-text);margin-top:8px;line-height:1;}\n.stat-hint{font-size:12px;color:var(--fl-faint);margin-top:6px;}\n.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:18px;box-shadow:var(--fl-shadow);}\n.panel h2{margin:0 0 14px;font-size:14px;font-weight:700;color:var(--fl-text);display:flex;align-items:center;gap:8px;}\n.panel h2 .tag{margin-left:auto;font-size:11px;font-weight:600;color:var(--fl-muted);background:var(--fl-surface-2);padding:3px 8px;border-radius:20px;}\n.bar-row{display:grid;grid-template-columns:92px 1fr 34px;align-items:center;gap:10px;margin-bottom:12px;}\n.bar-row:last-child{margin-bottom:0;}\n.bar-name{font-size:12.5px;color:var(--fl-text);text-transform:capitalize;}\n.bar-track{height:9px;border-radius:6px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;border-radius:6px;transition:width 1s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;color:var(--fl-muted);text-align:right;font-variant-numeric:tabular-nums;}\n.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--fl-border);}\n.item:last-child{border-bottom:none;}\n.item-main{min-width:0;flex:1;}\n.item-title{display:block;font-size:13.5px;color:var(--fl-text);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.item-meta{display:block;font-size:11.5px;color:var(--fl-faint);margin-top:2px;text-transform:capitalize;}\n.badge{flex:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;border:1px solid;text-transform:capitalize;}\n.empty-panel{text-align:center;color:var(--fl-muted);font-size:13px;padding:26px 0;display:flex;flex-direction:column;align-items:center;gap:12px;}\n.actions{display:flex;flex-wrap:wrap;gap:10px;}\n.actions .btn{display:flex;align-items:center;gap:8px;}\n@media(max-width:860px){.stats{grid-template-columns:repeat(2,1fr);}.panels{grid-template-columns:1fr;}}\n@media(max-width:460px){.stats{grid-template-columns:1fr;}}\n",
+          "js": "\nvar FL = window.FormLogic;\nfunction h(s){ return FL.escapeHtml(s == null ? '' : String(s)); }\nfunction findForm(ctx, name){\n  var t = String(name).toLowerCase();\n  for (var i=0;i<ctx.forms.length;i++){ if (String(ctx.forms[i].displayName||'').toLowerCase()===t) return ctx.forms[i]; }\n  return null;\n}\nfunction fieldOptions(form, fieldId){\n  if(!form) return [];\n  for (var i=0;i<form.fields.length;i++){ var f=form.fields[i]; if(f.id===fieldId && f.properties && f.properties.options) return f.properties.options; }\n  return [];\n}\nfunction optLabel(opts, val){\n  for (var i=0;i<opts.length;i++){ if(opts[i].value===val) return opts[i].label; }\n  return val ? String(val) : '';\n}\nfunction recs(form){ return form ? FL.records(form.formId, { limit: 500 }).catch(function(){ return []; }) : Promise.resolve([]); }\nfunction linkId(v){\n  if(v == null) return '';\n  if(Array.isArray(v)) return v.length ? linkId(v[0]) : '';\n  if(typeof v === 'object') return v.id || v.recordId || v.value || '';\n  return String(v);\n}\nfunction fmtDate(s){\n  if(!s) return '';\n  var d = new Date(s); if(isNaN(d.getTime())) return '';\n  var diff = Math.floor((Date.now() - d.getTime())/86400000);\n  if(diff <= 0) return 'today';\n  if(diff === 1) return 'yesterday';\n  if(diff < 7) return diff + 'd ago';\n  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });\n}\nfunction isThisMonth(s){\n  if(!s) return false;\n  var d = new Date(s); if(isNaN(d.getTime())) return false;\n  var now = new Date();\n  return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();\n}\nfunction statCard(label, value, hint, color){\n  return '<div class=\"card stat\">'\n    + '<div class=\"stat-top\"><span class=\"dot\" style=\"background:'+color+'\"></span><span class=\"stat-label\">'+h(label)+'</span></div>'\n    + '<div class=\"stat-val\">'+h(value)+'</div>'\n    + '<div class=\"stat-hint\">'+h(hint)+'</div>'\n    + '</div>';\n}\nfunction bar(label, count, max, color){\n  var pct = max>0 ? Math.max(4, Math.round(count/max*100)) : 0;\n  return '<div class=\"bar-row\"><span class=\"bar-name\">'+h(label)+'</span>'\n    + '<div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"width:0;background:'+color+'\"></div></div>'\n    + '<span class=\"bar-val\">'+count+'</span></div>';\n}\nasync function main(){\n  var root = document.getElementById('app');\n  var ctx;\n  try { ctx = await FL.context(); } catch(e){ root.innerHTML = '<div class=\"wrap\"><div class=\"empty\">Could not load the dashboard.</div></div>'; return; }\n  var user = await FL.currentUser().catch(function(){ return null; });\n\n  var propForm = findForm(ctx, 'Properties');\n  var tenantForm = findForm(ctx, 'Tenants');\n  var reqForm = findForm(ctx, 'Maintenance Requests');\n  var woForm = findForm(ctx, 'Work Orders');\n  var inspForm = findForm(ctx, 'Inspections');\n\n  var out = await Promise.all([recs(reqForm), recs(propForm), recs(woForm)]);\n  var requests = out[0], properties = out[1], workOrders = out[2];\n\n  // Property id -> address map for resolving linked records.\n  var propMap = {};\n  for (var i=0;i<properties.length;i++){\n    var pid = properties[i].id || (properties[i].answers ? properties[i].answers.id : '');\n    if(pid) propMap[pid] = (properties[i].answers||{}).address || 'Property';\n  }\n\n  var statusOpts = fieldOptions(reqForm, 'status');\n  var catOpts = fieldOptions(reqForm, 'category');\n\n  var catColors = {\n    'plumbing':'#38bdf8',\n    'electrical':'var(--fl-warn)',\n    'appliance':'var(--fl-accent)',\n    'structural':'var(--fl-bad)',\n    'garden':'var(--fl-good)',\n    'other':'var(--fl-faint)'\n  };\n  var catOrder = ['plumbing','electrical','appliance','structural','garden','other'];\n  var catCounts = { 'plumbing':0, 'electrical':0, 'appliance':0, 'structural':0, 'garden':0, 'other':0 };\n\n  var statusColors = {\n    'new':'#38bdf8',\n    'scheduled':'var(--fl-accent)',\n    'in-progress':'var(--fl-warn)',\n    'completed':'var(--fl-good)',\n    'closed':'var(--fl-faint)'\n  };\n\n  var openReq = 0, urgentReq = 0, completedThisMonth = 0;\n  for (var i=0;i<requests.length;i++){\n    var a = requests[i].answers || {};\n    if(catCounts[a.category]!=null) catCounts[a.category]++;\n    var st = a.status;\n    if(st==='new' || st==='scheduled' || st==='in-progress') openReq++;\n    if(a.priority==='urgent' && st!=='completed' && st!=='closed') urgentReq++;\n    if(st==='completed' && isThisMonth(a.reported_date || requests[i].submittedAt)) completedThisMonth++;\n  }\n\n  var scheduledWO = 0;\n  for (var i=0;i<workOrders.length;i++){\n    var wst = (workOrders[i].answers||{}).status;\n    if(wst==='scheduled' || wst==='in-progress') scheduledWO++;\n  }\n\n  var head = '<header class=\"hd\"><div class=\"hd-left\"><div class=\"logo\">🏠</div>'\n    + '<div><h1>'+h(ctx.appName || 'Maintenance')+'</h1>'\n    + '<p class=\"sub\">'+ (user ? 'Signed in as '+h(user.name || user.email || 'manager') : 'Property maintenance operations') +' · '+properties.length+' properties</p></div>'\n    + '</div><button class=\"btn primary\" data-nav=\"request\">+ New Request</button></header>';\n\n  var stats = '<div class=\"stats\">'\n    + statCard('Open Requests', openReq.toLocaleString(), requests.length + ' total requests', 'var(--fl-accent)')\n    + statCard('Urgent', urgentReq.toLocaleString(), (urgentReq>0 ? 'need attention' : 'all clear'), 'var(--fl-bad)')\n    + statCard('Scheduled Work', scheduledWO.toLocaleString(), workOrders.length + ' work orders', '#38bdf8')\n    + statCard('Properties', properties.length.toLocaleString(), 'under management', 'var(--fl-good)')\n    + statCard('Completed', completedThisMonth.toLocaleString(), 'this month', 'var(--fl-warn)')\n    + '</div>';\n\n  var maxCat = 0;\n  for (var ci=0; ci<catOrder.length; ci++){ if(catCounts[catOrder[ci]] > maxCat) maxCat = catCounts[catOrder[ci]]; }\n  var barsHtml = '';\n  if(requests.length === 0){\n    barsHtml = '<div class=\"empty-panel\">No requests yet<button class=\"btn primary sm\" data-nav=\"request\">Log a request</button></div>';\n  } else {\n    for (var ci=0; ci<catOrder.length; ci++){\n      var ck = catOrder[ci];\n      barsHtml += bar(optLabel(catOpts, ck) || ck, catCounts[ck], maxCat, catColors[ck]);\n    }\n  }\n  var catPanel = '<div class=\"panel\"><h2>Requests by category<span class=\"tag\">'+requests.length+' total</span></h2>'+barsHtml+'</div>';\n\n  var itemsHtml = '';\n  if(requests.length === 0){\n    itemsHtml = '<div class=\"empty-panel\">Nothing to show yet<button class=\"btn ghost sm\" data-nav=\"property\">Add a property</button></div>';\n  } else {\n    var n = Math.min(6, requests.length);\n    for (var ri=0; ri<n; ri++){\n      var a = requests[ri].answers || {};\n      var propName = propMap[linkId(a.property)] || 'Unassigned property';\n      var catL = optLabel(catOpts, a.category) || 'Uncategorised';\n      var sk2 = a.status;\n      var statusL = optLabel(statusOpts, sk2) || 'Unset';\n      var sc = statusColors[sk2] || 'var(--fl-faint)';\n      var meta = catL;\n      var dt = fmtDate(a.reported_date || requests[ri].submittedAt);\n      if(dt) meta += ' · ' + dt;\n      itemsHtml += '<div class=\"item\"><div class=\"item-main\">'\n        + '<span class=\"item-title\">'+h(propName)+'</span>'\n        + '<span class=\"item-meta\">'+h(meta)+'</span></div>'\n        + '<span class=\"badge\" style=\"color:'+sc+';border-color:color-mix(in srgb,'+sc+' 40%,transparent);background:color-mix(in srgb,'+sc+' 13%,transparent)\">'+h(statusL)+'</span>'\n        + '</div>';\n    }\n  }\n  var recentPanel = '<div class=\"panel\"><h2>Recent requests<span class=\"tag\">latest</span></h2>'+itemsHtml+'</div>';\n\n  var actionDefs = [\n    { key:'request', form:reqForm, label:'New Request', icon:'🔧' },\n    { key:'property', form:propForm, label:'Add Property', icon:'🏠' },\n    { key:'workorder', form:woForm, label:'New Work Order', icon:'📋' },\n    { key:'inspection', form:inspForm, label:'Log Inspection', icon:'🔍' },\n    { key:'tenant', form:tenantForm, label:'Add Tenant', icon:'👤' }\n  ];\n  var actionsHtml = '';\n  for (var ai=0; ai<actionDefs.length; ai++){\n    if(!actionDefs[ai].form) continue;\n    actionsHtml += '<button class=\"btn ghost\" data-nav=\"'+actionDefs[ai].key+'\"><span aria-hidden=\"true\">'+actionDefs[ai].icon+'</span>'+h(actionDefs[ai].label)+'</button>';\n  }\n  var actions = '<div class=\"panel\"><h2>Quick actions</h2><div class=\"actions\">'+actionsHtml+'</div></div>';\n\n  var navMap = {};\n  if(reqForm) navMap.request = reqForm.formId;\n  if(propForm) navMap.property = propForm.formId;\n  if(woForm) navMap.workorder = woForm.formId;\n  if(inspForm) navMap.inspection = inspForm.formId;\n  if(tenantForm) navMap.tenant = tenantForm.formId;\n\n  root.innerHTML = '<div class=\"wrap\">'+head+stats+'<div class=\"panels\">'+catPanel+recentPanel+'</div>'+actions+'</div>';\n\n  var btns = root.querySelectorAll('[data-nav]');\n  for (var bi=0; bi<btns.length; bi++){\n    btns[bi].addEventListener('click', function(){\n      var id = navMap[this.getAttribute('data-nav')];\n      if(id) FL.navigate(id); else FL.toast.error('That form is not available.');\n    });\n  }\n\n  requestAnimationFrame(function(){ setTimeout(function(){\n    var els = root.querySelectorAll('.bar-fill');\n    for (var i=0;i<els.length;i++){ els[i].style.width = (els[i].getAttribute('data-pct')||0)+'%'; }\n  }, 60); });\n}\nmain();\n"
+        },
+        "roles": [
+          {
+            "name": "Property Manager",
+            "description": "Full access to all property maintenance forms.",
+            "permissions": [
+              {
+                "packFormId": "property",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "property",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "property",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "property",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "property",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "export_responses"
+              }
+            ]
+          },
+          {
+            "name": "Handyman",
+            "description": "Field handymen who work maintenance requests, complete work orders and log inspections.",
+            "permissions": [
+              {
+                "packFormId": "property",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "view_all_responses"
+              }
+            ]
+          },
+          {
+            "name": "Landlord",
+            "description": "Property owners who log requests and review work on their properties.",
+            "permissions": [
+              {
+                "packFormId": "property",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "property",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "tenant",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "maintenance-request",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "work-order",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "inspection",
+                "permission": "view_all_responses"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

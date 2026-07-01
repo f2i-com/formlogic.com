@@ -112,6 +112,11 @@ function niceCategory(string $slug, array $tags): string
         'people-onboarding-compliance' => 'HR',
         'plumbing-field-service' => 'Trades & Field Service',
         'job-invoice-management' => 'Billing & Invoicing',
+        'salon-beauty-studio' => 'Beauty & Wellness',
+        'mechanic-workshop' => 'Trades & Field Service',
+        'property-maintenance' => 'Trades & Field Service',
+        'clinic-appointment-intake' => 'Health & Wellness',
+        'inventory-purchase-orders' => 'Operations',
     ];
     if (isset($map[$slug])) {
         return $map[$slug];

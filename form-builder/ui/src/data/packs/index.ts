@@ -7,6 +7,11 @@ import { eventManagementPack } from './eventManagementPack';
 import { customerServicePack } from './customerServicePack';
 import { plumbingFieldServicePack } from './plumbingFieldServicePack';
 import { jobInvoicePack } from './jobInvoicePack';
+import { salonBeautyPack } from './salonBeautyPack';
+import { mechanicWorkshopPack } from './mechanicWorkshopPack';
+import { propertyMaintenancePack } from './propertyMaintenancePack';
+import { clinicIntakePack } from './clinicIntakePack';
+import { inventoryPurchaseOrdersPack } from './inventoryPurchaseOrdersPack';
 
 export interface PackCatalogEntry {
   id: string;
@@ -107,5 +112,60 @@ export const packCatalog: PackCatalogEntry[] = [
     appCount: jobInvoicePack.apps?.length ?? 0,
     icon: '🧾', // 🧾
     pack: jobInvoicePack as unknown as PackData,
+  },
+  {
+    id: 'salon-beauty-studio',
+    name: 'Hair Salon & Beauty Studio',
+    description:
+      'A booking and client manager for a hair salon or beauty studio: keep client profiles, a service menu and stylist roster, book and track appointments, and record retail product sales. Includes 5 forms and 1 app.',
+    tags: ['salon', 'beauty', 'appointments', 'bookings', 'clients'],
+    formCount: salonBeautyPack.forms.length,
+    appCount: salonBeautyPack.apps?.length ?? 0,
+    icon: '💇', // 💇
+    pack: salonBeautyPack as unknown as PackData,
+  },
+  {
+    id: 'mechanic-workshop',
+    name: 'Mechanic Workshop Manager',
+    description:
+      'Run an auto mechanic workshop end to end: manage customers and their vehicles, track job cards through the bay, log parts used, and raise invoices from one linked dashboard. Includes 5 forms and 1 app.',
+    tags: ['mechanic', 'automotive', 'workshop', 'repairs', 'vehicles'],
+    formCount: mechanicWorkshopPack.forms.length,
+    appCount: mechanicWorkshopPack.apps?.length ?? 0,
+    icon: '🚗', // 🚗
+    pack: mechanicWorkshopPack as unknown as PackData,
+  },
+  {
+    id: 'property-maintenance',
+    name: 'Property Maintenance & Handyman',
+    description:
+      'A maintenance-request and work-order tracker for property managers and handymen: manage properties and tenants, log maintenance requests, schedule and track work orders, and record inspections. Includes 5 forms and 1 app.',
+    tags: ['property', 'maintenance', 'handyman', 'jobs', 'landlord'],
+    formCount: propertyMaintenancePack.forms.length,
+    appCount: propertyMaintenancePack.apps?.length ?? 0,
+    icon: '🏠', // 🏠
+    pack: propertyMaintenancePack as unknown as PackData,
+  },
+  {
+    id: 'clinic-appointment-intake',
+    name: 'Clinic Appointment & Intake',
+    description:
+      'A light front-desk toolkit for a small clinic: register patients, manage providers, book and track appointments, capture patient intake and consent, and schedule follow-ups from one linked dashboard. Includes 5 forms and 1 app.',
+    tags: ['clinic', 'appointments', 'intake', 'patients', 'front-desk'],
+    formCount: clinicIntakePack.forms.length,
+    appCount: clinicIntakePack.apps?.length ?? 0,
+    icon: '🩺', // 🩺
+    pack: clinicIntakePack as unknown as PackData,
+  },
+  {
+    id: 'inventory-purchase-orders',
+    name: 'Inventory & Purchase Orders',
+    description:
+      'A stock-control and purchasing hub to manage products and suppliers, raise purchase orders with line items, and log every stock movement, with low-stock alerts and live stock value on a linked dashboard. Includes 5 forms and 1 app.',
+    tags: ['inventory', 'purchasing', 'stock', 'suppliers', 'warehouse'],
+    formCount: inventoryPurchaseOrdersPack.forms.length,
+    appCount: inventoryPurchaseOrdersPack.apps?.length ?? 0,
+    icon: '📦', // 📦
+    pack: inventoryPurchaseOrdersPack as unknown as PackData,
   },
 ];

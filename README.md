@@ -1,6 +1,8 @@
 # FormLogic
 
-A full-stack form builder and internal apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
+**A self-hosted internal-app platform with a marketplace of ready-made business apps — install one, customise it, or let your AI build one.**
+
+Every app is *forms + workflow + a live dashboard*, deployable with role-based access. Install a niche app from the marketplace (plumbing field service, salon bookings, job & invoicing, mechanic workshop, HR, OHS…), adapt it to your business, or point your own AI at it over MCP to generate and edit apps for you. Under the hood it's a full drag-and-drop form builder with a sandboxed JavaScript runtime, linked records, analytics, and audit logging.
 
 ![FormLogic form builder — drag-and-drop canvas, field palette, and per-field settings](docs/images/builder.png)
 
@@ -19,15 +21,18 @@ A full-stack form builder and internal apps platform. Build forms with drag-and-
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
+FormLogic is built around a simple loop: **land → try the live demo → install a ready-made vertical app → customise it → hand it to your AI to improve → export/share it.** Each marketplace app bundles the forms, the workflow (roles, linked records, `onSubmit` scripts), and a live custom dashboard, so you start from a working business system rather than a blank canvas. It's fully self-hosted, with a Typeform-style builder and a sandboxed JavaScript (QuickJS) runtime underneath.
 
 ### Key Capabilities
 
+- **App Marketplace** -- Install ready-made business apps in one click. Each app = forms + workflow + a live dashboard, seeded with realistic demo data. Browse by dynamic categories/tags derived from the catalog; every app is customisable and fully export/import-able. See [App Marketplace](#app-marketplace) below.
+- **Live Demo** -- A no-signup shared Demo account with the whole marketplace pre-installed and populated, so dashboards are live on first look. Visitors' changes (new records, new forms, settings) stay in *their* browser — the shared demo never gets polluted.
+- **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a sandboxed custom-screen dashboard.
+- **Build with AI / MCP** -- Generate forms/apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit whole apps for you. See [Build with your own AI (MCP)](#build-with-your-own-ai-mcp).
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — the same engine and standard-library prelude run in the browser and on the server
-- **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
-- **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
+- **Pack System** -- Every app is a portable pack (forms + apps + screens + scripts); publish to the catalog, install into an account, or export/import as a single `.json`
 - **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
 - **Analytics** -- Per-form response charts, completion rates, average times, field breakdowns
 - **Webhooks** -- Trigger HTTP callbacks on form submissions with delivery tracking
@@ -36,6 +41,44 @@ FormLogic combines a Typeform-style form builder with an internal apps platform.
 - **NIGO Dashboard** -- Real-time "Not In Good Order" field completion tracker for compliance workflows
 - **AI Generation** -- Generate forms from text prompts, documents, or images (requires AI provider config)
 - **PWA Support** -- Offline-capable progressive web app with service worker
+
+---
+
+## App Marketplace
+
+FormLogic ships with a catalog of **ready-made vertical apps** — each one is a real, working business system (not a "Contact Us" form): several linked forms, role-based access, seeded demo data, and a live custom dashboard. Install one in a click, then customise it, hand it to your AI over MCP, or export it as a portable `.json`. The public **[Live Demo](#)** has every app pre-installed and populated, so you can click straight into a working dashboard.
+
+<p align="center">
+  <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — jobs, revenue, and status dashboard" />
+  &nbsp;
+  <img src="docs/images/packs/salon.png" width="49%" alt="Hair Salon & Beauty Studio — appointments and revenue dashboard" />
+</p>
+<p align="center">
+  <img src="docs/images/packs/job-invoice.png" width="49%" alt="Job & Invoice Management — billing pipeline dashboard" />
+  &nbsp;
+  <img src="docs/images/packs/inventory.png" width="49%" alt="Inventory & Purchase Orders — stock and low-stock dashboard" />
+</p>
+<p align="center"><sub>A few of the marketplace dashboards — Plumbing field service · Salon bookings · Job &amp; invoicing · Inventory (all render in light &amp; dark)</sub></p>
+
+Browse by **dynamic categories and tags** derived from whatever's in the catalog (no hardcoded taxonomy) — publish your own packs and the browse chips update automatically.
+
+| App | Category | What it runs |
+|-----|----------|--------------|
+| 🔧 Plumbing & Trades Field Service | Trades & Field Service | Customers → jobs → site visits → invoices → parts |
+| 🚗 Mechanic Workshop Manager | Trades & Field Service | Customers → vehicles → job cards → parts → invoices |
+| 🏠 Property Maintenance & Handyman | Trades & Field Service | Properties → tenants → requests → work orders → inspections |
+| 🧾 Job & Invoice Management | Billing & Invoicing | Clients → jobs → quotes → invoices → payments |
+| 💇 Hair Salon & Beauty Studio | Beauty & Wellness | Clients → services → stylists → appointments → sales |
+| 🩺 Clinic Appointment & Intake | Health & Wellness | Patients → providers → appointments → intake → follow-ups (front-desk only) |
+| 📦 Inventory & Purchase Orders | Operations | Products → suppliers → purchase orders → line items → stock movements |
+| 👥 HR & People Management | HR | Recruitment, onboarding, leave, reviews, expenses, training, exits |
+| ⛑️ OHS & Quality Management | Safety & Quality | Incidents, hazards, audits, corrective actions, NCRs (ISO 45001 / 9001) |
+| 🎧 Customer Service | Customer Service | Tickets, bugs, feature requests, feedback, refunds, escalations, KB |
+| 🎉 Event Management | Events | Registration, speakers, vendors, volunteers, incidents, budget, feedback |
+| 🏦 Finance OS (US) | Finance | RIA/broker-dealer onboarding, compliance & advisory (Reg BI, Form CRS) |
+| 🦘 Finance OS (AU) | Finance | AFSL advice, Best Interest Duty, super, AUSTRAC |
+
+**Producing packs is a repeatable pipeline**: an AI author→review workflow generates the forms + linked records + dashboard + sample data, then each pack is verified (imports, renders light/dark, data populates), auto-screenshotted for the gallery, and published. New verticals are cheap to add.
 
 ---
 
