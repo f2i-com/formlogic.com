@@ -52,6 +52,15 @@ if (!$colStmt->fetchColumn()) {
     $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshot` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `icon`");
     echo "  added pack_catalog.screenshot column\n";
 }
+$col2Stmt = $pdo->prepare(
+    "SELECT 1 FROM information_schema.columns
+     WHERE table_schema = :db AND table_name = 'pack_catalog' AND column_name = 'screenshots' LIMIT 1"
+);
+$col2Stmt->execute(['db' => $conf['database']]);
+if (!$col2Stmt->fetchColumn()) {
+    $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshots` json DEFAULT NULL AFTER `screenshot`");
+    echo "  added pack_catalog.screenshots column\n";
+}
 
 $forms = new FormService($mysqlConn, $sqlite);
 $apps = new AppService($mysqlConn, $forms);
@@ -257,38 +266,47 @@ if ($_ENV['RESEED_DEMO'] ?? getenv('RESEED_DEMO')) {
 // disk (clearing it otherwise so a deleted file doesn't leave a broken thumbnail).
 $shotDirs = [__DIR__ . '/../storage/pack-screenshots', __DIR__ . '/../resources/pack-screenshots'];
 $appSlugByName = $pdo->prepare("SELECT slug FROM apps WHERE owner_id = ? AND name = ? LIMIT 1");
-$manifest = [];
-$linked = 0;
-foreach ($sources as $s) {
-    // Prefer the first app in the pack that has a custom-screen dashboard (that's what we want to
-    // snap); fall back to the first app.
-    $appName = null;
-    foreach ($s['pack']['apps'] ?? [] as $a) {
-        if (!empty($a['customScreen']['enabled'] ?? ($a['customScreen'] ?? null))) { $appName = $a['name'] ?? null; break; }
-    }
-    if ($appName === null) { $appName = $s['pack']['apps'][0]['name'] ?? null; }
-
-    $appSlug = null;
-    if ($appName !== null) {
-        $appSlugByName->execute([$demoId, $appName]);
-        $appSlug = $appSlugByName->fetchColumn() ?: null;
-    }
-    if ($appSlug) {
-        $manifest[] = ['catalogSlug' => $s['slug'], 'appSlug' => $appSlug, 'name' => $s['name']];
-    }
-
-    $found = null;
+// Returns "<base>.<ext>" if a captured file exists on disk, else null.
+$findShot = static function (string $base) use ($shotDirs): ?string {
     foreach (['png', 'jpg', 'jpeg', 'webp'] as $ext) {
         foreach ($shotDirs as $dir) {
-            if (is_file("$dir/{$s['slug']}.$ext")) { $found = "{$s['slug']}.$ext"; break 2; }
+            if (is_file("$dir/$base.$ext")) { return "$base.$ext"; }
         }
     }
-    $catalog->setScreenshotBySlug($s['slug'], $found ? "/api/packs/screenshots/$found" : null);
-    if ($found) { $linked++; }
+    return null;
+};
+$manifest = []; // flat: [{catalogSlug, appSlug, label, file}] — one entry per dashboard app
+$linkedShots = 0;
+foreach ($sources as $s) {
+    $shots = [];   // [{label, url}] — one per app that has a dashboard + a captured file
+    $idx = 0;
+    foreach ($s['pack']['apps'] ?? [] as $a) {
+        $enabled = !empty($a['customScreen']['enabled'] ?? ($a['customScreen'] ?? null));
+        if (!$enabled) { continue; }
+        $appName = $a['name'] ?? null;
+        if ($appName === null) { continue; }
+        // Stable filename per app: <slug>.png, <slug>-2.png, <slug>-3.png … (order = pack app order).
+        $base = $s['slug'] . ($idx === 0 ? '' : '-' . ($idx + 1));
+        $appSlugByName->execute([$demoId, $appName]);
+        $appSlug = $appSlugByName->fetchColumn() ?: null;
+        if ($appSlug) {
+            $manifest[] = ['catalogSlug' => $s['slug'], 'appSlug' => $appSlug, 'label' => $appName, 'file' => "$base.png"];
+        }
+        if ($found = $findShot($base)) {
+            $shots[] = ['label' => $appName, 'url' => "/api/packs/screenshots/$found"];
+        }
+        $idx++;
+    }
+    // Fallback for packs with no dashboard app but a legacy <slug>.png on disk.
+    if (empty($shots) && ($found = $findShot($s['slug']))) {
+        $shots[] = ['label' => $s['name'], 'url' => "/api/packs/screenshots/$found"];
+    }
+    $catalog->setPackScreenshots($s['slug'], $shots);
+    $linkedShots += count($shots);
 }
 @mkdir($shotDirs[0], 0775, true);
 file_put_contents($shotDirs[0] . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT));
-out("screenshot manifest: " . count($manifest) . " app(s); linked: $linked / " . count($sources));
+out("screenshot manifest: " . count($manifest) . " app(s); linked images: $linkedShots");
 
 out("\nDone. Demo apps: " . count($apps->getAllApps($demoId)));
 

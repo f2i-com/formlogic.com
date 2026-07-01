@@ -64,7 +64,7 @@ async function main() {
 
   const page = await context.newPage();
 
-  async function snap(appSlug, catalogSlug) {
+  async function snap(appSlug, file) {
     await page.goto(`${APP_BASE}/app/${appSlug}`, { waitUntil: 'networkidle', timeout: 30000 });
     // The dashboard is a sandboxed iframe; wait for it to mount, then give the SDK time to fetch
     // records and paint charts before snapping.
@@ -73,7 +73,7 @@ async function main() {
 
     const frame = page.locator('iframe').first();
     const box = await frame.boundingBox();
-    const outPath = resolve(OUT_DIR, `${catalogSlug}.png`);
+    const outPath = resolve(OUT_DIR, file);
     if (box && box.width > 200) {
       // 16:10 crop from the top of the dashboard region → an even, attractive card thumbnail.
       const width = Math.min(box.width, 1360 - box.x);
@@ -85,20 +85,21 @@ async function main() {
   }
 
   let ok = 0;
-  for (const { catalogSlug, appSlug, name } of manifest) {
+  for (const { catalogSlug, appSlug, label, file } of manifest) {
+    const outFile = file || `${catalogSlug}.png`;
     let lastErr;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        await snap(appSlug, catalogSlug);
+        await snap(appSlug, outFile);
         ok++;
-        log(`✓ ${catalogSlug}  (${name})`);
+        log(`✓ ${outFile}  (${label || catalogSlug})`);
         lastErr = null;
         break;
       } catch (e) {
         lastErr = e;
       }
     }
-    if (lastErr) log(`✗ ${catalogSlug}  (${name}) — ${lastErr.message}`);
+    if (lastErr) log(`✗ ${outFile}  (${label || catalogSlug}) — ${lastErr.message}`);
   }
 
   await browser.close();

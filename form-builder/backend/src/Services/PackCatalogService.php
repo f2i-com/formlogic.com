@@ -163,13 +163,21 @@ class PackCatalogService
     }
 
     /**
-     * Attach a marketplace thumbnail URL to a pack by slug. Called by the screenshot-capture
-     * pipeline after a pack's dashboard has been rendered and snapped. Idempotent.
+     * Attach captured dashboard screenshots to a pack by slug — one per app (the detail view shows
+     * them as a gallery). Also mirrors the first shot into the single `screenshot` column for any
+     * legacy single-image use. Called by the screenshot-capture pipeline. Idempotent.
+     *
+     * @param list<array{label:string,url:string}> $shots
      */
-    public function setScreenshotBySlug(string $slug, ?string $url): void
+    public function setPackScreenshots(string $slug, array $shots): void
     {
-        $stmt = $this->mysql->prepare("UPDATE pack_catalog SET screenshot = :url WHERE slug = :slug");
-        $stmt->execute(['url' => $url, 'slug' => $slug]);
+        $primary = $shots[0]['url'] ?? null;
+        $stmt = $this->mysql->prepare("UPDATE pack_catalog SET screenshot = :s, screenshots = :ss WHERE slug = :slug");
+        $stmt->execute([
+            's' => $primary,
+            'ss' => json_encode(array_values($shots)),
+            'slug' => $slug,
+        ]);
     }
 
     /**
@@ -573,6 +581,7 @@ class PackCatalogService
             'description' => $row['description'],
             'icon' => $row['icon'],
             'screenshot' => $row['screenshot'] ?? null,
+            'screenshots' => json_decode($row['screenshots'] ?? '[]', true) ?: [],
             'tags' => json_decode($row['tags'] ?? '[]', true),
             'category' => $row['category'],
             'visibility' => $row['visibility'],

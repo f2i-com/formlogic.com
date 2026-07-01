@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
-import { api, resolveFileUrl, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../../lib/api';
+import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../../lib/api';
+import { PackScreenshots } from './PackScreenshots';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -34,7 +35,6 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
-  const [zoom, setZoom] = useState(false);
 
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
@@ -233,35 +233,11 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         </div>
       </div>
 
-      {/* Dashboard preview — click to enlarge */}
-      {pack.screenshot && (
-        <button
-          type="button"
-          onClick={() => setZoom(true)}
-          className="group block w-full overflow-hidden rounded-xl border border-gray-200 dark:border-slate-700 cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-          aria-label="View dashboard preview"
-        >
-          <img
-            src={resolveFileUrl(pack.screenshot)}
-            alt={`${pack.name} dashboard preview`}
-            loading="lazy"
-            className="w-full max-h-72 object-cover object-top transition-opacity group-hover:opacity-95"
-          />
-        </button>
-      )}
-
-      {/* Fullscreen preview */}
-      {zoom && pack.screenshot && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 cursor-zoom-out"
-          onClick={() => setZoom(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${pack.name} dashboard preview`}
-        >
-          <img src={resolveFileUrl(pack.screenshot)} alt={`${pack.name} dashboard preview`} className="max-h-full max-w-full rounded-lg shadow-2xl" />
-        </div>
-      )}
+      {/* Dashboard preview(s) — one per app, click to enlarge */}
+      <PackScreenshots
+        shots={pack.screenshots?.length ? pack.screenshots : (pack.screenshot ? [{ label: pack.name, url: pack.screenshot }] : [])}
+        maxHeight="max-h-72"
+      />
 
       {/* Stats bar */}
       <div className="flex items-center gap-4 text-sm">

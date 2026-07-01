@@ -1486,6 +1486,7 @@ interface CatalogPack {
   description: string | null;
   icon: string | null;
   screenshot: string | null;
+  screenshots: PackScreenshot[];
   tags: string[];
   category: string | null;
   visibility: string;
@@ -1501,6 +1502,11 @@ interface CatalogPack {
   appCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+interface PackScreenshot {
+  label: string;
+  url: string;
 }
 
 interface PackVersionInfo {
@@ -1616,4 +1622,4 @@ export function resolveFileUrl(url?: string | null): string {
 }
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
