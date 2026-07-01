@@ -4,6 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
+import { useAuthStore } from '../../stores/authStore';
 import { formatRelativeTime, formatTimeUntil, copyToClipboard } from '../../lib/utils';
 
 type Session = { id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string };
@@ -13,6 +14,8 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [sessions, setSessions] = useState<Session[]>([]);
   const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<NewToken | null>(null);
+  // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
+  const isDemo = useAuthStore((s) => s.user?.isDemo === true);
 
   // Fetch only inside the async callback (no synchronous setState in the effect body).
   const load = useCallback(() => {
@@ -55,19 +58,31 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title={title} size="lg">
       <div className="p-5 sm:p-6 space-y-5">
-        <p className="text-sm text-gray-600 dark:text-slate-300">
-          Give an external AI (Claude, Cursor, …) access to build and edit {appName ? <span className="font-medium">{appName}</span> : (creator ? <span className="font-medium">a brand-new app</span> : 'your apps')} over MCP — it can create forms, write custom screens, and wire up the app. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.{creator ? ' The AI creates the app itself — nothing is added until it does.' : ''}
-        </p>
+        {isDemo ? (
+          <p className="text-sm text-gray-600 dark:text-slate-300">
+            Give an external AI (Claude, Cursor, …) <span className="font-medium">read-only</span> access to explore {appName ? <span className="font-medium">{appName}</span> : 'this demo'} over MCP — it can view the forms, apps and submitted data, but <span className="font-medium">can&apos;t change anything</span> in this shared demo. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.
+          </p>
+        ) : (
+          <p className="text-sm text-gray-600 dark:text-slate-300">
+            Give an external AI (Claude, Cursor, …) access to build and edit {appName ? <span className="font-medium">{appName}</span> : (creator ? <span className="font-medium">a brand-new app</span> : 'your apps')} over MCP — it can create forms, write custom screens, and wire up the app. The connection is <span className="font-medium">temporary</span>: it expires when idle and you can revoke it anytime.{creator ? ' The AI creates the app itself — nothing is added until it does.' : ''}
+          </p>
+        )}
 
         {fresh ? (
           <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
             <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
               <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>Copy this now — the token is shown once. It can create/edit your content, so treat it like a password. Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
+              <span>Copy this now — the token is shown once. {isDemo ? 'It is read-only, but still treat it like a password.' : 'It can create/edit your content, so treat it like a password.'} Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
             </div>
-            <p className="text-[11px] text-gray-500 dark:text-slate-400">
-              Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
-            </p>
+            {isDemo ? (
+              <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                Access: <span className="font-medium text-gray-700 dark:text-slate-300">read-only</span> · the AI can view apps, forms &amp; submitted data — <span className="font-medium">cannot make any changes</span> to this shared demo.
+              </p>
+            ) : (
+              <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
+              </p>
+            )}
             <div>
               <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
               <div className="flex items-center gap-2">

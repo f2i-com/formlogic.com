@@ -56,8 +56,19 @@ class McpController
         $ttl = (int) ($body['ttl'] ?? 3600);
         $idle = (int) ($body['idle'] ?? 900);
         $scopes = is_array($body['scopes'] ?? null) ? $body['scopes'] : null;
+
+        // The shared public Demo account is read-only: an external AI may explore its apps, forms and
+        // data, but must not be able to change the shared account. Force read-only scopes (write tools
+        // then don't exist for the token) and disable creator mode.
+        $readOnly = $this->isDemoRequest($request);
+        if ($readOnly) {
+            $creator = false;
+            $scopes = ['apps:read', 'forms:read', 'responses:read'];
+        }
+
         $result = $this->tokens->create($userId, $appId, $ttl, $idle, $scopes, $creator);
-        $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId, 'creator' => $creator]);
+        $result['readOnly'] = $readOnly;
+        $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId, 'creator' => $creator, 'readOnly' => $readOnly]);
 
         $uri = $request->getUri();
         $base = $uri->getScheme() . '://' . $uri->getHost() . ($uri->getPort() ? ':' . $uri->getPort() : '');
