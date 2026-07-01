@@ -11,6 +11,12 @@ import { toast } from './toastStore';
  * form set by app, so a single capped page would silently drop forms (and make whole apps read as
  * "No forms yet") once a user has more forms than one page holds.
  */
+// Forms the shared Demo account creates live ONLY in this browser (like its record writes): a stable
+// prefix marks them so they persist locally and merge alongside the server's seeded forms, and are
+// never pushed to the shared server.
+const DEMO_LOCAL_FORM_PREFIX = 'demolocal_';
+const isDemoLocalFormId = (id: string): boolean => id.startsWith(DEMO_LOCAL_FORM_PREFIX);
+
 async function fetchAllForms(): Promise<Form[] | null> {
   const PAGE = 200;
   const all: Form[] = [];
@@ -209,7 +215,8 @@ export const useFormStore = create<FormState>()(
     };
 
     const syncFormField = (formId: string, field: 'fields' | 'settings' | 'theme') => {
-      if (get().storageMode === 'api') {
+      // Demo overlay writes nothing to the server; the optimistic edit lives in the (persisted) store.
+      if (get().storageMode === 'api' && !api.isDemoMode()) {
         const key = `${formId}-${field}`;
         // Only count a NEW in-flight save. Rapid edits collapse into a single
         // debounced flush (the pending timer is replaced, its callback never
@@ -251,7 +258,7 @@ export const useFormStore = create<FormState>()(
         .map(f => f.id);
       if (emptyIds.length === 0) return;
       set(s => ({ forms: s.forms.filter(f => !emptyIds.includes(f.id)) }));
-      if (storageMode === 'api') {
+      if (storageMode === 'api' && !api.isDemoMode()) {
         for (const id of emptyIds) {
           api.deleteForm(id).catch(() => {});
         }
@@ -303,8 +310,10 @@ export const useFormStore = create<FormState>()(
             // Load ALL forms from API (paged) so My Forms' per-app grouping sees every form.
             const forms = await fetchAllForms();
             if (forms !== null) {
+              // Keep any demo-created (browser-only) forms alongside the server's seeded forms.
+              const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
               set({
-                forms,
+                forms: [...forms, ...localDemo],
                 isLoading: false,
                 isInitialized: true,
               });
@@ -342,7 +351,8 @@ export const useFormStore = create<FormState>()(
         try {
           const forms = await fetchAllForms();
           if (forms !== null) {
-            set({ forms, isLoading: false });
+            const localDemo = get().forms.filter((f) => isDemoLocalFormId(f.id));
+            set({ forms: [...forms, ...localDemo], isLoading: false });
           } else {
             set({ error: 'Failed to load forms', isLoading: false });
           }
@@ -366,8 +376,11 @@ export const useFormStore = create<FormState>()(
           }
         } catch { /* ignore malformed prefs */ }
 
+        // Demo account: create the form in-browser only (prefixed id → persisted locally + never
+        // synced to the shared server), so "create a form" works without hitting the read-only API.
+        const demo = api.isDemoMode();
         const form: Form = {
-          id: uuidv4(),
+          id: demo ? DEMO_LOCAL_FORM_PREFIX + uuidv4() : uuidv4(),
           title,
           description,
           fields: [],
@@ -384,8 +397,8 @@ export const useFormStore = create<FormState>()(
         // Optimistic update
         set((s) => ({ forms: [...s.forms, form] }));
 
-        // If using API, also create on server
-        if (state.storageMode === 'api') {
+        // If using API (and not the demo overlay), also create on server
+        if (state.storageMode === 'api' && !demo) {
           try {
             const result = await api.createForm(form);
             if (result.error) {
@@ -427,10 +440,11 @@ export const useFormStore = create<FormState>()(
           ),
         }));
 
-        // If using API, sync current form state to server (debounced)
+        // If using API (and not the demo overlay), sync current form state to server (debounced).
+        // Demo edits stay in-browser (persisted for demo-local forms; in-session for seeded ones).
         // Uses a separate debounce key to avoid conflicts with field/settings/theme syncs
         // Reads fresh state inside the callback to avoid stale closures dropping earlier updates
-        if (state.storageMode === 'api') {
+        if (state.storageMode === 'api' && !api.isDemoMode()) {
           const key = `${id}-meta`;
           // Count only a new in-flight save (see syncFormField) so the spinner
           // clears once the debounced flush completes.
@@ -487,6 +501,12 @@ export const useFormStore = create<FormState>()(
           };
         });
 
+        // Demo overlay: the optimistic local removal is all we do — nothing is synced to the shared
+        // server (demo-local forms disappear for good; seeded forms return on the next reload).
+        if (api.isDemoMode()) {
+          return;
+        }
+
         // If using API, also delete on server
         if (state.storageMode === 'api') {
           try {
@@ -519,9 +539,10 @@ export const useFormStore = create<FormState>()(
         if (!form) return null;
 
         // Keep the same field IDs since they're human-readable and unique per form
+        const demo = api.isDemoMode();
         const newForm: Form = {
           ...form,
-          id: uuidv4(),
+          id: demo ? DEMO_LOCAL_FORM_PREFIX + uuidv4() : uuidv4(),
           title: `${form.title} (Copy)`,
           settings: { ...form.settings, notifications: { ...form.settings.notifications } },
           theme: { ...form.theme },
@@ -551,8 +572,8 @@ export const useFormStore = create<FormState>()(
         // Optimistic update
         set((s) => ({ forms: [...s.forms, newForm] }));
 
-        // If using API, duplicate on server
-        if (state.storageMode === 'api') {
+        // If using API (and not the demo overlay), duplicate on server
+        if (state.storageMode === 'api' && !demo) {
           try {
             const result = await api.duplicateForm(id);
             if (result.error) {
@@ -585,6 +606,8 @@ export const useFormStore = create<FormState>()(
         const state = get();
         // In local mode, the form is already fully loaded
         if (state.storageMode !== 'api') return state.forms.find((f) => f.id === id);
+        // Demo-local forms exist only in the browser — never fetch them from the server (404).
+        if (isDemoLocalFormId(id)) return state.forms.find((f) => f.id === id);
 
         // Check if the form already has fields loaded (use _fieldsLoaded flag
         // since a form with 0 fields is valid and shouldn't trigger a refetch).
@@ -946,6 +969,11 @@ export const useFormStore = create<FormState>()(
         let synced = 0;
         let unchanged = 0;
 
+        // The shared Demo account never syncs to the server — its forms stay in the browser.
+        if (api.isDemoMode()) {
+          return { success: true, synced: 0, unchanged: state.forms.length, deleted: 0, conflicts: [], errors: [] };
+        }
+
         // The server returns MySQL datetimes ("Y-m-d H:i:s", UTC); offline edits re-stamp updatedAt
         // to an ISO string (toISOString, has 'T'+'Z'). Normalize both to a UTC ISO for comparison,
         // and use the 'T' marker to tell a real offline edit apart from an untouched loaded value.
@@ -1086,7 +1114,9 @@ export const useFormStore = create<FormState>()(
       name: 'formlogic-forms',
       partialize: (state) => ({
         // Only persist forms in local mode — API mode data is server-backed
-        forms: state.storageMode === 'local' ? state.forms : [],
+        // Local mode persists everything; otherwise persist only demo-created (browser-only) forms
+        // so they survive reload and merge back alongside the server's forms on the next load.
+        forms: state.storageMode === 'local' ? state.forms : state.forms.filter((f) => isDemoLocalFormId(f.id)),
         storageMode: state.storageMode,
         // Persist offline deletions so they survive a refresh until the next sync propagates them.
         pendingDeletions: state.pendingDeletions,

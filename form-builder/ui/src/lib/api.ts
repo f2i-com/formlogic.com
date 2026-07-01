@@ -78,6 +78,11 @@ class ApiClient {
     this._demoMode = on;
   }
 
+  /** Whether the shared Demo account is active (writes should stay in the browser). */
+  isDemoMode(): boolean {
+    return this._demoMode;
+  }
+
   /**
    * Register a callback to be invoked when a 401 response is received,
    * allowing stores to clear user state. Uses a Set to prevent duplicate registrations.
