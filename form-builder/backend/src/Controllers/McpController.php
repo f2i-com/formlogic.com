@@ -177,6 +177,7 @@ class McpController
         'create_form' => 'forms:write', 'update_form' => 'forms:write', 'create_app_form' => 'forms:write',
         'list_apps' => 'apps:read', 'create_app' => 'apps:write',
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
+        'create_report' => 'apps:write', 'create_document' => 'apps:write',
         'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
     ];
 
@@ -308,6 +309,57 @@ class McpController
                     $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => $cs]);
                     $this->audit($request, 'mcp.set_app_home', $userId, ['appId' => $args['appId'] ?? null]);
                     break;
+                case 'create_report': {
+                    // Add a chart report to the app's Reports section. Spec uses REAL form ids.
+                    $appId = (string) ($args['appId'] ?? '');
+                    $this->assertAppScope($session, $appId);
+                    $app = $this->ownApp($appId, $userId);
+                    $spec = is_array($args['spec'] ?? null) ? $args['spec'] : [];
+                    if (empty($spec['formId']) || !is_string($spec['formId'])) {
+                        throw new \Exception('spec.formId is required (a form id in this app)');
+                    }
+                    if (!in_array($spec['viz'] ?? 'bar', ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'], true)) {
+                        throw new \Exception('spec.viz must be one of: table, bar, line, area, pie, donut, kpi');
+                    }
+                    $item = ['id' => 'rep_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Report'), 'type' => 'builder', 'spec' => $spec];
+                    if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
+                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
+                    $reports[] = $item;
+                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    $this->appService->updateApp($appId, ['reports' => $reports]);
+                    $data = $item;
+                    $this->audit($request, 'mcp.create_report', $userId, ['appId' => $appId, 'reportId' => $item['id']]);
+                    break;
+                }
+                case 'create_document': {
+                    // Add a PDF document (text + chart blocks referencing existing reports) to the app.
+                    $appId = (string) ($args['appId'] ?? '');
+                    $this->assertAppScope($session, $appId);
+                    $app = $this->ownApp($appId, $userId);
+                    $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
+                    $existingIds = [];
+                    foreach ($reports as $r) { if (!empty($r['id'])) { $existingIds[(string) $r['id']] = true; } }
+                    $blocks = [];
+                    foreach ((is_array($args['blocks'] ?? null) ? $args['blocks'] : []) as $b) {
+                        $kind = $b['kind'] ?? '';
+                        if ($kind === 'text') {
+                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')];
+                        } elseif ($kind === 'report') {
+                            $rid = (string) ($b['reportId'] ?? '');
+                            if (!isset($existingIds[$rid])) { throw new \Exception("Document references unknown reportId '{$rid}' — create the chart report first"); }
+                            $blocks[] = ['id' => 'blk_' . bin2hex(random_bytes(5)), 'kind' => 'report', 'reportId' => $rid, 'caption' => $b['caption'] ?? null];
+                        }
+                    }
+                    if (!$blocks) { throw new \Exception('A document needs at least one block (text or report)'); }
+                    $item = ['id' => 'doc_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Document'), 'type' => 'document', 'blocks' => $blocks];
+                    if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
+                    $reports[] = $item;
+                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    $this->appService->updateApp($appId, ['reports' => $reports]);
+                    $data = $item;
+                    $this->audit($request, 'mcp.create_document', $userId, ['appId' => $appId, 'documentId' => $item['id']]);
+                    break;
+                }
                 case 'list_responses':
                     $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
@@ -492,6 +544,8 @@ class McpController
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],
             ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom frontend — a full sandboxed app (HTML/CSS/TypeScript) over the app's forms. The SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
+            ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
         ];
         // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
@@ -521,7 +575,8 @@ Build an app from scratch:
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
 4. (optional) set_app_home { appId, customScreen } — a full custom frontend over the app's forms. customScreen = { enabled:true, files:[{path,content}] } (a multi-file TypeScript project: index.html shell + index.ts entry + more, relative imports) OR { enabled:true, ts, html, css } (single file). Compiled/bundled automatically. Inside it, window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v). ALWAYS escapeHtml() record data before innerHTML.
-5. update_app { appId, status:"published" } — publish. Optional: slug, hideNav (full-screen, no menu).
+5. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
+6. update_app { appId, status:"published" } — publish. Optional: slug, hideNav (full-screen, no menu).
 
 First inspect existing content with list_apps / list_forms / get_form. Your token is temporary and cannot read submissions unless explicitly granted. Prefer create_app_form over create_form + add_form_to_app.
 TXT;
@@ -541,7 +596,8 @@ FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, b
 3. For each form: create_app_form { title, fields, displayName? } — creates the form and attaches it to the app in one call.
 4. Optionally update_form { formId, logicScript } to add server-side automation.
 5. Optionally set_app_home { appId, customScreen } to add a custom frontend.
-6. update_app { appId, status: "published" } to publish (optionally slug, hideNav).
+6. Optionally create_report / create_document to add analytics (see "Reports" below).
+7. update_app { appId, status: "published" } to publish (optionally slug, hideNav).
 
 ## Fields
 A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
@@ -567,6 +623,16 @@ Inside the screen, window.FormLogic is the SDK:
 - FormLogic.toast.success(msg) / .error(msg)
 - FormLogic.escapeHtml(value)  // ALWAYS use this for record/user data placed into innerHTML
 Never fetch() — there is no network; only FormLogic reaches the backend.
+
+## Reports (charts + PDF documents)
+Give the app a Reports section — no custom screen needed.
+- create_report { appId, name, spec } adds one chart/KPI/table. spec = { formId, viz, groupBy?, measure?, joins?, filters?, columns?, sort?, limit? }.
+  - viz: "bar" | "line" | "area" | "pie" | "donut" | "kpi" (a single number) | "table".
+  - groupBy: { field, bucket? } — bucket "day"|"month"|"year" for date fields. measure: { fn, field? } — fn count|countDistinct|sum|avg|min|max (field required except for count).
+  - joins: [{ via, formId, type }] to chart across related forms. via = a linked_record field id on the base form; formId = the linked form's id; type "left"|"inner". Reference a joined form's field as "<joinFormId>::<fieldId>".
+  - field refs (in groupBy/measure/filters/columns) are a base field id, a joined ref, or a pseudo-field: __submitted_at (submission time) or __status (workflow status).
+  - Examples: { formId:"<job>", viz:"bar", groupBy:{field:"status"}, measure:{fn:"count"} }; revenue over time { formId:"<invoice>", viz:"line", groupBy:{field:"__submitted_at",bucket:"month"}, measure:{fn:"sum",field:"total"} }; cross-form { formId:"<job>", viz:"bar", joins:[{via:"customer",formId:"<customer>",type:"left"}], groupBy:{field:"<customer>::customer_type"}, measure:{fn:"sum",field:"estimated_value"} }.
+- create_document { appId, name, blocks } builds an exportable PDF report page. blocks in order: { kind:"text", title?, body } or { kind:"report", reportId, caption? } (reportId = an id returned by create_report). Create the charts first, then the document.
 
 ## Worked example — a "Tasks" app
 1. create_app { "name": "Tasks" }  -> returns { id }

@@ -227,6 +227,14 @@ class PackService
                     }
                 }
 
+                // 6. Pre-configured reports (charts + PDF documents): resolve @pack: refs → real form ids.
+                if (!empty($packApp['reports']) && is_array($packApp['reports'])) {
+                    $reports = $this->resolvePackReports($packApp['reports'], $formIdMap);
+                    if ($reports) {
+                        $this->appService->updateApp($appId, ['reports' => $reports]);
+                    }
+                }
+
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }
 
@@ -426,6 +434,13 @@ class PackService
         ];
         if (!empty($app['customScreen'])) {
             $packApp['customScreen'] = $app['customScreen'];
+        }
+        // Reports (charts + PDF documents): rewrite real form ids → @pack: refs so they round-trip.
+        if (!empty($app['reports']) && is_array($app['reports'])) {
+            $packReports = $this->packifyReports($app['reports'], $realToPackKey);
+            if ($packReports) {
+                $packApp['reports'] = $packReports;
+            }
         }
 
         $pack = [
@@ -861,7 +876,7 @@ class PackService
                     throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 512KB limit");
                 }
             }
-            foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240] as $key => $cap) {
+            foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240, 'reports' => 262144] as $key => $cap) {
                 if (isset($app[$key])) {
                     $json = json_encode($app[$key]);
                     if ($json !== false && strlen($json) > $cap) {
@@ -920,6 +935,227 @@ class PackService
         }
         unset($field);
         return $fields;
+    }
+
+    /**
+     * Resolve a pack's report items (charts + PDF documents) into installable `apps.reports` items,
+     * rewriting every `@pack:<packFormId>` reference to the real form id via $formIdMap. A report whose
+     * form/join/field ref can't be resolved is dropped (never emit a broken spec). Document blocks that
+     * reference a dropped/unknown chart are dropped; a document left with no blocks is dropped.
+     *
+     * @param array         $packReports PackReportItem[] (each: { reportId, kind, name, description?, spec?|blocks? })
+     * @param array<string,string> $formIdMap packFormId => real form id
+     * @param callable|null $idFor  optional (packReportId) => stable item id; defaults to a fresh UUID
+     * @return array AppReportItem[] ready to persist to apps.reports
+     */
+    public function resolvePackReports(array $packReports, array $formIdMap, ?callable $idFor = null): array
+    {
+        $idFor ??= fn (string $rid) => $this->generateUuid();
+
+        // Pack-local reportId => resolved item id (so document blocks can point at the right chart).
+        $itemIdByPackId = [];
+        foreach ($packReports as $r) {
+            if (!empty($r['reportId'])) {
+                $itemIdByPackId[$r['reportId']] = $idFor((string) $r['reportId']);
+            }
+        }
+
+        // "@pack:key" => real form id (null if unknown).
+        $resolveForm = static function (mixed $ref) use ($formIdMap): ?string {
+            if (!is_string($ref) || !str_starts_with($ref, '@pack:')) { return null; }
+            return $formIdMap[substr($ref, 6)] ?? null;
+        };
+        // Field ref: "@pack:key::field" => "realId::field"; bare "field"/"__pseudo" unchanged; unknown => null.
+        $resolveFieldRef = static function (mixed $ref) use ($formIdMap): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (!str_contains($ref, '::')) { return $ref; }
+            [$fp, $fid] = explode('::', $ref, 2);
+            if (!str_starts_with($fp, '@pack:')) { return null; }
+            $id = $formIdMap[substr($fp, 6)] ?? null;
+            return $id !== null ? $id . '::' . $fid : null;
+        };
+
+        $out = [];
+        foreach ($packReports as $r) {
+            $id = $itemIdByPackId[$r['reportId'] ?? ''] ?? null;
+            if ($id === null) { continue; }
+            $kind = $r['kind'] ?? 'chart';
+
+            if ($kind === 'document') {
+                $blocks = [];
+                foreach ($r['blocks'] ?? [] as $b) {
+                    $bk = $b['kind'] ?? '';
+                    if ($bk === 'text') {
+                        $blocks[] = ['id' => $this->generateUuid(), 'kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')];
+                    } elseif ($bk === 'report') {
+                        $rid = $itemIdByPackId[$b['reportId'] ?? ''] ?? null;
+                        if ($rid !== null) {
+                            $blocks[] = ['id' => $this->generateUuid(), 'kind' => 'report', 'reportId' => $rid, 'caption' => $b['caption'] ?? null];
+                        }
+                    }
+                }
+                if ($blocks) {
+                    $out[] = ['id' => $id, 'name' => $r['name'] ?? 'Document', 'description' => $r['description'] ?? null, 'type' => 'document', 'blocks' => $blocks];
+                }
+                continue;
+            }
+
+            // chart
+            $spec = is_array($r['spec'] ?? null) ? $r['spec'] : null;
+            if (!$spec) { continue; }
+            $base = $resolveForm($spec['formId'] ?? null);
+            if ($base === null) { continue; }
+            $ns = ['formId' => $base, 'viz' => in_array($spec['viz'] ?? '', ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'], true) ? $spec['viz'] : 'bar'];
+
+            $ok = true;
+            if (!empty($spec['joins'])) {
+                $joins = [];
+                foreach ($spec['joins'] as $j) {
+                    $jf = $resolveForm($j['formId'] ?? null);
+                    if ($jf === null) { $ok = false; break; }
+                    $joins[] = ['via' => (string) ($j['via'] ?? ''), 'formId' => $jf, 'type' => ($j['type'] ?? 'left') === 'inner' ? 'inner' : 'left'];
+                }
+                if (!$ok) { continue; }
+                $ns['joins'] = $joins;
+            }
+            if (!empty($spec['groupBy']['field'])) {
+                $gf = $resolveFieldRef($spec['groupBy']['field']);
+                if ($gf === null) { continue; }
+                $ns['groupBy'] = ['field' => $gf];
+                if (!empty($spec['groupBy']['bucket'])) { $ns['groupBy']['bucket'] = $spec['groupBy']['bucket']; }
+            }
+            if (!empty($spec['measure'])) {
+                $m = $spec['measure'];
+                if (isset($m['field'])) {
+                    $mf = $resolveFieldRef($m['field']);
+                    if ($mf === null) { continue; }
+                    $m['field'] = $mf;
+                }
+                $ns['measure'] = $m;
+            }
+            if (!empty($spec['filters'])) {
+                $filters = [];
+                foreach ($spec['filters'] as $f) {
+                    $ff = $resolveFieldRef($f['field'] ?? null);
+                    if ($ff === null) { continue; }
+                    $filters[] = ['field' => $ff, 'op' => (string) ($f['op'] ?? 'eq'), 'value' => (string) ($f['value'] ?? '')];
+                }
+                if ($filters) { $ns['filters'] = $filters; }
+            }
+            if (!empty($spec['columns'])) {
+                $cols = [];
+                foreach ($spec['columns'] as $c) {
+                    $cf = $resolveFieldRef($c);
+                    if ($cf !== null) { $cols[] = $cf; }
+                }
+                if ($cols) { $ns['columns'] = $cols; }
+            }
+            if (!empty($spec['seriesSort'])) { $ns['seriesSort'] = $spec['seriesSort']; }
+            if (isset($spec['sort']) && is_string($spec['sort'])) { $ns['sort'] = $spec['sort']; }
+            if (isset($spec['limit'])) { $ns['limit'] = (int) $spec['limit']; }
+
+            $out[] = ['id' => $id, 'name' => $r['name'] ?? 'Report', 'description' => $r['description'] ?? null, 'type' => 'builder', 'spec' => $ns];
+        }
+        return $out;
+    }
+
+    /**
+     * Inverse of resolvePackReports: rewrite a saved app's reports (apps.reports) into portable pack report
+     * items, mapping real form ids back to `@pack:<key>`. A report referencing a form OUTSIDE the exported
+     * app is dropped (never leak a foreign UUID / emit a dangling import).
+     *
+     * @param array $reports AppReportItem[] from apps.reports
+     * @param array<string,string> $realToPackKey real form id => packFormId (slug)
+     * @return array PackReportItem[]
+     */
+    private function packifyReports(array $reports, array $realToPackKey): array
+    {
+        $packForm = static function (mixed $ref) use ($realToPackKey): ?string {
+            if (!is_string($ref)) { return null; }
+            return isset($realToPackKey[$ref]) ? '@pack:' . $realToPackKey[$ref] : null;
+        };
+        $packFieldRef = static function (mixed $ref) use ($realToPackKey): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (!str_contains($ref, '::')) { return $ref; } // base field / pseudo-field
+            [$fid0, $fid] = explode('::', $ref, 2);
+            return isset($realToPackKey[$fid0]) ? '@pack:' . $realToPackKey[$fid0] . '::' . $fid : null;
+        };
+
+        $out = [];
+        foreach ($reports as $item) {
+            $rid = (string) ($item['id'] ?? '');
+            if ($rid === '') { continue; }
+
+            if (($item['type'] ?? '') === 'document') {
+                $blocks = [];
+                foreach ($item['blocks'] ?? [] as $b) {
+                    if (($b['kind'] ?? '') === 'text') {
+                        $blocks[] = array_filter(['kind' => 'text', 'title' => $b['title'] ?? null, 'body' => (string) ($b['body'] ?? '')], static fn ($v) => $v !== null);
+                    } elseif (($b['kind'] ?? '') === 'report') {
+                        $blocks[] = array_filter(['kind' => 'report', 'reportId' => (string) ($b['reportId'] ?? ''), 'caption' => $b['caption'] ?? null], static fn ($v) => $v !== null);
+                    }
+                }
+                if ($blocks) {
+                    $out[] = array_filter(['reportId' => $rid, 'kind' => 'document', 'name' => $item['name'] ?? 'Document', 'description' => $item['description'] ?? null, 'blocks' => $blocks], static fn ($v) => $v !== null);
+                }
+                continue;
+            }
+
+            $spec = is_array($item['spec'] ?? null) ? $item['spec'] : null;
+            if (!$spec) { continue; }
+            $base = $packForm($spec['formId'] ?? null);
+            if ($base === null) { continue; } // form not in the exported app
+            $ns = ['formId' => $base, 'viz' => $spec['viz'] ?? 'bar'];
+            $ok = true;
+            if (!empty($spec['joins'])) {
+                $joins = [];
+                foreach ($spec['joins'] as $j) {
+                    $jf = $packForm($j['formId'] ?? null);
+                    if ($jf === null) { $ok = false; break; }
+                    $joins[] = array_filter(['via' => $j['via'] ?? '', 'formId' => $jf, 'type' => $j['type'] ?? 'left'], static fn ($v) => $v !== null);
+                }
+                if (!$ok) { continue; }
+                $ns['joins'] = $joins;
+            }
+            if (!empty($spec['groupBy']['field'])) {
+                $gf = $packFieldRef($spec['groupBy']['field']);
+                if ($gf === null) { continue; }
+                $ns['groupBy'] = ['field' => $gf];
+                if (!empty($spec['groupBy']['bucket'])) { $ns['groupBy']['bucket'] = $spec['groupBy']['bucket']; }
+            }
+            if (!empty($spec['measure'])) {
+                $m = $spec['measure'];
+                if (isset($m['field'])) {
+                    $mf = $packFieldRef($m['field']);
+                    if ($mf === null) { continue; }
+                    $m['field'] = $mf;
+                }
+                $ns['measure'] = $m;
+            }
+            if (!empty($spec['filters'])) {
+                $filters = [];
+                foreach ($spec['filters'] as $f) {
+                    $ff = $packFieldRef($f['field'] ?? null);
+                    if ($ff === null) { continue; }
+                    $filters[] = array_filter(['field' => $ff, 'op' => $f['op'] ?? 'eq', 'value' => $f['value'] ?? ''], static fn ($v) => $v !== null && $v !== '');
+                }
+                if ($filters) { $ns['filters'] = $filters; }
+            }
+            if (!empty($spec['columns'])) {
+                $cols = [];
+                foreach ($spec['columns'] as $c) {
+                    $cf = $packFieldRef($c);
+                    if ($cf !== null) { $cols[] = $cf; }
+                }
+                if ($cols) { $ns['columns'] = $cols; }
+            }
+            if (!empty($spec['seriesSort'])) { $ns['seriesSort'] = $spec['seriesSort']; }
+            if (isset($spec['sort']) && is_string($spec['sort'])) { $ns['sort'] = $spec['sort']; }
+            if (isset($spec['limit'])) { $ns['limit'] = (int) $spec['limit']; }
+
+            $out[] = array_filter(['reportId' => $rid, 'kind' => 'chart', 'name' => $item['name'] ?? 'Report', 'description' => $item['description'] ?? null, 'spec' => $ns], static fn ($v) => $v !== null);
+        }
+        return $out;
     }
 
     /**

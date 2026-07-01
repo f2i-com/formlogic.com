@@ -1462,6 +1462,106 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "cs-tickets-by-priority",
+            "kind": "chart",
+            "name": "Tickets by priority",
+            "spec": {
+              "formId": "@pack:support-ticket",
+              "viz": "bar",
+              "groupBy": {
+                "field": "priority"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "cs-tickets-over-time",
+            "kind": "chart",
+            "name": "Tickets submitted over time",
+            "spec": {
+              "formId": "@pack:support-ticket",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "cs-avg-csat-by-ticket-category",
+            "kind": "chart",
+            "name": "Avg satisfaction by ticket category",
+            "description": "Average customer satisfaction score (1–5) broken down by the original ticket category.",
+            "spec": {
+              "formId": "@pack:customer-feedback",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "ticket_record",
+                  "formId": "@pack:support-ticket",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:support-ticket::category"
+              },
+              "measure": {
+                "fn": "avg",
+                "field": "overall_satisfaction"
+              }
+            }
+          },
+          {
+            "reportId": "cs-total-refund-amount",
+            "kind": "chart",
+            "name": "Total refund amount",
+            "description": "Cumulative refund value across all processed refund requests.",
+            "spec": {
+              "formId": "@pack:refund-request",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "amount"
+              }
+            }
+          },
+          {
+            "reportId": "cs-service-desk-overview",
+            "kind": "document",
+            "name": "Service Desk overview",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Service Desk overview",
+                "body": "This document provides a high-level snapshot of support operations: ticket volumes by priority, monthly submission trends, customer satisfaction scores broken down by ticket category, and cumulative refund liability."
+              },
+              {
+                "kind": "report",
+                "reportId": "cs-tickets-by-priority",
+                "caption": "Ticket distribution across priority levels — use this to identify backlogs in urgent and high-priority queues."
+              },
+              {
+                "kind": "report",
+                "reportId": "cs-tickets-over-time",
+                "caption": "Monthly ticket volume trend — highlights seasonal spikes and the effect of product releases on support load."
+              },
+              {
+                "kind": "report",
+                "reportId": "cs-total-refund-amount",
+                "caption": "Cumulative refund spend — tracks total financial exposure from customer refund and return requests."
+              }
+            ]
+          }
         ]
       }
     ]

@@ -505,6 +505,12 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER nav_config");
         }
 
+        // Add reports column to apps (saved chart reports + PDF documents) if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'reports'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE apps ADD COLUMN reports JSON DEFAULT NULL AFTER custom_screen");
+        }
+
         // Add scopes column to mcp_sessions (per-token capability list) if it doesn't exist
         try {
             $result = $pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'scopes'");

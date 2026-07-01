@@ -877,6 +877,103 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "jobs-by-status",
+            "kind": "chart",
+            "name": "Jobs by status",
+            "spec": {
+              "formId": "@pack:job",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "jobs-over-time",
+            "kind": "chart",
+            "name": "Jobs booked over time",
+            "spec": {
+              "formId": "@pack:job",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "pipeline-by-customer-type",
+            "kind": "chart",
+            "name": "Pipeline value by customer type",
+            "description": "Estimated job value grouped by the customer’s type (Jobs joined to Customers).",
+            "spec": {
+              "formId": "@pack:job",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "customer",
+                  "formId": "@pack:customer",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:customer::customer_type"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "estimated_value"
+              }
+            }
+          },
+          {
+            "reportId": "total-invoiced",
+            "kind": "chart",
+            "name": "Total invoiced",
+            "spec": {
+              "formId": "@pack:invoice",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "total"
+              }
+            }
+          },
+          {
+            "reportId": "field-service-overview",
+            "kind": "document",
+            "name": "Field Service overview",
+            "description": "A one-page snapshot of the job pipeline, customer mix and billing.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Overview",
+                "body": "A snapshot of where jobs sit in the workflow, the value in the pipeline by customer segment, and total invoicing to date."
+              },
+              {
+                "kind": "report",
+                "reportId": "jobs-by-status",
+                "caption": "Where current jobs sit in the workflow."
+              },
+              {
+                "kind": "report",
+                "reportId": "pipeline-by-customer-type",
+                "caption": "Estimated pipeline value by customer segment."
+              },
+              {
+                "kind": "report",
+                "reportId": "total-invoiced"
+              }
+            ]
+          }
         ]
       }
     ]

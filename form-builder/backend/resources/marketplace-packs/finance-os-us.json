@@ -2260,6 +2260,111 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "onb-by-objective",
+            "kind": "chart",
+            "name": "Clients by Investment Objective",
+            "description": "Count of onboarded clients grouped by their stated investment objective.",
+            "spec": {
+              "formId": "@pack:client-intake",
+              "viz": "bar",
+              "groupBy": {
+                "field": "investment_objectives"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "onb-monthly-intakes",
+            "kind": "chart",
+            "name": "Monthly Intake — Total Annual Income",
+            "description": "Sum of annual income reported by clients onboarded each month, showing pipeline growth over time.",
+            "spec": {
+              "formId": "@pack:client-intake",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "annual_income"
+              }
+            }
+          },
+          {
+            "reportId": "onb-total-net-worth",
+            "kind": "chart",
+            "name": "Total Client Net Worth",
+            "description": "Aggregate net worth across all onboarded clients — a high-level measure of book depth.",
+            "spec": {
+              "formId": "@pack:client-intake",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "net_worth"
+              }
+            }
+          },
+          {
+            "reportId": "onb-risk-by-objective",
+            "kind": "chart",
+            "name": "Risk Assessments by Client Investment Objective",
+            "description": "Cross-form: risk questionnaire submissions broken down by the linked client's investment objective.",
+            "spec": {
+              "formId": "@pack:risk-questionnaire",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "client_record",
+                  "formId": "@pack:client-intake",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:client-intake::investment_objectives"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "onb-overview",
+            "kind": "document",
+            "name": "Onboarding Overview",
+            "description": "Executive summary of the client onboarding pipeline.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Onboarding Overview",
+                "body": "This report summarises the performance of the Client Onboarding Navigator. It tracks the volume and composition of newly onboarded clients, their aggregate wealth profile, and how risk assessments align with stated investment objectives — key inputs for regulatory suitability reviews."
+              },
+              {
+                "kind": "report",
+                "reportId": "onb-by-objective",
+                "caption": "Client distribution by investment objective"
+              },
+              {
+                "kind": "report",
+                "reportId": "onb-monthly-intakes",
+                "caption": "Monthly income capacity of new clients"
+              },
+              {
+                "kind": "report",
+                "reportId": "onb-total-net-worth",
+                "caption": "Aggregate net worth across all clients"
+              }
+            ]
+          }
         ]
       },
       {
@@ -2700,6 +2805,109 @@
               {
                 "packFormId": "rollover-form",
                 "permission": "export_responses"
+              }
+            ]
+          }
+        ],
+        "reports": [
+          {
+            "reportId": "trans-by-custodian",
+            "kind": "chart",
+            "name": "Transfers by Custodian",
+            "description": "Count of ACAT transfers initiated, broken down by delivering custodian.",
+            "spec": {
+              "formId": "@pack:acat-transfer",
+              "viz": "bar",
+              "groupBy": {
+                "field": "custodian"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "trans-value-trend",
+            "kind": "chart",
+            "name": "Transfer Value — Monthly Trend",
+            "description": "Total estimated asset value of transfers initiated each month.",
+            "spec": {
+              "formId": "@pack:acat-transfer",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "estimated_value"
+              }
+            }
+          },
+          {
+            "reportId": "trans-total-assets",
+            "kind": "chart",
+            "name": "Total Assets in Transfer",
+            "description": "Aggregate estimated value of all ACAT transfers — the total book of business in motion.",
+            "spec": {
+              "formId": "@pack:acat-transfer",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "estimated_value"
+              }
+            }
+          },
+          {
+            "reportId": "trans-by-client-objective",
+            "kind": "chart",
+            "name": "Transfers by Client Investment Objective",
+            "description": "Cross-form: ACAT transfers broken down by the linked client's investment objective.",
+            "spec": {
+              "formId": "@pack:acat-transfer",
+              "viz": "pie",
+              "joins": [
+                {
+                  "via": "client_record",
+                  "formId": "@pack:client-intake",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:client-intake::investment_objectives"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "trans-overview",
+            "kind": "document",
+            "name": "Transition Hub Overview",
+            "description": "Executive summary of the advisor book-of-business transition.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Advisor Transition Hub — Overview",
+                "body": "This report provides a high-level view of in-progress and completed book-of-business transitions. It covers the volume and aggregate value of ACAT transfers by custodian, tracks monthly asset-transfer momentum, and shows how the transferred book maps to client investment objectives — enabling management to assess transition risk and pipeline health at a glance."
+              },
+              {
+                "kind": "report",
+                "reportId": "trans-by-custodian",
+                "caption": "ACAT transfers by delivering custodian"
+              },
+              {
+                "kind": "report",
+                "reportId": "trans-value-trend",
+                "caption": "Monthly asset transfer volume"
+              },
+              {
+                "kind": "report",
+                "reportId": "trans-total-assets",
+                "caption": "Total book value in transit"
               }
             ]
           }

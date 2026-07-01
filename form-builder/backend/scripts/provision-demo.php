@@ -317,78 +317,37 @@ foreach ($sources as $s) {
 file_put_contents($shotDirs[0] . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT));
 out("screenshot manifest: " . count($manifest) . " app(s); linked images: $linkedShots");
 
-// ── Seed sample reports (incl. cross-form joins) so the Reports section is populated in the demo ──
-// Templates are keyed by app name; field refs use "<FormTitle>::<fieldId>" for joined-form fields and
-// "<fieldId>" for the base form. Resolved to the demo's installed form ids per app. Idempotent
-// (deterministic ids). Only touches the demo account's apps.
-$SAMPLE_REPORTS = [
-    'Field Service' => [
-        ['name' => 'Jobs by status', 'baseForm' => 'Job', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'count']],
-        ['name' => 'Pipeline value by customer type', 'description' => 'Estimated job value grouped by the customer’s type (Jobs joined to Customers).', 'baseForm' => 'Job', 'joins' => [['via' => 'customer', 'form' => 'Customer', 'type' => 'left']], 'viz' => 'bar', 'groupBy' => ['field' => 'Customer::customer_type'], 'measure' => ['fn' => 'sum', 'field' => 'estimated_value']],
-        ['name' => 'Total invoiced', 'baseForm' => 'Invoice', 'viz' => 'kpi', 'measure' => ['fn' => 'sum', 'field' => 'total']],
-    ],
-    'Billing Pipeline' => [
-        ['name' => 'Pipeline by stage', 'baseForm' => 'Job', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'sum', 'field' => 'estimated_value']],
-        ['name' => 'Invoiced by client', 'description' => 'Invoice amounts grouped by client (Invoices joined to Clients).', 'baseForm' => 'Invoice', 'joins' => [['via' => 'client', 'form' => 'Client', 'type' => 'left']], 'viz' => 'bar', 'groupBy' => ['field' => 'Client::business_name'], 'measure' => ['fn' => 'sum', 'field' => 'amount']],
-        ['name' => 'Invoices by status', 'baseForm' => 'Invoice', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'sum', 'field' => 'amount']],
-    ],
-    'Salon' => [
-        ['name' => 'Appointments by status', 'baseForm' => 'Appointment', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'count']],
-        ['name' => 'Revenue by service', 'description' => 'Appointment revenue grouped by service (Appointments joined to Services).', 'baseForm' => 'Appointment', 'joins' => [['via' => 'service', 'form' => 'Service', 'type' => 'left']], 'viz' => 'bar', 'groupBy' => ['field' => 'Service::name'], 'measure' => ['fn' => 'sum', 'field' => 'price']],
-    ],
-    'Workshop' => [
-        ['name' => 'Job cards by status', 'baseForm' => 'Job Card', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'count']],
-        ['name' => 'Jobs by vehicle make', 'description' => 'Job cards grouped by vehicle make (Job Cards joined to Vehicles).', 'baseForm' => 'Job Card', 'joins' => [['via' => 'vehicle', 'form' => 'Vehicle', 'type' => 'left']], 'viz' => 'bar', 'groupBy' => ['field' => 'Vehicle::make'], 'measure' => ['fn' => 'count']],
-    ],
-    'Inventory' => [
-        ['name' => 'Stock movements by type', 'baseForm' => 'Stock Movement', 'viz' => 'bar', 'groupBy' => ['field' => 'movement_type'], 'measure' => ['fn' => 'count']],
-        ['name' => 'Purchase orders by status', 'baseForm' => 'Purchase Order', 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'sum', 'field' => 'total']],
-        ['name' => 'Products by category', 'baseForm' => 'Product', 'viz' => 'pie', 'groupBy' => ['field' => 'category'], 'measure' => ['fn' => 'count']],
-    ],
-];
+// ── Apply each pack's pre-configured reports (charts + PDF documents) to the demo apps ──────────
+// Packs now carry their own reports with portable @pack:<packFormId> refs. importPack seeds them on a
+// fresh install; here we re-resolve + re-apply to the (possibly already-installed) demo apps so every
+// re-provision reflects the latest pack-authored reports. Deterministic ids → idempotent overwrite.
 $seededReports = 0;
-foreach ($apps->getAllApps($demoId) as $a) {
-    $tpls = $SAMPLE_REPORTS[$a['name']] ?? null;
-    if (!$tpls) { continue; }
-    $rows = $pdo->query("SELECT f.id, f.title FROM app_forms af JOIN forms f ON f.id = af.form_id WHERE af.app_id = " . $pdo->quote($a['id']))->fetchAll(PDO::FETCH_ASSOC);
-    $byTitle = [];
-    foreach ($rows as $r) { $byTitle[$r['title']] = $r['id']; }
-    $reports = [];
-    foreach ($tpls as $t) {
-        $baseId = $byTitle[$t['baseForm']] ?? null;
-        if (!$baseId) { continue; }
-        $titleToId = [];
-        $joins = [];
-        $ok = true;
-        foreach ($t['joins'] ?? [] as $j) {
-            $jid = $byTitle[$j['form']] ?? null;
-            if (!$jid) { $ok = false; break; }
-            $joins[] = ['via' => $j['via'], 'formId' => $jid, 'type' => $j['type'] ?? 'left'];
-            $titleToId[$j['form']] = $jid;
-        }
-        if (!$ok) { continue; }
-        $ref = static function (string $r) use ($titleToId): ?string {
-            if (str_contains($r, '::')) { [$ft, $fid] = explode('::', $r, 2); return isset($titleToId[$ft]) ? $titleToId[$ft] . '::' . $fid : null; }
-            return $r;
-        };
-        $spec = ['formId' => $baseId, 'viz' => $t['viz']];
-        if ($joins) { $spec['joins'] = $joins; }
-        if (isset($t['groupBy'])) {
-            $gf = $ref($t['groupBy']['field']);
-            if ($gf === null) { continue; }
-            $spec['groupBy'] = array_merge(['field' => $gf], isset($t['groupBy']['bucket']) ? ['bucket' => $t['groupBy']['bucket']] : []);
-            $spec['sort'] = 'desc';
-        }
-        if (isset($t['measure'])) {
-            $m = $t['measure'];
-            if (isset($m['field'])) { $mf = $ref($m['field']); if ($mf === null) { continue; } $m['field'] = $mf; }
-            $spec['measure'] = $m;
-        }
-        $reports[] = ['id' => 'seed-' . substr(md5($t['name'] . $baseId), 0, 10), 'name' => $t['name'], 'description' => $t['description'] ?? null, 'type' => 'builder', 'spec' => $spec];
+$appIdByName = [];
+foreach ($apps->getAllApps($demoId) as $a) { $appIdByName[$a['name']] = $a['id']; }
+foreach ($sources as $s) {
+    // packFormId => form title (from the pack's top-level forms).
+    $titleByPackForm = [];
+    foreach ($s['pack']['forms'] ?? [] as $pf) {
+        if (!empty($pf['packFormId'])) { $titleByPackForm[$pf['packFormId']] = $pf['title'] ?? ''; }
     }
-    if ($reports) {
-        $apps->updateApp($a['id'], ['reports' => $reports]);
-        $seededReports += count($reports);
+    foreach ($s['pack']['apps'] ?? [] as $pa) {
+        if (empty($pa['reports']) || !is_array($pa['reports'])) { continue; }
+        $appId = $appIdByName[$pa['name']] ?? null;
+        if (!$appId) { continue; }
+        // installed form title => real id (for this demo app).
+        $rows = $pdo->query("SELECT f.id, f.title FROM app_forms af JOIN forms f ON f.id = af.form_id WHERE af.app_id = " . $pdo->quote($appId))->fetchAll(PDO::FETCH_ASSOC);
+        $idByTitle = [];
+        foreach ($rows as $r) { $idByTitle[$r['title']] = $r['id']; }
+        // packFormId => installed form id.
+        $formIdMap = [];
+        foreach ($titleByPackForm as $pfid => $title) {
+            if ($title !== '' && isset($idByTitle[$title])) { $formIdMap[$pfid] = $idByTitle[$title]; }
+        }
+        $reports = $packs->resolvePackReports($pa['reports'], $formIdMap, static fn (string $rid) => 'pack-' . substr(md5($appId . $rid), 0, 12));
+        if ($reports) {
+            $apps->updateApp($appId, ['reports' => $reports]);
+            $seededReports += count($reports);
+        }
     }
 }
 out("seeded reports: $seededReports across demo apps");

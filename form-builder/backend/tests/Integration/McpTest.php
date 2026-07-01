@@ -416,4 +416,70 @@ class McpTest extends TestCase
         // …but NOT an existing form it didn't create.
         $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
     }
+
+    // ── reports (charts + PDF documents) ──
+
+    public function testReportToolsListedForAppScopedToken(): void
+    {
+        $names = $this->toolNames(self::$tokens->create($this->userId, $this->appA)['token']);
+        $this->assertContains('create_report', $names);
+        $this->assertContains('create_document', $names);
+    }
+
+    public function testCreateReportAddsChartAndPersists(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'create_report', [
+            'appId' => $this->appA, 'name' => 'By status',
+            'spec' => ['formId' => $this->formA, 'viz' => 'bar', 'groupBy' => ['field' => 'status'], 'measure' => ['fn' => 'count']],
+        ]);
+        $this->assertFalse($res['isError'], $res['text']);
+        $this->assertNotSame('', $res['data']['id'] ?? '');
+        $reports = self::$apps->getApp($this->appA)['reports'] ?? [];
+        $this->assertCount(1, $reports);
+        $this->assertSame('By status', $reports[0]['name']);
+        $this->assertSame('builder', $reports[0]['type']);
+    }
+
+    public function testCreateReportValidatesSpec(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $this->assertTrue($this->tool($tok, 'create_report', ['appId' => $this->appA, 'name' => 'X', 'spec' => ['viz' => 'bar']])['isError'], 'missing formId rejected');
+        $this->assertTrue($this->tool($tok, 'create_report', ['appId' => $this->appA, 'name' => 'X', 'spec' => ['formId' => $this->formA, 'viz' => 'bogus']])['isError'], 'bad viz rejected');
+    }
+
+    public function testCreateReportAppScopeEnforced(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'create_report', ['appId' => $this->appB, 'name' => 'Sneak', 'spec' => ['formId' => $this->formB, 'viz' => 'kpi', 'measure' => ['fn' => 'count']]]);
+        $this->assertTrue($res['isError'], 'creating a report on another app must be rejected');
+    }
+
+    public function testCreateDocumentReferencesExistingReports(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $chart = $this->tool($tok, 'create_report', ['appId' => $this->appA, 'name' => 'Chart', 'spec' => ['formId' => $this->formA, 'viz' => 'kpi', 'measure' => ['fn' => 'count']]]);
+        $rid = $chart['data']['id'] ?? '';
+        $this->assertNotSame('', $rid);
+        // A document referencing an unknown report id is rejected.
+        $bad = $this->tool($tok, 'create_document', ['appId' => $this->appA, 'name' => 'Doc', 'blocks' => [['kind' => 'report', 'reportId' => 'does-not-exist']]]);
+        $this->assertTrue($bad['isError'], 'unknown reportId rejected');
+        // Valid text + report blocks persist in order, referencing the chart.
+        $doc = $this->tool($tok, 'create_document', ['appId' => $this->appA, 'name' => 'Doc', 'blocks' => [
+            ['kind' => 'text', 'title' => 'Intro', 'body' => 'Hello'],
+            ['kind' => 'report', 'reportId' => $rid, 'caption' => 'A KPI'],
+        ]]);
+        $this->assertFalse($doc['isError'], $doc['text']);
+        $reports = self::$apps->getApp($this->appA)['reports'] ?? [];
+        $document = array_values(array_filter($reports, static fn ($r) => ($r['type'] ?? '') === 'document'))[0] ?? null;
+        $this->assertNotNull($document, 'document should be persisted');
+        $this->assertCount(2, $document['blocks']);
+        $this->assertSame($rid, $document['blocks'][1]['reportId']);
+    }
+
+    public function testCreateDocumentRequiresBlocks(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $this->assertTrue($this->tool($tok, 'create_document', ['appId' => $this->appA, 'name' => 'Empty', 'blocks' => []])['isError'], 'a document with no blocks is rejected');
+    }
 }

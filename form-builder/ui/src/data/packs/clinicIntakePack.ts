@@ -726,6 +726,64 @@ main();
           ],
         },
       ],
+      reports: [
+        {
+          reportId: 'appt-by-status',
+          kind: 'chart',
+          name: 'Appointments by status',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'bar',
+            groupBy: { field: 'status' },
+            measure: { fn: 'count' },
+          },
+        },
+        {
+          reportId: 'appt-over-time',
+          kind: 'chart',
+          name: 'Appointments booked over time',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'line',
+            groupBy: { field: '__submitted_at', bucket: 'month' },
+            measure: { fn: 'count' },
+          },
+        },
+        {
+          reportId: 'appt-by-provider-specialty',
+          kind: 'chart',
+          name: 'Appointments by provider specialty',
+          spec: {
+            formId: '@pack:appointment',
+            viz: 'bar',
+            joins: [{ via: 'provider', formId: '@pack:provider', type: 'left' }],
+            groupBy: { field: '@pack:provider::role' },
+            measure: { fn: 'count' },
+          },
+        },
+        {
+          reportId: 'total-patients',
+          kind: 'chart',
+          name: 'Total patients registered',
+          spec: {
+            formId: '@pack:patient',
+            viz: 'kpi',
+            measure: { fn: 'count' },
+          },
+        },
+        {
+          reportId: 'front-desk-overview',
+          kind: 'document',
+          name: 'Front Desk overview',
+          description: 'A one-page snapshot of clinic activity, appointment pipeline and patient numbers.',
+          blocks: [
+            { kind: 'text', title: 'Overview', body: 'A snapshot of appointment pipeline and patient registrations across the front desk.' },
+            { kind: 'report', reportId: 'appt-by-status', caption: 'Where each appointment currently sits in the workflow.' },
+            { kind: 'report', reportId: 'appt-over-time', caption: 'Monthly booking trend.' },
+            { kind: 'report', reportId: 'total-patients' },
+          ],
+        },
+      ],
     },
   ],
 };

@@ -860,6 +860,116 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "jobcards-by-status",
+            "kind": "chart",
+            "name": "Job Cards by Status",
+            "description": "Count of job cards grouped by their current workflow status.",
+            "spec": {
+              "formId": "@pack:job-card",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "jobs-by-vehicle-make",
+            "kind": "chart",
+            "name": "Jobs by Vehicle Make",
+            "description": "Number of job cards raised per vehicle make, resolved via the vehicle link.",
+            "spec": {
+              "formId": "@pack:job-card",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "vehicle",
+                  "formId": "@pack:vehicle",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:vehicle::make"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc",
+              "limit": 10
+            }
+          },
+          {
+            "reportId": "jobs-over-time",
+            "kind": "chart",
+            "name": "Jobs Over Time",
+            "description": "Monthly trend of job cards opened.",
+            "spec": {
+              "formId": "@pack:job-card",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "total-labour-hours",
+            "kind": "chart",
+            "name": "Total Labour Hours",
+            "description": "Sum of all labour hours logged across all job cards.",
+            "spec": {
+              "formId": "@pack:job-card",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "labour_hours"
+              }
+            }
+          },
+          {
+            "reportId": "workshop-overview",
+            "kind": "document",
+            "name": "Workshop Overview",
+            "description": "A summary document of workshop activity combining key charts for management reporting.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Workshop Overview",
+                "body": "This report summarises current workshop activity: the job card pipeline by status, job volume broken down by vehicle make, monthly throughput trend, and cumulative labour hours on record."
+              },
+              {
+                "kind": "report",
+                "reportId": "jobcards-by-status",
+                "caption": "Current job card status breakdown"
+              },
+              {
+                "kind": "report",
+                "reportId": "jobs-by-vehicle-make",
+                "caption": "Top vehicle makes by job volume"
+              },
+              {
+                "kind": "report",
+                "reportId": "jobs-over-time",
+                "caption": "Monthly job card volume trend"
+              },
+              {
+                "kind": "report",
+                "reportId": "total-labour-hours",
+                "caption": "Cumulative labour hours across all jobs"
+              }
+            ]
+          }
         ]
       }
     ]

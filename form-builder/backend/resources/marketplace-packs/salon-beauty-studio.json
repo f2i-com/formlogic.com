@@ -736,6 +736,114 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "appts-by-status",
+            "kind": "chart",
+            "name": "Appointments by status",
+            "description": "Count of appointments broken down by their current status.",
+            "spec": {
+              "formId": "@pack:appointment",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "revenue-by-service",
+            "kind": "chart",
+            "name": "Revenue by service",
+            "description": "Total appointment revenue grouped by the linked service name.",
+            "spec": {
+              "formId": "@pack:appointment",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "service",
+                  "formId": "@pack:service",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:service::name"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "price"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "appts-over-time",
+            "kind": "chart",
+            "name": "Appointments over time",
+            "description": "Monthly trend of appointments booked.",
+            "spec": {
+              "formId": "@pack:appointment",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "total-revenue",
+            "kind": "chart",
+            "name": "Total revenue",
+            "description": "Cumulative revenue summed across all appointments.",
+            "spec": {
+              "formId": "@pack:appointment",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "price"
+              }
+            }
+          },
+          {
+            "reportId": "salon-overview",
+            "kind": "document",
+            "name": "Salon overview",
+            "description": "High-level summary of salon appointment activity and revenue.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Salon performance overview",
+                "body": "This report summarises appointment activity and revenue across the salon. Use it to monitor booking trends, understand which services generate the most revenue, and track overall throughput at a glance."
+              },
+              {
+                "kind": "report",
+                "reportId": "appts-by-status",
+                "caption": "Appointment counts by current status."
+              },
+              {
+                "kind": "report",
+                "reportId": "revenue-by-service",
+                "caption": "Revenue contribution by service type."
+              },
+              {
+                "kind": "report",
+                "reportId": "appts-over-time",
+                "caption": "Month-by-month appointment volume."
+              },
+              {
+                "kind": "report",
+                "reportId": "total-revenue",
+                "caption": "Total revenue across all appointments."
+              }
+            ]
+          }
         ]
       }
     ]

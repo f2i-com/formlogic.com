@@ -825,6 +825,104 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "wo-by-status",
+            "kind": "chart",
+            "name": "Work orders by status",
+            "description": "Count of work orders grouped by their current status.",
+            "spec": {
+              "formId": "@pack:work-order",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "req-by-priority",
+            "kind": "chart",
+            "name": "Maintenance requests by priority",
+            "description": "Distribution of maintenance requests across priority levels.",
+            "spec": {
+              "formId": "@pack:maintenance-request",
+              "viz": "pie",
+              "groupBy": {
+                "field": "priority"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "req-over-time",
+            "kind": "chart",
+            "name": "Requests over time",
+            "description": "Monthly volume of maintenance requests submitted.",
+            "spec": {
+              "formId": "@pack:maintenance-request",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "total-work-cost",
+            "kind": "chart",
+            "name": "Total work cost",
+            "description": "Running KPI of total maintenance spend across all work orders.",
+            "spec": {
+              "formId": "@pack:work-order",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "cost"
+              }
+            }
+          },
+          {
+            "reportId": "maintenance-overview",
+            "kind": "document",
+            "name": "Maintenance overview",
+            "description": "Executive summary of property maintenance operations.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Maintenance overview",
+                "body": "This report summarises current property maintenance operations: the volume and status of active work orders, the priority profile of maintenance requests, how request volumes are trending month-on-month, and total maintenance expenditure to date."
+              },
+              {
+                "kind": "report",
+                "reportId": "wo-by-status",
+                "caption": "Work orders by status"
+              },
+              {
+                "kind": "report",
+                "reportId": "req-by-priority",
+                "caption": "Maintenance requests by priority"
+              },
+              {
+                "kind": "report",
+                "reportId": "req-over-time",
+                "caption": "Requests submitted per month"
+              },
+              {
+                "kind": "report",
+                "reportId": "total-work-cost",
+                "caption": "Total maintenance spend"
+              }
+            ]
+          }
         ]
       }
     ]

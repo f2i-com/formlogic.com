@@ -2675,6 +2675,105 @@
               }
             ]
           }
+        ],
+        "reports": [
+          {
+            "reportId": "incidents-by-severity",
+            "kind": "chart",
+            "name": "Incidents by severity",
+            "description": "Count of incidents grouped by severity level.",
+            "spec": {
+              "formId": "@pack:incident-report",
+              "viz": "bar",
+              "groupBy": {
+                "field": "severity"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value"
+            }
+          },
+          {
+            "reportId": "incidents-over-time",
+            "kind": "chart",
+            "name": "Incidents over time",
+            "description": "Monthly trend of incident submissions.",
+            "spec": {
+              "formId": "@pack:incident-report",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "sort": "asc"
+            }
+          },
+          {
+            "reportId": "hazards-by-type",
+            "kind": "chart",
+            "name": "Hazards by type",
+            "description": "Distribution of identified hazards by hazard type.",
+            "spec": {
+              "formId": "@pack:hazard-identification",
+              "viz": "pie",
+              "groupBy": {
+                "field": "hazard_type"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "total-incidents-kpi",
+            "kind": "chart",
+            "name": "Total incidents",
+            "description": "Total number of incidents reported.",
+            "spec": {
+              "formId": "@pack:incident-report",
+              "viz": "kpi",
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "safety-overview",
+            "kind": "document",
+            "name": "Safety Management overview",
+            "description": "Executive summary of safety performance across incidents and hazards.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Overview",
+                "body": "This report summarises workplace safety performance including incident frequency, severity distribution, and hazard classifications. Use this document for management reviews and ISO 45001 compliance reporting."
+              },
+              {
+                "kind": "report",
+                "reportId": "total-incidents-kpi",
+                "caption": "Total incidents on record"
+              },
+              {
+                "kind": "report",
+                "reportId": "incidents-by-severity",
+                "caption": "Breakdown of incidents by severity"
+              },
+              {
+                "kind": "report",
+                "reportId": "incidents-over-time",
+                "caption": "Monthly incident trend"
+              },
+              {
+                "kind": "report",
+                "reportId": "hazards-by-type",
+                "caption": "Hazard type distribution"
+              }
+            ]
+          }
         ]
       },
       {
@@ -2939,6 +3038,109 @@
               {
                 "packFormId": "training-record",
                 "permission": "view_own_responses"
+              }
+            ]
+          }
+        ],
+        "reports": [
+          {
+            "reportId": "ncr-by-severity",
+            "kind": "chart",
+            "name": "Non-conformances by severity",
+            "description": "Count of NCRs grouped by severity (minor / major / critical).",
+            "spec": {
+              "formId": "@pack:ncr",
+              "viz": "bar",
+              "groupBy": {
+                "field": "severity"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value"
+            }
+          },
+          {
+            "reportId": "audits-by-type",
+            "kind": "chart",
+            "name": "Audits by type",
+            "description": "Distribution of completed audits by audit type.",
+            "spec": {
+              "formId": "@pack:audit-report",
+              "viz": "donut",
+              "groupBy": {
+                "field": "audit_type"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "cars-over-time",
+            "kind": "chart",
+            "name": "Corrective actions over time",
+            "description": "Monthly trend of corrective action requests raised.",
+            "spec": {
+              "formId": "@pack:car",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "sort": "asc"
+            }
+          },
+          {
+            "reportId": "complaints-by-priority",
+            "kind": "chart",
+            "name": "Complaints by priority",
+            "description": "Complaint volume broken down by priority level.",
+            "spec": {
+              "formId": "@pack:complaint-report",
+              "viz": "bar",
+              "groupBy": {
+                "field": "priority"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value"
+            }
+          },
+          {
+            "reportId": "quality-overview",
+            "kind": "document",
+            "name": "Quality & Compliance overview",
+            "description": "Executive summary of quality management performance across audits, NCRs, CARs, and complaints.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Overview",
+                "body": "This report provides a management overview of quality and compliance activity including audit outcomes, non-conformance severity, corrective action trends, and complaint priority distribution. Suitable for ISO 9001 management review meetings."
+              },
+              {
+                "kind": "report",
+                "reportId": "audits-by-type",
+                "caption": "Audit type distribution"
+              },
+              {
+                "kind": "report",
+                "reportId": "ncr-by-severity",
+                "caption": "Non-conformance severity breakdown"
+              },
+              {
+                "kind": "report",
+                "reportId": "cars-over-time",
+                "caption": "Monthly corrective action trend"
+              },
+              {
+                "kind": "report",
+                "reportId": "complaints-by-priority",
+                "caption": "Complaints by priority level"
               }
             ]
           }

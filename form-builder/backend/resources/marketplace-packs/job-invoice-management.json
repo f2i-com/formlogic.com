@@ -806,6 +806,119 @@
             ]
           }
         ],
+        "reports": [
+          {
+            "reportId": "pipeline-by-stage",
+            "kind": "chart",
+            "name": "Pipeline by stage",
+            "description": "Estimated value of jobs grouped by pipeline stage.",
+            "spec": {
+              "formId": "@pack:job",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "estimated_value"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "invoiced-by-client",
+            "kind": "chart",
+            "name": "Invoiced by client",
+            "description": "Total invoice amount grouped by client name.",
+            "spec": {
+              "formId": "@pack:invoice",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "client",
+                  "formId": "@pack:client",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:client::business_name"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "amount"
+              },
+              "seriesSort": "value",
+              "sort": "desc",
+              "limit": 10
+            }
+          },
+          {
+            "reportId": "revenue-over-time",
+            "kind": "chart",
+            "name": "Revenue over time",
+            "description": "Total invoiced amount by month.",
+            "spec": {
+              "formId": "@pack:invoice",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "sum",
+                "field": "amount"
+              }
+            }
+          },
+          {
+            "reportId": "total-invoiced",
+            "kind": "chart",
+            "name": "Total invoiced",
+            "description": "Sum of all invoice amounts raised.",
+            "spec": {
+              "formId": "@pack:invoice",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "amount"
+              }
+            }
+          },
+          {
+            "reportId": "billing-pipeline-overview",
+            "kind": "document",
+            "name": "Billing Pipeline overview",
+            "description": "Combined overview of pipeline health and billing performance.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Billing Pipeline Overview",
+                "body": "This report summarises the health of the job-to-cash pipeline. It shows where jobs sit by estimated value across each pipeline stage, how invoiced revenue is distributed across clients, how revenue has trended month-by-month, and the total amount invoiced to date."
+              },
+              {
+                "kind": "report",
+                "reportId": "pipeline-by-stage",
+                "caption": "Jobs by stage (estimated value)"
+              },
+              {
+                "kind": "report",
+                "reportId": "invoiced-by-client",
+                "caption": "Invoice totals per client"
+              },
+              {
+                "kind": "report",
+                "reportId": "revenue-over-time",
+                "caption": "Monthly invoiced revenue"
+              },
+              {
+                "kind": "report",
+                "reportId": "total-invoiced",
+                "caption": "Total invoiced (all time)"
+              }
+            ]
+          }
+        ],
         "customScreen": {
           "enabled": true,
           "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"empty\">Loading Billing Pipeline…</div></div></div>",

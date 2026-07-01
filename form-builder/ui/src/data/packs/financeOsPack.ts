@@ -42,6 +42,42 @@ export interface PackAppForm {
   isVisible: boolean;
 }
 
+/**
+ * A report spec inside a pack. Form references are portable pack keys, NOT real ids:
+ *  - `formId` / `joins[].formId` use `@pack:<packFormId>`
+ *  - joined field refs use `@pack:<packFormId>::<fieldId>`; base-form field refs are the bare `<fieldId>`;
+ *    `__submitted_at` / `__status` are pseudo-fields.
+ * These are resolved to real form ids at install/import time (PackService::resolvePackReports).
+ */
+export interface PackReportSpec {
+  formId: string;
+  viz: 'table' | 'bar' | 'line' | 'area' | 'pie' | 'donut' | 'kpi';
+  joins?: Array<{ via: string; formId: string; type?: 'inner' | 'left' }>;
+  filters?: Array<{ field: string; op: string; value?: string | number }>;
+  groupBy?: { field: string; bucket?: 'none' | 'day' | 'month' | 'year' };
+  measure?: { fn: 'count' | 'countDistinct' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
+  columns?: string[];
+  seriesSort?: 'value' | 'label';
+  sort?: 'asc' | 'desc';
+  limit?: number;
+}
+
+/** A block in a pack PDF document: free text, or a chart that references a sibling PackReportItem by reportId. */
+export type PackReportBlock =
+  | { kind: 'text'; title?: string; body: string }
+  | { kind: 'report'; reportId: string; caption?: string };
+
+/** A pack report item — a chart (`kind:'chart'`, has `spec`) or a PDF document (`kind:'document'`, has `blocks`). */
+export interface PackReportItem {
+  /** Pack-local stable id, referenced by document blocks. */
+  reportId: string;
+  kind: 'chart' | 'document';
+  name: string;
+  description?: string;
+  spec?: PackReportSpec;
+  blocks?: PackReportBlock[];
+}
+
 export interface PackApp {
   packAppId: string;
   name: string;
@@ -52,6 +88,8 @@ export interface PackApp {
   /** Optional sandboxed custom home screen (dashboard) shown instead of the form list. */
   customScreen?: { enabled?: boolean; html?: string; css?: string; js?: string };
   roles: PackAppRole[];
+  /** Optional pre-configured chart reports + PDF documents shown in the app's Reports section. */
+  reports?: PackReportItem[];
 }
 
 export interface PackData {
@@ -1604,6 +1642,76 @@ export const financeOsPack: PackData = {
           ],
         },
       ],
+      reports: [
+        {
+          reportId: 'onb-by-objective',
+          kind: 'chart',
+          name: 'Clients by Investment Objective',
+          description: 'Count of onboarded clients grouped by their stated investment objective.',
+          spec: {
+            formId: '@pack:client-intake',
+            viz: 'bar',
+            groupBy: { field: 'investment_objectives' },
+            measure: { fn: 'count' },
+            seriesSort: 'value',
+            sort: 'desc',
+          },
+        },
+        {
+          reportId: 'onb-monthly-intakes',
+          kind: 'chart',
+          name: 'Monthly Intake — Total Annual Income',
+          description: 'Sum of annual income reported by clients onboarded each month, showing pipeline growth over time.',
+          spec: {
+            formId: '@pack:client-intake',
+            viz: 'line',
+            groupBy: { field: '__submitted_at', bucket: 'month' },
+            measure: { fn: 'sum', field: 'annual_income' },
+          },
+        },
+        {
+          reportId: 'onb-total-net-worth',
+          kind: 'chart',
+          name: 'Total Client Net Worth',
+          description: 'Aggregate net worth across all onboarded clients — a high-level measure of book depth.',
+          spec: {
+            formId: '@pack:client-intake',
+            viz: 'kpi',
+            measure: { fn: 'sum', field: 'net_worth' },
+          },
+        },
+        {
+          reportId: 'onb-risk-by-objective',
+          kind: 'chart',
+          name: 'Risk Assessments by Client Investment Objective',
+          description: 'Cross-form: risk questionnaire submissions broken down by the linked client\'s investment objective.',
+          spec: {
+            formId: '@pack:risk-questionnaire',
+            viz: 'bar',
+            joins: [{ via: 'client_record', formId: '@pack:client-intake', type: 'left' }],
+            groupBy: { field: '@pack:client-intake::investment_objectives' },
+            measure: { fn: 'count' },
+            seriesSort: 'value',
+            sort: 'desc',
+          },
+        },
+        {
+          reportId: 'onb-overview',
+          kind: 'document',
+          name: 'Onboarding Overview',
+          description: 'Executive summary of the client onboarding pipeline.',
+          blocks: [
+            {
+              kind: 'text',
+              title: 'Onboarding Overview',
+              body: 'This report summarises the performance of the Client Onboarding Navigator. It tracks the volume and composition of newly onboarded clients, their aggregate wealth profile, and how risk assessments align with stated investment objectives — key inputs for regulatory suitability reviews.',
+            },
+            { kind: 'report', reportId: 'onb-by-objective', caption: 'Client distribution by investment objective' },
+            { kind: 'report', reportId: 'onb-monthly-intakes', caption: 'Monthly income capacity of new clients' },
+            { kind: 'report', reportId: 'onb-total-net-worth', caption: 'Aggregate net worth across all clients' },
+          ],
+        },
+      ],
     },
 
     // ── 2. Advisor Transition Hub ────────────────────────────────────────
@@ -1852,6 +1960,74 @@ export const financeOsPack: PackData = {
             { packFormId: 'rollover-form', permission: 'edit_responses' },
             { packFormId: 'rollover-form', permission: 'delete_responses' },
             { packFormId: 'rollover-form', permission: 'export_responses' },
+          ],
+        },
+      ],
+      reports: [
+        {
+          reportId: 'trans-by-custodian',
+          kind: 'chart',
+          name: 'Transfers by Custodian',
+          description: 'Count of ACAT transfers initiated, broken down by delivering custodian.',
+          spec: {
+            formId: '@pack:acat-transfer',
+            viz: 'bar',
+            groupBy: { field: 'custodian' },
+            measure: { fn: 'count' },
+            seriesSort: 'value',
+            sort: 'desc',
+          },
+        },
+        {
+          reportId: 'trans-value-trend',
+          kind: 'chart',
+          name: 'Transfer Value — Monthly Trend',
+          description: 'Total estimated asset value of transfers initiated each month.',
+          spec: {
+            formId: '@pack:acat-transfer',
+            viz: 'line',
+            groupBy: { field: '__submitted_at', bucket: 'month' },
+            measure: { fn: 'sum', field: 'estimated_value' },
+          },
+        },
+        {
+          reportId: 'trans-total-assets',
+          kind: 'chart',
+          name: 'Total Assets in Transfer',
+          description: 'Aggregate estimated value of all ACAT transfers — the total book of business in motion.',
+          spec: {
+            formId: '@pack:acat-transfer',
+            viz: 'kpi',
+            measure: { fn: 'sum', field: 'estimated_value' },
+          },
+        },
+        {
+          reportId: 'trans-by-client-objective',
+          kind: 'chart',
+          name: 'Transfers by Client Investment Objective',
+          description: 'Cross-form: ACAT transfers broken down by the linked client\'s investment objective.',
+          spec: {
+            formId: '@pack:acat-transfer',
+            viz: 'pie',
+            joins: [{ via: 'client_record', formId: '@pack:client-intake', type: 'left' }],
+            groupBy: { field: '@pack:client-intake::investment_objectives' },
+            measure: { fn: 'count' },
+          },
+        },
+        {
+          reportId: 'trans-overview',
+          kind: 'document',
+          name: 'Transition Hub Overview',
+          description: 'Executive summary of the advisor book-of-business transition.',
+          blocks: [
+            {
+              kind: 'text',
+              title: 'Advisor Transition Hub — Overview',
+              body: 'This report provides a high-level view of in-progress and completed book-of-business transitions. It covers the volume and aggregate value of ACAT transfers by custodian, tracks monthly asset-transfer momentum, and shows how the transferred book maps to client investment objectives — enabling management to assess transition risk and pipeline health at a glance.',
+            },
+            { kind: 'report', reportId: 'trans-by-custodian', caption: 'ACAT transfers by delivering custodian' },
+            { kind: 'report', reportId: 'trans-value-trend', caption: 'Monthly asset transfer volume' },
+            { kind: 'report', reportId: 'trans-total-assets', caption: 'Total book value in transit' },
           ],
         },
       ],
