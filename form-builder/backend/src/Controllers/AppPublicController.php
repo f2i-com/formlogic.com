@@ -1199,14 +1199,10 @@ class AppPublicController
                         }
                     }
                 } else {
-                    $count = 0;
-                    foreach ($targetForm['fields'] as $f) {
-                        if ($count >= 2) break;
-                        if (in_array($f['type'], ['short_text', 'long_text', 'email', 'phone', 'url', 'number'])) {
-                            $val = $answers[$f['id']] ?? null;
-                            if ($val !== null) { $parts[] = (string)$val; $count++; }
-                        }
-                    }
+                    // No display fields configured — derive a smart label (prefers name fields,
+                    // first+last concat, etc.), falling back to the first text field.
+                    $guess = \FormLogic\Helpers\RecordLabel::guess($targetForm['fields'], $answers);
+                    if ($guess !== null && $guess !== '') { $parts[] = $guess; }
                 }
 
                 $resolvedCache[$targetFormId][$tr['id']] = [

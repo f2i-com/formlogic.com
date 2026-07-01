@@ -20,7 +20,9 @@ import {
   Timer,
   Upload,
   RefreshCw,
+  Link2,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
@@ -41,10 +43,16 @@ import type { Form, FormField, LocalFormResponse } from '../types/form';
 
 const ITEMS_PER_PAGE = 10;
 
+// A linked_record value resolved server-side into a human label. `targetFormId` lets the
+// UI open the referenced record on demand (the owner owns it, so it's fetchable directly).
+type ResolvedLink = { id: string; display: string; targetFormId?: string };
+
 interface ResponseWithStatus extends LocalFormResponse {
   status?: string;
   tags?: string[];
   computed?: Record<string, unknown>;
+  // Server-injected labels for linked_record fields, keyed by field id.
+  _resolved?: Record<string, ResolvedLink | ResolvedLink[]>;
 }
 
 // Fetch EVERY response for a form. The API caps each page (default 100, max
@@ -79,6 +87,188 @@ async function fetchAllApiResponses(
     }
   }
   return { responses: all, truncated };
+}
+
+// Format a single answer for display. Pure over its args (no component state) so it's shared
+// by the table, the CSV export, the detail drawer, and the linked-record peek.
+function formatValue(value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  // File upload: show filenames
+  if (fieldType === 'file_upload' && Array.isArray(value)) {
+    return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
+  }
+  // Signature: a typed signature is stored as "typed:<name>" — show the name; a drawn
+  // signature is a data:image URL — show a marker, never the raw base64.
+  if (fieldType === 'signature') {
+    if (typeof value === 'string' && value.startsWith('typed:')) {
+      const name = value.slice(6).trim();
+      return name || '-';
+    }
+    return value ? '[signature]' : '-';
+  }
+  // Linked record: stored as the target response id(s). Prefer resolved labels at the call
+  // site (see linkedText); this fallback only fires when nothing was resolved.
+  if (fieldType === 'linked_record') {
+    const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
+    return n === 0 ? '-' : n === 1 ? '[linked record]' : `[${n} linked records]`;
+  }
+  // Choice fields: map stored option values (e.g. "option_2") to their human labels.
+  if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
+    const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
+    return Array.isArray(value) ? value.map(labelFor).join(', ') : labelFor(value);
+  }
+  // Location: show coordinates
+  if (fieldType === 'location' && value && typeof value === 'object' && 'latitude' in (value as Record<string, unknown>)) {
+    const loc = value as Record<string, number>;
+    return `${loc.latitude?.toFixed(6)}, ${loc.longitude?.toFixed(6)}`;
+  }
+  // Date/time locale formatting (guard against Invalid Date rather than swallowing it)
+  if (typeof value === 'string' && value) {
+    if (fieldType === 'date') {
+      const d = new Date(value + 'T00:00:00');
+      return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    } else if (fieldType === 'time') {
+      const [h, m] = value.split(':').map(Number);
+      const d = new Date(2000, 0, 1, h, m);
+      return isNaN(d.getTime()) ? value : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    } else if (fieldType === 'datetime') {
+      const d = new Date(value);
+      return isNaN(d.getTime()) ? value : d.toLocaleString();
+    }
+  }
+  if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+// Normalize the server's _resolved value (single object or array) into a list.
+function asResolvedList(v: ResolvedLink | ResolvedLink[] | undefined): ResolvedLink[] {
+  if (!v) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
+// Plain-text join of resolved linked-record labels — for tooltips, CSV, and non-interactive rows.
+function linkedText(items: ResolvedLink[]): string {
+  return items.length ? items.map((i) => i.display).join(', ') : '-';
+}
+
+// Target-form definitions are cached so the peek doesn't refetch field labels for every chip.
+const linkedFormCache = new Map<string, Form>();
+
+// Renders resolved linked records as chips. Each real record is clickable and opens a peek
+// with the referenced record's details. Used where the row is NOT already a button.
+function LinkedRecordChips({ items }: { items: ResolvedLink[] }) {
+  const [peek, setPeek] = useState<ResolvedLink | null>(null);
+  if (!items.length) return <span className="text-gray-400 dark:text-slate-500">-</span>;
+  return (
+    <>
+      <span className="flex flex-wrap items-center gap-1 max-w-full min-w-0">
+        {items.map((it, i) => {
+          const clickable = !!it.targetFormId && it.display !== 'Record not found';
+          return (
+            <button
+              key={it.id + i}
+              type="button"
+              disabled={!clickable}
+              onClick={(e) => { e.stopPropagation(); if (clickable) setPeek(it); }}
+              title={clickable ? `${it.display} — click to view` : it.display}
+              className={cn(
+                'inline-flex items-center gap-1 max-w-full min-w-0 rounded-full border px-2 py-0.5 text-xs font-medium leading-5 transition-colors',
+                clickable
+                  ? 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 cursor-pointer'
+                  : 'border-gray-200 bg-gray-50 text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 cursor-default'
+              )}
+            >
+              <Link2 className="h-3 w-3 flex-shrink-0" />
+              <span className="truncate">{it.display}</span>
+            </button>
+          );
+        })}
+      </span>
+      {peek && <LinkedRecordPeek item={peek} onClose={() => setPeek(null)} />}
+    </>
+  );
+}
+
+// A modal that lazily loads and displays a single linked record (the owner owns the target
+// form, so it's fetched directly). Kept lightweight — a read-only peek, not the full editor.
+function LinkedRecordPeek({ item, onClose }: { item: ResolvedLink; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState<Form | null>(null);
+  const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [resolved, setResolved] = useState<Record<string, ResolvedLink | ResolvedLink[]>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const tfid = item.targetFormId ?? '';
+        let f = linkedFormCache.get(tfid) ?? null;
+        if (!f) {
+          const fr = await api.getForm(tfid);
+          f = fr.data?.form ?? null;
+          if (f) linkedFormCache.set(tfid, f);
+        }
+        const rr = await api.getResponse(tfid, item.id);
+        if (cancelled) return;
+        setForm(f);
+        setAnswers((rr.data?.response?.answers as Record<string, unknown>) ?? {});
+        setResolved((rr.data?.response as { _resolved?: Record<string, ResolvedLink | ResolvedLink[]> })?._resolved ?? {});
+      } catch {
+        if (!cancelled) setError('Could not load this record.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [item]);
+
+  const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+
+  return (
+    <Modal isOpen onClose={onClose} title={form?.title || 'Linked record'} description={item.display} size="md">
+      <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+        {loading ? (
+          <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+        ) : error ? (
+          <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+        ) : fields.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-slate-400">This record has no displayable fields.</p>
+        ) : (
+          fields.map((field) => {
+            let content: ReactNode;
+            if (field.type === 'linked_record') {
+              content = linkedText(asResolvedList(resolved[field.id]));
+            } else if (field.type === 'file_upload' && Array.isArray(answers[field.id]) && (answers[field.id] as unknown[]).length > 0) {
+              content = (
+                <span className="inline-flex flex-wrap gap-2">
+                  {(answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
+                    f && f.url
+                      ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">{f.originalFilename || 'File'}</a>
+                      : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
+                  ))}
+                </span>
+              );
+            } else {
+              content = formatValue(answers[field.id], field.type, field.properties?.options);
+            }
+            const empty = content === '' || content === '-' || content == null;
+            return (
+              <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-3 last:border-0 last:pb-0">
+                <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
+                <div className="text-sm text-gray-900 dark:text-white break-words">
+                  {empty ? <span className="text-gray-400 dark:text-slate-500 italic">No answer</span> : content}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </Modal>
+  );
 }
 
 const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archived'] as const;
@@ -238,7 +428,14 @@ function FormResponses() {
   // typing in the search box is a cheap substring scan instead of re-serializing every
   // response's answers on every keystroke.
   const searchIndex = useMemo(
-    () => responses.map((r) => ({ r, hay: (JSON.stringify(r.answers) + ' ' + r.id).toLowerCase() })),
+    () => responses.map((r) => {
+      // Also index the resolved linked-record labels so a search for "Ada Lovelace" matches a
+      // Deal that links to her — the raw answers only hold the target UUID.
+      const linkText = r._resolved
+        ? Object.values(r._resolved).flatMap((v) => asResolvedList(v).map((x) => x.display)).join(' ')
+        : '';
+      return { r, hay: (JSON.stringify(r.answers) + ' ' + r.id + ' ' + linkText).toLowerCase() };
+    }),
     [responses]
   );
 
@@ -430,7 +627,11 @@ function FormResponses() {
       r.id,
       parseServerDate(r.submittedAt).toLocaleString(),
       r.status ?? 'submitted',
-      ...allExportFields.map((f) => formatValue(r.answers[f.id], f.type, f.properties?.options)),
+      ...allExportFields.map((f) =>
+        f.type === 'linked_record'
+          ? linkedText(linksFor(r, f.id))
+          : formatValue(r.answers[f.id], f.type, f.properties?.options)
+      ),
     ]);
 
     const csv = [headers.map(escapeCell).join(','), ...rows.map((row) => row.map(escapeCell).join(','))].join('\n');
@@ -445,56 +646,9 @@ function FormResponses() {
     URL.revokeObjectURL(url);
   };
 
-  // Format value for display
-  const formatValue = (value: unknown, fieldType?: string, options?: Array<{ value: string; label?: string }>): string => {
-    if (value === null || value === undefined) return '-';
-    if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-    // File upload: show filenames
-    if (fieldType === 'file_upload' && Array.isArray(value)) {
-      return value.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? (f as Record<string, unknown>).originalFilename : 'File').join(', ') || '-';
-    }
-    // Signature: a typed signature is stored as "typed:<name>" — show the name; a drawn
-    // signature is a data:image URL — show a marker, never the raw base64.
-    if (fieldType === 'signature') {
-      if (typeof value === 'string' && value.startsWith('typed:')) {
-        const name = value.slice(6).trim();
-        return name || '-';
-      }
-      return value ? '[signature]' : '-';
-    }
-    // Linked record: stored as the target response id(s) — don't show a raw UUID.
-    if (fieldType === 'linked_record') {
-      const n = Array.isArray(value) ? value.length : (value ? 1 : 0);
-      return n === 0 ? '-' : n === 1 ? '[linked record]' : `[${n} linked records]`;
-    }
-    // Choice fields: map stored option values (e.g. "option_2") to their human labels.
-    if (options && options.length && (fieldType === 'dropdown' || fieldType === 'multiple_choice' || fieldType === 'checkboxes')) {
-      const labelFor = (v: unknown) => options.find((o) => o.value === v)?.label ?? String(v);
-      return Array.isArray(value) ? value.map(labelFor).join(', ') : labelFor(value);
-    }
-    // Location: show coordinates
-    if (fieldType === 'location' && value && typeof value === 'object' && 'latitude' in (value as Record<string, unknown>)) {
-      const loc = value as Record<string, number>;
-      return `${loc.latitude?.toFixed(6)}, ${loc.longitude?.toFixed(6)}`;
-    }
-    // Date/time locale formatting (guard against Invalid Date rather than swallowing it)
-    if (typeof value === 'string' && value) {
-      if (fieldType === 'date') {
-        const d = new Date(value + 'T00:00:00');
-        return isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-      } else if (fieldType === 'time') {
-        const [h, m] = value.split(':').map(Number);
-        const d = new Date(2000, 0, 1, h, m);
-        return isNaN(d.getTime()) ? value : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      } else if (fieldType === 'datetime') {
-        const d = new Date(value);
-        return isNaN(d.getTime()) ? value : d.toLocaleString();
-      }
-    }
-    if (Array.isArray(value)) return value.map(v => typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)).join(', ');
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  };
+  // Resolved linked-record labels for a field on a given response (empty if none/unresolved).
+  const linksFor = (response: ResponseWithStatus, fieldId: string): ResolvedLink[] =>
+    asResolvedList(response._resolved?.[fieldId]);
 
   // Format date (server timestamps are UTC — parse them as such)
   const formatDate = (dateStr: string) => {
@@ -730,7 +884,10 @@ function FormResponses() {
                       {displayFields.slice(0, 4).map((field) => (
                         <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                          {formatValue(response.answers[field.id], field.type, field.properties?.options)}
+                          {/* This row is itself a button, so linked records render as plain text (no nested buttons). */}
+                          {field.type === 'linked_record'
+                            ? linkedText(linksFor(response, field.id))
+                            : formatValue(response.answers[field.id], field.type, field.properties?.options)}
                         </p>
                       ))}
                       <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">{formatDuration(response.completionTime || 0)}</p>
@@ -784,15 +941,21 @@ function FormResponses() {
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {formatDate(response.submittedAt)}
                       </td>
-                      {visibleFields.map((field) => (
-                        <td
-                          key={field.id}
-                          className="px-4 py-4 text-sm text-gray-600 dark:text-slate-300 truncate"
-                          title={formatValue(response.answers[field.id], field.type, field.properties?.options)}
-                        >
-                          {formatValue(response.answers[field.id], field.type, field.properties?.options)}
-                        </td>
-                      ))}
+                      {visibleFields.map((field) => {
+                        const isLinked = field.type === 'linked_record';
+                        const plain = isLinked
+                          ? linkedText(linksFor(response, field.id))
+                          : formatValue(response.answers[field.id], field.type, field.properties?.options);
+                        return (
+                          <td
+                            key={field.id}
+                            className={cn('px-4 py-4 text-sm text-gray-600 dark:text-slate-300', isLinked ? 'align-middle overflow-hidden' : 'truncate')}
+                            title={plain}
+                          >
+                            {isLinked ? <LinkedRecordChips items={linksFor(response, field.id)} /> : plain}
+                          </td>
+                        );
+                      })}
                       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-500">
                         {formatDuration(response.completionTime || 0)}
                       </td>
@@ -891,7 +1054,9 @@ function FormResponses() {
                   <div key={field.id} className="border-b border-gray-100 dark:border-slate-800 pb-4 last:border-0 last:pb-0">
                     <p className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-1">{field.label}</p>
                     <div className="text-gray-900 dark:text-white">
-                      {field.type === 'file_upload' && Array.isArray(selectedResponse.answers[field.id]) && (selectedResponse.answers[field.id] as unknown[]).length > 0 ? (
+                      {field.type === 'linked_record' ? (
+                        <LinkedRecordChips items={linksFor(selectedResponse, field.id)} />
+                      ) : field.type === 'file_upload' && Array.isArray(selectedResponse.answers[field.id]) && (selectedResponse.answers[field.id] as unknown[]).length > 0 ? (
                         <div className="flex flex-col gap-1">
                           {(selectedResponse.answers[field.id] as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
                             f && f.url

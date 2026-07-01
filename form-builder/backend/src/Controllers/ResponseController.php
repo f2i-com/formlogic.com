@@ -105,6 +105,124 @@ class ResponseController
     }
 
     /**
+     * Resolve linked_record fields into human-readable display labels for the owner-scoped
+     * responses view. Injects `_resolved[fieldId] = {id, display}` (or an array for multi-link)
+     * so the UI can show the referenced record's name instead of a raw UUID / "[linked record]".
+     *
+     * Owner-scoped: the target form must belong to the SAME user (a cross-tenant guard in case a
+     * field's targetFormId was tampered) — no app RBAC applies here since the owner sees all their
+     * own data. Records are batch-loaded per target form to avoid an N+1.
+     *
+     * @param array<int,array<string,mixed>> $responses
+     * @param array<string,mixed> $form
+     * @return array<int,array<string,mixed>>
+     */
+    private function resolveLinkedRecords(array $responses, array $form, string $userId): array
+    {
+        $linkedFields = [];
+        foreach ($form['fields'] ?? [] as $field) {
+            if (($field['type'] ?? '') === 'linked_record' && !empty($field['properties']['targetFormId'])) {
+                $linkedFields[] = $field;
+            }
+        }
+        if (empty($linkedFields) || empty($responses)) {
+            return $responses;
+        }
+
+        // Collect referenced response ids, grouped by target form.
+        $refsByForm = []; // targetFormId => [responseId => true]
+        foreach ($responses as $resp) {
+            $answers = $resp['answers'] ?? [];
+            foreach ($linkedFields as $field) {
+                $targetFormId = $field['properties']['targetFormId'];
+                $val = $answers[$field['id']] ?? null;
+                if ($val === null || $val === '') {
+                    continue;
+                }
+                foreach ((array) $val as $id) {
+                    if (is_string($id) && $id !== '') {
+                        $refsByForm[$targetFormId][$id] = true;
+                    }
+                }
+            }
+        }
+
+        // Batch-load + build a display string per referenced record.
+        $displayCache = []; // targetFormId => responseId => ['id' => .., 'display' => ..]
+        foreach ($refsByForm as $targetFormId => $idMap) {
+            $displayCache[$targetFormId] = [];
+            $targetForm = $this->formService->getForm($targetFormId);
+            // Cross-tenant guard: never resolve a form the requester doesn't own.
+            if (!$targetForm || ($targetForm['userId'] ?? null) !== $userId) {
+                continue;
+            }
+
+            // The display fields chosen on the linking field, else fall back to the first couple
+            // of text-ish fields on the target form.
+            $displayFieldIds = [];
+            foreach ($linkedFields as $field) {
+                if ($field['properties']['targetFormId'] === $targetFormId) {
+                    $displayFieldIds = $field['properties']['displayFieldIds'] ?? [];
+                    break;
+                }
+            }
+
+            $targetResponses = $this->responseService->getResponsesByIds($targetFormId, array_keys($idMap));
+            foreach ($targetResponses as $tr) {
+                $answers = $tr['answers'] ?? [];
+                $parts = [];
+                if (!empty($displayFieldIds)) {
+                    foreach ($displayFieldIds as $dfid) {
+                        $v = $answers[$dfid] ?? null;
+                        if ($v !== null && $v !== '') {
+                            $parts[] = is_array($v) ? implode(', ', $v) : (string) $v;
+                        }
+                    }
+                } else {
+                    // No display fields configured — derive a smart label (prefers name fields,
+                    // first+last concat, etc.), falling back to the first text field.
+                    $guess = \FormLogic\Helpers\RecordLabel::guess($targetForm['fields'], $answers);
+                    if ($guess !== null && $guess !== '') {
+                        $parts[] = $guess;
+                    }
+                }
+                $displayCache[$targetFormId][$tr['id']] = [
+                    'id' => $tr['id'],
+                    'display' => implode(' - ', $parts) ?: ('Record ' . substr($tr['id'], 0, 8)),
+                ];
+            }
+        }
+
+        // Inject _resolved into each response.
+        foreach ($responses as &$resp) {
+            $answers = $resp['answers'] ?? [];
+            $resolved = [];
+            foreach ($linkedFields as $field) {
+                $targetFormId = $field['properties']['targetFormId'];
+                $val = $answers[$field['id']] ?? null;
+                if ($val === null || $val === '') {
+                    continue;
+                }
+                $miss = fn ($id) => ['id' => $id, 'display' => 'Record not found', 'targetFormId' => $targetFormId];
+                if (is_array($val)) {
+                    $resolved[$field['id']] = array_map(
+                        fn ($id) => ($displayCache[$targetFormId][$id] ?? $miss($id)) + ['targetFormId' => $targetFormId],
+                        $val
+                    );
+                } else {
+                    $resolved[$field['id']] = ($displayCache[$targetFormId][$val] ?? $miss($val)) + ['targetFormId' => $targetFormId];
+                }
+            }
+            if (!empty($resolved)) {
+                $resp['_resolved'] = $resolved;
+            }
+        }
+        unset($resp);
+
+        return $responses;
+    }
+
+    /**
      * List all responses for a form
      * GET /api/forms/{formId}/responses
      */
@@ -131,6 +249,7 @@ class ResponseController
         ];
 
         $responses = $this->responseService->getFormResponses($formId, $options);
+        $responses = $this->resolveLinkedRecords($responses, $form, $form['userId']);
 
         return $this->jsonResponse($response, [
             'responses' => $responses,
@@ -164,6 +283,9 @@ class ResponseController
                 'message' => 'Response not found',
             ], 404);
         }
+
+        $resolved = $this->resolveLinkedRecords([$formResponse], $form, $form['userId']);
+        $formResponse = $resolved[0];
 
         return $this->jsonResponse($response, ['response' => $formResponse]);
     }

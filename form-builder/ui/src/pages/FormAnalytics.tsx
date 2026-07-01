@@ -346,6 +346,15 @@ export default function FormAnalytics() {
 
 
   // Shared value formatter for the recent-responses preview (table + card modes).
+  // Server-resolved label(s) for a linked_record field on a response, or null if unresolved.
+  const resolvedLinkLabel = (response: unknown, fieldId: string): string | null => {
+    const v = (response as { _resolved?: Record<string, unknown> })._resolved?.[fieldId] as { display?: string } | Array<{ display?: string }> | undefined;
+    if (!v) return null;
+    const list = Array.isArray(v) ? v : [v];
+    const s = list.map((x) => x?.display).filter(Boolean).join(', ');
+    return s || null;
+  };
+
   const formatPreviewValue = (field: { id: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }, val: unknown): string => {
     if (val === null || val === undefined || val === '') return '-';
     if (field.type === 'location' && typeof val === 'object' && 'latitude' in (val as Record<string, unknown>)) {
@@ -354,6 +363,11 @@ export default function FormAnalytics() {
     }
     if (field.type === 'file_upload' && Array.isArray(val)) {
       return val.map((f: unknown) => (f && typeof f === 'object' && 'originalFilename' in f) ? String((f as Record<string, unknown>).originalFilename) : 'File').join(', ');
+    }
+    // Linked record: never show raw UUIDs (call sites prefer the resolved label; this is the fallback).
+    if (field.type === 'linked_record') {
+      const n = Array.isArray(val) ? val.length : (val ? 1 : 0);
+      return n === 0 ? '-' : n === 1 ? '[linked record]' : `[${n} linked records]`;
     }
     if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
       const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
@@ -704,7 +718,9 @@ export default function FormAnalytics() {
                         {previewFields.map((field) => (
                           <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
                             <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                            {formatPreviewValue(field, response.answers[field.id])}
+                            {field.type === 'linked_record'
+                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                              : formatPreviewValue(field, response.answers[field.id])}
                           </p>
                         ))}
                       </li>
@@ -738,7 +754,9 @@ export default function FormAnalytics() {
                         </td>
                         {visiblePreview.map((field) => (
                           <td key={field.id} className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
-                            {formatPreviewValue(field, response.answers[field.id])}
+                            {field.type === 'linked_record'
+                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                              : formatPreviewValue(field, response.answers[field.id])}
                           </td>
                         ))}
                       </tr>
