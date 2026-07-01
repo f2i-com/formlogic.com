@@ -15,8 +15,20 @@ export function SampleAppsModal({ isOpen, onClose, onInstalled }: { isOpen: bool
 
   useEffect(() => {
     if (!isOpen) return;
-    setLoading(true);
-    api.getSampleApps().then((r) => { setSamples(r.data?.samples || []); }).catch(() => {}).finally(() => setLoading(false));
+    let cancelled = false;
+    // setState only after the await, so this doesn't trip react-hooks/set-state-in-effect
+    // (loading defaults to true, so the spinner shows until the first fetch resolves).
+    (async () => {
+      try {
+        const r = await api.getSampleApps();
+        if (!cancelled) setSamples(r.data?.samples || []);
+      } catch {
+        /* ignore — empty state renders */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [isOpen]);
 
   const install = async (s: Sample) => {
