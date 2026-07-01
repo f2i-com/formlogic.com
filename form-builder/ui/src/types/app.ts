@@ -65,6 +65,8 @@ export interface AppReport {
 export interface AppReportSpec {
   formId: string;
   viz: 'table' | 'bar' | 'pie' | 'kpi';
+  /** Cross-form joins along linked_record relationships. Joined fields are referenced as "<formId>::<fieldId>". */
+  joins?: Array<{ via: string; formId: string; type: 'inner' | 'left' }>;
   filters?: Array<{ field: string; op: string; value?: string }>;
   groupBy?: { field: string; bucket?: 'none' | 'day' | 'month' | 'year' };
   measure?: { fn: 'count' | 'sum' | 'avg' | 'min' | 'max'; field?: string };

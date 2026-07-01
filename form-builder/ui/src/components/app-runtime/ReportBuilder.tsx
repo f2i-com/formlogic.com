@@ -6,8 +6,10 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { AppReport, AppReportSpec, AppReportResult } from '../../types/app';
 import { ReportResultView } from './ReportResultView';
 
-type Field = { id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } };
+type Field = { id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }>; targetFormId?: string } };
+type FieldOpt = { ref: string; label: string; type: string; properties?: Field['properties'] };
 type Filter = { field: string; op: string; value: string };
+type Join = { via: string; formId: string; type: 'inner' | 'left' };
 
 const LAYOUT_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
 const CHOICE_TYPES = ['dropdown', 'multiple_choice', 'checkbox', 'radio'];
@@ -37,34 +39,61 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
   const [columns, setColumns] = useState<string[]>(initSpec?.columns ?? []);
   const [filters, setFilters] = useState<Filter[]>((initSpec?.filters ?? []).map((f) => ({ field: f.field, op: f.op, value: String(f.value ?? '') })));
   const [limit, setLimit] = useState(initSpec?.limit ?? 100);
+  const [joins, setJoins] = useState<Join[]>((initSpec?.joins as Join[]) ?? []);
 
-  const fields: Field[] = useMemo(() => {
-    const f = forms.find((x) => x.formId === formId);
-    return ((f?.fields ?? []) as Field[]).filter((fl) => !LAYOUT_TYPES.includes(fl.type));
-  }, [forms, formId]);
+  const baseForm = useMemo(() => forms.find((x) => x.formId === formId), [forms, formId]);
+  const baseFields: Field[] = useMemo(() => ((baseForm?.fields ?? []) as Field[]).filter((fl) => !LAYOUT_TYPES.includes(fl.type)), [baseForm]);
+  // linked_record fields whose target form is also in this app → available as joins ("related data").
+  const linkedFields: Field[] = useMemo(
+    () => ((baseForm?.fields ?? []) as Field[]).filter((f) => f.type === 'linked_record' && f.properties?.targetFormId && forms.some((x) => x.formId === f.properties?.targetFormId)),
+    [baseForm, forms]
+  );
 
-  const groupable = fields.filter((f) => CHOICE_TYPES.includes(f.type) || DATE_TYPES.includes(f.type) || f.type === 'short_text');
-  const numberFields = fields.filter((f) => f.type === 'number');
-  const groupIsDate = DATE_TYPES.includes(fields.find((f) => f.id === groupField)?.type ?? '');
+  // All selectable fields = base fields (ref = id) + fields of each joined form (ref = "<formId>::<id>").
+  const allFields: FieldOpt[] = useMemo(() => {
+    const base: FieldOpt[] = baseFields.map((f) => ({ ref: f.id, label: f.label, type: f.type, properties: f.properties }));
+    const joined: FieldOpt[] = joins.flatMap((j) => {
+      const tf = forms.find((x) => x.formId === j.formId);
+      if (!tf) return [];
+      return ((tf.fields ?? []) as Field[])
+        .filter((fl) => !LAYOUT_TYPES.includes(fl.type))
+        .map((f) => ({ ref: `${j.formId}::${f.id}`, label: `${tf.displayName} · ${f.label}`, type: f.type, properties: f.properties }));
+    });
+    return [...base, ...joined];
+  }, [baseFields, joins, forms]);
 
-  // Default group/column choices when the form changes and nothing is set yet.
+  const groupable = allFields.filter((f) => CHOICE_TYPES.includes(f.type) || DATE_TYPES.includes(f.type) || f.type === 'short_text');
+  const numberFields = allFields.filter((f) => f.type === 'number');
+  const groupIsDate = DATE_TYPES.includes(allFields.find((f) => f.ref === groupField)?.type ?? '');
+
+  // Changing the source form invalidates joins (they reference the base form's links) — reset them.
+  const prevFormRef = useRef(formId);
   useEffect(() => {
-    if ((viz === 'bar' || viz === 'pie') && !groupable.some((g) => g.id === groupField)) {
-      setGroupField(groupable[0]?.id ?? '');
+    if (prevFormRef.current !== formId) {
+      prevFormRef.current = formId;
+      setJoins([]);
+    }
+  }, [formId]);
+
+  // Default group/column choices when the form/viz changes and nothing is set yet.
+  useEffect(() => {
+    if ((viz === 'bar' || viz === 'pie') && !groupable.some((g) => g.ref === groupField)) {
+      setGroupField(groupable[0]?.ref ?? '');
     }
     if (viz === 'table' && columns.length === 0) {
-      setColumns(fields.slice(0, 4).map((f) => f.id));
+      setColumns(baseFields.slice(0, 4).map((f) => f.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formId, viz]);
 
   const spec: AppReportSpec = useMemo(() => {
     const base: AppReportSpec = { formId, viz, filters: filters.filter((f) => f.field), limit };
+    if (joins.length) { base.joins = joins; }
     if (viz === 'bar' || viz === 'pie') { base.groupBy = { field: groupField, bucket: groupIsDate ? bucket : 'none' }; base.measure = { fn: measureFn, field: measureField }; base.sort = 'desc'; }
     if (viz === 'kpi') { base.measure = { fn: measureFn, field: measureField }; }
     if (viz === 'table') { base.columns = columns; }
     return base;
-  }, [formId, viz, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit]);
+  }, [formId, viz, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit]);
 
   const [preview, setPreview] = useState<AppReportResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -111,9 +140,11 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
 
   return (
     <Modal isOpen onClose={onClose} title={report ? 'Edit report' : 'New report'} size="xl">
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,340px)_1fr] gap-0 max-h-[75dvh]">
+      {/* On mobile the preview sits on top (capped) so you see results while the controls scroll below;
+          on lg it's the right column. flex-col-reverse renders the preview (source-order 2) first. */}
+      <div className="flex flex-col-reverse lg:grid lg:grid-cols-[minmax(0,340px)_1fr] max-h-[80dvh] lg:max-h-[75dvh] min-h-0">
         {/* Controls */}
-        <div className="p-5 space-y-4 overflow-y-auto border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-slate-800">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0 lg:border-r border-gray-200 dark:border-slate-800">
           <div>
             <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Report name</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Revenue by month" className={`w-full ${selectCls}`} />
@@ -128,6 +159,34 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
               {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
             </select>
           </div>
+          {linkedFields.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Related data</label>
+              <div className="space-y-2">
+                {linkedFields.map((lf) => {
+                  const targetId = lf.properties?.targetFormId as string;
+                  const tf = forms.find((x) => x.formId === targetId);
+                  const join = joins.find((j) => j.via === lf.id && j.formId === targetId);
+                  return (
+                    <div key={lf.id} className="flex items-center gap-2">
+                      <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer flex-1 min-w-0">
+                        <input type="checkbox" className="app-accent rounded shrink-0" checked={!!join} onChange={(e) => setJoins((js) => e.target.checked ? [...js.filter((j) => !(j.via === lf.id)), { via: lf.id, formId: targetId, type: 'left' as const }] : js.filter((j) => !(j.via === lf.id && j.formId === targetId)))} />
+                        <span className="truncate">{tf?.displayName ?? 'Related'} <span className="text-gray-400 dark:text-slate-500">· via {lf.label}</span></span>
+                      </label>
+                      {join && (
+                        <select value={join.type} onChange={(e) => setJoins((js) => js.map((j) => j.via === lf.id && j.formId === targetId ? { ...j, type: e.target.value as 'inner' | 'left' } : j))} className={selectCls} title="Join type">
+                          <option value="left">Include all</option>
+                          <option value="inner">Only matched</option>
+                        </select>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Pull fields from linked forms in to group by or list alongside.</p>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Show as</label>
             <div className="flex flex-wrap gap-2">
@@ -141,7 +200,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
             <div>
               <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Group by</label>
               <select value={groupField} onChange={(e) => setGroupField(e.target.value)} className={`w-full ${selectCls}`}>
-                {groupable.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                {groupable.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
               </select>
               {groupIsDate && (
                 <select value={bucket} onChange={(e) => setBucket(e.target.value as typeof bucket)} className={`w-full mt-2 ${selectCls}`}>
@@ -161,7 +220,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
                 {measureNeedsField && (
                   <select value={measureField} onChange={(e) => setMeasureField(e.target.value)} className={`flex-1 ${selectCls}`}>
                     <option value="">Select field…</option>
-                    {numberFields.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                    {numberFields.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
                   </select>
                 )}
               </div>
@@ -173,9 +232,9 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
             <div>
               <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Columns</label>
               <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 p-2 space-y-1">
-                {fields.map((f) => (
-                  <label key={f.id} className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
-                    <input type="checkbox" className="app-accent rounded" checked={columns.includes(f.id)} onChange={(e) => setColumns((c) => e.target.checked ? [...c, f.id] : c.filter((x) => x !== f.id))} />
+                {allFields.map((f) => (
+                  <label key={f.ref} className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
+                    <input type="checkbox" className="app-accent rounded" checked={columns.includes(f.ref)} onChange={(e) => setColumns((c) => e.target.checked ? [...c, f.ref] : c.filter((x) => x !== f.ref))} />
                     <span className="truncate">{f.label}</span>
                   </label>
                 ))}
@@ -193,13 +252,13 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
             <div className="space-y-2">
               {filters.map((flt, i) => {
                 const opNeedsValue = !['empty', 'notempty'].includes(flt.op);
-                const fld = fields.find((f) => f.id === flt.field);
+                const fld = allFields.find((f) => f.ref === flt.field);
                 const opts = fld?.properties?.options ?? [];
                 return (
                   <div key={i} className="flex items-center gap-1.5">
                     <select value={flt.field} onChange={(e) => setFilters((fs) => fs.map((x, j) => j === i ? { ...x, field: e.target.value } : x))} className={`${selectCls} flex-1 min-w-0`}>
                       <option value="">Field…</option>
-                      {fields.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                      {allFields.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
                     </select>
                     <select value={flt.op} onChange={(e) => setFilters((fs) => fs.map((x, j) => j === i ? { ...x, op: e.target.value } : x))} className={selectCls}>
                       {OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
@@ -221,8 +280,8 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
           </div>
         </div>
 
-        {/* Live preview */}
-        <div className="p-5 overflow-y-auto bg-gray-50 dark:bg-slate-950/40">
+        {/* Live preview — capped + on top on mobile, full right column on desktop */}
+        <div className="p-5 overflow-y-auto bg-gray-50 dark:bg-slate-950/40 max-h-[40dvh] lg:max-h-none shrink-0 border-b lg:border-b-0 border-gray-200 dark:border-slate-800">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{name.trim() || 'Preview'}</h3>
             {running && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}

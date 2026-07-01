@@ -965,9 +965,42 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
         }
 
+        // Resolve + authorise cross-form joins. A join is only allowed ALONG a real linked_record
+        // relationship on the base form (via field → target form), and the joined form must be in this
+        // app and viewable by the caller. Anything not meeting that is silently dropped (no error).
+        $baseLinked = [];
+        foreach ($form['fields'] ?? [] as $f) {
+            if (($f['type'] ?? '') === 'linked_record' && !empty($f['properties']['targetFormId'])) {
+                $baseLinked[$f['id']] = (string) $f['properties']['targetFormId'];
+            }
+        }
+        $resolvedJoins = [];
+        $seenJoinForms = [];
+        foreach ($spec['joins'] ?? [] as $j) {
+            if (!is_array($j)) { continue; }
+            $via = (string) ($j['via'] ?? '');
+            $jFormId = (string) ($j['formId'] ?? '');
+            if (!isset($baseLinked[$via]) || $baseLinked[$via] !== $jFormId) { continue; } // must be a real link
+            if (isset($seenJoinForms[$jFormId])) { continue; } // one join per target form (MVP)
+            if (!$this->verifyFormBelongsToApp($app['id'], $jFormId)) { continue; }
+            $jViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $jFormId);
+            $jViewOwn = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $jFormId);
+            if (!$jViewAll && !$jViewOwn) { continue; }
+            $jForm = $this->formService->getForm($jFormId);
+            if (!$jForm) { continue; }
+            $seenJoinForms[$jFormId] = true;
+            $resolvedJoins[] = [
+                'formId' => $jFormId,
+                'via' => $via,
+                'type' => (($j['type'] ?? 'left') === 'inner') ? 'inner' : 'left',
+                'fields' => $jForm['fields'] ?? [],
+                'path' => $this->sqlite->getFormDbPath($jFormId),
+            ];
+        }
+
         try {
             $svc = new \FormLogic\Services\ReportService($this->sqlite);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId, $resolvedJoins);
             return $this->jsonResponse($response, $result);
         } catch (\Throwable $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run report'], 500);
