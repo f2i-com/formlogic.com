@@ -1,19 +1,25 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft,
   Search,
   Trash2,
   Eye,
   Edit2,
   Download,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Check,
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Calendar,
-  Clock,
+  Database,
+  FileJson,
+  Filter,
   Inbox,
+  Loader2,
   Share2,
   Users,
   CalendarDays,
@@ -27,6 +33,7 @@ import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent } from '../components/ui/Card';
 import { StatCard } from '../components/ui/StatCard';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Modal } from '../components/ui/Modal';
 import { Skeleton, ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -282,6 +289,8 @@ const STATUS_OPTIONS = ['submitted', 'reviewed', 'approved', 'rejected', 'archiv
 function FormResponses() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const storageMode = useFormStore((state) => state.storageMode);
   const getForm = useFormStore((state) => state.getForm);
   const refreshForms = useFormStore((state) => state.refreshForms);
@@ -306,6 +315,9 @@ function FormResponses() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   // Load form and responses
   useEffect(() => {
@@ -391,6 +403,49 @@ function FormResponses() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [storageMode, reloadResponses]);
+
+  // Close the export menu on outside click / Escape (mirrors the Analytics export menu).
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExportMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [exportMenuOpen]);
+
+  // Deep-link support: /responses/:formId?open=<responseId> (e.g. from Analytics'
+  // Recent Responses rows) opens that record's view modal once loaded, then clears
+  // the param so refresh/back doesn't re-open it.
+  const openParamHandled = useRef(false);
+  useEffect(() => {
+    if (openParamHandled.current || isLoading) return;
+    const openId = searchParams.get('open');
+    if (!openId) return;
+    openParamHandled.current = true;
+    const target = responses.find((r) => r.id === openId);
+    if (target) {
+      setSelectedResponse(target);
+      setIsViewModalOpen(true);
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('open');
+        return next;
+      },
+      { replace: true }
+    );
+  }, [isLoading, responses, searchParams, setSearchParams]);
 
   // Get display fields (first few meaningful fields)
   const displayFields = useMemo(() => {
@@ -605,9 +660,9 @@ function FormResponses() {
     setIsViewModalOpen(false);
   };
 
-  // Handle export
-  const handleExportCsv = () => {
-    // Export exactly what's shown (the search + status filter), not the full set.
+  // Client-side export of exactly what's shown (the search + status filter).
+  const handleExportFilteredCsv = () => {
+    setExportMenuOpen(false);
     if (!form || filteredResponses.length === 0) return;
 
     // Export all fields, not just displayFields (which is limited to 6 for the table UI)
@@ -644,6 +699,64 @@ function FormResponses() {
     a.download = `${sanitizeFilename(form.title)}-responses.csv`;
     a.click();
     URL.revokeObjectURL(url);
+    toast.success('Export ready', 'Your CSV download has started.');
+  };
+
+  // Server-side exports of the FULL dataset \u2014 the same endpoints Analytics uses.
+  const handleExportServerCsv = async () => {
+    if (!form) return;
+    setExportMenuOpen(false);
+    setIsExporting(true);
+    try {
+      const csv = await api.exportResponses(form.id);
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sanitizeFilename(form.title)}-responses.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Export ready', 'Your CSV download has started.');
+    } catch (error) {
+      toast.error('Export failed', error instanceof Error ? error.message : 'Could not export responses.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportJson = async () => {
+    if (!form) return;
+    setExportMenuOpen(false);
+    setIsExporting(true);
+    try {
+      await api.downloadJson(form.id, form.title);
+      toast.success('Export ready', 'Your JSON download has started.');
+    } catch (error) {
+      toast.error('Export failed', error instanceof Error ? error.message : 'Could not export JSON.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportSqlite = async () => {
+    if (!form) return;
+    setExportMenuOpen(false);
+    setIsExporting(true);
+    try {
+      await api.downloadSqlite(form.id, form.title);
+      toast.success('Export ready', 'Your SQLite download has started.');
+    } catch (error) {
+      toast.error('Export failed', error instanceof Error ? error.message : 'Could not export SQLite database.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // History-aware back: return to wherever the user came from; fall back to this
+  // form's analytics page on a fresh deep link with no in-app history.
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/analytics/${formId}`);
   };
 
   // Resolved linked-record labels for a field on a given response (empty if none/unresolved).
@@ -720,13 +833,9 @@ function FormResponses() {
   return (
     <div className="min-h-screen transition-colors">
       <Header
-        title={`${form.title} - Responses`}
+        title="Responses"
         actions={
           <div className="flex flex-wrap gap-1.5 sm:gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate(`/analytics/${formId}`)} title="Back to Analytics">
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Analytics</span>
-            </Button>
             {storageMode === 'api' && (
               <Button variant="outline" size="sm" onClick={reloadResponses} disabled={isRefreshing} title="Refresh responses">
                 <RefreshCw className={`h-4 w-4${isRefreshing ? ' animate-spin' : ''}`} />
@@ -741,23 +850,91 @@ function FormResponses() {
               <Upload className="h-4 w-4" />
               <span className="hidden lg:inline ml-2">Import</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={handleExportCsv} disabled={responses.length === 0} title="Export CSV">
-              <Download className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Export</span>
-            </Button>
+            <div className="relative" ref={exportRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setExportMenuOpen((open) => !open)}
+                disabled={isExporting || responses.length === 0}
+                title={responses.length === 0 ? 'No responses to export' : 'Export responses'}
+                aria-haspopup="menu"
+                aria-expanded={exportMenuOpen}
+              >
+                {isExporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
+                <span className="hidden lg:inline ml-2">Export</span>
+                <ChevronDown className="h-4 w-4 ml-1" />
+              </Button>
+              {exportMenuOpen && (
+                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
+                  {storageMode === 'api' && (
+                    <>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={handleExportServerCsv}
+                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <Download className="h-4 w-4 text-purple-500 dark:text-purple-400" />
+                        Export CSV
+                      </button>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={handleExportJson}
+                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <FileJson className="h-4 w-4 text-green-500 dark:text-green-400" />
+                        Export JSON
+                      </button>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={handleExportSqlite}
+                        className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer"
+                      >
+                        <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
+                        Download SQLite
+                      </button>
+                    </>
+                  )}
+                  <button
+                    role="menuitem"
+                    type="button"
+                    onClick={handleExportFilteredCsv}
+                    disabled={filteredResponses.length === 0}
+                    title={filteredResponses.length === 0 ? 'No responses match the current search and status filters' : 'Export only the rows matching the current filters'}
+                    className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    <Filter className="h-4 w-4 text-amber-500 dark:text-amber-400" />
+                    CSV (filtered view)
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         }
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
+        <PageHeader
+          title={form.title}
+          subtitle={`Responses · ${stats.total} ${stats.total === 1 ? 'record' : 'records'}`}
+          onBack={goBack}
+          backLabel="Back"
+        />
+
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <StatCard
             icon={Users}
             label="Total Responses"
             value={stats.total}
-            iconBg="bg-indigo-500/10"
-            iconColor="text-indigo-500"
+            iconBg="bg-primary-500/10"
+            iconColor="text-primary-500"
           />
           <StatCard
             icon={CalendarDays}
@@ -811,30 +988,26 @@ function FormResponses() {
                 <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
               ))}
             </select>
-            <button
-              onClick={() => toggleSort('submittedAt')}
-              className={cn(
-                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium cursor-pointer',
-                sortField === 'submittedAt'
-                  ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-primary-300 shadow-sm'
-                  : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
-              )}
-            >
-              <Calendar className="h-4 w-4" />
-              Date {sortField === 'submittedAt' && (sortDirection === 'desc' ? '↓' : '↑')}
-            </button>
-            <button
-              onClick={() => toggleSort('completionTime')}
-              className={cn(
-                'px-4 py-2.5 text-sm rounded-lg border transition-all flex items-center gap-2 font-medium cursor-pointer',
-                sortField === 'completionTime'
-                  ? 'bg-primary-50 dark:bg-primary-500/10 border-primary-200 dark:border-primary-500/50 text-primary-700 dark:text-primary-300 shadow-sm'
-                  : 'bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'
-              )}
-            >
-              <Clock className="h-4 w-4" />
-              Time {sortField === 'completionTime' && (sortDirection === 'desc' ? '↓' : '↑')}
-            </button>
+            {/* Desktop sorts from the Date/Time table headers; the card view has no
+                headers, so keep a compact sort control here for that mode only. */}
+            {cardMode && (
+              <select
+                value={`${sortField}-${sortDirection}`}
+                onChange={(e) => {
+                  const [field, direction] = e.target.value.split('-') as ['submittedAt' | 'completionTime', 'asc' | 'desc'];
+                  setSortField(field);
+                  setSortDirection(direction);
+                  setCurrentPage(1);
+                }}
+                aria-label="Sort responses"
+                className="px-3 py-2.5 text-sm rounded-lg border bg-white dark:bg-slate-900 border-gray-200 dark:border-slate-800 text-gray-600 dark:text-slate-300 font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="submittedAt-desc">Newest first</option>
+                <option value="submittedAt-asc">Oldest first</option>
+                <option value="completionTime-desc">Longest time</option>
+                <option value="completionTime-asc">Shortest time</option>
+              </select>
+            )}
           </div>
         </div>
 
@@ -881,6 +1054,13 @@ function FormResponses() {
                           {formatStatusLabel(response.status || 'submitted')}
                         </Badge>
                       </div>
+                      {response.tags && response.tags.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {response.tags.map((tag) => (
+                            <Badge key={tag} className="max-w-full"><span className="truncate">{tag}</span></Badge>
+                          ))}
+                        </div>
+                      )}
                       {displayFields.slice(0, 4).map((field) => (
                         <p key={field.id} className="mt-1 text-sm text-gray-600 dark:text-slate-300 truncate">
                           <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
@@ -912,8 +1092,22 @@ function FormResponses() {
               <table className="w-full table-fixed">
                 <thead className="bg-gray-50/50 dark:bg-slate-900/50 border-b border-gray-200 dark:border-slate-800">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-44">
-                      Date
+                    <th
+                      aria-sort={sortField === 'submittedAt' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
+                      className="px-4 py-3 text-left w-44"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSort('submittedAt')}
+                        className="group inline-flex items-center gap-1 rounded text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                      >
+                        Date
+                        {sortField === 'submittedAt' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                        ) : (
+                          <ArrowUpDown className="h-3.5 w-3.5 opacity-40 group-hover:opacity-70 transition-opacity" aria-hidden="true" />
+                        )}
+                      </button>
                     </th>
                     {visibleFields.map((field) => (
                       <th
@@ -924,8 +1118,22 @@ function FormResponses() {
                         <span className="truncate block">{field.label}</span>
                       </th>
                     ))}
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-20">
-                      Time
+                    <th
+                      aria-sort={sortField === 'completionTime' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : undefined}
+                      className="px-4 py-3 text-left w-20"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSort('completionTime')}
+                        className="group inline-flex items-center gap-1 rounded text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider hover:text-gray-700 dark:hover:text-slate-300 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                      >
+                        Time
+                        {sortField === 'completionTime' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+                        ) : (
+                          <ArrowUpDown className="h-3.5 w-3.5 opacity-40 group-hover:opacity-70 transition-opacity" aria-hidden="true" />
+                        )}
+                      </button>
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider w-28">
                       Status
@@ -938,8 +1146,15 @@ function FormResponses() {
                 <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/20">
                   {paginatedResponses.map((response) => (
                     <tr key={response.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                        {formatDate(response.submittedAt)}
+                      <td className="px-4 py-4 text-sm text-gray-900 dark:text-white">
+                        <span className="whitespace-nowrap">{formatDate(response.submittedAt)}</span>
+                        {response.tags && response.tags.length > 0 && (
+                          <span className="mt-1 flex flex-wrap gap-1">
+                            {response.tags.map((tag) => (
+                              <Badge key={tag} className="max-w-full"><span className="truncate">{tag}</span></Badge>
+                            ))}
+                          </span>
+                        )}
                       </td>
                       {visibleFields.map((field) => {
                         const isLinked = field.type === 'linked_record';
@@ -1072,6 +1287,26 @@ function FormResponses() {
                     </div>
                   </div>
                 ))}
+              {/* Computed values (set by the form's logic script) */}
+              {selectedResponse.computed && Object.keys(selectedResponse.computed).length > 0 && (
+                <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
+                  <h3 className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Computed</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {Object.entries(selectedResponse.computed).map(([key, value]) => (
+                      <div key={key} className="min-w-0">
+                        <p className="text-xs text-gray-500 dark:text-slate-400 truncate" title={key}>{key}</p>
+                        <p className="text-gray-900 dark:text-white break-words mt-0.5">
+                          {value === null || value === undefined
+                            ? '—'
+                            : typeof value === 'object'
+                              ? JSON.stringify(value)
+                              : String(value)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Metadata */}
               <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
                 <h3 className="text-sm font-medium text-gray-500 dark:text-slate-400 mb-3">Metadata</h3>
@@ -1107,6 +1342,16 @@ function FormResponses() {
                       </Badge>
                     )}
                   </div>
+                  {selectedResponse.tags && selectedResponse.tags.length > 0 && (
+                    <div className="col-span-2">
+                      <p className="text-gray-500 dark:text-slate-400 mb-1">Tags</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedResponse.tags.map((tag) => (
+                          <Badge key={tag}>{tag}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {selectedResponse.metadata?.userAgent && (
                     <div className="col-span-2">
                       <p className="text-gray-500 dark:text-slate-400">User Agent</p>

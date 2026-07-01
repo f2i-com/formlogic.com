@@ -227,9 +227,9 @@ export function AppFormManager() {
   return (
     <div className="min-h-screen">
       <Header
-        title="Manage Forms"
+        title="Manage forms"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -240,7 +240,7 @@ export function AppFormManager() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Available forms */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available Forms</h3>
+          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available forms</h3>
           <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2 mb-3">Standalone forms not yet part of any app.</p>
           {availableForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">
@@ -265,7 +265,7 @@ export function AppFormManager() {
 
         {/* Included forms */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Included Forms ({appForms.length})</h3>
+          <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Included forms ({appForms.length})</h3>
           {appForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">No forms included yet</p>
           ) : (
@@ -358,13 +358,13 @@ export function AppFormManager() {
         isOpen={!!removeConfirm}
         onClose={() => setRemoveConfirm(null)}
         onConfirm={() => removeConfirm && handleRemoveConfirmed(removeConfirm.formId)}
-        title={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Linked Record Dependencies' : 'Remove form from app?'}
+        title={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Linked record dependencies' : 'Remove form from app?'}
         message={removeConfirm
           ? (removeConfirm.affectedFields.length > 0
               ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\nAre you sure you want to remove this form?`
               : `Remove "${removeConfirm.formName}" from this app? It will stop appearing in the app. The form and its responses are kept.`)
           : ''}
-        confirmLabel={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Remove Anyway' : 'Remove'}
+        confirmLabel={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Remove anyway' : 'Remove'}
         variant="danger"
       />
     </div>

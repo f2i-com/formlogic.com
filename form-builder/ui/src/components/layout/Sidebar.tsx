@@ -6,7 +6,7 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Globe,
+  Boxes,
   Stethoscope,
   Cloud,
   HardDrive,
@@ -21,7 +21,8 @@ import { Logo } from '../ui/Logo';
 const navItems = [
   { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/forms', icon: FileText, label: 'My Forms' },
-  { path: '/apps', icon: Globe, label: 'Apps' },
+  // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
+  { path: '/apps', icon: Boxes, label: 'Apps' },
   { path: '/settings', icon: Settings, label: 'Settings' },
   { path: '/doctor', icon: Stethoscope, label: 'Doctor' },
 ];

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download } from 'lucide-react';
+import { useState, useEffect, type CSSProperties } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -10,6 +10,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/Tabs';
+import { IconPicker } from '../../components/ui/IconPicker';
+import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { cn } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
 import type { App, AppRole, AppForm } from '../../types/app';
@@ -21,10 +23,16 @@ const tabs = [
   { label: 'Manage', value: 'manage', icon: LayoutGrid },
 ];
 
+const TAB_VALUES = tabs.map((t) => t.value);
+
+// The accent hex lands in an inline CSS custom property, so keep the format strict.
+const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
+
 export function AppSettings() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { updateApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { updateApp, deleteApp, fetchApps, fetchRoles, fetchAppForms } = useAppStore();
   const [app, setApp] = useState<App | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -38,6 +46,20 @@ export function AppSettings() {
   const [initialSnapshot, setInitialSnapshot] = useState('');
   const [pendingNav, setPendingNav] = useState<string | null>(null);
   const [showMcp, setShowMcp] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Active tab lives in ?tab= so refresh and Back (e.g. from the Manage sub-pages)
+  // return to the same section. `replace` keeps tab flips out of the history stack.
+  const tabParam = searchParams.get('tab');
+  const activeTab = tabParam && TAB_VALUES.includes(tabParam) ? tabParam : 'general';
+  const setActiveTab = (value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value === 'general') next.delete('tab'); else next.set('tab', value);
+      return next;
+    }, { replace: true });
+  };
 
   useEffect(() => {
     fetchApps().then(() => {
@@ -85,7 +107,7 @@ export function AppSettings() {
       <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
         <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
         <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don’t have access.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to Apps</Button>
+        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to apps</Button>
       </div>
     );
   }
@@ -112,6 +134,22 @@ export function AppSettings() {
       setInitialSnapshot(JSON.stringify(app)); // edits are now persisted
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
+    }
+  };
+
+  // Same flow as the Apps dashboard: the store deletes + toasts on failure. Only
+  // leave the page when the app is actually gone from the store.
+  const handleDeleteConfirmed = async () => {
+    if (!appId || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteApp(appId);
+      if (!useAppStore.getState().getApp(appId)) {
+        setShowDelete(false);
+        navigate('/apps');
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -152,9 +190,12 @@ export function AppSettings() {
             <Button variant="ghost" size="sm" onClick={() => navGuarded('/apps')} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
-              {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save'}
-            </Button>
+            {/* Nothing on the Manage tab is savable — hide the Save action there. */}
+            {activeTab !== 'manage' && (
+              <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
+                {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save'}
+              </Button>
+            )}
           </>
         }
       />
@@ -162,7 +203,7 @@ export function AppSettings() {
       <div className="max-w-4xl mx-auto">
 
       {/* Tab navigation */}
-      <Tabs defaultValue="general">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList variant="underline" aria-label="App settings sections" className="mb-6">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -178,7 +219,7 @@ export function AppSettings() {
           <TabsContent value="general">
           <div className="space-y-4">
             <div>
-              <label htmlFor="app-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App Name</label>
+              <label htmlFor="app-name" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App name</label>
               <input id="app-name" type="text" value={app.name}
                 onChange={(e) => { setApp({ ...app, name: e.target.value }); if (nameError) setNameError(null); }}
                 onBlur={(e) => setNameError(e.target.value.trim().length < 2 ? 'Name must be at least 2 characters' : null)}
@@ -225,12 +266,43 @@ export function AppSettings() {
                 <option value="published">Published</option>
                 <option value="archived">Archived</option>
               </select>
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Archived: hidden from members; data kept.</p>
             </div>
             <div>
               <label htmlFor="app-logo" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Logo URL</label>
               <input id="app-logo" type="text" value={app.logoUrl || ''} onChange={(e) => setApp({ ...app, logoUrl: e.target.value })}
                 placeholder="https://example.com/logo.png"
                 className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
+            </div>
+            <div>
+              <span className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App icon</span>
+              <div className="flex items-center gap-3">
+                {/* Live preview: the icon on a tile tinted with the app's accent color. */}
+                {(() => {
+                  const accent = app.theme?.primaryColor;
+                  const accented = isHexColor(accent);
+                  return (
+                    <div
+                      style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
+                      className={cn(
+                        'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0',
+                        accented
+                          ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
+                          : 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400'
+                      )}
+                      aria-hidden="true"
+                    >
+                      <DynamicIcon
+                        name={app.settings?.icon}
+                        className="h-5 w-5"
+                        fallback={<span className="text-sm font-semibold">{(app.name.trim()[0] || '?').toUpperCase()}</span>}
+                      />
+                    </div>
+                  );
+                })()}
+                <IconPicker value={app.settings?.icon} onChange={(name) => updateSetting('icon', name ?? undefined)} />
+                <p className="text-xs text-gray-400 dark:text-slate-500 min-w-0">Shown on the app card and tiles when there's no logo.</p>
+              </div>
             </div>
 
             {/* Membership */}
@@ -293,6 +365,20 @@ export function AppSettings() {
                 description="Render the app full-screen without the sidebar and menu — for self-contained apps (e.g. a single custom home screen). Members navigate from within the screen."
               />
             </div>
+
+            {/* Danger zone */}
+            <div className="pt-4 border-t border-gray-100 dark:border-slate-800">
+              <h3 className="text-sm font-medium text-red-700 dark:text-red-400 mb-3">Danger zone</h3>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-red-200/80 dark:border-red-500/20 bg-red-50/50 dark:bg-red-500/5 p-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">Delete this app</p>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">Permanently removes the app with all its forms, members, roles, and data. This cannot be undone.</p>
+                </div>
+                <Button variant="danger" size="sm" className="flex-shrink-0 self-start sm:self-auto" onClick={() => setShowDelete(true)} leftIcon={<Trash2 className="h-4 w-4" />}>
+                  Delete app
+                </Button>
+              </div>
+            </div>
           </div>
           </TabsContent>
 
@@ -300,16 +386,17 @@ export function AppSettings() {
           <div className="space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Primary Color</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Accent color</label>
                 <div className="flex gap-2 items-center">
-                  <input type="color" aria-label="Primary color picker" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })} className="h-10 w-10 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
-                  <input type="text" aria-label="Primary color hex value" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })}
+                  <input type="color" aria-label="Accent color picker" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })} className="h-10 w-10 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
+                  <input type="text" aria-label="Accent color hex value" value={app.theme?.primaryColor || '#6366f1'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, primaryColor: e.target.value } })}
                     onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setApp({ ...app, theme: { ...app.theme, primaryColor: '#6366f1' } }); }}
                     className="flex-1 px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm font-mono focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
                 </div>
+                <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Buttons, links and highlights inside the app.</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Background Color</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Background color</label>
                 <div className="flex gap-2 items-center">
                   <input type="color" aria-label="Background color picker" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })} className="h-10 w-10 rounded-lg border border-gray-200 dark:border-slate-600 cursor-pointer" />
                   <input type="text" aria-label="Background color hex value" value={app.theme?.backgroundColor || '#ffffff'} onChange={(e) => setApp({ ...app, theme: { ...app.theme, backgroundColor: e.target.value } })}
@@ -351,7 +438,7 @@ export function AppSettings() {
               );
             })()}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Font Family</label>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">Font family</label>
               <select aria-label="Font family" value={app.theme?.fontFamily || DEFAULT_APP_THEME.fontFamily} onChange={(e) => setApp({ ...app, theme: { ...app.theme, fontFamily: e.target.value } })}
                 className="px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
                 <option value="DM Sans">DM Sans</option>
@@ -375,7 +462,7 @@ export function AppSettings() {
                   <span className="font-semibold text-sm" style={{ color: app.theme?.primaryColor || '#6366f1' }}>{app.name}</span>
                 </div>
                 <div className="rounded-lg px-4 py-2 text-sm font-medium inline-block" style={{ backgroundColor: app.theme?.primaryColor || '#6366f1', color: readableForegroundColor(app.theme?.primaryColor || '#6366f1') }}>
-                  Sample Button
+                  Sample button
                 </div>
               </div>
             </div>
@@ -395,7 +482,7 @@ export function AppSettings() {
               <button
                 key={item.path}
                 onClick={() => navGuarded(`/apps/${appId}/${item.path}`)}
-                className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+                className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
               >
                 <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
                   <item.icon className="h-5 w-5 text-primary-600 dark:text-primary-400" />
@@ -408,7 +495,7 @@ export function AppSettings() {
             ))}
             <button
               onClick={() => setShowMcp(true)}
-              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
             >
               <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
                 <Plug className="h-5 w-5 text-primary-600 dark:text-primary-400" />
@@ -421,7 +508,7 @@ export function AppSettings() {
             <button
               onClick={handleExport}
               disabled={exporting}
-              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
             >
               <div className="p-2 rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
                 <Download className="h-5 w-5 text-primary-600 dark:text-primary-400" />
@@ -445,6 +532,16 @@ export function AppSettings() {
         message="You have unsaved changes to this app. If you leave now, they'll be lost."
         confirmLabel="Discard changes"
         variant="danger"
+      />
+      <ConfirmDialog
+        isOpen={showDelete}
+        onClose={() => { if (!deleting) setShowDelete(false); }}
+        onConfirm={handleDeleteConfirmed}
+        title="Delete app"
+        message={`Are you sure you want to delete "${app.name}"? This will permanently remove all forms, users, roles, and data associated with this app. This action cannot be undone.`}
+        confirmLabel="Delete app"
+        variant="danger"
+        isLoading={deleting}
       />
       <ConnectAiModal isOpen={showMcp} onClose={() => setShowMcp(false)} appId={appId} appName={app?.name} />
     </div>

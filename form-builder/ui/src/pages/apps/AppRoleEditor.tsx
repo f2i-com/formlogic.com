@@ -158,9 +158,9 @@ export function AppRoleEditor() {
   return (
     <div className="min-h-screen">
       <Header
-        title="Roles & Permissions"
+        title="Roles & permissions"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navGuarded(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navGuarded(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -235,7 +235,7 @@ export function AppRoleEditor() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Permissions for "{selectedRole.name}"</h3>
                 <Button size="sm" onClick={handleSavePermissions} disabled={saving || isOwnerRole || !dirty}>
-                  {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save Permissions'}
+                  {saving ? 'Saving...' : saveSuccess ? 'Saved!' : 'Save permissions'}
                 </Button>
               </div>
               {isOwnerRole ? (
@@ -261,9 +261,9 @@ export function AppRoleEditor() {
         isOpen={deleteRoleId !== null}
         onClose={() => setDeleteRoleId(null)}
         onConfirm={() => { if (deleteRoleId) { handleDeleteRole(deleteRoleId); setDeleteRoleId(null); } }}
-        title="Delete Role"
+        title="Delete role"
         message={`Are you sure you want to delete the role "${roles.find((r) => r.id === deleteRoleId)?.name}"? Users with this role will need to be reassigned.`}
-        confirmLabel="Delete Role"
+        confirmLabel="Delete role"
         variant="danger"
       />
       <ConfirmDialog

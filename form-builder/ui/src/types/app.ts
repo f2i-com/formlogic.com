@@ -16,6 +16,8 @@ export interface AppSettings {
   allowSelfRegistration: boolean;
   requireApproval: boolean;
   defaultRoleId?: string;
+  /** Lucide icon name (curated ICON_MAP) shown on the app's identity tile when there's no logo. */
+  icon?: string;
   // 'dashboard' (default) or a specific formId the member lands on.
   landingPage: 'dashboard' | string;
   showBranding: boolean;
@@ -230,16 +232,16 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 };
 
 export const APP_PERMISSION_LABELS: Record<PermissionAction, string> = {
-  manage_app: 'Manage App',
-  manage_users: 'Manage Users',
-  manage_roles: 'Manage Roles',
-  view_analytics: 'View Analytics',
-  submit_responses: 'Submit Responses',
-  view_own_responses: 'View Own Responses',
-  view_all_responses: 'View All Responses',
-  edit_responses: 'Edit Responses',
-  delete_responses: 'Delete Responses',
-  export_responses: 'Export Responses',
+  manage_app: 'Manage app',
+  manage_users: 'Manage users',
+  manage_roles: 'Manage roles',
+  view_analytics: 'View analytics',
+  submit_responses: 'Submit responses',
+  view_own_responses: 'View own responses',
+  view_all_responses: 'View all responses',
+  edit_responses: 'Edit responses',
+  delete_responses: 'Delete responses',
+  export_responses: 'Export responses',
 };
 
 export const APP_LEVEL_PERMISSIONS: PermissionAction[] = [

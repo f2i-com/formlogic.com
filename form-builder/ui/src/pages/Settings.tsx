@@ -3,6 +3,7 @@ import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
+import { PasswordInput } from '../components/ui/PasswordInput';
 import { Button } from '../components/ui/Button';
 import { Spinner } from '../components/ui/Spinner';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -30,6 +31,7 @@ import {
   Trash2,
   Plus,
   AlertTriangle,
+  AlertCircle,
   Download,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
@@ -63,6 +65,38 @@ function getStoredPreferences(): UserPreferences {
 function savePreferences(prefs: UserPreferences): void {
   localStorage.setItem('formlogic_user_preferences', JSON.stringify(prefs));
 }
+
+// Inline error banner matching the auth pages' alert pattern
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div role="alert" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20">
+      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+// In-page anchor rail sections (order mirrors the cards below)
+const SECTIONS = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'notifications', label: 'Notifications' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'form-defaults', label: 'Form defaults' },
+  { id: 'security', label: 'Security' },
+  { id: 'api-keys', label: 'API keys' },
+  { id: 'mcp', label: 'MCP' },
+  { id: 'audit', label: 'Audit' },
+  { id: 'your-data', label: 'Your data' },
+  { id: 'danger', label: 'Danger zone' },
+] as const;
+
+// API-key expiry choices (days; 'never' = no expiresAt sent)
+const EXPIRY_OPTIONS = [
+  { value: 'never', label: 'Never expires' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '365', label: '365 days' },
+] as const;
 
 // Section Header Component
 function SectionHeader({
@@ -132,6 +166,7 @@ export function Settings() {
   const [showCreateKey, setShowCreateKey] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
   const [newKeyScopes, setNewKeyScopes] = useState<string[]>([]);
+  const [newKeyExpiry, setNewKeyExpiry] = useState<string>('never');
   const [isCreatingKey, setIsCreatingKey] = useState(false);
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [copiedKey, setCopiedKey] = useState(false);
@@ -291,12 +326,16 @@ export function Settings() {
 
     setIsCreatingKey(true);
     try {
-      const result = await api.createApiKey({ name: newKeyName.trim(), scopes: newKeyScopes });
+      const expiresAt = newKeyExpiry === 'never'
+        ? undefined
+        : new Date(Date.now() + Number(newKeyExpiry) * 24 * 60 * 60 * 1000).toISOString();
+      const result = await api.createApiKey({ name: newKeyName.trim(), scopes: newKeyScopes, ...(expiresAt ? { expiresAt } : {}) });
       if (result.data) {
         setCreatedKey(result.data.key);
         setShowCreateKey(false);
         setNewKeyName('');
         setNewKeyScopes([]);
+        setNewKeyExpiry('never');
         loadApiKeys();
       } else {
         toast.error('Failed to create API key', result.error || 'Unknown error');
@@ -367,16 +406,18 @@ export function Settings() {
     <div className="min-h-screen">
       <Header title="Settings" />
 
-      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto space-y-6">
+      <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
+        <div className="lg:flex lg:items-start lg:gap-8">
+        <div className="min-w-0 flex-1 space-y-6">
         {/* Profile Settings */}
-        <Card className="overflow-hidden">
+        <Card id="profile" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={User}
               title="Profile"
               description="Manage your personal information"
-              iconBg="bg-indigo-50 dark:bg-indigo-500/10"
-              iconColor="text-indigo-600 dark:text-indigo-400"
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               <Input
@@ -393,9 +434,8 @@ export function Settings() {
                 onChange={(e) => setEmail(e.target.value)}
               />
               {emailChanged && (
-                <Input
+                <PasswordInput
                   label="Current password"
-                  type="password"
                   placeholder="Required to change your email"
                   value={profilePassword}
                   onChange={(e) => setProfilePassword(e.target.value)}
@@ -416,7 +456,7 @@ export function Settings() {
         </Card>
 
         {/* Notification Settings */}
-        <Card className="overflow-hidden">
+        <Card id="notifications" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Bell}
@@ -441,7 +481,7 @@ export function Settings() {
         </Card>
 
         {/* Appearance Settings */}
-        <Card className="overflow-hidden">
+        <Card id="appearance" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Palette}
@@ -500,7 +540,7 @@ export function Settings() {
         </Card>
 
         {/* Default Form Settings */}
-        <Card className="overflow-hidden">
+        <Card id="form-defaults" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Settings2}
@@ -545,7 +585,7 @@ export function Settings() {
         </Card>
 
         {/* Security Section */}
-        <Card className="overflow-hidden">
+        <Card id="security" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Shield}
@@ -559,30 +599,28 @@ export function Settings() {
                 <Lock className="h-4 w-4 text-gray-500 dark:text-slate-400" />
                 <h3 className="font-medium text-gray-900 dark:text-white">Change Password</h3>
               </div>
-              <Input
+              <PasswordInput
                 label="Current Password"
-                type="password"
                 placeholder="Enter current password"
                 value={currentPassword}
                 onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); }}
+                autoComplete="current-password"
               />
-              <Input
+              <PasswordInput
                 label="New Password"
-                type="password"
                 placeholder="Enter new password (min 10 characters)"
                 value={newPassword}
                 onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); }}
+                autoComplete="new-password"
               />
-              <Input
+              <PasswordInput
                 label="Confirm New Password"
-                type="password"
                 placeholder="Confirm new password"
                 value={confirmPassword}
                 onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); }}
+                autoComplete="new-password"
               />
-              {passwordError && (
-                <p role="alert" className="text-sm text-red-500">{passwordError}</p>
-              )}
+              {passwordError && <ErrorBanner message={passwordError} />}
               <div className="pt-2">
                 <Button
                   onClick={handleChangePassword}
@@ -597,14 +635,14 @@ export function Settings() {
         </Card>
 
         {/* API Keys Section */}
-        <Card className="overflow-hidden">
+        <Card id="api-keys" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Key}
               title="API Keys"
               description="Manage API keys for external integrations"
-              iconBg="bg-amber-50 dark:bg-amber-500/10"
-              iconColor="text-amber-600 dark:text-amber-400"
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
             />
             <div className="space-y-4 ml-0 sm:ml-14">
               {/* Created key display (one-time) */}
@@ -660,7 +698,7 @@ export function Settings() {
                           key={scope.id}
                           className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                             newKeyScopes.includes(scope.id)
-                              ? 'border-amber-400 dark:border-amber-500/50 bg-amber-50 dark:bg-amber-500/10'
+                              ? 'border-primary-400 dark:border-primary-500/50 bg-primary-50 dark:bg-primary-500/10'
                               : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
                           }`}
                         >
@@ -668,7 +706,7 @@ export function Settings() {
                             type="checkbox"
                             checked={newKeyScopes.includes(scope.id)}
                             onChange={() => toggleScope(scope.id)}
-                            className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-amber-500 focus:ring-amber-500"
+                            className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 accent-primary-600 focus:ring-primary-500"
                           />
                           <div>
                             <p className="text-sm font-medium text-gray-900 dark:text-white">{scope.label}</p>
@@ -677,6 +715,21 @@ export function Settings() {
                         </label>
                       ))}
                     </div>
+                  </div>
+                  <div>
+                    <label htmlFor="api-key-expiry" className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5 block">
+                      Expiration
+                    </label>
+                    <select
+                      id="api-key-expiry"
+                      value={newKeyExpiry}
+                      onChange={(e) => setNewKeyExpiry(e.target.value)}
+                      className="block w-full sm:max-w-xs rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/60 px-3.5 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
+                    >
+                      {EXPIRY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
                   </div>
                   <div className="flex gap-2">
                     <Button
@@ -688,7 +741,7 @@ export function Settings() {
                     </Button>
                     <Button
                       variant="secondary"
-                      onClick={() => { setShowCreateKey(false); setNewKeyName(''); setNewKeyScopes([]); }}
+                      onClick={() => { setShowCreateKey(false); setNewKeyName(''); setNewKeyScopes([]); setNewKeyExpiry('never'); }}
                     >
                       Cancel
                     </Button>
@@ -739,7 +792,7 @@ export function Settings() {
                           {key.scopes.map((scope) => (
                             <span
                               key={scope}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-medium"
+                              className="text-[10px] px-1.5 py-0.5 rounded bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 font-medium"
                             >
                               {scope}
                             </span>
@@ -750,6 +803,12 @@ export function Settings() {
                             ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}`
                             : 'Never used'}
                           {' · '}Created {parseServerDate(key.createdAt).toLocaleDateString()}
+                          {' · '}{key.expiresAt
+                            ? `Expires ${parseServerDate(key.expiresAt).toLocaleDateString()}`
+                            : 'Never expires'}
+                          {' · '}{key.formIds && key.formIds.length > 0
+                            ? `${key.formIds.length} ${key.formIds.length === 1 ? 'form' : 'forms'}`
+                            : 'All forms'}
                         </p>
                       </div>
                       <button
@@ -768,7 +827,7 @@ export function Settings() {
         </Card>
 
         {/* Connect an AI (MCP) Section */}
-        <Card className="overflow-hidden">
+        <Card id="mcp" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Plug}
@@ -786,7 +845,7 @@ export function Settings() {
         </Card>
 
         {/* Audit & Compliance Section */}
-        <Card className="overflow-hidden">
+        <Card id="audit" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
               icon={Shield}
@@ -840,17 +899,17 @@ export function Settings() {
           </CardContent>
         </Card>
 
-        {/* Danger Zone */}
-        <Card className="overflow-hidden border-red-200/70 dark:border-red-500/30">
+        {/* Your Data */}
+        <Card id="your-data" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
             <SectionHeader
-              icon={AlertTriangle}
-              title="Danger Zone"
-              description="Export or permanently delete your account data"
-              iconBg="bg-red-50 dark:bg-red-500/10"
-              iconColor="text-red-600 dark:text-red-400"
+              icon={Download}
+              title="Your data"
+              description="Download a copy of your account data"
+              iconBg="bg-sky-50 dark:bg-sky-500/10"
+              iconColor="text-sky-600 dark:text-sky-400"
             />
-            <div className="space-y-3 ml-0 sm:ml-14">
+            <div className="ml-0 sm:ml-14">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Download my data</p>
@@ -860,6 +919,21 @@ export function Settings() {
                   Export
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Danger Zone */}
+        <Card id="danger" className="overflow-hidden scroll-mt-24 border-red-200/70 dark:border-red-500/30">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={AlertTriangle}
+              title="Danger Zone"
+              description="Permanently delete your account and its data"
+              iconBg="bg-red-50 dark:bg-red-500/10"
+              iconColor="text-red-600 dark:text-red-400"
+            />
+            <div className="ml-0 sm:ml-14">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-red-200/70 dark:border-red-500/30 bg-red-50/40 dark:bg-red-500/5">
                 <div>
                   <p className="font-medium text-gray-900 dark:text-white">Delete account</p>
@@ -872,6 +946,24 @@ export function Settings() {
             </div>
           </CardContent>
         </Card>
+        </div>
+
+        {/* Sticky anchor rail (lg+) */}
+        <nav aria-label="Settings sections" className="hidden lg:block w-44 shrink-0 sticky top-24">
+          <ul className="space-y-0.5 text-sm">
+            {SECTIONS.map((section) => (
+              <li key={section.id}>
+                <a
+                  href={`#${section.id}`}
+                  className="block px-3 py-1.5 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+                >
+                  {section.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        </div>
       </div>
 
       <Modal isOpen={deleteAccountOpen} onClose={() => setDeleteAccountOpen(false)} title="Delete account" size="sm">
@@ -880,15 +972,14 @@ export function Settings() {
             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
             <span>This permanently deletes your account and all forms, responses, and apps you own. This cannot be undone.</span>
           </div>
-          <Input
+          <PasswordInput
             label="Confirm your password"
-            type="password"
             value={deletePassword}
             onChange={(e) => setDeletePassword(e.target.value)}
             placeholder="Your current password"
             autoComplete="current-password"
           />
-          {deleteError && <p className="text-sm text-red-600 dark:text-red-400">{deleteError}</p>}
+          {deleteError && <ErrorBanner message={deleteError} />}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setDeleteAccountOpen(false)} disabled={isDeletingAccount}>Cancel</Button>
             <Button variant="danger" onClick={handleDeleteAccount} isLoading={isDeletingAccount} disabled={!deletePassword}>Delete my account</Button>

@@ -1,6 +1,7 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload } from 'lucide-react';
+import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -18,6 +19,10 @@ import { cn, formatRelativeTime } from '../../lib/utils';
 import type { App } from '../../types/app';
 
 const APPS_PAGE = 9;
+
+// Accent hex lands in an inline CSS custom property, so keep the format strict
+// (mirrors the marketplace's DemoAppCard identity-tile pattern).
+const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
 
 export function AppsDashboard() {
   const navigate = useNavigate();
@@ -79,7 +84,7 @@ export function AppsDashboard() {
               Import
             </Button>
             <Button size="sm" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
-              Create App
+              Create app
             </Button>
           </div>
         }
@@ -161,9 +166,9 @@ export function AppsDashboard() {
           try { await deleteApp(deleteTarget.id); setDeleteTarget(null); }
           finally { setDeleting(false); }
         }}
-        title="Delete App"
+        title="Delete app"
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This will permanently remove all forms, users, roles, and data associated with this app. This action cannot be undone.`}
-        confirmLabel="Delete App"
+        confirmLabel="Delete app"
         variant="danger"
         isLoading={deleting}
       />
@@ -175,6 +180,12 @@ export function AppsDashboard() {
 }
 
 function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: string | null; onClick: () => void; onDelete: () => void }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  // App identity tile: logo image → curated icon on the app's accent → Globe fallback.
+  const showLogo = Boolean(app.logoUrl) && !imgFailed;
+  const icon = app.settings?.icon;
+  const accent = app.theme?.primaryColor;
+  const accented = !showLogo && Boolean(icon) && isHexColor(accent);
   return (
     <div
       role="button"
@@ -190,14 +201,31 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
     >
       <div className="flex items-start justify-between gap-2 mb-4">
         <div className="flex items-center gap-3 min-w-0">
-          {app.logoUrl ? (
-            <img src={app.logoUrl} alt={app.name} className="w-10 h-10 rounded-xl object-cover flex-shrink-0"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-          ) : (
-            <div className="w-10 h-10 rounded-xl bg-primary-100 dark:bg-primary-500/20 flex items-center justify-center flex-shrink-0">
-              <Globe className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            </div>
-          )}
+          <div
+            style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
+            className={cn(
+              'w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden',
+              showLogo
+                ? 'bg-gray-50 dark:bg-slate-800/60'
+                : accented
+                  ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
+                  : 'bg-primary-100 dark:bg-primary-500/20 text-primary-600 dark:text-primary-400'
+            )}
+          >
+            {showLogo ? (
+              <img
+                src={app.logoUrl}
+                alt=""
+                loading="lazy"
+                onError={() => setImgFailed(true)}
+                className="h-full w-full object-cover"
+              />
+            ) : icon ? (
+              <DynamicIcon name={icon} className="h-5 w-5" fallback={<Globe className="h-5 w-5" />} />
+            ) : (
+              <Globe className="h-5 w-5" />
+            )}
+          </div>
           <div className="min-w-0">
             <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors truncate">
               {app.name}

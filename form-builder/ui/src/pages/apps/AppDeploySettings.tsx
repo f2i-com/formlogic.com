@@ -50,7 +50,7 @@ export function AppDeploySettings() {
       <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
         <p className="text-lg font-medium text-gray-700 dark:text-slate-300">App not found</p>
         <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">It may have been deleted, or you don’t have access.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to Apps</Button>
+        <Button variant="outline" className="mt-4" onClick={() => navigate('/apps')}>Back to apps</Button>
       </div>
     );
   }
@@ -111,9 +111,9 @@ export function AppDeploySettings() {
   return (
     <div className="min-h-screen">
       <Header
-        title="Deploy & Share"
+        title="Deploy & share"
         actions={
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
             Back
           </Button>
         }
@@ -138,7 +138,7 @@ export function AppDeploySettings() {
           <div className="bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200/80 dark:border-yellow-500/20 rounded-2xl p-6">
             <h3 className="font-medium text-yellow-800 dark:text-yellow-400 mb-2 tracking-tight">App is not published</h3>
             <p className="text-sm text-yellow-700 dark:text-yellow-300/70 mb-4">Publish your app to make it accessible to users.</p>
-            <Button onClick={handlePublish} disabled={publishing} isLoading={publishing}>Publish App</Button>
+            <Button onClick={handlePublish} disabled={publishing} isLoading={publishing}>Publish app</Button>
           </div>
         )}
 
@@ -146,7 +146,7 @@ export function AppDeploySettings() {
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
           <div className="flex items-center gap-3 mb-4">
             <Globe className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Share Link</h3>
+            <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Share link</h3>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -202,7 +202,7 @@ export function AppDeploySettings() {
             <Button size="sm" onClick={handleSavePwa} isLoading={savingPwa} disabled={savingPwa}>Save PWA settings</Button>
           </div>
           <div className="bg-gray-50 dark:bg-slate-800 rounded-xl p-4 text-sm text-gray-600 dark:text-slate-400">
-            <p className="font-medium mb-2">Install Instructions:</p>
+            <p className="font-medium mb-2">Install instructions:</p>
             <ol className="list-decimal list-inside space-y-1">
               <li>Open the app URL on a mobile device</li>
               <li>In Chrome: tap the menu and select "Install app"</li>

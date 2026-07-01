@@ -5,6 +5,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { api, type DeepHealth, type DeepHealthCheck } from '../lib/api';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { parseServerDate } from '../lib/utils';
 
 type Severity = 'ok' | 'warn' | 'fail';
 
@@ -139,7 +140,7 @@ export function Doctor() {
             </div>
 
             {data.timestamp && (
-              <p className="mt-6 text-xs text-gray-400 dark:text-slate-500">Checked {new Date(data.timestamp).toLocaleString()}</p>
+              <p className="mt-6 text-xs text-gray-400 dark:text-slate-500">Checked {parseServerDate(data.timestamp).toLocaleString()}</p>
             )}
           </>
         ) : null}

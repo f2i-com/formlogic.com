@@ -198,13 +198,13 @@ export function AppUserManager() {
   return (
     <div className="min-h-screen">
       <Header
-        title="Users & Access"
+        title="Users & access"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
-            <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite User</Button>
+            <Button size="sm" onClick={() => setShowInviteModal(true)} leftIcon={<UserPlus className="h-4 w-4" />}>Invite user</Button>
           </>
         }
       />
@@ -274,7 +274,7 @@ export function AppUserManager() {
           <div className="flex gap-2 mb-4">
             <input type="text" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} placeholder="New group name"
               className="flex-1 max-w-xs px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm transition-all duration-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent" />
-            <Button size="sm" onClick={handleCreateGroup} isLoading={creatingGroup} disabled={!newGroupName.trim() || creatingGroup}>Create Group</Button>
+            <Button size="sm" onClick={handleCreateGroup} isLoading={creatingGroup} disabled={!newGroupName.trim() || creatingGroup}>Create group</Button>
           </div>
           <DataTable
             data={appGroups as unknown as Record<string, unknown>[]}
@@ -300,7 +300,7 @@ export function AppUserManager() {
     </div>
     </div>
 
-      <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite User" size="sm">
+      <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite user" size="sm">
         {inviteLink ? (
           <div className="p-6 space-y-4">
             <div className="flex items-center gap-2 p-3 text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 rounded-lg border border-green-200 dark:border-green-500/20">
@@ -345,7 +345,7 @@ export function AppUserManager() {
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={closeInviteModal}>Cancel</Button>
-            <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send Invitation</Button>
+            <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send invitation</Button>
           </div>
         </div>
         )}
@@ -388,7 +388,7 @@ export function AppUserManager() {
         </div>
       </Modal>
 
-      <Modal isOpen={editingUser !== null} onClose={() => setEditingUser(null)} title="Edit Member" size="sm">
+      <Modal isOpen={editingUser !== null} onClose={() => setEditingUser(null)} title="Edit member" size="sm">
         <div className="p-6 space-y-4">
           <div>
             <p className="text-sm font-medium text-gray-900 dark:text-white">{editingUser?.name || editingUser?.email}</p>

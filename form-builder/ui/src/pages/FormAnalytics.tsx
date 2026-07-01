@@ -1,19 +1,20 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick } from 'lucide-react';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
 import { Button } from '../components/ui/Button';
 import { Card, CardContent, CardHeader } from '../components/ui/Card';
 import { StatCard } from '../components/ui/StatCard';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { logger } from '../lib/logger';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
-import { formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
+import { cn, formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { EmbedModal } from '../components/builder/EmbedModal';
 
@@ -25,6 +26,7 @@ interface DailyResponse {
 export default function FormAnalytics() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { getForm, loadFullForm, storageMode } = useFormStore();
   const { getResponsesByFormId } = useResponseStore();
   const user = useAuthStore((state) => state.user);
@@ -323,6 +325,22 @@ export default function FormAnalytics() {
   const totalViews = analytics?.totalViews ?? 0;
   const completionRate = analytics?.completionRate ?? localAnalytics.completionRate;
   const avgCompletionTime = Math.round((analytics?.averageCompletionTime ?? localAnalytics.averageCompletionTime) / 1000);
+  // Views/starts/completion only exist server-side — without server analytics they'd
+  // read as a misleading 0 / 100%, so render an em dash + hint instead.
+  const hasServerAnalytics = analytics !== null;
+  const totalStarts = analytics?.totalStarts;
+
+  // History-aware back: return to wherever the user came from; fall back to the
+  // form builder on a fresh deep link with no in-app history.
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/builder/${form.id}`);
+  };
+
+  // Recent Responses rows open the full record on the Responses page (which reads
+  // ?open= once and auto-opens that record's view modal).
+  const openResponse = (responseId: string) =>
+    navigate(`/responses/${form.id}?open=${encodeURIComponent(responseId)}`);
 
   // Process daily responses for chart. Fill the last 7 CONTIGUOUS calendar days
   // (so empty days render as gaps, not collapsed into adjacent bars) and derive each
@@ -494,13 +512,9 @@ export default function FormAnalytics() {
   return (
     <div className="min-h-screen transition-colors">
       <Header
-        title={`${form.title} - Analytics`}
+        title="Analytics"
         actions={
           <div className="flex gap-1 sm:gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigate(`/builder/${form.id}`)} title="Back to Builder">
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Builder</span>
-            </Button>
             <Button variant="outline" size="sm" onClick={() => navigate(`/responses/${form.id}`)} title="View Data">
               <Table className="h-4 w-4" />
               <span className="hidden lg:inline ml-2">Data</span>
@@ -563,15 +577,32 @@ export default function FormAnalytics() {
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8 space-y-4 sm:space-y-6">
+        <PageHeader
+          title={form.title}
+          subtitle="Analytics"
+          onBack={goBack}
+          backLabel="Back"
+        />
+
         {/* Stats Cards — shared StatCard so they match the Dashboard tiles */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+        <div className={cn('grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4', typeof totalStarts === 'number' ? 'lg:grid-cols-6' : 'lg:grid-cols-5')}>
           <StatCard
             icon={Eye}
             iconBg="bg-sky-500/10"
             iconColor="text-sky-500"
-            value={totalViews}
+            value={hasServerAnalytics ? totalViews : '—'}
+            subtext={hasServerAnalytics ? undefined : 'Cloud analytics only'}
             label="Views"
           />
+          {typeof totalStarts === 'number' && (
+            <StatCard
+              icon={MousePointerClick}
+              iconBg="bg-teal-500/10"
+              iconColor="text-teal-500"
+              value={totalStarts}
+              label="Starts"
+            />
+          )}
           <StatCard
             icon={Users}
             iconBg="bg-blue-500/10"
@@ -583,7 +614,8 @@ export default function FormAnalytics() {
             icon={CheckCircle}
             iconBg="bg-green-500/10"
             iconColor="text-green-500"
-            value={`${completionRate}%`}
+            value={hasServerAnalytics ? `${completionRate}%` : '—'}
+            subtext={hasServerAnalytics ? undefined : 'Cloud analytics only'}
             label="Completion"
           />
           <StatCard
@@ -660,26 +692,25 @@ export default function FormAnalytics() {
                       <h3 className="font-medium text-gray-900 dark:text-white text-sm sm:text-base transition-colors">{breakdown.label}</h3>
                     </div>
                     <div className="space-y-2">
-                      {breakdown.data.map((item, index) => {
-                        const maxPercentage = Math.max(...breakdown.data.map((d) => d.percentage), 1);
-                        return (
-                          <div key={index} className="flex items-center gap-2 sm:gap-3">
-                            <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate flex-shrink-0 transition-colors" title={item.label}>
-                              {item.label}
-                            </div>
-                            <div className="flex-1 h-5 sm:h-6 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
-                              <div
-                                className="h-full bg-primary-600 rounded-full transition-all"
-                                style={{ width: `${(item.percentage / maxPercentage) * 100}%` }}
-                              />
-                            </div>
-                            <div className="w-16 sm:w-20 text-right flex-shrink-0">
-                              <span className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white transition-colors">{item.percentage}%</span>
-                              <span className="text-xs text-gray-500 dark:text-slate-500 ml-1 hidden sm:inline transition-colors">({item.count})</span>
-                            </div>
+                      {breakdown.data.map((item, index) => (
+                        <div key={index} className="flex items-center gap-2 sm:gap-3">
+                          <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate flex-shrink-0 transition-colors" title={item.label}>
+                            {item.label}
                           </div>
-                        );
-                      })}
+                          <div className="flex-1 h-5 sm:h-6 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
+                            {/* Width is the TRUE share of answers (a 4% option renders at 4%),
+                                not normalized to the largest option. */}
+                            <div
+                              className="h-full bg-primary-600 rounded-full transition-all"
+                              style={{ width: `${item.percentage}%` }}
+                            />
+                          </div>
+                          <div className="w-16 sm:w-20 text-right flex-shrink-0">
+                            <span className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white transition-colors">{item.percentage}%</span>
+                            <span className="text-xs text-gray-500 dark:text-slate-500 ml-1 hidden sm:inline transition-colors">({item.count})</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -713,16 +744,23 @@ export default function FormAnalytics() {
                 {previewCards ? (
                   <ul className="space-y-2">
                     {responses.slice(0, 10).map((response) => (
-                      <li key={response.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">{formatDate(response.submittedAt)}</p>
-                        {previewFields.map((field) => (
-                          <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
-                            <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
-                            {field.type === 'linked_record'
-                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                              : formatPreviewValue(field, response.answers[field.id])}
-                          </p>
-                        ))}
+                      <li key={response.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60">
+                        <button
+                          type="button"
+                          onClick={() => openResponse(response.id)}
+                          title="Open this response"
+                          className="w-full p-4 text-left rounded-xl cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                        >
+                          <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">{formatDate(response.submittedAt)}</p>
+                          {previewFields.map((field) => (
+                            <p key={field.id} className="text-sm text-gray-600 dark:text-slate-300 truncate">
+                              <span className="text-gray-400 dark:text-slate-500">{field.label}: </span>
+                              {field.type === 'linked_record'
+                                ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
+                                : formatPreviewValue(field, response.answers[field.id])}
+                            </p>
+                          ))}
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -742,9 +780,22 @@ export default function FormAnalytics() {
                   </thead>
                   <tbody>
                     {responses.slice(0, 10).map((response) => (
-                      <tr key={response.id} className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                        <td className="py-3 px-4 text-sm text-gray-900 dark:text-white font-mono truncate">
-                          #{response.id.slice(0, 8)}
+                      <tr
+                        key={response.id}
+                        onClick={() => openResponse(response.id)}
+                        className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                      >
+                        <td className="py-3 px-4 text-sm truncate">
+                          {/* Real button inside the row so keyboard users can open it too. */}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); openResponse(response.id); }}
+                            title="Open this response"
+                            aria-label={`Open response ${response.id.slice(0, 8)}`}
+                            className="font-mono text-sm text-gray-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 rounded cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                          >
+                            #{response.id.slice(0, 8)}
+                          </button>
                         </td>
                         <td className="py-3 px-4 text-sm text-gray-500 dark:text-slate-400 truncate">
                           {formatDate(response.submittedAt)}

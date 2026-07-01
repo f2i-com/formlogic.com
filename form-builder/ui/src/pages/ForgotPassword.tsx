@@ -23,8 +23,11 @@ export function ForgotPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6">
-      <div className="w-full max-w-[400px]">
+    <div className="min-h-screen bg-gray-50 dark:bg-transparent flex items-center justify-center p-6 relative overflow-hidden">
+      {/* Brand background treatment shared with Login/Signup */}
+      <div className="absolute top-0 right-0 w-96 h-96 bg-primary-500/10 rounded-full blur-[120px] pointer-events-none" aria-hidden="true" />
+      <div className="absolute bottom-0 left-0 w-72 h-72 bg-primary-500/10 rounded-full blur-[100px] pointer-events-none" aria-hidden="true" />
+      <div className="w-full max-w-[400px] relative z-10">
         <div className="flex justify-center mb-8"><Link to="/"><Logo size="lg" /></Link></div>
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
           {sent ? (
@@ -36,7 +39,18 @@ export function ForgotPassword() {
               <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
                 If an account exists for <span className="font-medium text-gray-700 dark:text-slate-300">{email}</span>, we've sent a link to reset your password. The link expires in 1 hour.
               </p>
-              <Link to="/login" className="inline-block mt-6 text-sm text-primary-600 dark:text-primary-400 hover:underline">Back to sign in</Link>
+              <div className="mt-6 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setSent(false)}
+                  className="text-sm text-primary-600 dark:text-primary-400 hover:underline cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 rounded"
+                >
+                  Wrong email? Try again
+                </button>
+                <p>
+                  <Link to="/login" className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">Back to sign in</Link>
+                </p>
+              </div>
             </div>
           ) : (
             <>

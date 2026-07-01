@@ -55,8 +55,10 @@ export function Login() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-transparent flex">
       {/* Left panel - Branding */}
-      <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-600 via-primary-700 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
-        {/* Decorative elements */}
+      <div className="hidden lg:flex lg:w-[45%] bg-gradient-to-br from-primary-700 via-primary-800 to-slate-900 dark:from-slate-900/80 dark:via-primary-950/60 dark:to-slate-950/80 backdrop-blur-xl p-12 flex-col justify-between relative overflow-hidden">
+        {/* Decorative elements. The extra scrim keeps the white copy WCAG-AA readable
+            even when the user picks a light accent color (e.g. lime, cyan). */}
+        <div className="absolute inset-0 bg-slate-950/25 dark:hidden" aria-hidden="true" />
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:60px_60px]" />
         <div className="absolute top-0 right-0 w-96 h-96 bg-primary-500/20 rounded-full blur-[120px]" />
         <div className="absolute bottom-0 left-0 w-72 h-72 bg-primary-500/15 rounded-full blur-[100px]" />

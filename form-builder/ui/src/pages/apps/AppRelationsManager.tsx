@@ -118,11 +118,11 @@ export function AppRelationsManager() {
         title="Relations"
         actions={
           <>
-            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+            <Button variant="ghost" size="sm" onClick={() => navigate(`/apps/${appId}/settings?tab=manage`)} leftIcon={<ArrowLeft className="h-4 w-4" />}>
               Back
             </Button>
             <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} title={appForms.length < 2 ? 'Add at least two forms to this app first' : undefined} leftIcon={<Plus className="h-4 w-4" />}>
-              Add Relation
+              Add relation
             </Button>
           </>
         }
@@ -150,7 +150,7 @@ export function AppRelationsManager() {
                   : 'Relations link records between forms. Create one to connect your data.'}
               </p>
               <Button size="sm" onClick={handleAdd} disabled={appForms.length < 2} leftIcon={<Plus className="h-4 w-4" />}>
-                Add Relation
+                Add relation
               </Button>
             </div>
           ) : (
@@ -191,7 +191,7 @@ export function AppRelationsManager() {
                       title="Open in Form Builder for full configuration"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                      Edit in Builder
+                      Edit in builder
                     </button>
                     <button
                       onClick={() => setDeleteTarget(rel)}
@@ -222,7 +222,7 @@ export function AppRelationsManager() {
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
-        title="Delete Relation"
+        title="Delete relation"
         message={deleteTarget ? `Remove the "${deleteTarget.field.label}" linked-record field from "${deleteTarget.sourceFormName}"? This will also remove any existing linked data for this field.` : ''}
         confirmLabel="Delete"
         variant="danger"
