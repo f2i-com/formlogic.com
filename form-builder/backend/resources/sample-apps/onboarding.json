@@ -1,0 +1,405 @@
+{
+  "formatVersion": 1,
+  "packMeta": {
+    "name": "People Onboarding & Compliance",
+    "description": "A complete employee onboarding + compliance app: employees, onboarding tasks, and policy acknowledgements, with a live completion & compliance dashboard.",
+    "version": "1.0.0",
+    "tags": [
+      "demo",
+      "hr",
+      "onboarding",
+      "compliance"
+    ]
+  },
+  "forms": [
+    {
+      "packFormId": "employee",
+      "title": "Employee",
+      "description": "New hires and their department + start date.",
+      "icon": "UserPlus",
+      "settings": {},
+      "theme": {},
+      "fields": [
+        {
+          "id": "full_name",
+          "type": "short_text",
+          "label": "Full name",
+          "required": true,
+          "properties": {}
+        },
+        {
+          "id": "email",
+          "type": "email",
+          "label": "Work email",
+          "required": true,
+          "properties": {}
+        },
+        {
+          "id": "department",
+          "type": "dropdown",
+          "label": "Department",
+          "required": true,
+          "properties": {
+            "options": [
+              {
+                "id": "engineering",
+                "label": "Engineering",
+                "value": "engineering"
+              },
+              {
+                "id": "sales",
+                "label": "Sales",
+                "value": "sales"
+              },
+              {
+                "id": "hr",
+                "label": "HR",
+                "value": "hr"
+              },
+              {
+                "id": "finance",
+                "label": "Finance",
+                "value": "finance"
+              },
+              {
+                "id": "ops",
+                "label": "Operations",
+                "value": "ops"
+              }
+            ]
+          }
+        },
+        {
+          "id": "start_date",
+          "type": "date",
+          "label": "Start date",
+          "required": true,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "packFormId": "onboarding-task",
+      "title": "Onboarding Task",
+      "description": "A single onboarding to-do assigned to an employee.",
+      "icon": "ListChecks",
+      "settings": {},
+      "theme": {},
+      "fields": [
+        {
+          "id": "title",
+          "type": "short_text",
+          "label": "Task",
+          "required": true,
+          "properties": {}
+        },
+        {
+          "id": "employee",
+          "type": "linked_record",
+          "label": "Employee",
+          "required": true,
+          "properties": {
+            "targetFormId": "@pack:employee"
+          }
+        },
+        {
+          "id": "category",
+          "type": "dropdown",
+          "label": "Category",
+          "required": true,
+          "properties": {
+            "options": [
+              {
+                "id": "it",
+                "label": "IT",
+                "value": "it"
+              },
+              {
+                "id": "hr",
+                "label": "HR",
+                "value": "hr"
+              },
+              {
+                "id": "legal",
+                "label": "Legal",
+                "value": "legal"
+              },
+              {
+                "id": "facilities",
+                "label": "Facilities",
+                "value": "facilities"
+              }
+            ]
+          }
+        },
+        {
+          "id": "due_date",
+          "type": "date",
+          "label": "Due date",
+          "required": false,
+          "properties": {}
+        },
+        {
+          "id": "done",
+          "type": "checkbox",
+          "label": "Completed",
+          "required": false,
+          "properties": {}
+        }
+      ]
+    },
+    {
+      "packFormId": "policy-acknowledgement",
+      "title": "Policy Acknowledgement",
+      "description": "Records that an employee has read and accepted a policy.",
+      "icon": "ShieldCheck",
+      "settings": {},
+      "theme": {},
+      "fields": [
+        {
+          "id": "policy",
+          "type": "dropdown",
+          "label": "Policy",
+          "required": true,
+          "properties": {
+            "options": [
+              {
+                "id": "code_of_conduct",
+                "label": "Code of Conduct",
+                "value": "code_of_conduct"
+              },
+              {
+                "id": "security_policy",
+                "label": "Security Policy",
+                "value": "security_policy"
+              },
+              {
+                "id": "data_privacy",
+                "label": "Data Privacy",
+                "value": "data_privacy"
+              },
+              {
+                "id": "handbook",
+                "label": "Employee Handbook",
+                "value": "handbook"
+              }
+            ]
+          }
+        },
+        {
+          "id": "employee",
+          "type": "linked_record",
+          "label": "Employee",
+          "required": true,
+          "properties": {
+            "targetFormId": "@pack:employee"
+          }
+        },
+        {
+          "id": "acknowledged",
+          "type": "checkbox",
+          "label": "I acknowledge this policy",
+          "required": false,
+          "properties": {}
+        },
+        {
+          "id": "date",
+          "type": "date",
+          "label": "Acknowledged on",
+          "required": false,
+          "properties": {}
+        }
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "packAppId": "people-onboarding",
+      "name": "People Onboarding & Compliance",
+      "description": "Onboard new hires, track task completion, and keep policy acknowledgements audit-ready — with a live dashboard.",
+      "logoUrl": null,
+      "settings": {
+        "hideNav": true,
+        "landingPage": "dashboard"
+      },
+      "theme": {
+        "primaryColor": "#6366f1"
+      },
+      "navConfig": [
+        {
+          "formId": "@pack:employee",
+          "label": "Employees",
+          "icon": "Users"
+        },
+        {
+          "formId": "@pack:onboarding-task",
+          "label": "Onboarding",
+          "icon": "ListChecks"
+        },
+        {
+          "formId": "@pack:policy-acknowledgement",
+          "label": "Compliance",
+          "icon": "ShieldCheck"
+        }
+      ],
+      "forms": [
+        {
+          "packFormId": "employee",
+          "displayName": "Employees",
+          "sortOrder": 0,
+          "isVisible": true,
+          "settings": {}
+        },
+        {
+          "packFormId": "onboarding-task",
+          "displayName": "Onboarding Tasks",
+          "sortOrder": 1,
+          "isVisible": true,
+          "settings": {}
+        },
+        {
+          "packFormId": "policy-acknowledgement",
+          "displayName": "Policy Acknowledgements",
+          "sortOrder": 2,
+          "isVisible": true,
+          "settings": {}
+        }
+      ],
+      "roles": [
+        {
+          "name": "HR Admin",
+          "description": "Full access: manage the roster, tasks, acknowledgements, analytics and team members.",
+          "system": false,
+          "permissions": [
+            {
+              "packFormId": null,
+              "permission": "view_analytics"
+            },
+            {
+              "packFormId": null,
+              "permission": "manage_users"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "view_all_responses"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "edit_responses"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "delete_responses"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "export_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "view_all_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "edit_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "delete_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "export_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "view_all_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "edit_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "delete_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "export_responses"
+            }
+          ]
+        },
+        {
+          "name": "Employee",
+          "description": "Self-service: submit and view onboarding tasks and policy acknowledgements.",
+          "system": false,
+          "permissions": [
+            {
+              "packFormId": "@pack:employee",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:employee",
+              "permission": "view_all_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:onboarding-task",
+              "permission": "view_all_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:policy-acknowledgement",
+              "permission": "view_all_responses"
+            }
+          ]
+        }
+      ],
+      "customScreen": {
+        "enabled": true,
+        "html": "<div id=\"app\"><div class=\"boot\">Loading onboarding dashboard&hellip;</div></div>\n",
+        "css": ":root {\n  --bg-0: #0b1020;\n  --bg-1: #111a33;\n  --card: rgba(255, 255, 255, 0.045);\n  --card-brd: rgba(255, 255, 255, 0.09);\n  --card-hi: rgba(255, 255, 255, 0.14);\n  --ink: #eef2ff;\n  --ink-dim: #a6b0cf;\n  --ink-mut: #6c789e;\n  --accent: #818cf8;\n  --accent-2: #34d399;\n  --accent-3: #fbbf24;\n  --accent-4: #f472b6;\n  --danger: #fb7185;\n  --track: rgba(255, 255, 255, 0.08);\n  --shadow: 0 18px 45px -22px rgba(0, 0, 0, 0.85);\n}\n\n* { box-sizing: border-box; }\n\nhtml, body { height: 100%; }\n\nbody {\n  margin: 0;\n  color: var(--ink);\n  font-family: \"Inter\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  background:\n    radial-gradient(1100px 620px at 12% -8%, rgba(129, 140, 248, 0.20), transparent 60%),\n    radial-gradient(900px 560px at 108% 6%, rgba(52, 211, 153, 0.14), transparent 55%),\n    linear-gradient(160deg, var(--bg-0), var(--bg-1) 62%, #0a0f1e);\n  background-attachment: fixed;\n  -webkit-font-smoothing: antialiased;\n}\n\n#app { max-width: 1180px; margin: 0 auto; padding: 28px 22px 56px; }\n\n.boot { padding: 80px 0; text-align: center; color: var(--ink-dim); font-size: 15px; }\n\n/* ---- header ---- */\n.hdr {\n  display: flex; flex-wrap: wrap; gap: 18px;\n  align-items: flex-end; justify-content: space-between;\n  margin-bottom: 26px;\n}\n.hdr .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }\n.hdr .logo {\n  width: 46px; height: 46px; flex: none; border-radius: 13px;\n  display: grid; place-items: center; font-size: 22px;\n  background: linear-gradient(140deg, var(--accent), #6366f1);\n  box-shadow: 0 10px 26px -10px rgba(99, 102, 241, 0.75);\n}\n.hdr h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }\n.hdr .sub { margin: 3px 0 0; color: var(--ink-dim); font-size: 13px; }\n.actions { display: flex; flex-wrap: wrap; gap: 10px; }\n\n.btn {\n  appearance: none; cursor: pointer; border: 1px solid var(--card-brd);\n  background: var(--card); color: var(--ink);\n  padding: 9px 15px; border-radius: 11px; font-size: 13px; font-weight: 600;\n  display: inline-flex; align-items: center; gap: 8px;\n  transition: transform .12s ease, background .12s ease, border-color .12s ease;\n}\n.btn:hover { transform: translateY(-1px); background: var(--card-hi); border-color: var(--card-hi); }\n.btn:active { transform: translateY(0); }\n.btn .ic { font-size: 14px; line-height: 1; }\n.btn.primary {\n  background: linear-gradient(135deg, var(--accent), #6366f1);\n  border-color: transparent; color: #0b1020;\n  box-shadow: 0 12px 26px -14px rgba(99, 102, 241, 0.9);\n}\n.btn.primary:hover { filter: brightness(1.06); }\n.btn.ghost { background: transparent; }\n\n/* ---- stat cards ---- */\n.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }\n.stat {\n  position: relative; overflow: hidden;\n  background: var(--card); border: 1px solid var(--card-brd);\n  border-radius: 18px; padding: 18px 18px 16px; box-shadow: var(--shadow);\n}\n.stat::before {\n  content: \"\"; position: absolute; inset: 0 0 auto 0; height: 3px;\n  background: linear-gradient(90deg, var(--accent), var(--accent-2));\n  opacity: .8;\n}\n.stat .k { color: var(--ink-dim); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }\n.stat .v { font-size: 30px; font-weight: 750; margin-top: 8px; letter-spacing: -0.02em; }\n.stat .m { color: var(--ink-mut); font-size: 12px; margin-top: 4px; }\n.stat.ok::before { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n.stat.warn::before { background: linear-gradient(90deg, var(--accent-3), var(--accent-4)); }\n.stat.info::before { background: linear-gradient(90deg, var(--accent-4), var(--accent)); }\n\n/* ---- grid ---- */\n.grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; margin-bottom: 22px; }\n.panel {\n  background: var(--card); border: 1px solid var(--card-brd);\n  border-radius: 18px; padding: 20px; box-shadow: var(--shadow);\n}\n.panel h2 {\n  margin: 0 0 14px; font-size: 14px; font-weight: 700;\n  display: flex; align-items: center; gap: 9px;\n}\n.panel h2 .badge {\n  margin-left: auto; font-size: 11px; font-weight: 700; color: var(--ink-dim);\n  background: var(--track); padding: 3px 9px; border-radius: 999px;\n}\n\n/* ---- completion ring ---- */\n.ring-row { display: flex; align-items: center; gap: 18px; }\n.ring {\n  --pct: 0; width: 116px; height: 116px; flex: none; border-radius: 50%;\n  background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--track) 0);\n  display: grid; place-items: center; position: relative;\n}\n.ring::after {\n  content: \"\"; position: absolute; inset: 11px; border-radius: 50%;\n  background: linear-gradient(160deg, #131c36, #0e1530);\n  border: 1px solid var(--card-brd);\n}\n.ring .lbl { position: relative; text-align: center; z-index: 1; }\n.ring .lbl b { font-size: 26px; font-weight: 780; }\n.ring .lbl span { display: block; font-size: 10px; color: var(--ink-dim); letter-spacing: .06em; text-transform: uppercase; }\n.ring-meta { color: var(--ink-dim); font-size: 13px; line-height: 1.6; }\n.ring-meta b { color: var(--ink); }\n\n/* ---- employee progress list ---- */\n.emp { display: flex; flex-direction: column; gap: 14px; }\n.emp .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }\n.emp .who { display: flex; align-items: center; gap: 10px; min-width: 0; }\n.avatar {\n  width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center;\n  font-size: 12px; font-weight: 700; color: #0b1020;\n  background: linear-gradient(140deg, var(--accent-2), var(--accent));\n}\n.emp .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.emp .dept { font-size: 11px; color: var(--ink-mut); }\n.emp .frac { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }\n.track { grid-column: 1 / -1; height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }\n.track > i {\n  display: block; height: 100%; border-radius: 999px;\n  background: linear-gradient(90deg, var(--accent), var(--accent-2));\n  transition: width .5s ease;\n}\n.track.full > i { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n\n/* ---- category bars ---- */\n.cats { display: flex; flex-direction: column; gap: 13px; }\n.cat .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }\n.cat .top .c { color: var(--ink); font-weight: 600; }\n.cat .top .n { color: var(--ink-dim); font-variant-numeric: tabular-nums; }\n.cat .bar { height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }\n.cat .bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent-3), var(--accent-4)); }\n\n/* ---- compliance ---- */\n.comp { margin-top: 4px; }\n.comp .stack { height: 12px; border-radius: 999px; overflow: hidden; display: flex; background: var(--track); }\n.comp .stack > .ack { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n.comp .stack > .pend { background: linear-gradient(90deg, var(--accent-3), var(--danger)); }\n.comp .legend { display: flex; gap: 18px; margin-top: 12px; font-size: 12px; color: var(--ink-dim); }\n.comp .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; vertical-align: middle; }\n.comp .legend b { color: var(--ink); }\n.dot.g { background: var(--accent-2); }\n.dot.y { background: var(--accent-3); }\n\n/* ---- recent ---- */\n.feed { display: flex; flex-direction: column; }\n.feed .item { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--card-brd); }\n.feed .item:first-child { border-top: 0; }\n.feed .ic {\n  width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center;\n  font-size: 14px; background: var(--track);\n}\n.feed .ic.t { background: rgba(129, 140, 248, 0.18); }\n.feed .ic.p { background: rgba(52, 211, 153, 0.18); }\n.feed .ic.e { background: rgba(251, 191, 36, 0.18); }\n.feed .txt { font-size: 13px; min-width: 0; }\n.feed .txt .when { font-size: 11px; color: var(--ink-mut); margin-top: 1px; }\n\n/* ---- empty ---- */\n.empty { text-align: center; padding: 46px 20px; }\n.empty .big { font-size: 40px; margin-bottom: 10px; }\n.empty h3 { margin: 0 0 6px; font-size: 17px; }\n.empty p { margin: 0 auto 20px; max-width: 420px; color: var(--ink-dim); font-size: 13px; line-height: 1.6; }\n.empty .actions { justify-content: center; }\n\n.muted { color: var(--ink-mut); font-size: 12px; padding: 8px 0; }\n\n@media (max-width: 860px) {\n  .stats { grid-template-columns: repeat(2, 1fr); }\n  .grid { grid-template-columns: 1fr; }\n}\n@media (max-width: 460px) {\n  .stats { grid-template-columns: 1fr; }\n  #app { padding: 20px 14px 42px; }\n}\n",
+        "files": [
+          {
+            "path": "index.html",
+            "content": "<div id=\"app\"><div class=\"boot\">Loading onboarding dashboard&hellip;</div></div>\n"
+          },
+          {
+            "path": "styles.css",
+            "content": ":root {\n  --bg-0: #0b1020;\n  --bg-1: #111a33;\n  --card: rgba(255, 255, 255, 0.045);\n  --card-brd: rgba(255, 255, 255, 0.09);\n  --card-hi: rgba(255, 255, 255, 0.14);\n  --ink: #eef2ff;\n  --ink-dim: #a6b0cf;\n  --ink-mut: #6c789e;\n  --accent: #818cf8;\n  --accent-2: #34d399;\n  --accent-3: #fbbf24;\n  --accent-4: #f472b6;\n  --danger: #fb7185;\n  --track: rgba(255, 255, 255, 0.08);\n  --shadow: 0 18px 45px -22px rgba(0, 0, 0, 0.85);\n}\n\n* { box-sizing: border-box; }\n\nhtml, body { height: 100%; }\n\nbody {\n  margin: 0;\n  color: var(--ink);\n  font-family: \"Inter\", system-ui, -apple-system, \"Segoe UI\", sans-serif;\n  background:\n    radial-gradient(1100px 620px at 12% -8%, rgba(129, 140, 248, 0.20), transparent 60%),\n    radial-gradient(900px 560px at 108% 6%, rgba(52, 211, 153, 0.14), transparent 55%),\n    linear-gradient(160deg, var(--bg-0), var(--bg-1) 62%, #0a0f1e);\n  background-attachment: fixed;\n  -webkit-font-smoothing: antialiased;\n}\n\n#app { max-width: 1180px; margin: 0 auto; padding: 28px 22px 56px; }\n\n.boot { padding: 80px 0; text-align: center; color: var(--ink-dim); font-size: 15px; }\n\n/* ---- header ---- */\n.hdr {\n  display: flex; flex-wrap: wrap; gap: 18px;\n  align-items: flex-end; justify-content: space-between;\n  margin-bottom: 26px;\n}\n.hdr .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }\n.hdr .logo {\n  width: 46px; height: 46px; flex: none; border-radius: 13px;\n  display: grid; place-items: center; font-size: 22px;\n  background: linear-gradient(140deg, var(--accent), #6366f1);\n  box-shadow: 0 10px 26px -10px rgba(99, 102, 241, 0.75);\n}\n.hdr h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }\n.hdr .sub { margin: 3px 0 0; color: var(--ink-dim); font-size: 13px; }\n.actions { display: flex; flex-wrap: wrap; gap: 10px; }\n\n.btn {\n  appearance: none; cursor: pointer; border: 1px solid var(--card-brd);\n  background: var(--card); color: var(--ink);\n  padding: 9px 15px; border-radius: 11px; font-size: 13px; font-weight: 600;\n  display: inline-flex; align-items: center; gap: 8px;\n  transition: transform .12s ease, background .12s ease, border-color .12s ease;\n}\n.btn:hover { transform: translateY(-1px); background: var(--card-hi); border-color: var(--card-hi); }\n.btn:active { transform: translateY(0); }\n.btn .ic { font-size: 14px; line-height: 1; }\n.btn.primary {\n  background: linear-gradient(135deg, var(--accent), #6366f1);\n  border-color: transparent; color: #0b1020;\n  box-shadow: 0 12px 26px -14px rgba(99, 102, 241, 0.9);\n}\n.btn.primary:hover { filter: brightness(1.06); }\n.btn.ghost { background: transparent; }\n\n/* ---- stat cards ---- */\n.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }\n.stat {\n  position: relative; overflow: hidden;\n  background: var(--card); border: 1px solid var(--card-brd);\n  border-radius: 18px; padding: 18px 18px 16px; box-shadow: var(--shadow);\n}\n.stat::before {\n  content: \"\"; position: absolute; inset: 0 0 auto 0; height: 3px;\n  background: linear-gradient(90deg, var(--accent), var(--accent-2));\n  opacity: .8;\n}\n.stat .k { color: var(--ink-dim); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }\n.stat .v { font-size: 30px; font-weight: 750; margin-top: 8px; letter-spacing: -0.02em; }\n.stat .m { color: var(--ink-mut); font-size: 12px; margin-top: 4px; }\n.stat.ok::before { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n.stat.warn::before { background: linear-gradient(90deg, var(--accent-3), var(--accent-4)); }\n.stat.info::before { background: linear-gradient(90deg, var(--accent-4), var(--accent)); }\n\n/* ---- grid ---- */\n.grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; margin-bottom: 22px; }\n.panel {\n  background: var(--card); border: 1px solid var(--card-brd);\n  border-radius: 18px; padding: 20px; box-shadow: var(--shadow);\n}\n.panel h2 {\n  margin: 0 0 14px; font-size: 14px; font-weight: 700;\n  display: flex; align-items: center; gap: 9px;\n}\n.panel h2 .badge {\n  margin-left: auto; font-size: 11px; font-weight: 700; color: var(--ink-dim);\n  background: var(--track); padding: 3px 9px; border-radius: 999px;\n}\n\n/* ---- completion ring ---- */\n.ring-row { display: flex; align-items: center; gap: 18px; }\n.ring {\n  --pct: 0; width: 116px; height: 116px; flex: none; border-radius: 50%;\n  background: conic-gradient(var(--accent) calc(var(--pct) * 1%), var(--track) 0);\n  display: grid; place-items: center; position: relative;\n}\n.ring::after {\n  content: \"\"; position: absolute; inset: 11px; border-radius: 50%;\n  background: linear-gradient(160deg, #131c36, #0e1530);\n  border: 1px solid var(--card-brd);\n}\n.ring .lbl { position: relative; text-align: center; z-index: 1; }\n.ring .lbl b { font-size: 26px; font-weight: 780; }\n.ring .lbl span { display: block; font-size: 10px; color: var(--ink-dim); letter-spacing: .06em; text-transform: uppercase; }\n.ring-meta { color: var(--ink-dim); font-size: 13px; line-height: 1.6; }\n.ring-meta b { color: var(--ink); }\n\n/* ---- employee progress list ---- */\n.emp { display: flex; flex-direction: column; gap: 14px; }\n.emp .row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }\n.emp .who { display: flex; align-items: center; gap: 10px; min-width: 0; }\n.avatar {\n  width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center;\n  font-size: 12px; font-weight: 700; color: #0b1020;\n  background: linear-gradient(140deg, var(--accent-2), var(--accent));\n}\n.emp .name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.emp .dept { font-size: 11px; color: var(--ink-mut); }\n.emp .frac { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }\n.track { grid-column: 1 / -1; height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }\n.track > i {\n  display: block; height: 100%; border-radius: 999px;\n  background: linear-gradient(90deg, var(--accent), var(--accent-2));\n  transition: width .5s ease;\n}\n.track.full > i { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n\n/* ---- category bars ---- */\n.cats { display: flex; flex-direction: column; gap: 13px; }\n.cat .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; }\n.cat .top .c { color: var(--ink); font-weight: 600; }\n.cat .top .n { color: var(--ink-dim); font-variant-numeric: tabular-nums; }\n.cat .bar { height: 8px; border-radius: 999px; background: var(--track); overflow: hidden; }\n.cat .bar > i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent-3), var(--accent-4)); }\n\n/* ---- compliance ---- */\n.comp { margin-top: 4px; }\n.comp .stack { height: 12px; border-radius: 999px; overflow: hidden; display: flex; background: var(--track); }\n.comp .stack > .ack { background: linear-gradient(90deg, var(--accent-2), #22d3ee); }\n.comp .stack > .pend { background: linear-gradient(90deg, var(--accent-3), var(--danger)); }\n.comp .legend { display: flex; gap: 18px; margin-top: 12px; font-size: 12px; color: var(--ink-dim); }\n.comp .legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; vertical-align: middle; }\n.comp .legend b { color: var(--ink); }\n.dot.g { background: var(--accent-2); }\n.dot.y { background: var(--accent-3); }\n\n/* ---- recent ---- */\n.feed { display: flex; flex-direction: column; }\n.feed .item { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--card-brd); }\n.feed .item:first-child { border-top: 0; }\n.feed .ic {\n  width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center;\n  font-size: 14px; background: var(--track);\n}\n.feed .ic.t { background: rgba(129, 140, 248, 0.18); }\n.feed .ic.p { background: rgba(52, 211, 153, 0.18); }\n.feed .ic.e { background: rgba(251, 191, 36, 0.18); }\n.feed .txt { font-size: 13px; min-width: 0; }\n.feed .txt .when { font-size: 11px; color: var(--ink-mut); margin-top: 1px; }\n\n/* ---- empty ---- */\n.empty { text-align: center; padding: 46px 20px; }\n.empty .big { font-size: 40px; margin-bottom: 10px; }\n.empty h3 { margin: 0 0 6px; font-size: 17px; }\n.empty p { margin: 0 auto 20px; max-width: 420px; color: var(--ink-dim); font-size: 13px; line-height: 1.6; }\n.empty .actions { justify-content: center; }\n\n.muted { color: var(--ink-mut); font-size: 12px; padding: 8px 0; }\n\n@media (max-width: 860px) {\n  .stats { grid-template-columns: repeat(2, 1fr); }\n  .grid { grid-template-columns: 1fr; }\n}\n@media (max-width: 460px) {\n  .stats { grid-template-columns: 1fr; }\n  #app { padding: 20px 14px 42px; }\n}\n"
+          },
+          {
+            "path": "sdk.ts",
+            "content": "// Typed accessor for the app-scoped FormLogic SDK injected into the sandboxed iframe.\n// window.FormLogic is the ONLY backend capability available to a custom screen.\n\nexport interface FLField {\n  id: string;\n  label: string;\n  type: string;\n}\n\nexport interface FLForm {\n  formId: string;\n  displayName: string;\n  fields: FLField[];\n}\n\nexport interface FLContext {\n  appName: string;\n  appSlug: string;\n  forms: FLForm[];\n}\n\nexport interface FLRecord {\n  id: string;\n  answers: Record<string, unknown>;\n  submittedAt: string;\n}\n\nexport interface FLUser {\n  id: string;\n  name: string;\n  email: string;\n}\n\nexport interface FLSdk {\n  context(): Promise<FLContext>;\n  forms(): Promise<FLForm[]>;\n  submit(formId: string, answers: Record<string, unknown>): Promise<unknown>;\n  records(formId: string, opts?: { limit?: number }): Promise<FLRecord[]>;\n  currentUser(): Promise<FLUser | null>;\n  navigate(target: string): void;\n  toast: { success(msg: string): void; error(msg: string): void };\n  escapeHtml(value: unknown): string;\n}\n\n// The bridge is installed on window by the runtime before this bundle executes.\nexport const FL: FLSdk = (window as unknown as { FormLogic: FLSdk }).FormLogic;\n\n/** Escape any value before interpolating it into innerHTML (prevents stored-XSS from record data). */\nexport const esc = (value: unknown): string => FL.escapeHtml(value);\n"
+          },
+          {
+            "path": "data.ts",
+            "content": "// Data layer: resolves form ids from the app context (by displayName, never hardcoded),\n// pulls records via the SDK, and computes the metrics the dashboard renders.\nimport { FL, FLForm, FLRecord } from \"./sdk\";\n\n// Value -> friendly label maps (dropdown options aren't exposed via the SDK context).\nexport const DEPT: Record<string, string> = {\n  engineering: \"Engineering\",\n  sales: \"Sales\",\n  hr: \"HR\",\n  finance: \"Finance\",\n  ops: \"Operations\",\n};\n\nexport const CATEGORY: Record<string, string> = {\n  it: \"IT\",\n  hr: \"HR\",\n  legal: \"Legal\",\n  facilities: \"Facilities\",\n};\n\nexport const POLICY: Record<string, string> = {\n  code_of_conduct: \"Code of Conduct\",\n  security_policy: \"Security Policy\",\n  data_privacy: \"Data Privacy\",\n  handbook: \"Employee Handbook\",\n};\n\nexport interface EmployeeProgress {\n  id: string;\n  name: string;\n  dept: string;\n  total: number;\n  done: number;\n  pct: number;\n}\n\nexport interface CategoryStat {\n  key: string;\n  label: string;\n  count: number;\n}\n\nexport interface RecentItem {\n  kind: \"employee\" | \"task\" | \"policy\";\n  text: string;\n  when: string;\n}\n\nexport interface Dashboard {\n  ready: boolean;\n  employeesFormId: string | null;\n  tasksFormId: string | null;\n  policyFormId: string | null;\n  totalEmployees: number;\n  totalTasks: number;\n  doneTasks: number;\n  outstanding: number;\n  completionPct: number;\n  progress: EmployeeProgress[];\n  categories: CategoryStat[];\n  totalPolicies: number;\n  acknowledged: number;\n  pending: number;\n  compliancePct: number;\n  recent: RecentItem[];\n}\n\nfunction truthy(v: unknown): boolean {\n  return v === true || v === 1 || v === \"1\" || v === \"true\" || v === \"yes\" || v === \"on\";\n}\n\nfunction str(v: unknown): string {\n  return v == null ? \"\" : String(v);\n}\n\nfunction pct(part: number, whole: number): number {\n  return whole > 0 ? Math.round((part / whole) * 100) : 0;\n}\n\nfunction findForm(forms: FLForm[], needles: string[]): FLForm | undefined {\n  return forms.find((f) => {\n    const name = (f.displayName || \"\").toLowerCase();\n    return needles.some((n) => name.includes(n));\n  });\n}\n\nasync function safeRecords(formId: string | null): Promise<FLRecord[]> {\n  if (!formId) return [];\n  try {\n    return await FL.records(formId, { limit: 500 });\n  } catch {\n    return [];\n  }\n}\n\nexport async function loadDashboard(): Promise<Dashboard> {\n  const ctx = await FL.context();\n  const forms = ctx.forms || [];\n\n  // Resolve the three forms by display name so ids are never hardcoded.\n  const tasksForm = findForm(forms, [\"task\"]);\n  const policyForm = findForm(forms, [\"policy\", \"acknowledg\", \"compliance\"]);\n  const employeesForm =\n    forms.find(\n      (f) => (f.displayName || \"\").toLowerCase().includes(\"employee\") && f !== tasksForm && f !== policyForm,\n    ) || findForm(forms, [\"employee\", \"people\", \"staff\", \"team\"]);\n\n  const employeesFormId = employeesForm ? employeesForm.formId : null;\n  const tasksFormId = tasksForm ? tasksForm.formId : null;\n  const policyFormId = policyForm ? policyForm.formId : null;\n\n  const [emps, tasks, pols] = await Promise.all([\n    safeRecords(employeesFormId),\n    safeRecords(tasksFormId),\n    safeRecords(policyFormId),\n  ]);\n\n  // Employee lookup: id -> { name, dept }.\n  const empMeta = new Map<string, { name: string; dept: string }>();\n  for (const e of emps) {\n    const a = e.answers;\n    const deptVal = str(a.department);\n    empMeta.set(e.id, {\n      name: str(a.full_name) || \"Unnamed\",\n      dept: DEPT[deptVal] || deptVal || \"Unassigned\",\n    });\n  }\n\n  // Tasks: completion, per-employee tallies, outstanding-by-category.\n  let doneTasks = 0;\n  const perEmp = new Map<string, { total: number; done: number }>();\n  const catOut = new Map<string, number>();\n  for (const t of tasks) {\n    const a = t.answers;\n    const isDone = truthy(a.done);\n    if (isDone) doneTasks += 1;\n\n    const empId = str(a.employee);\n    if (empId) {\n      const cur = perEmp.get(empId) || { total: 0, done: 0 };\n      cur.total += 1;\n      if (isDone) cur.done += 1;\n      perEmp.set(empId, cur);\n    }\n\n    if (!isDone) {\n      const cat = str(a.category) || \"other\";\n      catOut.set(cat, (catOut.get(cat) || 0) + 1);\n    }\n  }\n\n  // Per-employee progress bars (people with the most outstanding work first).\n  const progress: EmployeeProgress[] = [];\n  for (const [id, meta] of empMeta) {\n    const tally = perEmp.get(id) || { total: 0, done: 0 };\n    progress.push({\n      id,\n      name: meta.name,\n      dept: meta.dept,\n      total: tally.total,\n      done: tally.done,\n      pct: pct(tally.done, tally.total),\n    });\n  }\n  progress.sort((a, b) => {\n    if (a.total === 0 && b.total !== 0) return 1;\n    if (b.total === 0 && a.total !== 0) return -1;\n    if (a.pct !== b.pct) return a.pct - b.pct;\n    return b.total - a.total;\n  });\n\n  // Outstanding tasks by category — always show the four known buckets, plus any extras.\n  const categories: CategoryStat[] = [];\n  const seen = new Set<string>();\n  for (const key of Object.keys(CATEGORY)) {\n    categories.push({ key, label: CATEGORY[key], count: catOut.get(key) || 0 });\n    seen.add(key);\n  }\n  for (const [key, count] of catOut) {\n    if (!seen.has(key)) categories.push({ key, label: key, count });\n  }\n\n  // Compliance: acknowledged vs pending policy acknowledgements.\n  let acknowledged = 0;\n  for (const p of pols) {\n    if (truthy(p.answers.acknowledged)) acknowledged += 1;\n  }\n  const totalPolicies = pols.length;\n  const pending = Math.max(0, totalPolicies - acknowledged);\n\n  // Recent activity feed across all three forms.\n  const recent: RecentItem[] = [];\n  for (const e of emps) {\n    recent.push({\n      kind: \"employee\",\n      text: \"Joined: \" + (str(e.answers.full_name) || \"New employee\"),\n      when: e.submittedAt,\n    });\n  }\n  for (const t of tasks) {\n    const verb = truthy(t.answers.done) ? \"Completed task\" : \"New task\";\n    recent.push({ kind: \"task\", text: verb + \": \" + (str(t.answers.title) || \"Untitled\"), when: t.submittedAt });\n  }\n  for (const p of pols) {\n    const label = POLICY[str(p.answers.policy)] || \"Policy\";\n    const state = truthy(p.answers.acknowledged) ? \"acknowledged\" : \"pending\";\n    recent.push({ kind: \"policy\", text: label + \" \" + state, when: p.submittedAt });\n  }\n  recent.sort((a, b) => str(b.when).localeCompare(str(a.when)));\n\n  return {\n    ready: Boolean(employeesFormId || tasksFormId || policyFormId),\n    employeesFormId,\n    tasksFormId,\n    policyFormId,\n    totalEmployees: emps.length,\n    totalTasks: tasks.length,\n    doneTasks,\n    outstanding: Math.max(0, tasks.length - doneTasks),\n    completionPct: pct(doneTasks, tasks.length),\n    progress,\n    categories,\n    totalPolicies,\n    acknowledged,\n    pending,\n    compliancePct: pct(acknowledged, totalPolicies),\n    recent: recent.slice(0, 8),\n  };\n}\n"
+          },
+          {
+            "path": "index.ts",
+            "content": "// Entry point: wires the DOM to the FormLogic app-scoped SDK and renders the\n// onboarding + compliance command centre. All record/user values pass through esc().\nimport { FL, esc } from \"./sdk\";\nimport { loadDashboard, Dashboard, EmployeeProgress, CategoryStat, RecentItem } from \"./data\";\n\nconst root = document.getElementById(\"app\") as HTMLElement;\n\nfunction initials(name: string): string {\n  const parts = name.trim().split(/\\s+/).filter(Boolean);\n  if (parts.length === 0) return \"?\";\n  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();\n  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();\n}\n\nfunction statCard(cls: string, k: string, v: string, m: string): string {\n  return (\n    '<div class=\"stat ' + cls + '\">' +\n    '<div class=\"k\">' + esc(k) + \"</div>\" +\n    '<div class=\"v\">' + esc(v) + \"</div>\" +\n    '<div class=\"m\">' + esc(m) + \"</div></div>\"\n  );\n}\n\nfunction completionPanel(d: Dashboard): string {\n  return (\n    '<section class=\"panel\">' +\n    \"<h2>Onboarding completion</h2>\" +\n    '<div class=\"ring-row\">' +\n    '<div class=\"ring\" style=\"--pct:' + d.completionPct + '\">' +\n    '<div class=\"lbl\"><b>' + d.completionPct + \"%</b><span>complete</span></div></div>\" +\n    '<div class=\"ring-meta\">' +\n    \"<b>\" + d.doneTasks + \"</b> of <b>\" + d.totalTasks + \"</b> tasks done<br>\" +\n    \"<b>\" + d.outstanding + \"</b> still outstanding<br>\" +\n    \"across <b>\" + d.totalEmployees + \"</b> employees\" +\n    \"</div></div></section>\"\n  );\n}\n\nfunction progressPanel(rows: EmployeeProgress[]): string {\n  let body: string;\n  if (rows.length === 0) {\n    body = '<div class=\"muted\">No employees yet. Add your first hire to start tracking onboarding.</div>';\n  } else {\n    body =\n      '<div class=\"emp\">' +\n      rows\n        .slice(0, 12)\n        .map((e) => {\n          const frac = e.total > 0 ? e.done + \"/\" + e.total + \" tasks\" : \"no tasks yet\";\n          const cls = e.total > 0 && e.done === e.total ? \"track full\" : \"track\";\n          return (\n            '<div class=\"unit\">' +\n            '<div class=\"row\"><div class=\"who\">' +\n            '<div class=\"avatar\">' + esc(initials(e.name)) + \"</div>\" +\n            '<div><div class=\"name\">' + esc(e.name) + \"</div>\" +\n            '<div class=\"dept\">' + esc(e.dept) + \"</div></div></div>\" +\n            '<div class=\"frac\">' + esc(frac) + \"</div></div>\" +\n            '<div class=\"' + cls + '\"><i style=\"width:' + e.pct + '%\"></i></div>' +\n            \"</div>\"\n          );\n        })\n        .join(\"\") +\n      \"</div>\";\n  }\n  return (\n    '<section class=\"panel\"><h2>Per-employee progress' +\n    '<span class=\"badge\">' + rows.length + \" people</span></h2>\" +\n    body +\n    \"</section>\"\n  );\n}\n\nfunction categoryPanel(cats: CategoryStat[]): string {\n  const max = Math.max(1, ...cats.map((c) => c.count));\n  const total = cats.reduce((s, c) => s + c.count, 0);\n  let body: string;\n  if (total === 0) {\n    body = '<div class=\"muted\">No outstanding tasks. Everything is on track.</div>';\n  } else {\n    body =\n      '<div class=\"cats\">' +\n      cats\n        .map((c) => {\n          const w = Math.round((c.count / max) * 100);\n          return (\n            '<div class=\"cat\"><div class=\"top\">' +\n            '<span class=\"c\">' + esc(c.label) + \"</span>\" +\n            '<span class=\"n\">' + c.count + \"</span></div>\" +\n            '<div class=\"bar\"><i style=\"width:' + w + '%\"></i></div></div>'\n          );\n        })\n        .join(\"\") +\n      \"</div>\";\n  }\n  return (\n    '<section class=\"panel\"><h2>Outstanding by category' +\n    '<span class=\"badge\">' + total + \" open</span></h2>\" +\n    body +\n    \"</section>\"\n  );\n}\n\nfunction compliancePanel(d: Dashboard): string {\n  let body: string;\n  if (d.totalPolicies === 0) {\n    body = '<div class=\"muted\">No policy acknowledgements recorded yet.</div>';\n  } else {\n    const ackW = Math.round((d.acknowledged / d.totalPolicies) * 100);\n    const pendW = 100 - ackW;\n    body =\n      '<div class=\"comp\"><div class=\"stack\">' +\n      '<div class=\"ack\" style=\"width:' + ackW + '%\"></div>' +\n      '<div class=\"pend\" style=\"width:' + pendW + '%\"></div></div>' +\n      '<div class=\"legend\">' +\n      '<span><span class=\"dot g\"></span><b>' + d.acknowledged + \"</b> acknowledged</span>\" +\n      '<span><span class=\"dot y\"></span><b>' + d.pending + \"</b> pending</span>\" +\n      \"</div></div>\";\n  }\n  return (\n    '<section class=\"panel\"><h2>Policy compliance' +\n    '<span class=\"badge\">' + d.compliancePct + \"%</span></h2>\" +\n    body +\n    \"</section>\"\n  );\n}\n\nfunction feedPanel(items: RecentItem[]): string {\n  let body: string;\n  if (items.length === 0) {\n    body = '<div class=\"muted\">Activity will appear here as your team onboards.</div>';\n  } else {\n    const glyph: Record<string, string> = { employee: \"\\u{1F464}\", task: \"✓\", policy: \"\\u{1F4CB}\" };\n    const cls: Record<string, string> = { employee: \"e\", task: \"t\", policy: \"p\" };\n    body =\n      '<div class=\"feed\">' +\n      items\n        .map(\n          (it) =>\n            '<div class=\"item\"><div class=\"ic ' + cls[it.kind] + '\">' + glyph[it.kind] + \"</div>\" +\n            '<div class=\"txt\">' + esc(it.text) + \"</div></div>\",\n        )\n        .join(\"\") +\n      \"</div>\";\n  }\n  return '<section class=\"panel\"><h2>Recent activity</h2>' + body + \"</section>\";\n}\n\nfunction header(d: Dashboard): string {\n  const q = (formId: string | null, cls: string, label: string, glyph: string): string =>\n    formId\n      ? '<button class=\"btn ' + cls + '\" type=\"button\" data-nav=\"' + esc(formId) + '\">' +\n        '<span class=\"ic\">' + glyph + \"</span>\" + esc(label) + \"</button>\"\n      : \"\";\n  return (\n    '<header class=\"hdr\">' +\n    '<div class=\"brand\"><div class=\"logo\">\\u{1F680}</div>' +\n    \"<div><h1>People Onboarding &amp; Compliance</h1>\" +\n    '<p class=\"sub\">Track new-hire onboarding and policy sign-off in real time</p></div></div>' +\n    '<div class=\"actions\">' +\n    q(d.employeesFormId, \"primary\", \"Add employee\", \"+\") +\n    q(d.tasksFormId, \"\", \"New task\", \"+\") +\n    q(d.policyFormId, \"\", \"Acknowledge policy\", \"+\") +\n    '<button class=\"btn ghost\" type=\"button\" data-refresh=\"1\"><span class=\"ic\">↻</span>Refresh</button>' +\n    \"</div></header>\"\n  );\n}\n\nfunction renderEmpty(d: Dashboard): string {\n  const q = (formId: string | null, cls: string, label: string): string =>\n    formId ? '<button class=\"btn ' + cls + '\" type=\"button\" data-nav=\"' + esc(formId) + '\">' + esc(label) + \"</button>\" : \"\";\n  return (\n    header(d) +\n    '<div class=\"panel\"><div class=\"empty\">' +\n    '<div class=\"big\">\\u{1F331}</div>' +\n    \"<h3>Let's onboard your first hire</h3>\" +\n    \"<p>Add an employee, assign their onboarding tasks, and capture policy acknowledgements. \" +\n    \"Your live completion and compliance metrics will build automatically.</p>\" +\n    '<div class=\"actions\">' +\n    q(d.employeesFormId, \"primary\", \"Add employee\") +\n    q(d.tasksFormId, \"\", \"New onboarding task\") +\n    q(d.policyFormId, \"\", \"Acknowledge a policy\") +\n    \"</div></div></div>\"\n  );\n}\n\nfunction render(d: Dashboard): void {\n  const hasData = d.totalEmployees > 0 || d.totalTasks > 0 || d.totalPolicies > 0;\n  if (!hasData) {\n    root.innerHTML = renderEmpty(d);\n    return;\n  }\n  root.innerHTML =\n    header(d) +\n    '<div class=\"stats\">' +\n    statCard(\"info\", \"Employees\", String(d.totalEmployees), \"on the roster\") +\n    statCard(\"ok\", \"Onboarding\", d.completionPct + \"%\", d.doneTasks + \" of \" + d.totalTasks + \" tasks done\") +\n    statCard(\"warn\", \"Outstanding\", String(d.outstanding), \"tasks to complete\") +\n    statCard(\"\", \"Compliance\", d.compliancePct + \"%\", d.acknowledged + \" of \" + d.totalPolicies + \" acknowledged\") +\n    \"</div>\" +\n    '<div class=\"grid\">' +\n    progressPanel(d.progress) +\n    '<div style=\"display:flex;flex-direction:column;gap:16px\">' +\n    completionPanel(d) +\n    categoryPanel(d.categories) +\n    compliancePanel(d) +\n    \"</div></div>\" +\n    feedPanel(d.recent);\n}\n\nasync function refresh(): Promise<void> {\n  try {\n    const d = await loadDashboard();\n    render(d);\n  } catch (err) {\n    root.innerHTML =\n      '<div class=\"panel\"><div class=\"empty\"><div class=\"big\">⚠️</div>' +\n      \"<h3>Could not load the dashboard</h3><p>Please try refreshing in a moment.</p></div></div>\";\n    FL.toast.error(\"Failed to load onboarding data\");\n  }\n}\n\n// One delegated click handler survives every re-render of root.innerHTML.\nroot.addEventListener(\"click\", (ev) => {\n  const t = ev.target as HTMLElement;\n  const nav = t.closest(\"[data-nav]\") as HTMLElement | null;\n  if (nav) {\n    const fid = nav.getAttribute(\"data-nav\");\n    if (fid) FL.navigate(fid);\n    return;\n  }\n  if (t.closest(\"[data-refresh]\")) {\n    void refresh();\n  }\n});\n\nvoid refresh();\n"
+          }
+        ]
+      }
+    }
+  ]
+}

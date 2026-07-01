@@ -934,6 +934,15 @@ class ApiClient {
     return this.request(`/apps/${appId}/export`);
   }
 
+  /** Bundled sample apps for the "Try a sample app" gallery. */
+  async getSampleApps(): Promise<ApiResponse<{ samples: Array<{ id: string; name: string; description: string; formCount: number }> }>> {
+    return this.request('/sample-apps');
+  }
+  /** Install a bundled sample app into the current account (a fresh copy). */
+  async installSampleApp(id: string): Promise<ApiResponse<{ success: boolean; apps: Array<{ id: string; name: string }>; forms: Array<{ id: string; title: string }> }>> {
+    return this.request(`/sample-apps/${id}/install`, { method: 'POST' });
+  }
+
   async getInstalledPacks(): Promise<ApiResponse<{ installations: PackInstallation[] }>> {
     return this.request('/packs/installed');
   }

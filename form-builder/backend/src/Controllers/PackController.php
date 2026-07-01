@@ -142,6 +142,76 @@ class PackController
         }
     }
 
+    /** Directory of bundled sample-app packs (also CI-validated by PackFixturesTest). */
+    private function sampleDir(): string
+    {
+        return dirname(__DIR__, 2) . '/resources/sample-apps';
+    }
+
+    /**
+     * GET /api/sample-apps
+     * List the bundled sample apps (the "Try a sample app" gallery). Public metadata only.
+     */
+    public function listSampleApps(Request $request, Response $response): Response
+    {
+        $out = [];
+        foreach (glob($this->sampleDir() . '/*.json') ?: [] as $file) {
+            $pack = json_decode((string) file_get_contents($file), true);
+            if (!is_array($pack)) {
+                continue;
+            }
+            $app = $pack['apps'][0] ?? [];
+            $out[] = [
+                'id' => basename($file, '.json'),
+                'name' => $pack['packMeta']['name'] ?? ($app['name'] ?? 'Sample'),
+                'description' => $pack['packMeta']['description'] ?? ($app['description'] ?? ''),
+                'formCount' => count($pack['forms'] ?? []),
+            ];
+        }
+        return $this->jsonResponse($response, ['samples' => $out]);
+    }
+
+    /**
+     * POST /api/sample-apps/{id}/install
+     * Import a bundled sample app into the current account (a fresh copy).
+     */
+    public function installSampleApp(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        // Sanitize the id to a bare filename — never let it escape the sample dir.
+        $id = preg_replace('/[^a-z0-9._-]/i', '', (string) ($args['id'] ?? ''));
+        $file = $this->sampleDir() . '/' . $id . '.json';
+        if ($id === '' || !is_file($file)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Sample app not found'], 404);
+        }
+        $pack = json_decode((string) file_get_contents($file), true);
+        if (!is_array($pack)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Sample app is invalid'], 500);
+        }
+        $incoming = is_array($pack['forms'] ?? null) ? count($pack['forms']) : 0;
+        if ($incoming > 0 && $this->planService && !$this->planService->canCreateForms($userId, $incoming)) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'form_limit', 'message' => 'This sample would exceed your plan\'s form limit. Free up space or upgrade first.'], 402);
+        }
+        try {
+            $result = $this->packService->importPack($pack, $userId);
+            // Samples are "try it now" — publish the imported app(s) so they open running immediately.
+            foreach ($result['apps'] as $a) {
+                $this->packService->publishApp($a['id'], $userId);
+            }
+            if ($this->auditService) {
+                $this->auditService->log('sample.install', 'pack', $id, $userId, $this->ipResolver->getClientIp($request), ['appsCreated' => count($result['apps'])]);
+            }
+            return $this->jsonResponse($response, ['success' => true, 'apps' => $result['apps'], 'forms' => $result['forms']], 201);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to install the sample'], 500);
+        }
+    }
+
     /**
      * GET /api/apps/{id}/export/download
      * Same as export, but streams the pack as a downloadable .formlogic-app.json attachment (for API users).

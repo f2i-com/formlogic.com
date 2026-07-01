@@ -1,0 +1,367 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "name": "Sales CRM",
+        "description": "Client CRM and sales pipeline demo \u2014 Contacts, Deals, and Activities with a live dashboard custom screen.",
+        "version": "1.0.0",
+        "tags": [
+            "demo",
+            "crm",
+            "sales"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "contact-form",
+            "title": "Contact",
+            "description": "People and companies in your book of business.",
+            "icon": "Users",
+            "settings": [],
+            "theme": [],
+            "logicScript": "",
+            "fields": [
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Full name",
+                    "required": true,
+                    "properties": {
+                        "placeholder": "Jane Doe"
+                    }
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": true,
+                    "properties": {
+                        "placeholder": "jane@acme.com"
+                    }
+                },
+                {
+                    "id": "company",
+                    "type": "short_text",
+                    "label": "Company",
+                    "required": false,
+                    "properties": {
+                        "placeholder": "Acme Inc."
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": []
+                }
+            ]
+        },
+        {
+            "packFormId": "deal-form",
+            "title": "Deal",
+            "description": "Opportunities in your sales pipeline.",
+            "icon": "DollarSign",
+            "settings": [],
+            "theme": [],
+            "logicScript": "function onSubmit(ctx) {\n  // New deals default to the 'Lead' stage when none is chosen.\n  if (!ctx.answers.stage) {\n    ctx.answers.stage = 'lead';\n  }\n}\n",
+            "fields": [
+                {
+                    "id": "title",
+                    "type": "short_text",
+                    "label": "Deal title",
+                    "required": true,
+                    "properties": {
+                        "placeholder": "Acme - annual plan"
+                    }
+                },
+                {
+                    "id": "amount",
+                    "type": "number",
+                    "label": "Amount (USD)",
+                    "required": true,
+                    "properties": {
+                        "min": 0,
+                        "placeholder": "5000"
+                    }
+                },
+                {
+                    "id": "stage",
+                    "type": "dropdown",
+                    "label": "Stage",
+                    "required": true,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "lead",
+                                "label": "Lead",
+                                "value": "lead"
+                            },
+                            {
+                                "id": "qualified",
+                                "label": "Qualified",
+                                "value": "qualified"
+                            },
+                            {
+                                "id": "proposal",
+                                "label": "Proposal",
+                                "value": "proposal"
+                            },
+                            {
+                                "id": "won",
+                                "label": "Won",
+                                "value": "won"
+                            },
+                            {
+                                "id": "lost",
+                                "label": "Lost",
+                                "value": "lost"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "close_date",
+                    "type": "date",
+                    "label": "Expected close date",
+                    "required": false,
+                    "properties": []
+                },
+                {
+                    "id": "contact",
+                    "type": "linked_record",
+                    "label": "Contact",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:contact-form"
+                    }
+                }
+            ]
+        },
+        {
+            "packFormId": "activity-form",
+            "title": "Activity",
+            "description": "Calls, emails, and meetings logged against a contact.",
+            "icon": "CalendarClock",
+            "settings": [],
+            "theme": [],
+            "logicScript": "",
+            "fields": [
+                {
+                    "id": "subject",
+                    "type": "short_text",
+                    "label": "Subject",
+                    "required": true,
+                    "properties": {
+                        "placeholder": "Intro call"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {
+                        "placeholder": "What was discussed\u2026"
+                    }
+                },
+                {
+                    "id": "type",
+                    "type": "dropdown",
+                    "label": "Type",
+                    "required": true,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "call",
+                                "label": "Call",
+                                "value": "call"
+                            },
+                            {
+                                "id": "email",
+                                "label": "Email",
+                                "value": "email"
+                            },
+                            {
+                                "id": "meeting",
+                                "label": "Meeting",
+                                "value": "meeting"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "contact",
+                    "type": "linked_record",
+                    "label": "Contact",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:contact-form"
+                    }
+                },
+                {
+                    "id": "date",
+                    "type": "date",
+                    "label": "Date",
+                    "required": false,
+                    "properties": []
+                }
+            ]
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "sales-crm",
+            "name": "Sales CRM",
+            "description": "A lightweight client CRM and sales pipeline: track contacts, deals, and activities with a live dashboard.",
+            "logoUrl": null,
+            "settings": {
+                "hideNav": true,
+                "landingPage": "dashboard"
+            },
+            "theme": {
+                "primaryColor": "#6366f1"
+            },
+            "navConfig": [
+                {
+                    "formId": "@pack:contact-form",
+                    "label": "Contacts",
+                    "icon": "Users"
+                },
+                {
+                    "formId": "@pack:deal-form",
+                    "label": "Deals",
+                    "icon": "DollarSign"
+                },
+                {
+                    "formId": "@pack:activity-form",
+                    "label": "Activities",
+                    "icon": "CalendarClock"
+                }
+            ],
+            "forms": [
+                {
+                    "packFormId": "contact-form",
+                    "displayName": "Contacts",
+                    "sortOrder": 0,
+                    "isVisible": true,
+                    "settings": []
+                },
+                {
+                    "packFormId": "deal-form",
+                    "displayName": "Deals",
+                    "sortOrder": 1,
+                    "isVisible": true,
+                    "settings": []
+                },
+                {
+                    "packFormId": "activity-form",
+                    "displayName": "Activities",
+                    "sortOrder": 2,
+                    "isVisible": true,
+                    "settings": []
+                }
+            ],
+            "roles": [
+                {
+                    "name": "Sales Rep",
+                    "description": "Can create, view, edit, and export records across all forms.",
+                    "system": false,
+                    "permissions": [
+                        {
+                            "packFormId": "@pack:contact-form",
+                            "permission": "submit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:contact-form",
+                            "permission": "view_all_responses"
+                        },
+                        {
+                            "packFormId": "@pack:contact-form",
+                            "permission": "edit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:contact-form",
+                            "permission": "export_responses"
+                        },
+                        {
+                            "packFormId": "@pack:deal-form",
+                            "permission": "submit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:deal-form",
+                            "permission": "view_all_responses"
+                        },
+                        {
+                            "packFormId": "@pack:deal-form",
+                            "permission": "edit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:deal-form",
+                            "permission": "export_responses"
+                        },
+                        {
+                            "packFormId": "@pack:activity-form",
+                            "permission": "submit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:activity-form",
+                            "permission": "view_all_responses"
+                        },
+                        {
+                            "packFormId": "@pack:activity-form",
+                            "permission": "edit_responses"
+                        },
+                        {
+                            "packFormId": "@pack:activity-form",
+                            "permission": "export_responses"
+                        },
+                        {
+                            "packFormId": null,
+                            "permission": "view_analytics"
+                        }
+                    ]
+                },
+                {
+                    "name": "Viewer",
+                    "description": "Read-only access to all responses. Cannot create, edit, or export.",
+                    "system": false,
+                    "permissions": [
+                        {
+                            "packFormId": "@pack:contact-form",
+                            "permission": "view_all_responses"
+                        },
+                        {
+                            "packFormId": "@pack:deal-form",
+                            "permission": "view_all_responses"
+                        },
+                        {
+                            "packFormId": "@pack:activity-form",
+                            "permission": "view_all_responses"
+                        }
+                    ]
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "files": [
+                    {
+                        "path": "index.html",
+                        "content": "<div id=\"app\"><div class=\"boot\">Loading onboarding dashboard&hellip;</div></div>\n"
+                    },
+                    {
+                        "path": "styles.css",
+                        "content": ":root {\n  --bg-0: #0b1020;\n  --bg-1: #0f1630;\n  --card: rgba(255, 255, 255, 0.04);\n  --card-brd: rgba(255, 255, 255, 0.08);\n  --card-brd-hi: rgba(255, 255, 255, 0.16);\n  --text: #e7ecf5;\n  --muted: #93a0bf;\n  --faint: #64708f;\n  --brand: #6366f1;\n  --brand-2: #a855f7;\n  --ok: #22c55e;\n  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);\n  --radius: 16px;\n}\n\n* { box-sizing: border-box; }\n\nhtml, body {\n  margin: 0;\n  padding: 0;\n  background: var(--bg-0);\n  color: var(--text);\n  font-family: \"Inter\", ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif;\n  -webkit-font-smoothing: antialiased;\n}\n\n* { box-sizing: border-box; }\n\n#app {\n  min-height: 100vh;\n  background:\n    radial-gradient(1100px 520px at 12% -8%, rgba(99, 102, 241, 0.20), transparent 60%),\n    radial-gradient(900px 500px at 110% 0%, rgba(168, 85, 247, 0.16), transparent 55%),\n    linear-gradient(180deg, var(--bg-1), var(--bg-0));\n}\n\n.fl-loading {\n  display: grid;\n  place-items: center;\n  min-height: 100vh;\n  color: var(--muted);\n  font-size: 15px;\n  letter-spacing: 0.01em;\n}\n\n.wrap {\n  max-width: 1160px;\n  margin: 0 auto;\n  padding: 28px 22px 64px;\n}\n\n/* Header */\n.topbar {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 16px;\n  flex-wrap: wrap;\n  margin-bottom: 26px;\n}\n.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }\n.brand .logo {\n  width: 46px; height: 46px; border-radius: 13px; flex: none;\n  background: linear-gradient(135deg, var(--brand), var(--brand-2));\n  display: grid; place-items: center;\n  font-weight: 800; font-size: 20px; color: #fff;\n  box-shadow: var(--shadow);\n}\n.brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }\n.brand .sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }\n.topbar .who { display: flex; align-items: center; gap: 10px; }\n.who .greet { font-size: 13px; color: var(--muted); text-align: right; }\n.who .greet b { color: var(--text); font-weight: 600; }\n\n.btn {\n  appearance: none; border: 1px solid var(--card-brd-hi);\n  background: var(--card); color: var(--text);\n  padding: 9px 14px; border-radius: 11px; font-size: 13px; font-weight: 600;\n  cursor: pointer; transition: transform .08s ease, border-color .15s ease, background .15s ease;\n}\n.btn:hover { border-color: var(--brand); background: rgba(99, 102, 241, 0.12); }\n.btn:active { transform: translateY(1px); }\n.btn.primary {\n  border-color: transparent;\n  background: linear-gradient(135deg, var(--brand), var(--brand-2));\n  color: #fff;\n  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);\n}\n.btn.primary:hover { filter: brightness(1.06); background: linear-gradient(135deg, var(--brand), var(--brand-2)); }\n\n/* Stat cards */\n.stats {\n  display: grid;\n  grid-template-columns: repeat(4, 1fr);\n  gap: 16px;\n  margin-bottom: 22px;\n}\n.stat {\n  background: var(--card);\n  border: 1px solid var(--card-brd);\n  border-radius: var(--radius);\n  padding: 18px 18px 16px;\n  position: relative;\n  overflow: hidden;\n}\n.stat::after {\n  content: \"\"; position: absolute; inset: 0 0 auto 0; height: 3px;\n  background: linear-gradient(90deg, var(--brand), var(--brand-2));\n  opacity: .8;\n}\n.stat .k { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }\n.stat .v { font-size: 27px; font-weight: 800; margin-top: 8px; letter-spacing: -0.02em; }\n.stat .d { font-size: 12px; color: var(--faint); margin-top: 4px; }\n.stat.win::after { background: linear-gradient(90deg, var(--ok), #4ade80); }\n.stat.win .v { color: #86efac; }\n\n/* Layout grid */\n.grid {\n  display: grid;\n  grid-template-columns: 1.35fr 1fr;\n  gap: 16px;\n}\n.panel {\n  background: var(--card);\n  border: 1px solid var(--card-brd);\n  border-radius: var(--radius);\n  padding: 20px;\n}\n.panel h2 {\n  margin: 0 0 4px; font-size: 15px; font-weight: 700; letter-spacing: -0.01em;\n  display: flex; align-items: center; justify-content: space-between; gap: 10px;\n}\n.panel .hint { margin: 0 0 16px; font-size: 12px; color: var(--faint); }\n\n/* Pipeline bars */\n.bars { display: flex; flex-direction: column; gap: 14px; }\n.bar-row { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 12px; }\n.bar-row .name { font-size: 13px; color: var(--muted); font-weight: 600; }\n.bar-track {\n  height: 12px; border-radius: 99px; background: rgba(255, 255, 255, 0.06); overflow: hidden;\n}\n.bar-fill {\n  height: 100%; border-radius: 99px; width: 0;\n  transition: width .7s cubic-bezier(.2, .7, .2, 1);\n  background: linear-gradient(90deg, var(--brand), var(--brand-2));\n}\n.bar-row .amt { font-size: 13px; font-weight: 700; text-align: right; min-width: 74px; }\n.bar-row .amt small { display: block; font-weight: 500; color: var(--faint); font-size: 11px; }\n\n/* Recent deals */\n.list { display: flex; flex-direction: column; gap: 10px; }\n.item {\n  display: flex; align-items: center; gap: 12px;\n  padding: 12px 12px; border-radius: 12px;\n  border: 1px solid var(--card-brd);\n  background: rgba(255, 255, 255, 0.02);\n}\n.item .main { min-width: 0; flex: 1; }\n.item .t { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.item .m { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }\n.item .val { font-size: 14px; font-weight: 800; white-space: nowrap; }\n\n.badge {\n  display: inline-block; padding: 3px 9px; border-radius: 99px;\n  font-size: 11px; font-weight: 700; letter-spacing: .02em;\n  border: 1px solid transparent;\n}\n\n/* Quick actions */\n.actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 4px; }\n.action {\n  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;\n  padding: 16px; border-radius: 14px; cursor: pointer;\n  border: 1px solid var(--card-brd); background: rgba(255, 255, 255, 0.03);\n  color: var(--text); text-align: left;\n  transition: transform .08s ease, border-color .15s ease, background .15s ease;\n}\n.action:hover { border-color: var(--brand); background: rgba(99, 102, 241, 0.12); transform: translateY(-2px); }\n.action:active { transform: translateY(0); }\n.action .ico {\n  width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;\n  background: linear-gradient(135deg, rgba(99,102,241,.9), rgba(168,85,247,.9)); font-size: 18px;\n}\n.action .lbl { font-weight: 700; font-size: 14px; }\n.action .cap { font-size: 12px; color: var(--muted); }\n\n/* Empty state */\n.empty {\n  text-align: center; color: var(--muted); padding: 26px 12px; font-size: 13px;\n  border: 1px dashed var(--card-brd); border-radius: 12px;\n}\n.empty b { color: var(--text); display: block; margin-bottom: 4px; font-size: 14px; }\n\n.footer { margin-top: 26px; text-align: center; color: var(--faint); font-size: 12px; }\n\n@media (max-width: 900px) {\n  .stats { grid-template-columns: repeat(2, 1fr); }\n  .grid { grid-template-columns: 1fr; }\n}\n@media (max-width: 520px) {\n  .actions { grid-template-columns: 1fr; }\n  .bar-row { grid-template-columns: 78px 1fr auto; }\n}\n"
+                    },
+                    {
+                        "path": "data.ts",
+                        "content": "// data.ts \u2014 types, pipeline constants, and pure helpers for the CRM dashboard.\n// Imported by index.ts with a relative path (proves multi-file bundling).\n\nexport interface FieldMeta {\n  id: string;\n  label: string;\n  type: string;\n}\n\nexport interface FormMeta {\n  formId: string;\n  displayName: string;\n  fields: FieldMeta[];\n}\n\nexport interface AppContext {\n  appName: string;\n  appSlug: string;\n  forms: FormMeta[];\n}\n\nexport interface CrmRecord {\n  id: string;\n  answers: Record<string, unknown>;\n  submittedAt: string;\n}\n\nexport interface StageInfo {\n  value: string;\n  label: string;\n  color: string;\n  open: boolean;\n}\n\n// Pipeline stages in display order. `value` matches the Deal.stage dropdown value.\nexport const STAGES: StageInfo[] = [\n  { value: \"lead\", label: \"Lead\", color: \"#64748b\", open: true },\n  { value: \"qualified\", label: \"Qualified\", color: \"#6366f1\", open: true },\n  { value: \"proposal\", label: \"Proposal\", color: \"#a855f7\", open: true },\n  { value: \"won\", label: \"Won\", color: \"#22c55e\", open: false },\n  { value: \"lost\", label: \"Lost\", color: \"#ef4444\", open: false },\n];\n\nexport function stageInfo(value: string): StageInfo {\n  const found = STAGES.find((s) => s.value === value);\n  return found ?? { value, label: value || \"Unknown\", color: \"#64748b\", open: true };\n}\n\n// Resolve a form by fuzzy displayName match (e.g. base \"contact\" matches \"Contacts\").\nexport function findForm(ctx: AppContext, base: string): FormMeta | undefined {\n  const needle = base.trim().toLowerCase();\n  return ctx.forms.find((f) => (f.displayName || \"\").trim().toLowerCase().includes(needle));\n}\n\nexport function toNumber(value: unknown): number {\n  if (typeof value === \"number\") return Number.isFinite(value) ? value : 0;\n  if (typeof value === \"string\") {\n    const n = parseFloat(value.replace(/[^0-9.\\-]/g, \"\"));\n    return Number.isFinite(n) ? n : 0;\n  }\n  return 0;\n}\n\nexport function toText(value: unknown): string {\n  if (value === null || value === undefined) return \"\";\n  if (typeof value === \"string\") return value;\n  if (typeof value === \"number\" || typeof value === \"boolean\") return String(value);\n  return \"\";\n}\n\n// linked_record answers can arrive as an id string, an array, or an object.\nexport function linkedId(value: unknown): string {\n  if (!value) return \"\";\n  if (typeof value === \"string\") return value;\n  if (Array.isArray(value)) return linkedId(value[0]);\n  if (typeof value === \"object\") {\n    const obj = value as Record<string, unknown>;\n    return toText(obj.id ?? obj.value ?? obj.recordId ?? \"\");\n  }\n  return \"\";\n}\n\nexport function formatCurrency(amount: number): string {\n  return \"$\" + Math.round(amount).toLocaleString(\"en-US\");\n}\n\nexport function formatCompact(amount: number): string {\n  const abs = Math.abs(amount);\n  if (abs >= 1_000_000) return \"$\" + (amount / 1_000_000).toFixed(1).replace(/\\.0$/, \"\") + \"M\";\n  if (abs >= 1_000) return \"$\" + (amount / 1_000).toFixed(1).replace(/\\.0$/, \"\") + \"k\";\n  return \"$\" + Math.round(amount);\n}\n\nexport interface StageBucket {\n  stage: StageInfo;\n  total: number;\n  count: number;\n}\n\nexport function pipelineByStage(deals: CrmRecord[]): StageBucket[] {\n  return STAGES.map((stage) => {\n    const matching = deals.filter((d) => toText(d.answers[\"stage\"]) === stage.value);\n    const total = matching.reduce((sum, d) => sum + toNumber(d.answers[\"amount\"]), 0);\n    return { stage, total, count: matching.length };\n  });\n}\n\n// Build a lookup of Contact record id -> display name for linked-record rendering.\nexport function contactNameMap(contacts: CrmRecord[]): Record<string, string> {\n  const map: Record<string, string> = {};\n  for (const c of contacts) {\n    const name = toText(c.answers[\"name\"]) || toText(c.answers[\"company\"]) || toText(c.answers[\"email\"]);\n    if (c.id) map[c.id] = name || \"Unnamed contact\";\n  }\n  return map;\n}\n"
+                    },
+                    {
+                        "path": "index.ts",
+                        "content": "// index.ts \u2014 entry point. Wires the DOM to the app-scoped FormLogic SDK and\n// renders a live sales-pipeline dashboard. Bundled by esbuild (relative imports only).\nimport {\n  AppContext,\n  CrmRecord,\n  FormMeta,\n  contactNameMap,\n  findForm,\n  formatCompact,\n  formatCurrency,\n  linkedId,\n  pipelineByStage,\n  stageInfo,\n  toNumber,\n  toText,\n} from \"./data\";\n\ninterface FormLogicSdk {\n  context(): Promise<AppContext>;\n  submit(formId: string, answers: Record<string, unknown>): Promise<unknown>;\n  records(formId: string, opts?: { limit?: number }): Promise<CrmRecord[]>;\n  currentUser(): Promise<{ name?: string; email?: string } | null>;\n  navigate(formId: string): void;\n  toast: { success(msg: string): void; error(msg: string): void };\n  escapeHtml(value: unknown): string;\n}\n\ndeclare global {\n  interface Window {\n    FormLogic: FormLogicSdk;\n  }\n}\n\nconst FL = window.FormLogic;\nconst esc = (v: unknown): string => FL.escapeHtml(v);\nconst root = document.getElementById(\"app\");\n\nvoid main();\n\nasync function main(): Promise<void> {\n  if (!root) return;\n  if (!FL) {\n    root.innerHTML = '<div class=\"fl-loading\">FormLogic SDK unavailable.</div>';\n    return;\n  }\n  try {\n    const ctx = await FL.context();\n    const user = await FL.currentUser().catch(() => null);\n\n    const contactForm = findForm(ctx, \"contact\");\n    const dealForm = findForm(ctx, \"deal\");\n    const activityForm = findForm(ctx, \"activit\");\n\n    const [deals, contacts] = await Promise.all([\n      dealForm ? FL.records(dealForm.formId, { limit: 500 }) : Promise.resolve([]),\n      contactForm ? FL.records(contactForm.formId, { limit: 500 }) : Promise.resolve([]),\n    ]);\n\n    render(ctx, user, { contactForm, dealForm, activityForm }, deals, contacts);\n  } catch (err) {\n    root.innerHTML =\n      '<div class=\"wrap\"><div class=\"empty\"><b>Could not load the dashboard</b>' +\n      esc(err instanceof Error ? err.message : String(err)) +\n      \"</div></div>\";\n  }\n}\n\ninterface Forms {\n  contactForm?: FormMeta;\n  dealForm?: FormMeta;\n  activityForm?: FormMeta;\n}\n\nfunction render(\n  ctx: AppContext,\n  user: { name?: string; email?: string } | null,\n  forms: Forms,\n  deals: CrmRecord[],\n  contacts: CrmRecord[]\n): void {\n  if (!root) return;\n\n  const buckets = pipelineByStage(deals);\n  const openPipeline = buckets\n    .filter((b) => b.stage.open)\n    .reduce((s, b) => s + b.total, 0);\n  const wonTotal = buckets.filter((b) => b.stage.value === \"won\").reduce((s, b) => s + b.total, 0);\n  const openCount = deals.filter((d) => stageInfo(toText(d.answers[\"stage\"])).open).length;\n  const maxBar = Math.max(1, ...buckets.map((b) => b.total));\n  const names = contactNameMap(contacts);\n\n  const greeting = user && (user.name || user.email) ? `<b>${esc(user.name || user.email)}</b>` : \"there\";\n\n  root.innerHTML = `\n    <div class=\"wrap\">\n      <header class=\"topbar\">\n        <div class=\"brand\">\n          <div class=\"logo\">${esc((ctx.appName || \"C\").charAt(0).toUpperCase())}</div>\n          <div>\n            <h1>${esc(ctx.appName || \"Sales CRM\")}</h1>\n            <p class=\"sub\">Pipeline overview &middot; welcome back, ${greeting}</p>\n          </div>\n        </div>\n        <div class=\"who\">\n          <button class=\"btn\" id=\"refresh\" type=\"button\">Refresh</button>\n          <button class=\"btn primary\" id=\"new-deal\" type=\"button\">+ New deal</button>\n        </div>\n      </header>\n\n      <section class=\"stats\">\n        ${statCard(\"Open pipeline\", formatCurrency(openPipeline), `${openCount} active deal${openCount === 1 ? \"\" : \"s\"}`, false)}\n        ${statCard(\"Won\", formatCurrency(wonTotal), `${buckets.find((b) => b.stage.value === \"won\")?.count ?? 0} closed`, true)}\n        ${statCard(\"Contacts\", String(contacts.length), \"in your book\", false)}\n        ${statCard(\"Total deals\", String(deals.length), \"all stages\", false)}\n      </section>\n\n      <section class=\"grid\">\n        <div class=\"panel\">\n          <h2>Pipeline value by stage</h2>\n          <p class=\"hint\">Sum of deal amounts grouped by stage.</p>\n          ${deals.length ? renderBars(buckets, maxBar) : emptyState(\"No deals yet\", \"Add your first deal to see the pipeline build up.\")}\n        </div>\n\n        <div class=\"panel\">\n          <h2>Quick add</h2>\n          <p class=\"hint\">Jump straight into a form.</p>\n          <div class=\"actions\">\n            ${actionCard(\"act-contact\", \"\\u{1F464}\", \"Contact\", \"New person\", forms.contactForm)}\n            ${actionCard(\"act-deal\", \"\\u{1F4B0}\", \"Deal\", \"New opportunity\", forms.dealForm)}\n            ${actionCard(\"act-activity\", \"\\u{1F5D3}\", \"Activity\", \"Log a touch\", forms.activityForm)}\n          </div>\n        </div>\n      </section>\n\n      <section class=\"grid\" style=\"margin-top:16px\">\n        <div class=\"panel\">\n          <h2>Recent deals</h2>\n          <p class=\"hint\">Latest opportunities and their linked contact.</p>\n          ${deals.length ? renderRecentDeals(deals, names) : emptyState(\"No deals yet\", \"Deals you create will appear here.\")}\n        </div>\n\n        <div class=\"panel\">\n          <h2>Recent contacts</h2>\n          <p class=\"hint\">The people most recently added.</p>\n          ${contacts.length ? renderRecentContacts(contacts) : emptyState(\"No contacts yet\", \"Add a contact to get started.\")}\n        </div>\n      </section>\n\n      <p class=\"footer\">Built with FormLogic &middot; live data from your forms</p>\n    </div>\n  `;\n\n  wire(forms);\n}\n\nfunction statCard(k: string, v: string, d: string, win: boolean): string {\n  return `\n    <div class=\"stat${win ? \" win\" : \"\"}\">\n      <div class=\"k\">${esc(k)}</div>\n      <div class=\"v\">${esc(v)}</div>\n      <div class=\"d\">${esc(d)}</div>\n    </div>`;\n}\n\nfunction renderBars(buckets: ReturnType<typeof pipelineByStage>, maxBar: number): string {\n  const rows = buckets\n    .map((b) => {\n      const pct = Math.max(b.total > 0 ? 4 : 0, Math.round((b.total / maxBar) * 100));\n      const grad = `linear-gradient(90deg, ${b.stage.color}, ${b.stage.color}cc)`;\n      return `\n        <div class=\"bar-row\">\n          <span class=\"name\">${esc(b.stage.label)}</span>\n          <span class=\"bar-track\"><span class=\"bar-fill\" style=\"width:${pct}%;background:${grad}\"></span></span>\n          <span class=\"amt\">${esc(formatCompact(b.total))}<small>${b.count} deal${b.count === 1 ? \"\" : \"s\"}</small></span>\n        </div>`;\n    })\n    .join(\"\");\n  return `<div class=\"bars\">${rows}</div>`;\n}\n\nfunction renderRecentDeals(deals: CrmRecord[], names: Record<string, string>): string {\n  const recent = [...deals].sort(bySubmittedDesc).slice(0, 6);\n  const items = recent\n    .map((d) => {\n      const title = toText(d.answers[\"title\"]) || \"Untitled deal\";\n      const st = stageInfo(toText(d.answers[\"stage\"]));\n      const amount = formatCurrency(toNumber(d.answers[\"amount\"]));\n      const cid = linkedId(d.answers[\"contact\"]);\n      const contactName = cid && names[cid] ? names[cid] : cid ? \"Linked contact\" : \"No contact\";\n      const badge = `<span class=\"badge\" style=\"color:${st.color};background:${st.color}22;border-color:${st.color}55\">${esc(st.label)}</span>`;\n      return `\n        <div class=\"item\">\n          <div class=\"main\">\n            <div class=\"t\">${esc(title)}</div>\n            <div class=\"m\">${badge} &middot; ${esc(contactName)}</div>\n          </div>\n          <div class=\"val\">${esc(amount)}</div>\n        </div>`;\n    })\n    .join(\"\");\n  return `<div class=\"list\">${items}</div>`;\n}\n\nfunction renderRecentContacts(contacts: CrmRecord[]): string {\n  const recent = [...contacts].sort(bySubmittedDesc).slice(0, 6);\n  const items = recent\n    .map((c) => {\n      const name = toText(c.answers[\"name\"]) || \"Unnamed\";\n      const company = toText(c.answers[\"company\"]);\n      const email = toText(c.answers[\"email\"]);\n      const sub = [company, email].filter(Boolean).join(\" \u00b7 \") || \"\u2014\";\n      return `\n        <div class=\"item\">\n          <div class=\"main\">\n            <div class=\"t\">${esc(name)}</div>\n            <div class=\"m\">${esc(sub)}</div>\n          </div>\n        </div>`;\n    })\n    .join(\"\");\n  return `<div class=\"list\">${items}</div>`;\n}\n\nfunction actionCard(id: string, ico: string, lbl: string, cap: string, form?: FormMeta): string {\n  const disabled = form ? \"\" : ' aria-disabled=\"true\" style=\"opacity:.5;cursor:not-allowed\"';\n  return `\n    <button class=\"action\" type=\"button\" id=\"${esc(id)}\"${disabled}>\n      <span class=\"ico\">${ico}</span>\n      <span class=\"lbl\">${esc(lbl)}</span>\n      <span class=\"cap\">${esc(cap)}</span>\n    </button>`;\n}\n\nfunction emptyState(title: string, msg: string): string {\n  return `<div class=\"empty\"><b>${esc(title)}</b>${esc(msg)}</div>`;\n}\n\nfunction bySubmittedDesc(a: CrmRecord, b: CrmRecord): number {\n  return String(b.submittedAt || \"\").localeCompare(String(a.submittedAt || \"\"));\n}\n\nfunction wire(forms: Forms): void {\n  const go = (form?: FormMeta): void => {\n    if (form) {\n      FL.navigate(form.formId);\n    } else {\n      FL.toast.error(\"That form isn't available in this app.\");\n    }\n  };\n\n  document.getElementById(\"refresh\")?.addEventListener(\"click\", () => {\n    FL.toast.success(\"Refreshing\u2026\");\n    void main();\n  });\n  document.getElementById(\"new-deal\")?.addEventListener(\"click\", () => go(forms.dealForm));\n  document.getElementById(\"act-contact\")?.addEventListener(\"click\", () => go(forms.contactForm));\n  document.getElementById(\"act-deal\")?.addEventListener(\"click\", () => go(forms.dealForm));\n  document.getElementById(\"act-activity\")?.addEventListener(\"click\", () => go(forms.activityForm));\n}\n"
+                    }
+                ]
+            }
+        }
+    ]
+}

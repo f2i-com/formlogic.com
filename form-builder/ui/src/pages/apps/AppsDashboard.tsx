@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, Sparkles } from 'lucide-react';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
 import { Header } from '../../components/layout/Header';
@@ -10,6 +10,7 @@ import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { PackImportModal } from '../../components/builder/PackImportModal';
+import { SampleAppsModal } from '../../components/apps/SampleAppsModal';
 import { ShowMore } from '../../components/ui/ShowMore';
 import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
@@ -28,6 +29,7 @@ export function AppsDashboard() {
   const [appLimit, setAppLimit] = useState(APPS_PAGE);
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   const [showImport, setShowImport] = useState(false);
+  const [showSamples, setShowSamples] = useState(false);
   const [showHandToAi, setShowHandToAi] = useState(false);
 
   // Open a "creator" MCP connection so an external AI can build a brand-new app itself — no placeholder.
@@ -75,6 +77,9 @@ export function AppsDashboard() {
             <Button variant="outline" size="sm" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />} title="Share a temporary MCP link so your own AI can build a new app">
               Hand to an AI
             </Button>
+            <Button variant="outline" size="sm" onClick={() => setShowSamples(true)} leftIcon={<Sparkles className="h-4 w-4" />} title="Install a ready-made sample app">
+              Sample apps
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setShowImport(true)} leftIcon={<Upload className="h-4 w-4" />} title="Import an app from a .json bundle exported from FormLogic">
               Import
             </Button>
@@ -111,11 +116,16 @@ export function AppsDashboard() {
           <EmptyState
             icon={Globe}
             title="No apps yet"
-            description="Create your first app to group forms into a deployable application."
+            description="Create your first app to group forms into a deployable application — or start from a ready-made sample to see what's possible."
             action={
-              <Button onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
-                Create Your First App
-              </Button>
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <Button onClick={() => setShowSamples(true)} leftIcon={<Sparkles className="h-4 w-4" />}>
+                  Try a sample app
+                </Button>
+                <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>
+                  Create your own
+                </Button>
+              </div>
             }
           />
         ) : filteredApps.length === 0 ? (
@@ -164,6 +174,7 @@ export function AppsDashboard() {
       />
 
       {showImport && <PackImportModal isOpen onClose={() => { setShowImport(false); fetchApps(); }} initialTab="upload" />}
+      <SampleAppsModal isOpen={showSamples} onClose={() => setShowSamples(false)} onInstalled={fetchApps} />
       <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
     </div>
   );

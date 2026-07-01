@@ -896,6 +896,14 @@ $app->post('/api/packs/import', function ($request, $response) use ($container) 
     return $container->get(PackController::class)->import($request, $response);
 })->add($authRequired);
 
+// Bundled sample apps ("Try a sample app")
+$app->get('/api/sample-apps', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->listSampleApps($request, $response);
+})->add($authRequired);
+$app->post('/api/sample-apps/{id}/install', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(PackController::class)->installSampleApp($request, $response, $getArgs($request));
+})->add($authRequired);
+
 $app->post('/api/packs/adopt', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->adopt($request, $response);
 })->add($authRequired);

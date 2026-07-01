@@ -88,10 +88,15 @@ class PackFixturesTest extends TestCase
 
     public static function fixtureProvider(): array
     {
-        $dir = dirname(__DIR__) . '/fixtures/apps';
+        $dirs = [
+            dirname(__DIR__) . '/fixtures/apps',        // test fixtures
+            dirname(__DIR__, 2) . '/resources/sample-apps', // bundled "Try a sample app" packs (shipped)
+        ];
         $out = [];
-        foreach (glob($dir . '/*.json') ?: [] as $file) {
-            $out[basename($file)] = [$file];
+        foreach ($dirs as $dir) {
+            foreach (glob($dir . '/*.json') ?: [] as $file) {
+                $out[basename($file)] = [$file];
+            }
         }
         return $out;
     }

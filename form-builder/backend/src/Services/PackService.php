@@ -447,6 +447,18 @@ class PackService
     }
 
     /**
+     * Publish an app the user owns (used by the sample-app install so it opens running immediately).
+     * Ordinary pack import stays draft; only the explicit "Try a sample" flow publishes.
+     */
+    public function publishApp(string $appId, string $userId): void
+    {
+        $app = $this->appService->getApp($appId);
+        if ($app && ($app['ownerId'] ?? null) === $userId) {
+            $this->appService->updateApp($appId, ['status' => 'published']);
+        }
+    }
+
+    /**
      * Get all pack installations for a user.
      *
      * @return array List of installation records
