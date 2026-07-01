@@ -174,7 +174,7 @@ Entry point. Sets up Dotenv, PHP-DI Container, Slim App via `Bridge::create()`. 
 | `api_tokens` | API key auth (token_hash, expires_at) |
 | `response_metadata` | Global response index (form_id FK, status enum, ip_address) |
 | `form_analytics` | Daily stats (views, starts, completions, avg_completion_time) |
-| `apps` | Internal apps (owner_id FK, slug UNIQUE, settings/theme/nav_config JSON) |
+| `apps` | Business apps (owner_id FK, slug UNIQUE, settings/theme/nav_config JSON) |
 | `app_forms` | App-form junction (app_id + form_id UNIQUE, display_name, sort_order) |
 | `app_roles` | RBAC roles (app_id FK, is_system bool) |
 | `app_role_permissions` | Permission assignments (role_id FK, form_id nullable, permission) |

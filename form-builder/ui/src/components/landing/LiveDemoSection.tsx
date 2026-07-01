@@ -58,7 +58,7 @@ export function LiveDemoSection() {
           Live demo · no signup
         </div>
         <h2 className="fl-display mt-4 text-3xl sm:text-4xl font-bold tracking-tight text-gray-900 dark:text-white">
-          Try a real internal app <span className="fl-grad">right now</span>
+          Try a real business app <span className="fl-grad">right now</span>
         </h2>
         <p className="mt-3 max-w-2xl text-gray-500 dark:text-slate-400 leading-relaxed">
           Jump into a live workspace as <strong className="text-gray-900 dark:text-white">Demo</strong> — no account,

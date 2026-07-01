@@ -1,16 +1,16 @@
 # FormLogic
 
-A full-stack form builder and internal apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
+A full-stack form builder and business apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with an internal apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
+FormLogic combines a Typeform-style form builder with a business apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
 
 ### Key Capabilities
 
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — one engine and prelude shared by the browser and the server
-- **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
+- **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
 - **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
 - **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
@@ -351,7 +351,7 @@ form-builder/                     # (under the repo root, e.g. formlogic-app/for
 │   └── src/
 │       ├── pages/                 # 11 pages + 9 app admin pages
 │       ├── components/
-│       │   ├── app-runtime/       # Internal app runtime (data tables, form views, auth guards)
+│       │   ├── app-runtime/       # Business app runtime (data tables, form views, auth guards)
 │       │   ├── builder/           # Form builder (field palette, script editor, AI generator...)
 │       │   ├── layout/            # App shell, sidebar, header, mobile nav
 │       │   └── ui/                # Shared UI components (buttons, modals, toasts...)
@@ -386,9 +386,9 @@ Forms can be stored in two modes:
 - **Local** -- Forms persist in browser localStorage (no account required)
 - **Cloud** -- Forms sync to the backend API (requires authentication)
 
-### Internal Apps Platform
+### Business Apps Platform
 
-Forms can be composed into deployable internal applications:
+Forms can be composed into deployable business applications:
 
 1. **Create an app** -- Name, description, theme, slug
 2. **Add forms** -- Select which forms appear in the app's navigation

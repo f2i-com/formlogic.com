@@ -9,7 +9,7 @@ Every app is *forms + workflow + a live dashboard*, deployable with role-based a
 <p align="center">
   <img src="docs/images/public-form.png" width="49%" alt="Public form fill — focused, one-question-at-a-time mode" />
   &nbsp;
-  <img src="docs/images/app-runtime.png" width="49%" alt="Internal app runtime — multi-form app with RBAC" />
+  <img src="docs/images/app-runtime.png" width="49%" alt="Business app runtime — multi-form app with RBAC" />
 </p>
 <p align="center">
   <img src="docs/images/doctor.png" width="49%" alt="Doctor — admin health diagnostics" />
@@ -17,7 +17,7 @@ Every app is *forms + workflow + a live dashboard*, deployable with role-based a
   <img src="docs/images/landing.png" width="49%" alt="Landing page" />
 </p>
 
-<p align="center"><sub>Form builder · public form (focused mode) · internal app runtime · Doctor diagnostics · landing</sub></p>
+<p align="center"><sub>Form builder · public form (focused mode) · business app runtime · Doctor diagnostics · landing</sub></p>
 
 ## Overview
 
@@ -27,7 +27,7 @@ FormLogic is built around a simple loop: **land → try the live demo → instal
 
 - **App Marketplace** -- Install ready-made business apps in one click. Each app = forms + workflow + a live dashboard, seeded with realistic demo data. Browse by dynamic categories/tags derived from the catalog; every app is customisable and fully export/import-able. See [App Marketplace](#app-marketplace) below.
 - **Live Demo** -- A no-signup shared Demo account with the whole marketplace pre-installed and populated, so dashboards are live on first look. Visitors' changes (new records, new forms, settings) stay in *their* browser — the shared demo never gets polluted.
-- **Internal Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a sandboxed custom-screen dashboard.
+- **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a sandboxed custom-screen dashboard.
 - **Build with AI / MCP** -- Generate forms/apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit whole apps for you. See [Build with your own AI (MCP)](#build-with-your-own-ai-mcp).
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — the same engine and standard-library prelude run in the browser and on the server
@@ -141,7 +141,7 @@ formlogic-app/
 │       └── src/
 │           ├── pages/                 # 11 pages + 9 app admin pages
 │           ├── components/
-│           │   ├── app-runtime/       # Internal app runtime (data tables, form views, auth guards)
+│           │   ├── app-runtime/       # Business app runtime (data tables, form views, auth guards)
 │           │   ├── builder/           # Form builder (field palette, script editor, NIGO dashboard...)
 │           │   ├── layout/            # App shell, sidebar, header
 │           │   └── ui/                # Shared UI components (buttons, modals, toasts...)
@@ -253,9 +253,9 @@ Forms can be stored in two modes:
 
 The storage mode preference persists across sessions.
 
-### Internal Apps Platform
+### Business Apps Platform
 
-Forms can be composed into deployable internal applications:
+Forms can be composed into deployable business applications:
 
 1. **Create an app** -- Name, description, theme, slug
 2. **Add forms** -- Select which forms appear in the app's navigation
