@@ -588,7 +588,7 @@ export default function FormBuilder() {
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="relative z-30 h-14 bg-white/95 dark:bg-slate-900/80 backdrop-blur-xl border-b border-gray-200/80 dark:border-slate-800 flex items-center justify-between px-2 sm:px-4 flex-shrink-0">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 overflow-hidden">
           <Button variant="ghost" size="sm" onClick={() => navigate('/forms')}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
@@ -609,8 +609,10 @@ export default function FormBuilder() {
             className="border-none bg-transparent font-semibold text-base sm:text-lg focus:ring-0 p-0 min-w-0 w-full sm:w-48 md:w-auto"
           />
           {/* Save indicator — reflects the real storage mode (cloud vs local) and
-              is announced to screen readers. */}
-          <span role="status" aria-live="polite" className="hidden sm:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
+              is announced to screen readers. Shown only on wide screens so it never
+              crowds the action buttons; the left group also clips (overflow-hidden)
+              so it can never overlap the right group on a tight header. */}
+          <span role="status" aria-live="polite" className="hidden lg:flex items-center gap-1 text-xs text-gray-400 dark:text-slate-500 flex-shrink-0">
             {isSaving ? (
               <><Loader2 className="h-3 w-3 animate-spin" />Saving</>
             ) : storageMode === 'api' ? (
@@ -621,7 +623,7 @@ export default function FormBuilder() {
           </span>
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
           {/* AI Generator - always visible */}
           <Button
             variant="outline"
@@ -632,7 +634,7 @@ export default function FormBuilder() {
             className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border-purple-500/30 hover:border-purple-400"
           >
             <Sparkles className="h-4 w-4 text-purple-400" />
-            <span className="hidden lg:inline ml-2 text-purple-600 dark:text-purple-300">AI</span>
+            <span className="hidden xl:inline ml-2 text-purple-600 dark:text-purple-300">AI</span>
           </Button>
 
           {/* Settings - hidden on smallest screens */}
@@ -645,7 +647,7 @@ export default function FormBuilder() {
             className="hidden sm:flex"
           >
             <Settings className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Settings</span>
+            <span className="hidden xl:inline ml-2">Settings</span>
           </Button>
 
           {/* Theme - hidden on small screens */}
@@ -658,7 +660,7 @@ export default function FormBuilder() {
             className="hidden md:flex"
           >
             <Palette className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Theme</span>
+            <span className="hidden xl:inline ml-2">Theme</span>
           </Button>
 
           {/* Script - hidden on small screens */}
@@ -671,27 +673,27 @@ export default function FormBuilder() {
             className="hidden md:flex"
           >
             <Code2 className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Script</span>
+            <span className="hidden xl:inline ml-2">Script</span>
             {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
           </Button>
 
           {/* Preview */}
           <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview" aria-label="Preview form">
             <Eye className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Preview</span>
+            <span className="hidden xl:inline ml-2">Preview</span>
           </Button>
 
           {/* Custom Screen (Beta) — AI-built sandboxed frontend over this form's data */}
           <Button variant="outline" size="sm" onClick={() => navigate(`/forms/${form.id}/screen/edit`)} title="Custom screen (Beta)" aria-label="Custom screen">
             <MonitorPlay className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Screen</span>
+            <span className="hidden xl:inline ml-2">Screen</span>
           </Button>
 
           {/* View the custom screen as a flexible popup dashboard (only when one is enabled) */}
           {form.customScreen?.enabled && (
             <Button variant="outline" size="sm" onClick={() => setActiveModal('screen')} title="View dashboard" aria-label="View dashboard">
               <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden lg:inline ml-2">Dashboard</span>
+              <span className="hidden xl:inline ml-2">Dashboard</span>
             </Button>
           )}
 
@@ -705,7 +707,7 @@ export default function FormBuilder() {
             className="hidden sm:flex"
           >
             <Share2 className="h-4 w-4" />
-            <span className="hidden lg:inline ml-2">Share</span>
+            <span className="hidden xl:inline ml-2">Share</span>
           </Button>
 
           {/* Version history - hidden on smallest screens */}
