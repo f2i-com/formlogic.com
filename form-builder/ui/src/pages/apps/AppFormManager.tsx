@@ -110,8 +110,27 @@ export function AppFormManager() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
+  // Form ids that already belong to ANOTHER app. A form should live in one app, so the "available"
+  // list only offers standalone (app-less) forms — never one that's part of a different app.
+  const [otherAppFormIds, setOtherAppFormIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await api.getApps();
+      const apps = (res.data?.apps ?? []) as Array<{ id: string }>;
+      const memberships = await Promise.all(
+        apps.filter((a) => a.id !== appId).map((a) => api.getAppForms(a.id))
+      );
+      if (cancelled) return;
+      const ids = new Set<string>();
+      memberships.forEach((m) => ((m.data?.forms ?? []) as Array<{ formId: string }>).forEach((f) => ids.add(f.formId)));
+      setOtherAppFormIds(ids);
+    })();
+    return () => { cancelled = true; };
+  }, [appId]);
+
   const includedFormIds = appForms.map((f) => f.formId);
-  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id));
+  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !otherAppFormIds.has(f.id));
 
   const handleAdd = async (formId: string) => {
     if (!appId) return;
@@ -220,9 +239,10 @@ export function AppFormManager() {
         {/* Available forms */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available Forms</h3>
+          <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2 mb-3">Standalone forms not yet part of any app.</p>
           {availableForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">
-              {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'All forms are already included.'}
+              {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No standalone forms to add — all your forms already belong to an app.'}
             </p>
           ) : (
             <div className="space-y-2">
