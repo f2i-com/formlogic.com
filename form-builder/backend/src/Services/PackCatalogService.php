@@ -28,9 +28,14 @@ class PackCatalogService
         $where[] = "pc.visibility = 'public'";
 
         if (!empty($filters['search'])) {
-            $where[] = "(pc.name LIKE :search ESCAPE '\\' OR pc.description LIKE :search ESCAPE '\\')";
-            $escaped = strtr($filters['search'], ['%' => '\%', '_' => '\_']);
-            $params['search'] = '%' . $escaped . '%';
+            // Use '!' as the LIKE escape char (not backslash): a backslash escape in a double-quoted
+            // PHP string collapses to ESCAPE '\' in SQL, whose \' escapes the quote and breaks the query.
+            // Bind two distinct placeholders (not one reused :search) — PDO with emulation off rejects a
+            // named placeholder used more than once.
+            $where[] = "(pc.name LIKE :searchName ESCAPE '!' OR pc.description LIKE :searchDesc ESCAPE '!')";
+            $escaped = strtr($filters['search'], ['!' => '!!', '%' => '!%', '_' => '!_']);
+            $params['searchName'] = '%' . $escaped . '%';
+            $params['searchDesc'] = '%' . $escaped . '%';
         }
 
         if (!empty($filters['category'])) {
