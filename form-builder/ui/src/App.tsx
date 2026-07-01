@@ -276,8 +276,6 @@ function AppRoutes() {
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/billing" element={<Billing />} />
         <Route path="/analytics/:formId" element={<FormAnalytics />} />
-        <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
-        <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
         <Route path="/responses/:formId" element={<FormResponses />} />
         {/* App admin routes */}
         <Route path="/apps" element={<AppsDashboard />} />
@@ -288,7 +286,6 @@ function AppRoutes() {
         <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
         <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
         <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
-        <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
       </Route>
 
       {/* Redirect authenticated users from auth pages */}
@@ -305,6 +302,12 @@ function AppRoutes() {
 
       {/* Preview route (full screen) */}
       <Route path="/preview/:formId" element={<FormPreview />} />
+
+      {/* Custom-screen play + editors — full screen (own header/back), so they fit the viewport
+          and scroll internally instead of overflowing under AppShell's chrome on small screens */}
+      <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
+      <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
+      <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
 
       {/* Pack marketplace */}
       <Route path="/packs" element={<PackGalleryPage />} />

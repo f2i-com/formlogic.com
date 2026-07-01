@@ -34,7 +34,7 @@ export default function CustomScreenPlay() {
   }, [formId]);
 
   return (
-    <div className="h-screen flex flex-col bg-white dark:bg-slate-950">
+    <div className="h-dvh flex flex-col bg-white dark:bg-slate-950">
       <div className="flex items-center gap-3 px-4 h-12 shrink-0 border-b border-gray-200 dark:border-slate-800">
         <button onClick={() => navigate(-1)} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
