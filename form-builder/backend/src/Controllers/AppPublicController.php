@@ -432,7 +432,53 @@ class AppPublicController
         // Server-side search + total (so the records grid paginates + searches across ALL rows, fast).
         // Empty search field list → the searchable query falls back to matching the whole answers JSON.
         $search = trim((string)($queryParams['search'] ?? ''));
-        $result = $this->responseService->getFormResponsesSearchable($formId, $search, [], $options);
+
+        // Make linked-record DISPLAY text + choice-field LABELS searchable too (not just raw stored
+        // ids/option values): resolve the term to matching values and OR them into the query.
+        $extraMatches = [];
+        if ($search !== '') {
+            $form = $this->formService->getForm($formId);
+            $fields = is_array($form['fields'] ?? null) ? $form['fields'] : [];
+            $appFormIds = [];
+            foreach ($this->appService->getAppForms($app['id']) as $af) {
+                $appFormIds[$af['formId']] = true;
+            }
+            $lowerSearch = mb_strtolower($search);
+            $choiceTypes = ['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio'];
+            $multiTypes = ['multiple_choice', 'checkbox', 'checkboxes'];
+            foreach ($fields as $field) {
+                $fid = (string) ($field['id'] ?? '');
+                $type = (string) ($field['type'] ?? '');
+                if ($fid === '') { continue; }
+
+                if ($type === 'linked_record') {
+                    $tf = $field['properties']['targetFormId'] ?? null;
+                    // Cross-tenant guard: only search a target form that belongs to this app + the caller can view.
+                    if (!$tf || empty($appFormIds[$tf])) { continue; }
+                    $tCanAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $tf);
+                    $tCanOwn = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $tf);
+                    if (!$tCanAll && !$tCanOwn) { continue; }
+                    $ids = $this->responseService->findMatchingResponseIds($tf, $search, $tCanAll ? null : $userId);
+                    if ($ids) {
+                        $extraMatches[] = ['field' => $fid, 'values' => $ids, 'multi' => ($field['properties']['allowMultiple'] ?? false) === true];
+                    }
+                } elseif (in_array($type, $choiceTypes, true)) {
+                    $vals = [];
+                    foreach (($field['properties']['options'] ?? []) as $o) {
+                        if (!is_array($o)) { continue; }
+                        $label = (string) ($o['label'] ?? '');
+                        if (isset($o['value']) && $label !== '' && str_contains(mb_strtolower($label), $lowerSearch)) {
+                            $vals[] = (string) $o['value'];
+                        }
+                    }
+                    if ($vals) {
+                        $extraMatches[] = ['field' => $fid, 'values' => $vals, 'multi' => in_array($type, $multiTypes, true)];
+                    }
+                }
+            }
+        }
+
+        $result = $this->responseService->getFormResponsesSearchable($formId, $search, [], $options, $extraMatches);
         $responses = $result['responses'];
         $total = (int) ($result['total'] ?? count($responses));
 

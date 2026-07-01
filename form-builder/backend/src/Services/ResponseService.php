@@ -505,11 +505,44 @@ class ResponseService
     /**
      * Search responses using SQL json_extract for efficient filtering
      */
+    /**
+     * IDs of a form's responses whose answers contain $term (whole-answers substring match). Used to
+     * resolve a search term against a LINKED form so the parent grid can match by the linked record's
+     * display/content, not just its stored id. Optionally restricted to a specific submitter (own-scope).
+     *
+     * @return string[]
+     */
+    public function findMatchingResponseIds(string $formId, string $term, ?string $ownerUserId = null, int $limit = 2000): array
+    {
+        $term = trim($term);
+        if ($term === '' || !$this->sqlite->formDatabaseExists($formId)) {
+            return [];
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $conditions = ["answers LIKE :q ESCAPE '\'"];
+        $params = ['q' => '%' . strtr($term, ['%' => '\%', '_' => '\_']) . '%'];
+        if ($ownerUserId !== null) {
+            $conditions[] = "json_extract(metadata, '$.submittedByUserId') = :owner";
+            $params['owner'] = $ownerUserId;
+        }
+        $stmt = $db->prepare("SELECT id FROM responses WHERE " . implode(' AND ', $conditions) . " LIMIT :lim");
+        foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
+        $stmt->bindValue('lim', max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map('strval', $stmt->fetchAll(PDO::FETCH_COLUMN) ?: []);
+    }
+
+    /**
+     * @param array $extraMatches Extra OR-conditions so search matches resolved values (linked-record
+     *   display / choice labels): each ['field'=>id, 'values'=>string[], 'multi'=>bool]. A row matches if
+     *   its answer for that field equals one of the values (or, for multi, contains one via json_each).
+     */
     public function getFormResponsesSearchable(
         string $formId,
         string $searchQuery,
         array $searchFieldIds,
-        array $options = []
+        array $options = [],
+        array $extraMatches = []
     ): array {
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return ['responses' => [], 'total' => 0];
@@ -552,6 +585,25 @@ class ResponseService
                 // Fallback: search the entire answers JSON string
                 $searchConditions[] = "answers LIKE :search_all ESCAPE '\'";
                 $params['search_all'] = $searchParam;
+            }
+
+            // Extra matches (linked-record display / choice labels resolved to stored values by the caller).
+            foreach ($extraMatches as $mi => $m) {
+                $mfid = preg_replace('/[^a-zA-Z0-9_]/', '', (string)($m['field'] ?? ''));
+                $vals = array_values(array_filter((array)($m['values'] ?? []), static fn ($v) => is_string($v) || is_int($v)));
+                if ($mfid === '' || empty($vals)) {
+                    continue;
+                }
+                $placeholders = [];
+                foreach ($vals as $vi => $v) {
+                    $p = "em_{$mi}_{$vi}";
+                    $placeholders[] = ":$p";
+                    $params[$p] = (string) $v;
+                }
+                $inList = implode(', ', $placeholders);
+                $searchConditions[] = !empty($m['multi'])
+                    ? "EXISTS (SELECT 1 FROM json_each(answers, '\$.$mfid') WHERE value IN ($inList))"
+                    : "json_extract(answers, '\$.$mfid') IN ($inList)";
             }
 
             if (!empty($searchConditions)) {
