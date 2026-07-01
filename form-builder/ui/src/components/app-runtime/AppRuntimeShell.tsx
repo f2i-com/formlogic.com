@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database } from 'lucide-react';
+import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database, FileBarChart } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -59,20 +59,37 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // dashboard is a dead end for browsing data. Hidden on the records screens themselves.
   const hideNav = (config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
   if (hideNav) {
-    const onRecordsView = location.pathname.includes('/records') || /\/form\/[^/]+\/responses/.test(location.pathname);
+    const path = location.pathname;
+    const onRecordsView = path.includes('/records') || /\/form\/[^/]+\/responses/.test(path);
+    const onReportsView = path.includes('/reports');
+    const hasReports = (config.app?.reports?.length ?? 0) > 0 || !!config.app?.ownerId;
     return (
       <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {children}
-        {!onRecordsView && (
-          <button
-            onClick={() => navigate(`/app/${appSlug}/records`)}
-            aria-label="View records"
-            className="app-btn-primary fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 hover:opacity-90 transition-opacity cursor-pointer"
-            style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
-          >
-            <Database className="h-4 w-4" />
-            Records
-          </button>
+        {/* Chromeless apps still get unobtrusive access to Records + Reports. */}
+        {(!onRecordsView || !onReportsView) && (
+          <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            {hasReports && !onReportsView && (
+              <button
+                onClick={() => navigate(`/app/${appSlug}/reports`)}
+                aria-label="View reports"
+                className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                <FileBarChart className="h-4 w-4" />
+                Reports
+              </button>
+            )}
+            {!onRecordsView && (
+              <button
+                onClick={() => navigate(`/app/${appSlug}/records`)}
+                aria-label="View records"
+                className="app-btn-primary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                <Database className="h-4 w-4" />
+                Records
+              </button>
+            )}
+          </div>
         )}
       </main>
     );
@@ -82,17 +99,22 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const basePath = `/app/${appSlug}`;
 
   const onRecords = location.pathname.includes('/records');
+  const onReports = location.pathname.includes('/reports');
+  // Reports are optional: the section shows if any exist, or to the owner (who can create them).
+  const showReports = (config.app?.reports?.length ?? 0) > 0 || !!config.app?.ownerId;
 
+  type NavKind = 'dashboard' | 'form' | 'records' | 'reports';
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, kind: 'dashboard' as 'dashboard' | 'form' | 'records', path: basePath },
+    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, kind: 'dashboard' as NavKind, path: basePath },
     ...forms.map((f) => ({
       id: f.formId,
       label: f.displayName,
       iconName: f.icon ?? null,
-      kind: 'form' as 'dashboard' | 'form' | 'records',
+      kind: 'form' as NavKind,
       path: `${basePath}/form/${f.formId}`,
     })),
-    { id: 'records', label: 'Records', iconName: null as string | null, kind: 'records' as 'dashboard' | 'form' | 'records', path: `${basePath}/records` },
+    { id: 'records', label: 'Records', iconName: null as string | null, kind: 'records' as NavKind, path: `${basePath}/records` },
+    ...(showReports ? [{ id: 'reports', label: 'Reports', iconName: null as string | null, kind: 'reports' as NavKind, path: `${basePath}/reports` }] : []),
   ];
 
   const handleNav = (item: typeof navItems[0]) => {
@@ -104,13 +126,15 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const navIcon = (item: typeof navItems[0], className: string) => {
     if (item.kind === 'dashboard') return <Home className={className} />;
     if (item.kind === 'records') return <Database className={className} />;
+    if (item.kind === 'reports') return <FileBarChart className={className} />;
     return <DynamicIcon name={item.iconName} className={className} />;
   };
 
   const isActive = (id: string) => {
     if (location.pathname.includes('/profile')) return false;
-    if (id === 'records') return onRecords;
-    if (onRecords) return false; // on the records screen, no form/dashboard item is active
+    if (id === 'reports') return onReports;
+    if (id === 'records') return onRecords && !onReports;
+    if (onRecords || onReports) return false; // on records/reports, no form/dashboard item is active
     return id === activeFormId || (id === 'dashboard' && !activeFormId);
   };
 

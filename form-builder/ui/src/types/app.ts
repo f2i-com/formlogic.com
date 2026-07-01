@@ -47,8 +47,38 @@ export interface App {
   navConfig: AppNavItem[];
   /** Optional sandboxed custom HOME screen ({ html, css, js }) shown instead of the form list. */
   customScreen?: CustomScreen;
+  /** Optional saved reports shown in the app's Reports section. */
+  reports?: AppReport[];
   createdAt: string;
   updatedAt: string;
+}
+
+/** A saved report on an app. `builder` = no-code spec; `screen` reserved for future AI report screens. */
+export interface AppReport {
+  id: string;
+  name: string;
+  description?: string;
+  type?: 'builder' | 'screen';
+  spec: AppReportSpec;
+}
+
+export interface AppReportSpec {
+  formId: string;
+  viz: 'table' | 'bar' | 'pie' | 'kpi';
+  filters?: Array<{ field: string; op: string; value?: string }>;
+  groupBy?: { field: string; bucket?: 'none' | 'day' | 'month' | 'year' };
+  measure?: { fn: 'count' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
+  columns?: string[];
+  sort?: 'asc' | 'desc';
+  limit?: number;
+}
+
+export interface AppReportResult {
+  viz: string;
+  columns?: Array<{ id: string; label: string }>;
+  rows?: Array<Record<string, unknown>>;
+  series?: Array<{ label: string; value: number }>;
+  value?: number;
 }
 
 export interface AppForm {

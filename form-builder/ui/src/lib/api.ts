@@ -942,6 +942,14 @@ class ApiClient {
    * Owner-scoped linked-record lookup (no app context) — powers linked_record fields on standalone /
    * pack forms. Returns only the caller's own records.
    */
+  /** Run a no-code report spec against one of an app's forms (read-only, permission-scoped). */
+  async runReport(slug: string, spec: Record<string, unknown>): Promise<ApiResponse<import('../types/app').AppReportResult>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/reports/run`, {
+      method: 'POST',
+      body: JSON.stringify({ spec }),
+    });
+  }
+
   async lookupOwnedRecords(
     formId: string,
     options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }

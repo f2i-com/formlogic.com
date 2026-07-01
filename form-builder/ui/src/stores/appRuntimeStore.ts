@@ -3,7 +3,10 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
-import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions } from '../types/app';
+import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReport, AppReportSpec, AppReportResult } from '../types/app';
+
+// Demo report authoring stays per-browser (the shared demo is read-only on the server).
+const demoReportsKey = (appId: string) => `formlogic-demo-reports-${appId}`;
 
 interface AppRuntimeState {
   config: AppRuntimeConfig | null;
@@ -29,6 +32,10 @@ interface AppRuntimeState {
 
   // Linked records
   lookupRecords: (formId: string, options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; ids?: string[] }) => Promise<LinkedRecord[]>;
+
+  // Reports
+  runReport: (spec: AppReportSpec) => Promise<AppReportResult | null>;
+  saveReports: (reports: AppReport[]) => Promise<boolean>;
 
   // Permission helpers
   canSubmit: (formId: string) => boolean;
@@ -75,8 +82,16 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             const data = result.data as Record<string, unknown>;
             const perms = data.permissions as AppUserPermissions | undefined;
             const forms = (data.forms as AppRuntimeForm[]) ?? [];
+            const app = data.app as AppRuntimeConfig['app'];
+            // Demo authors reports in their browser only — merge any local ones over the server set.
+            if (api.isDemoMode() && app?.id) {
+              try {
+                const raw = localStorage.getItem(demoReportsKey(app.id));
+                if (raw) { app.reports = JSON.parse(raw) as AppReport[]; }
+              } catch { /* ignore */ }
+            }
             const config: AppRuntimeConfig = {
-              app: data.app as AppRuntimeConfig['app'],
+              app,
               forms,
               userPermissions: perms?.formLevel ?? {},
             };
@@ -160,6 +175,29 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         const result = await api.lookupLinkedRecords(slug, formId, options);
         if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to look up records');
         return result.data?.records ?? [];
+      },
+
+      runReport: async (spec) => {
+        const slug = get().appSlug;
+        if (!slug) return null;
+        const result = await api.runReport(slug, spec as unknown as Record<string, unknown>);
+        if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to run report');
+        return result.data ?? null;
+      },
+
+      saveReports: async (reports) => {
+        const cfg = get().config;
+        if (!cfg) return false;
+        // Optimistic: reflect immediately in the runtime.
+        set({ config: { ...cfg, app: { ...cfg.app, reports } } });
+        // Demo keeps report authoring in the browser; real owners persist to the app.
+        if (api.isDemoMode()) {
+          try { localStorage.setItem(demoReportsKey(cfg.app.id), JSON.stringify(reports)); } catch { /* ignore */ }
+          return true;
+        }
+        const r = await api.updateApp(cfg.app.id, { reports });
+        if (r.error) { toast.error('Failed to save report', typeof r.error === 'string' ? r.error : undefined); return false; }
+        return true;
       },
 
       // Permission helpers check both app-level and form-level permissions.
