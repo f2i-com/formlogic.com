@@ -117,10 +117,14 @@ export interface CustomScreen {
   enabled?: boolean;
   html?: string;
   css?: string;
-  /** Compiled, runnable JS (the artifact the sandbox executes). Produced from `ts` on save. */
+  /** Compiled, runnable JS (the artifact the sandbox executes). Produced from `ts`/`files` on save. */
   js?: string;
-  /** TypeScript/JS source authored in the editor. Compiled to `js`; the editable source of truth. */
+  /** TypeScript/JS source authored in the editor (single-file mode). Compiled to `js`. */
   ts?: string;
+  /** Multi-file project: TS/TSX/CSS/HTML files with relative imports, bundled to `js` (index.html = shell). */
+  files?: Array<{ path: string; content: string }>;
+  /** Entry file for the multi-file bundle (default: index.ts / index.tsx). */
+  entry?: string;
   /** When true, the screen's records() works on the public link (e.g. a leaderboard). */
   publicRecords?: boolean;
   /** Whitelist of field ids exposed publicly via records() — ONLY these answer keys are returned. */

@@ -13,7 +13,7 @@ export function AppHomeScreen() {
   const config = useAppRuntimeStore((s) => s.config);
   const cs = config?.app?.customScreen;
 
-  if (!config || !cs?.enabled || !(cs.html || cs.js || cs.ts)) {
+  if (!config || !cs?.enabled || !(cs.html || cs.js || cs.ts || cs.files?.length)) {
     return <AppDashboard />;
   }
 

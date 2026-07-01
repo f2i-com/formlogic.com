@@ -3,7 +3,7 @@ import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
 import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
-import { compileScreenCode } from '../../lib/screenCompile';
+import { resolveScreenAssets } from '../../lib/screenCompile';
 import type { CustomScreen } from '../../types/form';
 import type { AppRuntimeForm } from '../../types/app';
 
@@ -70,28 +70,26 @@ export function AppCustomScreenRuntime({
   const rateRef = useRef(createSdkRateLimiter());
   const user = useAuthStore((s) => s.user);
 
-  // Precompiled `js` is the norm; compile `ts` on the fly only when there's no `js` (e.g. AI-authored over MCP).
-  const [compiledJs, setCompiledJs] = useState<string>('');
+  // Resolve to { html, css, js }: precompiled `js`, or compile `ts` / bundle multi-file `files` on the fly.
+  const [assets, setAssets] = useState<{ html: string; css: string; js: string }>({ html: screen.html || '', css: screen.css || '', js: screen.js || '' });
   useEffect(() => {
     let cancelled = false;
-    if (!screen.js && screen.ts) {
-      compileScreenCode(screen.ts).then((r) => { if (!cancelled) setCompiledJs(r.js); });
-    }
+    resolveScreenAssets({ html: screen.html, css: screen.css, js: screen.js, ts: screen.ts, files: screen.files, entry: screen.entry })
+      .then((a) => { if (!cancelled) setAssets({ html: a.html, css: a.css, js: a.js }); });
     return () => { cancelled = true; };
-  }, [screen.js, screen.ts]);
-  const effectiveJs = screen.js || compiledJs || '';
+  }, [screen.html, screen.css, screen.js, screen.ts, screen.files, screen.entry]);
 
   const srcDoc = useMemo(() => {
-    const css = screen.css || '';
-    const html = screen.html || '';
-    const js = effectiveJs.replace(/<\/script>/gi, '<\\/script>');
+    const css = assets.css || '';
+    const html = assets.html || '';
+    const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
     return `<!doctype html><html><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
       + `<script>${APP_SDK_SHIM}</script>`
       + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
-  }, [screen.html, screen.css, effectiveJs]);
+  }, [assets]);
 
   useEffect(() => {
     const formIds = new Set(forms.map((f) => f.formId));

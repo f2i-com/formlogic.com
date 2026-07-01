@@ -402,7 +402,7 @@ class McpController
     private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
-        $screen = ['type' => 'object', 'description' => 'Custom screen { enabled, html, css, ts } — a sandboxed full frontend. `ts` is TypeScript (plain JS works too); it is compiled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
+        $screen = ['type' => 'object', 'description' => 'Custom screen — a sandboxed full frontend. Provide EITHER `ts` (a single TypeScript/JS file) OR `files` (a multi-file project: an array of { path, content } with .ts/.tsx/.css files + an index.html shell and relative imports between files). Either is compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;

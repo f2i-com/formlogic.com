@@ -27,7 +27,7 @@ export default function CustomScreenPlay() {
       const cs = form?.customScreen;
       setTitle(form?.title || '');
       setFields((form?.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
-      setScreen(cs && (cs.html || cs.js || cs.ts) ? cs : null);
+      setScreen(cs && (cs.html || cs.js || cs.ts || cs.files?.length) ? cs : null);
       setLoading(false);
     }).catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
