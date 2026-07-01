@@ -7,6 +7,7 @@ import { AppRuntimeShell } from './AppRuntimeShell';
 import { AppHomeScreen } from './AppHomeScreen';
 import { AppFormView } from './AppFormView';
 import { AppDataTable } from './AppDataTable';
+import { AppRecordsBrowser } from './AppRecordsBrowser';
 import { AppResponseDetail } from './AppResponseDetail';
 import { AppAnalytics } from './AppAnalytics';
 import { AppUserProfile } from './AppUserProfile';
@@ -89,6 +90,7 @@ export function AppRuntimeRoot() {
         <AppRuntimeShell>
           <Routes>
             <Route path="/" element={<AppHomeScreen />} />
+            <Route path="/records" element={<AppRecordsBrowser />} />
             <Route path="/form/:formId" element={<AppFormView />} />
             <Route path="/form/:formId/responses" element={<AppDataTable />} />
             <Route path="/form/:formId/responses/:responseId" element={<AppResponseDetail />} />

@@ -24,6 +24,8 @@ import {
   Boxes,
   ChevronRight,
   Loader2,
+  ExternalLink,
+  Settings,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Header } from '../components/layout/Header';
@@ -296,7 +298,7 @@ export function FormsList() {
   const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
   // App grouping: which forms belong to which app, and the current drill-in.
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
-  const [appGroups, setAppGroups] = useState<Array<{ id: string; name: string; formIds: string[] }>>([]);
+  const [appGroups, setAppGroups] = useState<Array<{ id: string; name: string; slug: string | null; formIds: string[] }>>([]);
   // Apps load async — track it so the section reserves space (skeleton) instead of popping in.
   const [appsLoading, setAppsLoading] = useState(() => useFormStore.getState().storageMode === 'api');
   // Incremental pagination limits.
@@ -342,11 +344,11 @@ export function FormsList() {
       if (!cancelled) setAppsLoading(true);
       try {
         const res = await api.getApps();
-        const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
+        const apps = (res.data?.apps || []) as Array<{ id: string; name: string; slug?: string | null }>;
         const groups = await Promise.all(apps.map(async (a) => {
           const fr = await api.getAppForms(a.id);
           const formIds = ((fr.data?.forms || []) as Array<{ formId: string }>).map((f) => f.formId);
-          return { id: a.id, name: a.name, formIds };
+          return { id: a.id, name: a.name, slug: a.slug ?? null, formIds };
         }));
         if (!cancelled) setAppGroups(groups);
       } finally {
@@ -504,13 +506,37 @@ export function FormsList() {
       />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
-        {/* Breadcrumb when drilled into an app */}
+        {/* Breadcrumb + app actions when drilled into an app */}
         {selectedAppId && (
-          <nav className="mb-4 flex items-center gap-1.5 text-sm" aria-label="Breadcrumb">
-            <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">My Forms</button>
-            <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600" />
-            <span className="font-medium text-gray-900 dark:text-white inline-flex items-center gap-1.5"><Boxes className="h-4 w-4 text-primary-600 dark:text-primary-400" />{selectedApp?.name ?? 'App'}</span>
-          </nav>
+          <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <nav className="flex items-center gap-1.5 text-sm min-w-0" aria-label="Breadcrumb">
+              <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">My Forms</button>
+              <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 shrink-0" />
+              <span className="font-medium text-gray-900 dark:text-white inline-flex items-center gap-1.5 min-w-0"><Boxes className="h-4 w-4 text-primary-600 dark:text-primary-400 shrink-0" /><span className="truncate">{selectedApp?.name ?? 'App'}</span></span>
+            </nav>
+            <div className="flex items-center gap-2 sm:ml-auto">
+              {selectedApp?.slug && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/app/${selectedApp.slug}`)}
+                  leftIcon={<ExternalLink className="h-4 w-4" />}
+                >
+                  Open app
+                </Button>
+              )}
+              {selectedAppId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/apps/${selectedAppId}/settings`)}
+                  leftIcon={<Settings className="h-4 w-4" />}
+                >
+                  Manage
+                </Button>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Apps grouping (top level only). Rendered as a skeleton while apps load so it reserves space

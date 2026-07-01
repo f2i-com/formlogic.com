@@ -6,6 +6,28 @@ import { api } from '../lib/api';
 import { logger } from '../lib/logger';
 import { toast } from './toastStore';
 
+/**
+ * Load ALL of the user's forms, paging past the API's per-request cap. My Forms groups the full
+ * form set by app, so a single capped page would silently drop forms (and make whole apps read as
+ * "No forms yet") once a user has more forms than one page holds.
+ */
+async function fetchAllForms(): Promise<Form[] | null> {
+  const PAGE = 200;
+  const all: Form[] = [];
+  for (let offset = 0; offset < 100000; offset += PAGE) {
+    const res = await api.getForms({ limit: PAGE, offset });
+    if (res.error || !res.data) {
+      // First-page failure = API unavailable → signal caller to fall back; a later-page failure
+      // still returns what we already loaded.
+      return offset === 0 ? null : all;
+    }
+    const batch = res.data.forms as Form[];
+    all.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return all;
+}
+
 // Field-id slugs must not collide with the FormLogic expression prelude's global
 // names: a field id like "count"/"sum"/"format" would shadow that builtin in the
 // generated expression context (let count = <value>) and break every conditional/
@@ -278,11 +300,11 @@ export const useFormStore = create<FormState>()(
           const apiAvailable = !healthResult.error && healthResult.data?.status === 'ok';
 
           if (apiAvailable && state.storageMode === 'api') {
-            // Load forms from API
-            const result = await api.getForms();
-            if (!result.error && result.data) {
+            // Load ALL forms from API (paged) so My Forms' per-app grouping sees every form.
+            const forms = await fetchAllForms();
+            if (forms !== null) {
               set({
-                forms: result.data.forms as Form[],
+                forms,
                 isLoading: false,
                 isInitialized: true,
               });
@@ -318,11 +340,11 @@ export const useFormStore = create<FormState>()(
 
         set({ isLoading: true });
         try {
-          const result = await api.getForms();
-          if (!result.error && result.data) {
-            set({ forms: result.data.forms as Form[], isLoading: false });
+          const forms = await fetchAllForms();
+          if (forms !== null) {
+            set({ forms, isLoading: false });
           } else {
-            set({ error: result.error || 'Failed to load forms', isLoading: false });
+            set({ error: 'Failed to load forms', isLoading: false });
           }
         } catch (error) {
           logger.error('Failed to refresh forms:', error);

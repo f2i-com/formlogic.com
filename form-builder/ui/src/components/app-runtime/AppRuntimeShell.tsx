@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff } from 'lucide-react';
+import { Home, User, Menu, X, ChevronLeft, MoreHorizontal, WifiOff, Database } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -55,11 +55,25 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   if (!config) return null;
 
   // Chromeless mode: a self-contained app (e.g. a custom-home dashboard) can hide the sidebar/header/nav.
+  // We still give it a single, unobtrusive way into the submitted records — otherwise a custom
+  // dashboard is a dead end for browsing data. Hidden on the records screens themselves.
   const hideNav = (config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
   if (hideNav) {
+    const onRecordsView = location.pathname.includes('/records') || /\/form\/[^/]+\/responses/.test(location.pathname);
     return (
       <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {children}
+        {!onRecordsView && (
+          <button
+            onClick={() => navigate(`/app/${appSlug}/records`)}
+            aria-label="View records"
+            className="app-btn-primary fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 hover:opacity-90 transition-opacity cursor-pointer"
+            style={{ paddingBottom: 'max(0.625rem, env(safe-area-inset-bottom))' }}
+          >
+            <Database className="h-4 w-4" />
+            Records
+          </button>
+        )}
       </main>
     );
   }
@@ -67,29 +81,36 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const forms = config.forms || [];
   const basePath = `/app/${appSlug}`;
 
+  const onRecords = location.pathname.includes('/records');
+
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, isComponent: true as boolean, path: basePath },
+    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, kind: 'dashboard' as 'dashboard' | 'form' | 'records', path: basePath },
     ...forms.map((f) => ({
       id: f.formId,
       label: f.displayName,
       iconName: f.icon ?? null,
-      isComponent: false as boolean,
+      kind: 'form' as 'dashboard' | 'form' | 'records',
       path: `${basePath}/form/${f.formId}`,
     })),
+    { id: 'records', label: 'Records', iconName: null as string | null, kind: 'records' as 'dashboard' | 'form' | 'records', path: `${basePath}/records` },
   ];
 
   const handleNav = (item: typeof navItems[0]) => {
-    if (item.id !== 'dashboard') {
-      setActiveForm(item.id);
-    } else {
-      setActiveForm(null);
-    }
+    setActiveForm(item.kind === 'form' ? item.id : null);
     navigate(item.path);
     setMobileMenuOpen(false);
   };
 
+  const navIcon = (item: typeof navItems[0], className: string) => {
+    if (item.kind === 'dashboard') return <Home className={className} />;
+    if (item.kind === 'records') return <Database className={className} />;
+    return <DynamicIcon name={item.iconName} className={className} />;
+  };
+
   const isActive = (id: string) => {
     if (location.pathname.includes('/profile')) return false;
+    if (id === 'records') return onRecords;
+    if (onRecords) return false; // on the records screen, no form/dashboard item is active
     return id === activeFormId || (id === 'dashboard' && !activeFormId);
   };
 
@@ -141,7 +162,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               )}
               title={sidebarCollapsed ? item.label : undefined}
             >
-              {item.isComponent ? <Home className="h-4 w-4 flex-shrink-0" /> : <DynamicIcon name={item.iconName} className="h-4 w-4 flex-shrink-0" />}
+              {navIcon(item, 'h-4 w-4 flex-shrink-0')}
               {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
             </button>
           ))}
@@ -219,7 +240,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                   : 'text-gray-400 dark:text-slate-500'
               )}
             >
-              {item.isComponent ? <Home className={cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110')} /> : <DynamicIcon name={item.iconName} className={cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110')} />}
+              {navIcon(item, cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110'))}
               <span className="truncate max-w-[64px]">{item.label}</span>
             </button>
           ))}
@@ -268,7 +289,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80'
                   )}
                 >
-                  {item.isComponent ? <Home className="h-4 w-4 flex-shrink-0" /> : <DynamicIcon name={item.iconName} className="h-4 w-4 flex-shrink-0" />}
+                  {navIcon(item, 'h-4 w-4 flex-shrink-0')}
                   <span className="truncate">{item.label}</span>
                 </button>
               ))}
