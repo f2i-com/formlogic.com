@@ -233,7 +233,7 @@ class ApiClient {
   }
 
   /** Public list of demoable apps (published apps owned by the Demo account). */
-  async getDemoApps(): Promise<ApiResponse<{ apps: Array<{ slug: string; name: string; description: string; logoUrl: string | null }> }>> {
+  async getDemoApps(): Promise<ApiResponse<{ apps: Array<{ slug: string; name: string; description: string; logoUrl: string | null; packName?: string; tags?: string[] }> }>> {
     return this.request('/demo/apps');
   }
 

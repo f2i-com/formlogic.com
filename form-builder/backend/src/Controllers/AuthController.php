@@ -258,16 +258,21 @@ class AuthController
 
         $user = $this->authService->ensureDemoUser($this->demoEmail());
         $apps = $this->appService->getAllApps($user->id);
+        // Pack name + tags per app, so the landing browser can search by them too.
+        $packInfo = $this->appService->getPackInfoByApp($user->id);
         $out = [];
         foreach ($apps as $app) {
             if (($app['status'] ?? '') !== 'published') {
                 continue;
             }
+            $info = $packInfo[$app['id'] ?? ''] ?? ['packName' => '', 'tags' => []];
             $out[] = [
                 'slug' => $app['slug'] ?? null,
                 'name' => $app['name'] ?? 'App',
                 'description' => $app['description'] ?? '',
                 'logoUrl' => $app['logoUrl'] ?? null,
+                'packName' => $info['packName'],
+                'tags' => $info['tags'],
             ];
         }
 

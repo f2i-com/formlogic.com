@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 
 const PAGE_SIZE = 9;
 
-type DemoApp = { slug: string; name: string; description: string; logoUrl: string | null };
+type DemoApp = { slug: string; name: string; description: string; logoUrl: string | null; packName?: string; tags?: string[] };
 
 /**
  * Landing "live demo" band. Fetches the demoable apps (published apps owned by the shared Demo
@@ -53,9 +53,15 @@ export function LiveDemoSection() {
 
   const anyLaunching = launching !== null;
 
-  // Search across name + description, then paginate the matches.
-  const q = query.trim().toLowerCase();
-  const filtered = q ? apps.filter((a) => `${a.name} ${a.description ?? ''}`.toLowerCase().includes(q)) : apps;
+  // Search across name + description + tags + pack name. Tokenised partial match: every whitespace-
+  // separated term must appear somewhere (so "invoice job" matches "Job & Invoice Management").
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = terms.length === 0
+    ? apps
+    : apps.filter((a) => {
+        const hay = `${a.name} ${a.description ?? ''} ${(a.tags ?? []).join(' ')} ${a.packName ?? ''}`.toLowerCase();
+        return terms.every((t) => hay.includes(t));
+      });
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const current = Math.min(page, pageCount); // stay in range as the filter shrinks
   const paged = filtered.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
@@ -103,7 +109,7 @@ export function LiveDemoSection() {
             />
           </div>
           <span className="text-xs text-gray-400 dark:text-slate-500">
-            {filtered.length} app{filtered.length === 1 ? '' : 's'}{q ? ` matching “${query.trim()}”` : ''}
+            {filtered.length} app{filtered.length === 1 ? '' : 's'}{terms.length ? ` matching “${query.trim()}”` : ''}
           </span>
         </div>
 

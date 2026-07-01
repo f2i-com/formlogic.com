@@ -59,6 +59,36 @@ class AppService
     }
 
     /**
+     * Map appId => { packName, tags[] } for the apps a user installed from packs (joined via
+     * pack_installations → pack_catalog). Used to make the demo browser searchable by pack + tag.
+     *
+     * @return array<string, array{packName:string, tags:string[]}>
+     */
+    public function getPackInfoByApp(string $userId): array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT pi.app_ids, pi.pack_name, pc.tags
+             FROM pack_installations pi
+             LEFT JOIN pack_catalog pc ON pc.id = pi.catalog_id
+             WHERE pi.user_id = :uid"
+        );
+        $stmt->execute(['uid' => $userId]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $appIds = json_decode((string) ($row['app_ids'] ?? '[]'), true);
+            $tags = json_decode((string) ($row['tags'] ?? '[]'), true);
+            if (!is_array($appIds)) { continue; }
+            foreach ($appIds as $aid) {
+                $out[(string) $aid] = [
+                    'packName' => (string) ($row['pack_name'] ?? ''),
+                    'tags' => is_array($tags) ? array_values(array_filter($tags, 'is_string')) : [],
+                ];
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Check if a user is an ACTIVE member of an app (via app_users table).
      * Suspended/pending members are not treated as members — admin-side reads
      * must match the runtime gates (AppPublicController/FileController) which
