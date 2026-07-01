@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Pencil, Trash2, Download, FileBarChart, FileText, Loader2, BarChart3, LineChart, AreaChart, PieChart, CircleDot, Table2, Hash } from 'lucide-react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { Plus, Pencil, Trash2, Download, FileBarChart, FileText, BarChart3, LineChart, AreaChart, PieChart, CircleDot, Table2, Hash } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { AppReport, AppReportItem, AppReportDocument, AppReportResult } from '../../types/app';
 import { isReportDocument } from '../../types/app';
@@ -10,14 +10,21 @@ import { ReportBuilder } from './ReportBuilder';
 import { DocumentBuilder } from './DocumentBuilder';
 import { useDocumentResults } from './useDocumentResults';
 import { printReportDocument, readAppPrimary } from './reportPrint';
+import { PageHeader } from '../ui/PageHeader';
+import { EmptyState } from '../ui/EmptyState';
+import { Skeleton } from '../ui/Skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { toast } from '../../stores/toastStore';
 
 const VIZ_ICON: Record<string, typeof BarChart3> = { bar: BarChart3, line: LineChart, area: AreaChart, pie: PieChart, donut: CircleDot, table: Table2, kpi: Hash };
 
+/** Icon classes for a master-list row, shared by both panels. */
+const listIconCls = (active: boolean) => `h-4 w-4 ${active ? 'app-text-primary' : 'text-gray-500 dark:text-slate-400'}`;
+
 export function AppReports() {
   const { appSlug } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { config, saveReports } = useAppRuntimeStore();
 
   const items: AppReportItem[] = config?.app?.reports ?? [];
@@ -31,6 +38,13 @@ export function AppReports() {
   const [editingReport, setEditingReport] = useState<AppReport | 'new' | null>(null);
   const [editingDoc, setEditingDoc] = useState<AppReportDocument | 'new' | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  // History-aware back: return to wherever the user came from (dashboard, custom screen, …);
+  // fall back to the app home on a fresh deep link with no in-app history.
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/app/${appSlug}`);
+  };
 
   const saveItem = async (item: AppReportItem, onDone?: (id: string) => void) => {
     const exists = items.some((r) => r.id === item.id);
@@ -47,32 +61,27 @@ export function AppReports() {
     setDeleteId(null);
   };
 
-  const empty = items.length === 0;
-
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5">
-        <button onClick={() => navigate(`/app/${appSlug}`)} aria-label="Back to dashboard" className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer">
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">Reports</h1>
-          <p className="text-sm text-gray-500 dark:text-slate-400">Chart your data and export polished PDFs</p>
-        </div>
-        {isOwner && (
+      <PageHeader
+        title="Reports"
+        subtitle="Chart your data and export polished PDFs"
+        onBack={goBack}
+        backLabel="Back to dashboard"
+        actions={isOwner ? (
           tab === 'charts'
             ? <button onClick={() => setEditingReport('new')} aria-label="New report" className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium cursor-pointer"><Plus className="h-4 w-4" /> <span className="hidden sm:inline">New report</span></button>
             : <button onClick={() => setEditingDoc('new')} aria-label="New document" className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium cursor-pointer"><Plus className="h-4 w-4" /> <span className="hidden sm:inline">New document</span></button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {/* Tabs */}
       <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-gray-100 dark:bg-slate-800/60 mb-5">
         <button onClick={() => setTab('charts')} aria-pressed={tab === 'charts'} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium cursor-pointer transition-colors ${tab === 'charts' ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'}`}>
-          <FileBarChart className="h-4 w-4" /> Charts {chartReports.length > 0 && <span className="text-xs opacity-60">{chartReports.length}</span>}
+          <FileBarChart className="h-4 w-4" /> Charts {chartReports.length > 0 && <span className="text-xs opacity-60 tabular-nums">{chartReports.length}</span>}
         </button>
         <button onClick={() => setTab('documents')} aria-pressed={tab === 'documents'} className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium cursor-pointer transition-colors ${tab === 'documents' ? 'bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-slate-400'}`}>
-          <FileText className="h-4 w-4" /> PDF documents {documents.length > 0 && <span className="text-xs opacity-60">{documents.length}</span>}
+          <FileText className="h-4 w-4" /> PDF documents {documents.length > 0 && <span className="text-xs opacity-60 tabular-nums">{documents.length}</span>}
         </button>
       </div>
 
@@ -96,10 +105,6 @@ export function AppReports() {
           onEdit={(d) => setEditingDoc(d)}
           onDelete={(id) => setDeleteId(id)}
         />
-      )}
-
-      {empty && tab === 'charts' && (
-        <p className="sr-only">No reports yet.</p>
       )}
 
       {editingReport && (
@@ -129,6 +134,42 @@ export function AppReports() {
         confirmLabel="Delete"
         variant="danger"
       />
+    </div>
+  );
+}
+
+/**
+ * Master list shared by both report panels: a micro-labeled column of selectable rows.
+ * Purely presentational — selection state lives in the panel.
+ */
+function MasterList<T extends { id: string; name: string }>({ label, items, selectedId, onSelect, renderIcon, itemMeta }: {
+  label: string;
+  items: T[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  renderIcon: (item: T, active: boolean) => ReactNode;
+  itemMeta: (item: T) => ReactNode;
+}) {
+  return (
+    <div className="min-w-0 space-y-2">
+      <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500">{label}</p>
+      {items.map((item) => {
+        const active = item.id === selectedId;
+        return (
+          <button
+            key={item.id}
+            onClick={() => onSelect(item.id)}
+            aria-current={active ? 'true' : undefined}
+            className={`w-full flex items-center gap-3 p-3 rounded-2xl border text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary ${active ? 'app-bg-primary-light app-border-primary' : 'border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+          >
+            <div className={`p-2 rounded-lg shrink-0 ${active ? '' : 'bg-gray-100 dark:bg-slate-800'}`}>{renderIcon(item, active)}</div>
+            <div className="min-w-0 flex-1">
+              <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{item.name}</span>
+              <span className="block text-xs text-gray-400 dark:text-slate-500 truncate">{itemMeta(item)}</span>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -172,34 +213,34 @@ function ChartsPanel({ reports, appName, isOwner, onNew, onEdit, onDelete }: {
 
   if (reports.length === 0) {
     return (
-      <div className="text-center py-16">
-        <FileBarChart className="h-12 w-12 mx-auto mb-3 text-gray-300 dark:text-slate-600" />
-        <p className="text-gray-600 dark:text-slate-300 font-medium">No reports yet</p>
-        <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">{isOwner ? 'Create a report to chart or list your app’s data.' : 'The app owner hasn’t added any reports.'}</p>
-        {isOwner && <button onClick={onNew} className="app-btn-primary mt-4 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer"><Plus className="h-4 w-4" /> New report</button>}
+      <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50">
+        <EmptyState
+          icon={FileBarChart}
+          title="No reports yet"
+          description={isOwner ? 'Create a report to chart or list your app’s data.' : 'The app owner hasn’t added any reports.'}
+          action={isOwner ? (
+            <button onClick={onNew} className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer"><Plus className="h-4 w-4" /> New report</button>
+          ) : undefined}
+        />
       </div>
     );
   }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,260px)_1fr] gap-4">
-      <div className="space-y-2">
-        {reports.map((r) => {
+      <MasterList
+        label="Saved reports"
+        items={reports}
+        selectedId={selected?.id ?? null}
+        onSelect={setClickedId}
+        renderIcon={(r, active) => {
           const Icon = VIZ_ICON[r.spec?.viz ?? 'bar'] ?? BarChart3;
-          const active = r.id === selected?.id;
-          return (
-            <button key={r.id} onClick={() => setClickedId(r.id)} className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors cursor-pointer ${active ? 'app-bg-primary-light app-border-primary' : 'border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-              <div className={`p-2 rounded-lg shrink-0 ${active ? '' : 'bg-gray-100 dark:bg-slate-800'}`}><Icon className={`h-4 w-4 ${active ? 'app-text-primary' : 'text-gray-500 dark:text-slate-400'}`} /></div>
-              <div className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{r.name}</span>
-                <span className="block text-xs text-gray-400 dark:text-slate-500 truncate">{formName(r.spec?.formId ?? '')}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+          return <Icon className={listIconCls(active)} />;
+        }}
+        itemMeta={(r) => formName(r.spec?.formId ?? '')}
+      />
 
-      <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 min-h-[240px]">
+      <div className="min-w-0 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 p-5 min-h-[240px]">
         {selected && (
           <div className="flex items-start justify-between gap-3 mb-3">
             <div className="min-w-0">
@@ -218,7 +259,16 @@ function ChartsPanel({ reports, appName, isOwner, onNew, onEdit, onDelete }: {
           </div>
         )}
         {running ? (
-          <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-gray-400" /></div>
+          /* Mirror the coming chart: an axis-label line, the plot area, then a legend row. */
+          <div className="space-y-3 py-2" role="status" aria-label="Loading report">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-44 w-full rounded-xl" />
+            <div className="flex gap-3">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-16" />
+            </div>
+          </div>
         ) : err ? (
           <p className="py-16 text-center text-sm text-red-500">{err}</p>
         ) : result ? (
@@ -244,35 +294,37 @@ function DocumentsPanel({ documents, allItems, appName, isOwner, hasCharts, onNe
 
   if (documents.length === 0) {
     return (
-      <div className="text-center py-16">
-        <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300 dark:text-slate-600" />
-        <p className="text-gray-600 dark:text-slate-300 font-medium">No PDF documents yet</p>
-        <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">{isOwner ? 'Combine several charts and text into one polished PDF report.' : 'The app owner hasn’t added any documents.'}</p>
-        {isOwner && <button onClick={onNew} disabled={!hasCharts} title={hasCharts ? undefined : 'Create a chart report first'} className="app-btn-primary mt-4 inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer disabled:opacity-50"><Plus className="h-4 w-4" /> New document</button>}
-        {isOwner && !hasCharts && <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Create a chart report first.</p>}
+      <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50">
+        <EmptyState
+          icon={FileText}
+          title="No PDF documents yet"
+          description={isOwner ? 'Combine several charts and text into one polished PDF report.' : 'The app owner hasn’t added any documents.'}
+          action={isOwner ? (
+            <div className="flex flex-col items-center gap-2">
+              <button onClick={onNew} disabled={!hasCharts} title={hasCharts ? undefined : 'Create a chart report first'} className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer disabled:opacity-50"><Plus className="h-4 w-4" /> New document</button>
+              {!hasCharts && <p className="text-xs text-gray-400 dark:text-slate-500">Create a chart report first.</p>}
+            </div>
+          ) : undefined}
+        />
       </div>
     );
   }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,260px)_1fr] gap-4">
-      <div className="space-y-2">
-        {documents.map((d) => {
-          const active = d.id === selected?.id;
+      <MasterList
+        label="Saved documents"
+        items={documents}
+        selectedId={selected?.id ?? null}
+        onSelect={setClickedId}
+        renderIcon={(_d, active) => <FileText className={listIconCls(active)} />}
+        itemMeta={(d) => {
           const charts = d.blocks.filter((b) => b.kind === 'report').length;
-          return (
-            <button key={d.id} onClick={() => setClickedId(d.id)} className={`w-full flex items-center gap-3 p-3 rounded-xl border text-left transition-colors cursor-pointer ${active ? 'app-bg-primary-light app-border-primary' : 'border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
-              <div className={`p-2 rounded-lg shrink-0 ${active ? '' : 'bg-gray-100 dark:bg-slate-800'}`}><FileText className={`h-4 w-4 ${active ? 'app-text-primary' : 'text-gray-500 dark:text-slate-400'}`} /></div>
-              <div className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-gray-900 dark:text-white truncate">{d.name}</span>
-                <span className="block text-xs text-gray-400 dark:text-slate-500 truncate">{charts} chart{charts === 1 ? '' : 's'} · {d.blocks.length} block{d.blocks.length === 1 ? '' : 's'}</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+          return `${charts} chart${charts === 1 ? '' : 's'} · ${d.blocks.length} block${d.blocks.length === 1 ? '' : 's'}`;
+        }}
+      />
 
-      <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 min-h-[240px]">
+      <div className="min-w-0 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 p-5 min-h-[240px]">
         {selected && (
           <div className="flex items-center justify-end gap-1 mb-3">
             <button onClick={handleExport} aria-label="Print or save as PDF" title="Opens your browser's print dialog — choose “Save as PDF”." className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">

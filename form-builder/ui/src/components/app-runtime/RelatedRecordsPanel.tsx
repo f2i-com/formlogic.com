@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Link2, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { RelatedRecordGroup } from '../../lib/api';
+import { ListRowSkeleton } from '../ui/Skeleton';
 import { parseServerDate } from '../../lib/utils';
 
 const PAGE_SIZE = 50;
@@ -78,9 +79,11 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
   const groups = Object.values(related);
 
   if (loading) {
+    // Mirror the final layout (a short list of linked rows) so the page doesn't jump on load.
     return (
-      <div className="flex items-center justify-center py-6" role="status" aria-label="Loading related records">
-        <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
+      <div className="mt-4 space-y-2" role="status" aria-label="Loading related records">
+        <ListRowSkeleton />
+        <ListRowSkeleton />
       </div>
     );
   }
@@ -101,7 +104,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
     <div className="mt-4 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 overflow-hidden">
       <div className="px-5 py-3 border-b border-gray-100 dark:border-slate-700/40 flex items-center gap-2">
         <Link2 className="h-4 w-4 app-text-primary" />
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight">Related Records</h3>
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white tracking-tight">Related records</h3>
       </div>
 
       {groups.map((group) => (
@@ -148,7 +151,7 @@ export function RelatedRecordsPanel({ appSlug, formId, responseId }: RelatedReco
             className="w-full text-center text-sm font-medium app-text-primary hover:opacity-80 disabled:opacity-50 cursor-pointer"
           >
             {loadingMore ? (
-              <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Loading...</span>
+              <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 motion-safe:animate-spin" /> Loading…</span>
             ) : (
               'Load more'
             )}

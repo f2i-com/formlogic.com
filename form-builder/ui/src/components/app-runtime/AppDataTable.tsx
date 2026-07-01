@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Trash2, Columns3, Download } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Trash2, Columns3, Download, Inbox, Lock, Plus } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
+import { PageHeader } from '../ui/PageHeader';
+import { EmptyState } from '../ui/EmptyState';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { cn, parseServerDate } from '../../lib/utils';
 import { api } from '../../lib/api';
@@ -35,7 +37,8 @@ function flattenResponses(data: Record<string, unknown>[]): Record<string, unkno
 export function AppDataTable() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
-  const { config, fetchResponses, fetchResponsePage, deleteResponse, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
+  const location = useLocation();
+  const { config, fetchResponses, fetchResponsePage, deleteResponse, canSubmit, canDelete, canViewOwn, canViewAll, canExport } = useAppRuntimeStore();
   // Demo keeps a browser-local overlay of records, so it fetches everything and searches/paginates
   // client-side. Real apps use fast server-side pagination + search (limited rows per query).
   const serverMode = !api.isDemoMode();
@@ -332,36 +335,49 @@ export function AppDataTable() {
     </div>
   );
 
+  // History-aware back: return to wherever the user came from (records hub, dashboard, …);
+  // fall back to the records hub on a fresh deep link with no in-app history.
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/app/${appSlug}/records`);
+  };
+
+  const canSubmitThis = formId ? canSubmit(formId) : false;
+
+  // No records at all (not a filtered-out search) — show a real empty state with a CTA
+  // instead of an empty table. `!loading` avoids a flash while a refetch is in flight.
+  const showEmpty = loadedOnce && !loading && !error && total === 0 && !searchInput && !debouncedSearch;
+
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
-      <div className="text-center py-12">
-        <p className="text-gray-500 dark:text-slate-400">You don&apos;t have permission to view responses for this form.</p>
+      <div>
+        <PageHeader
+          title={runtimeForm?.displayName || 'Responses'}
+          subtitle="Submitted records"
+          onBack={goBack}
+          backLabel="Back to records"
+        />
+        <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50">
+          <EmptyState
+            icon={Lock}
+            title="No access to these records"
+            description="You don't have permission to view responses for this form. Ask the app owner to grant you view access."
+          />
+        </div>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => navigate(`/app/${appSlug}/records`)}
-          aria-label="Back to records"
-          className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Responses'}</h1>
-        </div>
-        {loadedOnce && !error && (
-          <span className={cn(
-            'text-xs font-medium px-2.5 py-1 rounded-full tabular-nums',
-            'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-          )}>
-            {total} {total === 1 ? 'response' : 'responses'}
-          </span>
-        )}
-      </div>
+      <PageHeader
+        title={runtimeForm?.displayName || 'Responses'}
+        subtitle={loadedOnce && !error
+          ? <span className="tabular-nums">{total} {total === 1 ? 'record' : 'records'}</span>
+          : 'Submitted records'}
+        onBack={goBack}
+        backLabel="Back to records"
+      />
 
       {error ? (
         <div className="text-center py-12" role="alert">
@@ -374,14 +390,32 @@ export function AppDataTable() {
             Try again
           </button>
         </div>
-      ) : loading && !loadedOnce ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading responses" />
+      ) : showEmpty ? (
+        <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50">
+          <EmptyState
+            icon={Inbox}
+            title="No records yet"
+            description={canSubmitThis
+              ? 'Submit the first record and it will show up here.'
+              : 'Records submitted to this form will appear here.'}
+            action={canSubmitThis ? (
+              <button
+                type="button"
+                onClick={() => navigate(`/app/${appSlug}/form/${formId}`)}
+                className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer"
+              >
+                <Plus className="h-4 w-4" /> Submit the first record
+              </button>
+            ) : undefined}
+          />
         </div>
       ) : (
         /* The shared DataTable fits columns to the available width and collapses to
            stacked cards on narrow screens, so no separate mobile layout is needed.
-           Server mode: paging + search are controlled here and run against the backend. */
+           Server mode: paging + search are controlled here and run against the backend.
+           isLoading renders the table's own layout-mirroring shimmer rows (initial load
+           included); the true zero-records case is handled by the EmptyState above, so
+           the in-table empty message only appears for searches with no matches. */
         <DataTable
           data={responses}
           columns={columns}
@@ -389,8 +423,8 @@ export function AppDataTable() {
           searchPlaceholder="Search records…"
           pageSize={serverMode ? SERVER_PAGE : 15}
           totalCount={total}
-          isLoading={serverMode && loading}
-          emptyMessage={debouncedSearch ? 'No records match your search' : 'No responses yet'}
+          isLoading={loading}
+          emptyMessage="No records match your search"
           serverMode={serverMode}
           page={serverMode ? page : undefined}
           onPageChange={serverMode ? setPage : undefined}

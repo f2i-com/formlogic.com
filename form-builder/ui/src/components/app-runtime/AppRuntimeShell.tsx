@@ -7,9 +7,20 @@ import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { cn } from '../../lib/utils';
+import type { AppSettings } from '../../types/app';
 
 interface AppRuntimeShellProps {
   children: React.ReactNode;
+}
+
+type NavKind = 'dashboard' | 'form' | 'records' | 'reports';
+
+interface NavItem {
+  id: string;
+  label: string;
+  iconName: string | null;
+  kind: NavKind;
+  path: string;
 }
 
 export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
@@ -66,16 +77,20 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     return (
       <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {children}
-        {/* Chromeless apps still get unobtrusive access to Records + Reports. */}
+        {/* Chromeless apps still get unobtrusive access to Records + Reports: a single compact
+            cluster that rests at 60% opacity so it never fights the dashboard for attention. */}
         {(!onRecordsView || !onReportsView) && (
-          <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+          <div
+            className="group fixed bottom-4 right-4 z-40 flex items-center gap-1.5"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          >
             {hasReports && !onReportsView && (
               <button
                 onClick={() => navigate(`/app/${appSlug}/reports`)}
                 aria-label="View reports"
-                className="inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                className="inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium bg-white/80 dark:bg-slate-800/80 backdrop-blur-md text-gray-700 dark:text-slate-200 border border-gray-200/80 dark:border-slate-700/80 shadow-md shadow-black/10 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-white dark:hover:bg-slate-800 transition duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
               >
-                <FileBarChart className="h-4 w-4" />
+                <FileBarChart className="h-3.5 w-3.5" />
                 Reports
               </button>
             )}
@@ -83,9 +98,9 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               <button
                 onClick={() => navigate(`/app/${appSlug}/records`)}
                 aria-label="View records"
-                className="app-btn-primary inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-medium shadow-lg shadow-black/10 hover:opacity-90 transition-opacity cursor-pointer"
+                className="app-btn-primary inline-flex h-9 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium backdrop-blur-md shadow-md shadow-black/10 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
               >
-                <Database className="h-4 w-4" />
+                <Database className="h-3.5 w-3.5" />
                 Records
               </button>
             )}
@@ -103,27 +118,31 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   // Reports are optional: the section shows if any exist, or to the owner (who can create them).
   const showReports = (config.app?.reports?.length ?? 0) > 0 || !!config.app?.ownerId;
 
-  type NavKind = 'dashboard' | 'form' | 'records' | 'reports';
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', iconName: null as string | null, kind: 'dashboard' as NavKind, path: basePath },
-    ...forms.map((f) => ({
-      id: f.formId,
-      label: f.displayName,
-      iconName: f.icon ?? null,
-      kind: 'form' as NavKind,
-      path: `${basePath}/form/${f.formId}`,
-    })),
-    { id: 'records', label: 'Records', iconName: null as string | null, kind: 'records' as NavKind, path: `${basePath}/records` },
-    ...(showReports ? [{ id: 'reports', label: 'Reports', iconName: null as string | null, kind: 'reports' as NavKind, path: `${basePath}/reports` }] : []),
+  const dashboardItem: NavItem = { id: 'dashboard', label: 'Dashboard', iconName: null, kind: 'dashboard', path: basePath };
+  const formItems: NavItem[] = forms.map((f) => ({
+    id: f.formId,
+    label: f.displayName,
+    iconName: f.icon ?? null,
+    kind: 'form',
+    path: `${basePath}/form/${f.formId}`,
+  }));
+  const recordsItem: NavItem = { id: 'records', label: 'Records', iconName: null, kind: 'records', path: `${basePath}/records` };
+  const reportsItem: NavItem = { id: 'reports', label: 'Reports', iconName: null, kind: 'reports', path: `${basePath}/reports` };
+
+  // Sidebar/drawer nav, grouped: Overview / Forms / Data.
+  const navGroups: Array<{ label: string; items: NavItem[] }> = [
+    { label: 'Overview', items: [dashboardItem] },
+    ...(formItems.length > 0 ? [{ label: 'Forms', items: formItems }] : []),
+    { label: 'Data', items: showReports ? [recordsItem, reportsItem] : [recordsItem] },
   ];
 
-  const handleNav = (item: typeof navItems[0]) => {
+  const handleNav = (item: NavItem) => {
     setActiveForm(item.kind === 'form' ? item.id : null);
     navigate(item.path);
     setMobileMenuOpen(false);
   };
 
-  const navIcon = (item: typeof navItems[0], className: string) => {
+  const navIcon = (item: NavItem, className: string) => {
     if (item.kind === 'dashboard') return <Home className={className} />;
     if (item.kind === 'records') return <Database className={className} />;
     if (item.kind === 'reports') return <FileBarChart className={className} />;
@@ -138,18 +157,47 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     return id === activeFormId || (id === 'dashboard' && !activeFormId);
   };
 
-  // Bottom nav: show up to 4 items, with "More" if overflow
-  const maxBottomItems = navItems.length > 4 ? 3 : 4;
-  const bottomNavItems = navItems.slice(0, maxBottomItems);
-  const hasMoreItems = navItems.length > maxBottomItems;
-  // Highlight "More" when the current section lives in the overflow menu.
-  const activeInOverflow = hasMoreItems && navItems.slice(maxBottomItems).some((i) => isActive(i.id));
+  // Mobile bottom bar: Dashboard / Records / Reports own the fixed slots — forms live
+  // under "More" (they're also reachable from Dashboard and Records), so Records and
+  // Reports never fall into the overflow just because an app has many forms.
+  const bottomNavItems: NavItem[] = [dashboardItem, recordsItem, ...(showReports ? [reportsItem] : [])];
+  const hasMoreItems = formItems.length > 0;
+  // Highlight "More" when the current section (a form) lives in the overflow menu.
+  const activeInOverflow = hasMoreItems && formItems.some((i) => isActive(i.id));
+
+  // Brand mark: logo image if the app has one, else its lucide icon, else its initial —
+  // always on the app-accent tint tile so every app gets a mark without configuration.
+  const appIconName = (config.app.settings as AppSettings & { icon?: string }).icon ?? null;
+  const appInitial = (config.app.name || '').trim().charAt(0).toUpperCase() || '?';
+  const brandMark = (size: 'md' | 'sm') => (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'app-bg-primary-light app-text-primary inline-flex items-center justify-center overflow-hidden flex-shrink-0',
+        size === 'md' ? 'h-9 w-9 rounded-xl' : 'h-8 w-8 rounded-lg'
+      )}
+    >
+      {config.app.logoUrl ? (
+        <img src={config.app.logoUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <DynamicIcon
+          name={appIconName}
+          className={size === 'md' ? 'h-[18px] w-[18px]' : 'h-4 w-4'}
+          fallback={
+            <span className={cn('font-semibold leading-none', size === 'md' ? 'text-sm' : 'text-xs')}>
+              {appInitial}
+            </span>
+          }
+        />
+      )}
+    </span>
+  );
 
   return (
     <div className="min-h-screen flex bg-gray-50 dark:bg-slate-950">
       <a
         href="#app-main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-white dark:focus:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 focus:ring-primary-500"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[60] focus:rounded-lg focus:bg-white dark:focus:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow-lg focus:ring-2 app-ring-primary"
       >
         Skip to content
       </a>
@@ -158,37 +206,60 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         'hidden md:flex flex-col border-r border-gray-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900/80 transition-all duration-300 flex-shrink-0',
         sidebarCollapsed ? 'w-16' : 'w-64'
       )}>
-        <div className="h-14 flex items-center px-4 border-b border-gray-100 dark:border-slate-800/80">
+        <div className="h-14 flex items-center gap-2.5 px-3 border-b border-gray-100 dark:border-slate-800/80">
           {!sidebarCollapsed && (
-            <h2 className="font-semibold truncate app-text-primary text-sm tracking-tight">{config.app.name}</h2>
+            <>
+              {brandMark('md')}
+              <h2 className="font-semibold truncate min-w-0 text-gray-900 dark:text-slate-100 text-[15px] tracking-tight">{config.app.name}</h2>
+            </>
           )}
           <button
             onClick={toggleSidebar}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="ml-auto p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+            className="ml-auto p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
           >
-            <ChevronLeft className={cn('h-4 w-4 transition-transform duration-200', sidebarCollapsed && 'rotate-180')} />
+            <ChevronLeft className={cn('h-4 w-4 motion-safe:transition-transform motion-safe:duration-200', sidebarCollapsed && 'rotate-180')} />
           </button>
         </div>
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleNav(item)}
-              aria-current={isActive(item.id) ? 'page' : undefined}
-              className={cn(
-                'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
-                'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
-                isActive(item.id)
-                  ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
-                  : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80',
-                sidebarCollapsed && 'justify-center px-0'
-              )}
-              title={sidebarCollapsed ? item.label : undefined}
+        <nav className="flex-1 p-2 overflow-y-auto">
+          {navGroups.map((group, gi) => (
+            <div
+              key={group.label}
+              role="group"
+              aria-label={group.label}
+              className={cn(gi > 0 && (sidebarCollapsed ? 'mt-2 pt-2 border-t border-gray-100 dark:border-slate-800/80' : 'mt-4'))}
             >
-              {navIcon(item, 'h-4 w-4 flex-shrink-0')}
-              {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
-            </button>
+              {!sidebarCollapsed && (
+                <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 select-none">
+                  {group.label}
+                </p>
+              )}
+              <div className="space-y-0.5">
+                {group.items.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => handleNav(item)}
+                    aria-current={isActive(item.id) ? 'page' : undefined}
+                    className={cn(
+                      'relative flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm transition-colors duration-150 text-left cursor-pointer',
+                      'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+                      isActive(item.id)
+                        ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
+                        : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 hover:text-gray-900 dark:hover:text-slate-200',
+                      sidebarCollapsed && 'justify-center px-0'
+                    )}
+                    title={sidebarCollapsed ? item.label : undefined}
+                  >
+                    {/* Accent bar doubles the active cue so it doesn't rely on the tint alone. */}
+                    {isActive(item.id) && (
+                      <span aria-hidden="true" className="app-bg-primary absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full" />
+                    )}
+                    {navIcon(item, 'h-4 w-4 flex-shrink-0')}
+                    {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
         <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
@@ -196,7 +267,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
             <button
               onClick={() => navigate(`${basePath}/profile`)}
               className={cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer',
+                'flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors duration-150 cursor-pointer',
                 'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
                 sidebarCollapsed ? 'justify-center px-0' : 'flex-1'
               )}
@@ -218,17 +289,20 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
           <button
             onClick={() => setMobileMenuOpen(true)}
             aria-label="Open navigation menu"
-            className="min-h-11 min-w-11 inline-flex items-center justify-center -ml-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400 transition-colors cursor-pointer"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center -ml-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400 transition-colors duration-150 cursor-pointer"
           >
             <Menu className="h-5 w-5" />
           </button>
-          <h2 className="ml-3 font-semibold truncate app-text-primary text-sm tracking-tight">{config.app.name}</h2>
-          <div className="ml-auto -mr-1.5 flex items-center">
+          <div className="ml-2 flex items-center gap-2.5 min-w-0">
+            {brandMark('sm')}
+            <h2 className="font-semibold truncate min-w-0 text-gray-900 dark:text-slate-100 text-[15px] tracking-tight">{config.app.name}</h2>
+          </div>
+          <div className="ml-auto -mr-1.5 flex items-center flex-shrink-0">
             <ThemeToggle />
             <button
               onClick={() => navigate(`${basePath}/profile`)}
               aria-label="Profile"
-              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors duration-150 cursor-pointer"
             >
               <User className="h-5 w-5" />
             </button>
@@ -258,13 +332,13 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               onClick={() => handleNav(item)}
               aria-current={isActive(item.id) ? 'page' : undefined}
               className={cn(
-                'flex-1 flex flex-col items-center py-3 text-[11px] transition-all duration-200 cursor-pointer',
+                'flex-1 flex flex-col items-center py-3 text-[11px] transition-colors duration-150 cursor-pointer',
                 isActive(item.id)
                   ? 'app-text-primary font-semibold'
                   : 'text-gray-400 dark:text-slate-500'
               )}
             >
-              {navIcon(item, cn('h-5 w-5 mb-0.5 transition-transform', isActive(item.id) && 'scale-110'))}
+              {navIcon(item, cn('h-5 w-5 mb-0.5 motion-safe:transition-transform motion-safe:duration-200', isActive(item.id) && 'scale-110'))}
               <span className="truncate max-w-[64px]">{item.label}</span>
             </button>
           ))}
@@ -273,7 +347,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
               onClick={() => setMobileMenuOpen(true)}
               aria-current={activeInOverflow ? 'page' : undefined}
               className={cn(
-                'flex-1 flex flex-col items-center py-3 text-[11px] transition-colors cursor-pointer',
+                'flex-1 flex flex-col items-center py-3 text-[11px] transition-colors duration-150 cursor-pointer',
                 activeInOverflow ? 'app-text-primary font-semibold' : 'text-gray-400 dark:text-slate-500'
               )}
             >
@@ -289,39 +363,52 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
         <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} aria-hidden="true" />
           <div ref={drawerRef} tabIndex={-1} className="absolute left-0 top-0 bottom-0 w-64 sm:w-72 bg-white dark:bg-slate-900 shadow-2xl shadow-black/20 flex flex-col">
-            <div className="h-14 flex items-center justify-between px-4 border-b border-gray-100 dark:border-slate-800/80 flex-shrink-0">
-              <h2 className="font-semibold app-text-primary text-sm tracking-tight">{config.app.name}</h2>
+            <div className="h-14 flex items-center gap-2.5 px-3 border-b border-gray-100 dark:border-slate-800/80 flex-shrink-0">
+              {brandMark('sm')}
+              <h2 className="font-semibold truncate min-w-0 text-gray-900 dark:text-slate-100 text-[15px] tracking-tight">{config.app.name}</h2>
               <button
                 onClick={() => setMobileMenuOpen(false)}
                 aria-label="Close navigation menu"
-                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors cursor-pointer"
+                className="ml-auto p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 dark:text-slate-500 transition-colors duration-150 cursor-pointer flex-shrink-0"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-              {navItems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => handleNav(item)}
-                  aria-current={isActive(item.id) ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm transition-all duration-200 text-left cursor-pointer',
-                    'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
-                    isActive(item.id)
-                      ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
-                      : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80'
-                  )}
-                >
-                  {navIcon(item, 'h-4 w-4 flex-shrink-0')}
-                  <span className="truncate">{item.label}</span>
-                </button>
+            <nav className="flex-1 p-2 overflow-y-auto">
+              {navGroups.map((group, gi) => (
+                <div key={group.label} role="group" aria-label={group.label} className={cn(gi > 0 && 'mt-4')}>
+                  <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500 select-none">
+                    {group.label}
+                  </p>
+                  <div className="space-y-0.5">
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => handleNav(item)}
+                        aria-current={isActive(item.id) ? 'page' : undefined}
+                        className={cn(
+                          'relative flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm transition-colors duration-150 text-left cursor-pointer',
+                          'focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+                          isActive(item.id)
+                            ? 'app-bg-primary-light app-text-primary font-medium shadow-sm'
+                            : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 hover:text-gray-900 dark:hover:text-slate-200'
+                        )}
+                      >
+                        {isActive(item.id) && (
+                          <span aria-hidden="true" className="app-bg-primary absolute left-0 top-1/2 -translate-y-1/2 h-4 w-0.5 rounded-full" />
+                        )}
+                        {navIcon(item, 'h-4 w-4 flex-shrink-0')}
+                        <span className="truncate">{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </nav>
             <div className="p-2 border-t border-gray-100 dark:border-slate-800/80">
               <button
                 onClick={() => { navigate(`${basePath}/profile`); setMobileMenuOpen(false); }}
-                className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors cursor-pointer"
+                className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800/80 transition-colors duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
               >
                 <User className="h-4 w-4" />
                 <span>Profile</span>

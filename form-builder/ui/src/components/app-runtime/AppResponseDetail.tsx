@@ -1,17 +1,26 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Trash2, Clock, CheckCircle2, Pencil, X, Link2, AlertTriangle } from 'lucide-react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Save, Trash2, Pencil, X, Link2, AlertTriangle, Lock } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { useAuthStore } from '../../stores/authStore';
 import { LinkedRecordInput } from './LinkedRecordInput';
 import { RelatedRecordsPanel } from './RelatedRecordsPanel';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { PageHeader } from '../ui/PageHeader';
+import { EmptyState } from '../ui/EmptyState';
+import { Skeleton } from '../ui/Skeleton';
 import { api, resolveFileUrl } from '../../lib/api';
 import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
 import { Badge } from '../ui/Badge';
 
+// Long/wide answer types span both columns of the detail grid.
+const FULL_WIDTH_TYPES = ['long_text', 'signature', 'file_upload'];
+
 export function AppResponseDetail() {
   const { appSlug, formId, responseId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const authUser = useAuthStore((s) => s.user);
   const { config, canEdit, canDelete, canViewOwn, canViewAll, updateResponse, deleteResponse } = useAppRuntimeStore();
   const [response, setResponse] = useState<Record<string, unknown> | null>(null);
   const [editing, setEditing] = useState(false);
@@ -58,31 +67,77 @@ export function AppResponseDetail() {
     }
   }, [appSlug, formId, responseId, config, hasLinkedFields]);
 
+  // History-aware back: return to wherever the user came from (table, related-records
+  // panel, linked-record chip), falling back to the responses table on a direct load.
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1);
+    else navigate(`/app/${appSlug}/form/${formId}/responses`);
+  };
+
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
-      <div className="flex-1 flex items-center justify-center py-12">
-        <p className="text-gray-500 dark:text-slate-400">You don&apos;t have permission to view this response.</p>
+      <div className="max-w-4xl mx-auto py-8">
+        <EmptyState
+          icon={Lock}
+          title="No access"
+          description="You don't have permission to view this record."
+        />
       </div>
     );
   }
 
   if (fetchError) {
     return (
-      <div className="flex-1 flex items-center justify-center py-12">
-        <div className="text-center">
-          <p className="text-red-600 dark:text-red-400 mb-4">{fetchError}</p>
-          <button onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)} className="text-sm app-text-primary hover:underline">
-            Back to Responses
-          </button>
-        </div>
+      <div className="max-w-4xl mx-auto py-8" role="alert">
+        <EmptyState
+          icon={AlertTriangle}
+          title="Couldn't load this record"
+          description={fetchError}
+          action={
+            <button
+              type="button"
+              onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
+              className="px-4 py-2 text-sm rounded-lg app-btn-primary transition-all duration-200 cursor-pointer"
+            >
+              Back to responses
+            </button>
+          }
+        />
       </div>
     );
   }
 
   if (loading || !response || !formId) {
+    // Skeleton mirroring the loaded layout: header, answers grid, details side card.
     return (
-      <div className="flex-1 flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading response" />
+      <div className="max-w-4xl mx-auto" role="status" aria-label="Loading response">
+        <div className="mb-6 flex items-start gap-3">
+          <Skeleton className="h-9 w-9 flex-none rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+            <Skeleton className="h-5 w-48 max-w-full" />
+            <Skeleton className="h-3.5 w-64 max-w-full" />
+          </div>
+          <Skeleton className="h-9 w-20 rounded-lg" />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
+          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 p-5 lg:order-2 space-y-4">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-6 w-28 rounded-full" />
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50 p-5 sm:p-6 lg:order-1">
+            <Skeleton className="h-3 w-20 mb-6" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-6">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="space-y-2 min-w-0">
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-4 w-3/4" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -164,57 +219,85 @@ export function AppResponseDetail() {
     }
   };
 
+  // Record identity: first non-empty short_text/email answer (same first-text-answer
+  // heuristic the tables use), falling back to a short id.
+  const savedAnswers = (response.answers as Record<string, unknown>) ?? {};
+  let recordTitle = '';
+  for (const f of fields) {
+    if (f.type !== 'short_text' && f.type !== 'email') continue;
+    const v = savedAnswers[f.id];
+    if (typeof v === 'string' && v.trim()) { recordTitle = v.trim(); break; }
+  }
+  if (!recordTitle) recordTitle = `Record #${String(responseId ?? '').slice(0, 8)}`;
+
+  const formName = runtimeForm?.displayName || 'Response';
+  const submittedAtText = response.submittedAt
+    ? parseServerDate(String(response.submittedAt)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : '—';
+  const updatedAtText = response.updatedAt
+    ? parseServerDate(String(response.updatedAt)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : null;
+  const submittedDateShort = response.submittedAt
+    ? parseServerDate(String(response.submittedAt)).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : null;
+
+  const meta = (response.metadata ?? {}) as Record<string, unknown>;
+  const submittedByUserId = typeof meta.submittedByUserId === 'string' && meta.submittedByUserId ? meta.submittedByUserId : null;
+  const submittedByLabel = submittedByUserId
+    ? (authUser?.id === submittedByUserId
+        ? (authUser?.name || authUser?.email || 'You')
+        : `User ${submittedByUserId.slice(0, 8)}`)
+    : null;
+  const tags = Array.isArray(response.tags) ? (response.tags as string[]) : [];
+
+  const microLabel = 'block text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-slate-500';
+
   return (
-    <div className="max-w-2xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
-          aria-label="Back to responses"
-          className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">{runtimeForm?.displayName || 'Response'}</h1>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {canEdit(formId) && !editing && (
-            <button
-              onClick={() => setEditing(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer"
-            >
-              <Pencil className="h-3.5 w-3.5" /> Edit
-            </button>
-          )}
-          {editing && (
-            <>
+    <div className="max-w-4xl mx-auto">
+      <PageHeader
+        title={recordTitle}
+        subtitle={submittedDateShort ? `${formName} · Submitted ${submittedDateShort}` : formName}
+        onBack={goBack}
+        backLabel="Back"
+        actions={
+          <>
+            {canEdit(formId) && !editing && (
               <button
-                onClick={() => { setEditing(false); setEditedAnswers((response.answers as Record<string, unknown>) ?? {}); setSaveError(null); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer"
+                onClick={() => setEditing(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
               >
-                <X className="h-3.5 w-3.5" /> Cancel
+                <Pencil className="h-3.5 w-3.5" /> Edit
               </button>
+            )}
+            {editing && (
+              <>
+                <button
+                  onClick={() => { setEditing(false); setEditedAnswers((response.answers as Record<string, unknown>) ?? {}); setSaveError(null); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200/80 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-300 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                >
+                  <X className="h-3.5 w-3.5" /> Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg app-btn-primary disabled:opacity-50 transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                >
+                  <Save className="h-3.5 w-3.5" /> {saving ? 'Saving...' : 'Save'}
+                </button>
+              </>
+            )}
+            {canDelete(formId) && !editing && (
               <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg app-btn-primary disabled:opacity-50 transition-all duration-200 cursor-pointer"
+                onClick={() => setShowDeleteConfirm(true)}
+                aria-label="Delete response"
+                className="p-2 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
               >
-                <Save className="h-3.5 w-3.5" /> {saving ? 'Saving...' : 'Save'}
+                <Trash2 className="h-4 w-4" />
               </button>
-            </>
-          )}
-          {canDelete(formId) && !editing && (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              aria-label="Delete response"
-              className="p-2.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      </div>
+            )}
+          </>
+        }
+      />
 
       {saveError && (
         <div role="alert" className="flex items-center justify-between text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 px-4 py-3 rounded-lg mb-4 border border-red-100 dark:border-red-500/20">
@@ -225,296 +308,326 @@ export function AppResponseDetail() {
         </div>
       )}
 
-      {/* Metadata card */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 mb-4 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-5 text-sm">
-        <div className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
-          <Clock className="h-4 w-4 flex-shrink-0" />
-          {response.submittedAt ? parseServerDate(String(response.submittedAt)).toLocaleString() : '-'}
-        </div>
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className={cn('h-4 w-4 flex-shrink-0',
-            status === 'approved' ? 'text-green-500' : status === 'rejected' ? 'text-red-500' : status === 'submitted' ? 'text-blue-500' : 'text-gray-400 dark:text-slate-500')} />
-          {formId && canViewAll(formId) && canEdit(formId) ? (
-            <select
-              value={status}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              aria-label="Response status"
-              className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-[color:var(--app-primary)] focus:outline-none cursor-pointer"
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-              ))}
-            </select>
-          ) : (
-            <Badge variant={statusBadgeVariant(status)} className="rounded-full">
-              {formatStatusLabel(status)}
-            </Badge>
-          )}
-        </div>
-      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
+        {/* Details side card: created/updated/status/submitted-by/tags */}
+        <aside className="lg:order-2 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5">
+          <h2 className={cn(microLabel, 'mb-4')}>Details</h2>
+          <dl className="space-y-4">
+            <div>
+              <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Status</dt>
+              <dd>
+                {formId && canViewAll(formId) && canEdit(formId) ? (
+                  <select
+                    value={status}
+                    onChange={(e) => handleStatusChange(e.target.value)}
+                    aria-label="Response status"
+                    className="w-full px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 focus:ring-2 focus:ring-[color:var(--app-primary)] focus:outline-none cursor-pointer"
+                  >
+                    {STATUS_OPTIONS.map((s) => (
+                      <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Badge variant={statusBadgeVariant(status)} className="rounded-full">
+                    {formatStatusLabel(status)}
+                  </Badge>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Created</dt>
+              <dd className="text-sm text-gray-700 dark:text-slate-300 tabular-nums">{submittedAtText}</dd>
+            </div>
+            {updatedAtText && updatedAtText !== submittedAtText && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Updated</dt>
+                <dd className="text-sm text-gray-700 dark:text-slate-300 tabular-nums">{updatedAtText}</dd>
+              </div>
+            )}
+            {submittedByLabel && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1">Submitted by</dt>
+                <dd className="text-sm text-gray-700 dark:text-slate-300 break-words">{submittedByLabel}</dd>
+              </div>
+            )}
+            {tags.length > 0 && (
+              <div>
+                <dt className="text-xs text-gray-400 dark:text-slate-500 mb-1.5">Tags</dt>
+                <dd className="flex flex-wrap gap-1.5">
+                  {tags.map((t) => <Badge key={t} variant="default">{t}</Badge>)}
+                </dd>
+              </div>
+            )}
+          </dl>
+        </aside>
 
-      {/* Answers */}
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 divide-y divide-gray-100 dark:divide-slate-700/40">
-        {fields.map((field) => {
-          const isLinked = field.type === 'linked_record';
-          const resolved = response._resolved as Record<string, unknown> | undefined;
-          const targetFormId = field.properties?.targetFormId as string | undefined;
-          const inputId = `resp-edit-${field.id}`;
+        {/* Answers */}
+        <div className="lg:order-1 min-w-0 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-5 sm:p-6">
+          <h2 className={cn(microLabel, 'mb-5')}>Answers</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-5">
+            {fields.map((field) => {
+              const isLinked = field.type === 'linked_record';
+              const resolved = response._resolved as Record<string, unknown> | undefined;
+              const targetFormId = field.properties?.targetFormId as string | undefined;
+              const inputId = `resp-edit-${field.id}`;
+              const spansFull = FULL_WIDTH_TYPES.includes(field.type) || (editing && isLinked);
 
-          return (
-            <div key={field.id} className="px-5 py-4">
-              <label htmlFor={inputId} className="block text-xs font-semibold text-gray-500 dark:text-slate-400 mb-1.5">
-                {isLinked && <Link2 className="inline h-3 w-3 mr-1" />}
-                {field.label}
-              </label>
-              {editing && !isLinked ? (
-                (() => {
-                  const editInputClass = "w-full px-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-[color:var(--app-primary)] focus:border-transparent transition-all duration-200";
-                  const editVal = editedAnswers[field.id];
+              return (
+                <div key={field.id} className={cn('min-w-0', spansFull && 'sm:col-span-2')}>
+                  <label htmlFor={inputId} className={cn(microLabel, 'mb-1.5')}>
+                    {isLinked && <Link2 className="inline h-3 w-3 mr-1 align-[-1px]" />}
+                    {field.label}
+                  </label>
+                  {editing && !isLinked ? (
+                    (() => {
+                      const editInputClass = "w-full px-3.5 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-[color:var(--app-primary)] focus:border-transparent transition-all duration-200";
+                      const editVal = editedAnswers[field.id];
 
-                  if (field.type === 'number') {
-                    return (
-                      <input
-                        id={inputId}
-                        type="number"
-                        step="any"
-                        value={editVal != null ? String(editVal) : ''}
-                        onChange={(e) => {
-                          const v = parseFloat(e.target.value);
-                          setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
-                        }}
-                        className={editInputClass}
-                      />
-                    );
-                  }
-                  if (field.type === 'date') {
-                    return <input id={inputId} type="date" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
-                  }
-                  if (field.type === 'time') {
-                    return <input id={inputId} type="time" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
-                  }
-                  if (field.type === 'datetime') {
-                    return <input id={inputId} type="datetime-local" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
-                  }
-                  if (field.type === 'long_text') {
-                    return <textarea id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} rows={4} className={cn(editInputClass, 'resize-none')} />;
-                  }
-                  if (field.type === 'dropdown') {
-                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
-                    return (
-                      <select id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass}>
-                        <option value="">Select...</option>
-                        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    );
-                  }
-                  if (field.type === 'multiple_choice') {
-                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
-                    return (
-                      <div className="space-y-1.5">
-                        {options.map((o) => (
-                          <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
-                            <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="app-accent" />
-                            {o.label}
-                          </label>
-                        ))}
-                      </div>
-                    );
-                  }
-                  if (field.type === 'checkboxes') {
-                    const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
-                    const selected = Array.isArray(editVal) ? (editVal as string[]) : [];
-                    return (
-                      <div className="space-y-1.5">
-                        {options.map((o) => (
-                          <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
-                            <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => {
-                              const newVals = e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value);
-                              setEditedAnswers({ ...editedAnswers, [field.id]: newVals });
-                            }} className="app-accent" />
-                            {o.label}
-                          </label>
-                        ))}
-                      </div>
-                    );
-                  }
-                  if (field.type === 'rating' || field.type === 'scale') {
-                    return (
-                      <input
-                        id={inputId}
-                        type="number"
-                        step="1"
-                        value={editVal != null ? String(editVal) : ''}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value, 10);
-                          setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
-                        }}
-                        className={editInputClass}
-                      />
-                    );
-                  }
-                  // Structured (object/array/data-URL) values can't be safely edited
-                  // as text — feeding them into a text input stringifies and corrupts
-                  // them. Keep them read-only; the original (seeded) value is preserved.
-                  if (field.type === 'location' || field.type === 'file_upload' || field.type === 'signature' || field.type === 'calculated' || field.type === 'hidden') {
-                    return (
-                      <p className="text-sm text-gray-400 dark:text-slate-500 italic px-3.5 py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-700">
-                        This field can't be edited here — its existing value is preserved on save.
-                      </p>
-                    );
-                  }
-                  // Default: text input for short_text, email, phone, url, etc.
-                  return (
-                    <input
-                      id={inputId}
-                      type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
-                      value={String(editVal ?? '')}
-                      onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
-                      className={editInputClass}
-                    />
-                  );
-                })()
-              ) : editing && isLinked ? (
-                (() => {
-                  const linkedTargetFormId = field.properties?.targetFormId as string | undefined;
-                  const displayFieldIds = field.properties?.displayFieldIds as string[] | undefined;
-                  const searchFieldIds = field.properties?.searchFieldIds as string[] | undefined;
-                  const allowMultiple = field.properties?.allowMultiple as boolean | undefined;
-                  if (!linkedTargetFormId || !formId) {
-                    return <p className="text-sm text-gray-400 dark:text-slate-500 italic">Linked record field not configured</p>;
-                  }
-                  return (
-                    <LinkedRecordInput
-                      formId={formId}
-                      targetFormId={linkedTargetFormId}
-                      displayFieldIds={displayFieldIds}
-                      searchFieldIds={searchFieldIds}
-                      allowMultiple={allowMultiple}
-                      value={editedAnswers[field.id]}
-                      onChange={(val) => setEditedAnswers({ ...editedAnswers, [field.id]: val })}
-                      primaryColor="var(--app-primary, #6366f1)"
-                    />
-                  );
-                })()
-              ) : isLinked && resolved?.[field.id] ? (
-                <div className="text-sm">
-                  {(() => {
-                    const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
-                    const items = Array.isArray(rv) ? rv : [rv];
-
-                    const renderLinkedItem = (item: { id?: string; display?: string }) => {
-                      const isBroken = !item.display || item.display === 'Record not found';
-                      if (isBroken) {
+                      if (field.type === 'number') {
                         return (
-                          <span
-                            key={item.id}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30"
-                          >
-                            <AlertTriangle className="h-3 w-3" />
-                            Record not found
-                          </span>
+                          <input
+                            id={inputId}
+                            type="number"
+                            step="any"
+                            value={editVal != null ? String(editVal) : ''}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
+                            }}
+                            className={editInputClass}
+                          />
                         );
                       }
+                      if (field.type === 'date') {
+                        return <input id={inputId} type="date" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                      }
+                      if (field.type === 'time') {
+                        return <input id={inputId} type="time" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                      }
+                      if (field.type === 'datetime') {
+                        return <input id={inputId} type="datetime-local" value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass} />;
+                      }
+                      if (field.type === 'long_text') {
+                        return <textarea id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} rows={4} className={cn(editInputClass, 'resize-none')} />;
+                      }
+                      if (field.type === 'dropdown') {
+                        const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                        return (
+                          <select id={inputId} value={String(editVal ?? '')} onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })} className={editInputClass}>
+                            <option value="">Select...</option>
+                            {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        );
+                      }
+                      if (field.type === 'multiple_choice') {
+                        const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                        return (
+                          <div className="space-y-1.5">
+                            {options.map((o) => (
+                              <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
+                                <input type="radio" name={field.id} checked={editVal === o.value} onChange={() => setEditedAnswers({ ...editedAnswers, [field.id]: o.value })} className="app-accent" />
+                                {o.label}
+                              </label>
+                            ))}
+                          </div>
+                        );
+                      }
+                      if (field.type === 'checkboxes') {
+                        const options = (field.properties?.options as Array<{ value: string; label: string }>) ?? [];
+                        const selected = Array.isArray(editVal) ? (editVal as string[]) : [];
+                        return (
+                          <div className="space-y-1.5">
+                            {options.map((o) => (
+                              <label key={o.value} className="flex items-center gap-2 text-sm text-gray-900 dark:text-slate-200 cursor-pointer">
+                                <input type="checkbox" checked={selected.includes(o.value)} onChange={(e) => {
+                                  const newVals = e.target.checked ? [...selected, o.value] : selected.filter((v) => v !== o.value);
+                                  setEditedAnswers({ ...editedAnswers, [field.id]: newVals });
+                                }} className="app-accent" />
+                                {o.label}
+                              </label>
+                            ))}
+                          </div>
+                        );
+                      }
+                      if (field.type === 'rating' || field.type === 'scale') {
+                        return (
+                          <input
+                            id={inputId}
+                            type="number"
+                            step="1"
+                            value={editVal != null ? String(editVal) : ''}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10);
+                              setEditedAnswers({ ...editedAnswers, [field.id]: isNaN(v) ? undefined : v });
+                            }}
+                            className={editInputClass}
+                          />
+                        );
+                      }
+                      // Structured (object/array/data-URL) values can't be safely edited
+                      // as text — feeding them into a text input stringifies and corrupts
+                      // them. Keep them read-only; the original (seeded) value is preserved.
+                      if (field.type === 'location' || field.type === 'file_upload' || field.type === 'signature' || field.type === 'calculated' || field.type === 'hidden') {
+                        return (
+                          <p className="text-sm text-gray-400 dark:text-slate-500 italic px-3.5 py-2.5 rounded-xl border border-dashed border-gray-200 dark:border-slate-700">
+                            This field can't be edited here — its existing value is preserved on save.
+                          </p>
+                        );
+                      }
+                      // Default: text input for short_text, email, phone, url, etc.
                       return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm app-bg-primary-light app-text-primary hover:opacity-80 transition-colors cursor-pointer"
-                        >
-                          <Link2 className="h-3 w-3" />
-                          {item.display}
-                        </button>
+                        <input
+                          id={inputId}
+                          type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : field.type === 'url' ? 'url' : 'text'}
+                          value={String(editVal ?? '')}
+                          onChange={(e) => setEditedAnswers({ ...editedAnswers, [field.id]: e.target.value })}
+                          className={editInputClass}
+                        />
                       );
-                    };
+                    })()
+                  ) : editing && isLinked ? (
+                    (() => {
+                      const linkedTargetFormId = field.properties?.targetFormId as string | undefined;
+                      const displayFieldIds = field.properties?.displayFieldIds as string[] | undefined;
+                      const searchFieldIds = field.properties?.searchFieldIds as string[] | undefined;
+                      const allowMultiple = field.properties?.allowMultiple as boolean | undefined;
+                      if (!linkedTargetFormId || !formId) {
+                        return <p className="text-sm text-gray-400 dark:text-slate-500 italic">Linked record field not configured</p>;
+                      }
+                      return (
+                        <LinkedRecordInput
+                          formId={formId}
+                          targetFormId={linkedTargetFormId}
+                          displayFieldIds={displayFieldIds}
+                          searchFieldIds={searchFieldIds}
+                          allowMultiple={allowMultiple}
+                          value={editedAnswers[field.id]}
+                          onChange={(val) => setEditedAnswers({ ...editedAnswers, [field.id]: val })}
+                          primaryColor="var(--app-primary, #6366f1)"
+                        />
+                      );
+                    })()
+                  ) : isLinked && resolved?.[field.id] ? (
+                    <div className="text-sm">
+                      {(() => {
+                        const rv = resolved[field.id] as { id?: string; display?: string } | Array<{ id?: string; display?: string }>;
+                        const items = Array.isArray(rv) ? rv : [rv];
 
-                    return (
-                      <div className="flex flex-wrap gap-2">
-                        {items.map((item) => renderLinkedItem(item))}
-                      </div>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <div className="text-sm text-gray-800 dark:text-slate-200 break-words">
-                  {answers[field.id] !== undefined && answers[field.id] !== null && answers[field.id] !== ''
-                    ? (() => {
-                        const val = answers[field.id];
-                        // Boolean yes/no chip
-                        if (val === 'yes' || val === 'no') {
-                          return (
-                            <span className={cn(
-                              'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
-                              val === 'yes' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
-                            )}>
-                              {val === 'yes' ? 'Yes' : 'No'}
-                            </span>
-                          );
-                        }
-                        // Date formatting
-                        if (field.type === 'date' && typeof val === 'string' && val) {
-                          try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch { return String(val); }
-                        }
-                        // Time formatting
-                        if (field.type === 'time' && typeof val === 'string' && val) {
-                          try {
-                            const [h, m] = val.split(':').map(Number);
-                            return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-                          } catch { return String(val); }
-                        }
-                        // Datetime formatting
-                        if (field.type === 'datetime' && typeof val === 'string' && val) {
-                          try { return new Date(val).toLocaleString(); } catch { return String(val); }
-                        }
-                        // Long text: preserve whitespace
-                        if (field.type === 'long_text' && typeof val === 'string') {
-                          return <span className="whitespace-pre-wrap">{val}</span>;
-                        }
-                        // File uploads: render as links (was "[object Object]")
-                        if (field.type === 'file_upload' && Array.isArray(val)) {
-                          return (
-                            <div className="flex flex-col gap-1">
-                              {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
-                                f && f.url
-                                  ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
-                                  : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
-                              ))}
-                            </div>
-                          );
-                        }
-                        // Location: lat, lng (was "[object Object]")
-                        if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in (val as object)) {
-                          const loc = val as { latitude: number; longitude: number };
-                          return `${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}`;
-                        }
-                        // Signature: render the drawn image, or show the typed name (never the raw "typed:" prefix)
-                        if (field.type === 'signature' && typeof val === 'string') {
-                          if (val.startsWith('data:image')) {
-                            return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                        const renderLinkedItem = (item: { id?: string; display?: string }) => {
+                          const isBroken = !item.display || item.display === 'Record not found';
+                          if (isBroken) {
+                            return (
+                              <span
+                                key={item.id}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-500/30"
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                Record not found
+                              </span>
+                            );
                           }
-                          if (val.startsWith('typed:')) {
-                            const n = val.slice(6).trim();
-                            return n ? <span style={{ fontFamily: 'cursive' }}>{n}</span> : '—';
-                          }
-                        }
-                        // Choice fields: map stored option values (e.g. "option_2") to
-                        // their human labels.
-                        if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
-                          const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
-                          const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
-                          return Array.isArray(val) ? (val as unknown[]).map(labelFor).join(', ') : labelFor(val);
-                        }
-                        // Arrays (checkboxes, etc.)
-                        if (Array.isArray(val)) return (val as unknown[]).join(', ');
-                        return String(val);
-                      })()
-                    : <span className="text-gray-400 dark:text-slate-500 italic">No answer</span>
-                  }
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => targetFormId && navigate(`/app/${appSlug}/form/${targetFormId}/responses/${item.id}`)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-sm app-bg-primary-light app-text-primary hover:opacity-80 transition-colors cursor-pointer"
+                            >
+                              <Link2 className="h-3 w-3" />
+                              {item.display}
+                            </button>
+                          );
+                        };
+
+                        return (
+                          <div className="flex flex-wrap gap-2">
+                            {items.map((item) => renderLinkedItem(item))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="text-[15px] text-gray-900 dark:text-slate-100 break-words">
+                      {answers[field.id] !== undefined && answers[field.id] !== null && answers[field.id] !== ''
+                        ? (() => {
+                            const val = answers[field.id];
+                            // Boolean yes/no chip
+                            if (val === 'yes' || val === 'no') {
+                              return (
+                                <span className={cn(
+                                  'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                                  val === 'yes' ? 'bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'
+                                )}>
+                                  {val === 'yes' ? 'Yes' : 'No'}
+                                </span>
+                              );
+                            }
+                            // Date formatting
+                            if (field.type === 'date' && typeof val === 'string' && val) {
+                              try { return new Date(val + 'T00:00:00').toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }); } catch { return String(val); }
+                            }
+                            // Time formatting
+                            if (field.type === 'time' && typeof val === 'string' && val) {
+                              try {
+                                const [h, m] = val.split(':').map(Number);
+                                return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+                              } catch { return String(val); }
+                            }
+                            // Datetime formatting
+                            if (field.type === 'datetime' && typeof val === 'string' && val) {
+                              try { return new Date(val).toLocaleString(); } catch { return String(val); }
+                            }
+                            // Long text: preserve whitespace
+                            if (field.type === 'long_text' && typeof val === 'string') {
+                              return <span className="whitespace-pre-wrap">{val}</span>;
+                            }
+                            // File uploads: render as links (was "[object Object]")
+                            if (field.type === 'file_upload' && Array.isArray(val)) {
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  {(val as Array<{ originalFilename?: string; url?: string }>).map((f, i) => (
+                                    f && f.url
+                                      ? <a key={i} href={resolveFileUrl(f.url)} target="_blank" rel="noopener noreferrer" className="app-text-primary hover:underline">{f.originalFilename || 'File'}</a>
+                                      : <span key={i}>{(f && f.originalFilename) || 'File'}</span>
+                                  ))}
+                                </div>
+                              );
+                            }
+                            // Location: lat, lng (was "[object Object]")
+                            if (field.type === 'location' && val && typeof val === 'object' && 'latitude' in (val as object)) {
+                              const loc = val as { latitude: number; longitude: number };
+                              return `${Number(loc.latitude).toFixed(6)}, ${Number(loc.longitude).toFixed(6)}`;
+                            }
+                            // Signature: render the drawn image, or show the typed name (never the raw "typed:" prefix)
+                            if (field.type === 'signature' && typeof val === 'string') {
+                              if (val.startsWith('data:image')) {
+                                return <img src={val} alt="Signature" className="max-h-32 border border-gray-200 dark:border-slate-700 rounded-lg bg-white" />;
+                              }
+                              if (val.startsWith('typed:')) {
+                                const n = val.slice(6).trim();
+                                return n ? <span style={{ fontFamily: 'cursive' }}>{n}</span> : '—';
+                              }
+                            }
+                            // Choice fields: map stored option values (e.g. "option_2") to
+                            // their human labels.
+                            if (['dropdown', 'multiple_choice', 'checkboxes'].includes(field.type)) {
+                              const opts = (field.properties?.options ?? []) as Array<{ value: string; label?: string }>;
+                              const labelFor = (v: unknown) => opts.find((o) => o.value === v)?.label ?? String(v);
+                              return Array.isArray(val) ? (val as unknown[]).map(labelFor).join(', ') : labelFor(val);
+                            }
+                            // Arrays (checkboxes, etc.)
+                            if (Array.isArray(val)) return (val as unknown[]).join(', ');
+                            return String(val);
+                          })()
+                        : <span className="text-gray-300 dark:text-slate-600" aria-label="No answer">—</span>
+                      }
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Related records (inverse relations) */}

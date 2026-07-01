@@ -40,6 +40,9 @@ export function AppRuntimeThemeProvider({ theme, children }: AppRuntimeThemeProv
         [data-app-runtime] .app-text-primary {
           color: var(--app-primary);
         }
+        [data-app-runtime] .app-bg-primary {
+          background-color: var(--app-primary);
+        }
         [data-app-runtime] .app-border-primary {
           border-color: var(--app-primary);
         }

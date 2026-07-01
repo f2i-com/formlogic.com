@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Eye, Users, CheckCircle, Clock, BarChart3 } from 'lucide-react';
+import { Eye, Users, CheckCircle, Clock, BarChart3, Lock, ExternalLink } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { api, type FormAnalytics } from '../../lib/api';
 import { StatCard } from '../ui/StatCard';
 import { Card } from '../ui/Card';
+import { PageHeader } from '../ui/PageHeader';
+import { EmptyState } from '../ui/EmptyState';
+import { Skeleton } from '../ui/Skeleton';
 
 /**
  * App-runtime analytics view — aggregate stats only (never individual answers).
@@ -13,7 +16,7 @@ import { Card } from '../ui/Card';
 export function AppAnalytics() {
   const { appSlug, formId } = useParams();
   const navigate = useNavigate();
-  const { config, canViewAnalytics } = useAppRuntimeStore();
+  const { config, canViewAnalytics, canSubmit } = useAppRuntimeStore();
   const [data, setData] = useState<FormAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,44 +50,69 @@ export function AppAnalytics() {
 
   if (!allowed) {
     return (
-      <div className="flex-1 flex items-center justify-center py-12">
-        <p className="text-gray-500 dark:text-slate-400">You don&apos;t have permission to view analytics for this form.</p>
+      <div className="py-8">
+        <EmptyState
+          icon={Lock}
+          title="No access"
+          description="You don't have permission to view analytics for this form."
+        />
       </div>
     );
   }
 
   const avg = data?.averageCompletionTime ?? 0;
+  const days = data?.responsesByDate ?? [];
+  // Thin the x-axis labels when days collide (show every Nth tick; the per-bar
+  // tooltip still carries the exact date for every bar).
+  const labelStep = Math.max(1, Math.ceil(days.length / 10));
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => navigate(`/app/${appSlug}`)}
-          aria-label="Back to dashboard"
-          className="p-2.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <h1 className="text-xl font-bold text-gray-900 dark:text-white tracking-tight">
-          {runtimeForm?.displayName || 'Analytics'}
-        </h1>
-      </div>
+      <PageHeader
+        title={runtimeForm?.displayName || 'Analytics'}
+        subtitle="Analytics · aggregate stats only"
+        onBack={() => navigate(`/app/${appSlug}`)}
+        backLabel="Back to dashboard"
+      />
 
       {error ? (
         <div className="text-center py-12" role="alert">
           <p className="text-red-600 dark:text-red-400">{error}</p>
         </div>
       ) : loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-current app-text-primary" role="status" aria-label="Loading analytics" />
+        // Skeleton mirroring the loaded layout: 4 stat tiles + the chart card.
+        <div className="space-y-6" role="status" aria-label="Loading analytics">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Card key={i} className="p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-2 pt-1">
+                    <Skeleton className="h-7 w-14" />
+                    <Skeleton className="h-3.5 w-20 max-w-full" />
+                  </div>
+                  <Skeleton className="h-10 w-10 rounded-xl flex-shrink-0" />
+                </div>
+              </Card>
+            ))}
+          </div>
+          <Card className="p-5">
+            <Skeleton className="h-4 w-44 mb-5" />
+            <div className="flex items-end gap-1 sm:gap-1.5 h-40">
+              {['h-1/3', 'h-3/5', 'h-2/5', 'h-4/5', 'h-1/2', 'h-2/3', 'h-2/5', 'h-3/4', 'h-1/2', 'h-3/5', 'h-1/3', 'h-2/3'].map((h, i) => (
+                <div key={i} className="flex-1 h-full flex items-end min-w-0">
+                  <Skeleton className={`w-full rounded-t ${h}`} />
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
       ) : (
         <div className="space-y-6">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard icon={Users} iconBg="bg-blue-500/10" iconColor="text-blue-500" value={data?.totalResponses ?? 0} label="Responses" />
-            <StatCard icon={CheckCircle} iconBg="bg-green-500/10" iconColor="text-green-500" value={`${data?.completionRate ?? 0}%`} label="Completion" />
-            <StatCard icon={Clock} iconBg="bg-purple-500/10" iconColor="text-purple-500" value={avg > 60 ? `${Math.floor(avg / 60)}m` : `${avg}s`} label="Avg. Time" />
-            <StatCard icon={Eye} iconBg="bg-sky-500/10" iconColor="text-sky-500" value={data?.totalViews ?? 0} label="Views" />
+            <StatCard icon={Users} iconBg="app-bg-primary-light" iconColor="app-text-primary" value={data?.totalResponses ?? 0} label="Responses" />
+            <StatCard icon={CheckCircle} iconBg="app-bg-primary-light" iconColor="app-text-primary" value={`${data?.completionRate ?? 0}%`} label="Completion" />
+            <StatCard icon={Clock} iconBg="app-bg-primary-light" iconColor="app-text-primary" value={avg > 60 ? `${Math.floor(avg / 60)}m` : `${avg}s`} label="Avg. time" />
+            <StatCard icon={Eye} iconBg="app-bg-primary-light" iconColor="app-text-primary" value={data?.totalViews ?? 0} label="Views" />
           </div>
 
           <Card className="p-5">
@@ -92,18 +120,38 @@ export function AppAnalytics() {
               <BarChart3 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Submissions over time</h2>
             </div>
-            {(data?.responsesByDate?.length ?? 0) === 0 ? (
-              <p className="text-sm text-gray-500 dark:text-slate-400 py-8 text-center">No submissions yet.</p>
+            {days.length === 0 ? (
+              <EmptyState
+                icon={BarChart3}
+                title="No submissions yet"
+                description="This chart fills in as responses come in."
+                className="py-8"
+                action={formId && canSubmit(formId) ? (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/app/${appSlug}/form/${formId}`)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg app-btn-primary transition-all duration-200 cursor-pointer"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open the form
+                  </button>
+                ) : undefined}
+              />
             ) : (
-              <div className="flex items-end gap-1.5 h-40" role="img" aria-label="Bar chart of submissions per day">
-                {data!.responsesByDate.map((d) => (
-                  <div key={d.date} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0" title={`${d.date}: ${d.count}`}>
-                    <span className="text-[10px] text-gray-500 dark:text-slate-400 tabular-nums">{d.count}</span>
-                    <div
-                      className="w-full rounded-t bg-primary-500/80 min-h-[2px]"
-                      style={{ height: `${(d.count / maxCount) * 100}%` }}
-                    />
-                    <span className="text-[9px] text-gray-400 dark:text-slate-500 truncate w-full text-center">{d.date.slice(5)}</span>
+              <div className="flex items-end gap-1 sm:gap-1.5 h-44" role="img" aria-label="Bar chart of submissions per day">
+                {days.map((d, i) => (
+                  <div key={d.date} className="flex-1 h-full flex flex-col items-center min-w-0" title={`${d.date}: ${d.count}`}>
+                    <span className="text-[10px] leading-4 text-gray-500 dark:text-slate-400 tabular-nums">{d.count}</span>
+                    {/* Light full-height track with the app-accent bar rising from the bottom. */}
+                    <div className="w-full flex-1 flex items-end rounded-t bg-gray-100/80 dark:bg-slate-800/50 overflow-hidden">
+                      <div
+                        className="w-full rounded-t min-h-[2px] motion-safe:transition-[height] motion-safe:duration-300"
+                        style={{ height: `${(d.count / maxCount) * 100}%`, backgroundColor: 'var(--app-primary)', opacity: 0.85 }}
+                      />
+                    </div>
+                    <span className="mt-1 text-[10px] leading-4 text-gray-400 dark:text-slate-500 truncate w-full text-center tabular-nums">
+                      {i % labelStep === 0 ? d.date.slice(5) : ' '}
+                    </span>
                   </div>
                 ))}
               </div>
