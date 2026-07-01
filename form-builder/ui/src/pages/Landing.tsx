@@ -338,7 +338,7 @@ export function Landing() {
             className="fl-reveal inline-flex items-center gap-2.5 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm border border-primary-200/60 dark:border-primary-500/20 text-primary-700 dark:text-primary-300 pl-3 pr-4 py-1.5 rounded-full text-xs font-medium mb-8 shadow-sm shadow-primary-500/5"
           >
             <span className="fl-dot relative inline-flex h-2 w-2 rounded-full bg-primary-500" />
-            <span className="fl-mono uppercase tracking-[0.18em]">Backend-powered forms</span>
+            <span className="fl-mono uppercase tracking-[0.18em]">Forms → internal apps</span>
           </div>
 
           <h1
@@ -346,9 +346,9 @@ export function Landing() {
             className="fl-display fl-reveal text-[2.85rem] leading-[1.04] sm:text-7xl text-gray-900 dark:text-white mb-7"
             style={{ transitionDelay: '80ms' }}
           >
-            The form platform with
+            Build internal apps
             <br />
-            <span className="fl-grad">backend logic</span>
+            <span className="fl-grad">from forms</span>
           </h1>
 
           <p
@@ -356,9 +356,9 @@ export function Landing() {
             className="fl-reveal text-lg sm:text-xl text-gray-500 dark:text-slate-400 mb-11 max-w-2xl mx-auto leading-relaxed"
             style={{ transitionDelay: '160ms' }}
           >
-            Move beyond basic form builders. FormLogic pairs a beautiful builder with real
-            server-side logic and a database per form — complete control over your data and
-            submission workflows.
+            Manually or with your AI. FormLogic turns forms into real internal apps — backend
+            logic, custom screens, linked records, roles, and a database per form. Build it
+            yourself, or hand a link to your AI and let it build.
           </p>
 
           <div
@@ -773,7 +773,7 @@ export function Landing() {
 
         <div data-reveal className="fl-reveal max-w-4xl mx-auto text-center relative z-10">
           <h2 className="fl-display text-4xl sm:text-6xl text-white mb-6">
-            Ready to build smarter forms?
+            Ready to build your first app?
           </h2>
           <p className="text-lg sm:text-xl text-primary-100/80 mb-10 max-w-2xl mx-auto leading-relaxed">
             Create a free account — your first 30 days of Cloud are on us. No credit card required.

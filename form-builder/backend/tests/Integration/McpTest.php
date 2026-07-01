@@ -341,6 +341,48 @@ class McpTest extends TestCase
         $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'X', 'customScreen' => ['danger' => 1]])['isError'], 'unknown customScreen key rejected');
     }
 
+    // ── adversarial ──
+
+    public function testHugePayloadsRejected(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'logicScript' => str_repeat('x', 102401)])['isError'], 'oversized logicScript rejected');
+        $fields = [];
+        for ($i = 0; $i < 250; $i++) {
+            $fields[] = ['id' => "f{$i}", 'type' => 'short_text', 'label' => 'L', 'required' => false];
+        }
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'fields' => $fields])['isError'], '>200 fields rejected');
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'customScreen' => ['enabled' => true, 'html' => str_repeat('y', 600000)]])['isError'], 'oversized customScreen rejected');
+    }
+
+    public function testAppScopeBypassAttemptsRejected(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        // Every app-mutating tool must reject a different app.
+        $this->assertTrue($this->tool($tok, 'create_app_form', ['appId' => $this->appB, 'title' => 'Sneak'])['isError']);
+        $this->assertTrue($this->tool($tok, 'add_form_to_app', ['appId' => $this->appB, 'formId' => $this->formB])['isError']);
+        $this->assertTrue($this->tool($tok, 'set_app_home', ['appId' => $this->appB, 'customScreen' => ['enabled' => true, 'html' => '<b>x</b>']])['isError']);
+        $this->assertTrue($this->tool($tok, 'get_form', ['formId' => $this->formB])['isError']);
+    }
+
+    public function testExpiredTokenBatchIsRejectedWholesale(): void
+    {
+        $t = self::$tokens->create($this->userId, $this->appA);
+        self::$pdo->prepare('UPDATE mcp_sessions SET expires_at = ? WHERE id = ?')->execute([date('Y-m-d H:i:s', time() - 3600), $t['id']]);
+        $r = $this->rpc($t['token'], [
+            ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'ping'],
+            ['jsonrpc' => '2.0', 'id' => 2, 'method' => 'tools/list'],
+        ]);
+        $this->assertSame(-32001, $r['error']['code'] ?? null, 'expired token fails auth before the batch runs');
+    }
+
+    public function testResponsesReadOutsideScopeRejected(): void
+    {
+        // Has responses:read, but app-scoped to appA — must not read a form in appB.
+        $tok = self::$tokens->create($this->userId, $this->appA, 3600, 900, ['forms:read', 'responses:read'])['token'];
+        $this->assertTrue($this->tool($tok, 'list_responses', ['formId' => $this->formB])['isError']);
+    }
+
     public function testExpiredAndRevokedSessionsArePurged(): void
     {
         // Create all three first (create() auto-purges, but nothing is dead yet), then kill two.
