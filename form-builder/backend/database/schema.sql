@@ -190,6 +190,8 @@ CREATE TABLE `apps` (
   `settings` json DEFAULT NULL,
   `theme` json DEFAULT NULL,
   `nav_config` json DEFAULT NULL,
+  `custom_screen` json DEFAULT NULL,
+  `reports` json DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

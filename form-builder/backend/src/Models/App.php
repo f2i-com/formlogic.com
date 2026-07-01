@@ -18,6 +18,7 @@ class App
         public array $theme = [],
         public array $navConfig = [],
         public array $customScreen = [],
+        public array $reports = [],
         public ?string $createdAt = null,
         public ?string $updatedAt = null
     ) {}
@@ -44,6 +45,9 @@ class App
             customScreen: is_string($data['custom_screen'] ?? null)
                 ? json_decode($data['custom_screen'], true) ?? []
                 : ($data['customScreen'] ?? []),
+            reports: is_string($data['reports'] ?? null)
+                ? json_decode($data['reports'], true) ?? []
+                : ($data['reports'] ?? []),
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null
         );
@@ -63,6 +67,7 @@ class App
             'theme' => $this->theme,
             'navConfig' => $this->navConfig,
             'customScreen' => $this->customScreen,
+            'reports' => $this->reports,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
         ];

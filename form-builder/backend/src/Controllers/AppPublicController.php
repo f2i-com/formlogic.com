@@ -924,6 +924,56 @@ class AppPublicController
         ]);
     }
 
+    /**
+     * POST /api/app/{slug}/reports/run
+     * Run a no-code report spec against one of the app's forms. Read-only (a scoped SELECT); the spec
+     * is data, never SQL. Permission-scoped per form (view-all → all rows, view-own → the caller's).
+     */
+    public function runReport(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'] ?? '';
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $body = $request->getParsedBody() ?? [];
+        $spec = is_array($body['spec'] ?? null) ? $body['spec'] : (is_array($body) ? $body : []);
+        $formId = (string) ($spec['formId'] ?? $body['formId'] ?? '');
+        if ($formId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'formId is required'], 400);
+        }
+        if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found in this app'], 404);
+        }
+
+        $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
+        $canViewOwn = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId);
+        if (!$canViewAll && !$canViewOwn) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+        }
+
+        $form = $this->formService->getForm($formId);
+        if (!$form) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+        }
+
+        try {
+            $svc = new \FormLogic\Services\ReportService($this->sqlite);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId);
+            return $this->jsonResponse($response, $result);
+        } catch (\Throwable $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run report'], 500);
+        }
+    }
+
     public function getRelatedRecords(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];

@@ -61,6 +61,15 @@ if (!$col2Stmt->fetchColumn()) {
     $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshots` json DEFAULT NULL AFTER `screenshot`");
     echo "  added pack_catalog.screenshots column\n";
 }
+$col3Stmt = $pdo->prepare(
+    "SELECT 1 FROM information_schema.columns
+     WHERE table_schema = :db AND table_name = 'apps' AND column_name = 'reports' LIMIT 1"
+);
+$col3Stmt->execute(['db' => $conf['database']]);
+if (!$col3Stmt->fetchColumn()) {
+    $pdo->exec("ALTER TABLE `apps` ADD COLUMN `reports` json DEFAULT NULL");
+    echo "  added apps.reports column\n";
+}
 
 $forms = new FormService($mysqlConn, $sqlite);
 $apps = new AppService($mysqlConn, $forms);

@@ -1350,6 +1350,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->lookupRecords($request, $response, $getArgs($request));
     })->add($authRequired);
 
+    // Run a no-code report (read-only SELECT; POST carries the report spec). Whitelisted for the demo.
+    $group->post('/reports/run', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->runReport($request, $response, $getArgs($request));
+    })->add($authRequired);
+
     // File upload for app forms — gated on the form owner's cloud access.
     $group->post('/forms/{formId}/upload', function ($request, $response) use ($container, $getArgs) {
         return $container->get(FileController::class)->appUpload($request, $response, $getArgs($request));

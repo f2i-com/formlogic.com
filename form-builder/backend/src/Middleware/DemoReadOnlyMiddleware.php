@@ -35,9 +35,10 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
         $this->authService = $authService;
         $this->demoEmail = $demoEmail;
         $this->cookieName = $cookieName;
-        // Entries ending in '*' match by path prefix. The MCP token endpoints are allowed so the demo
-        // can mint/revoke a "Connect an AI" link — the controller forces those tokens to be read-only.
-        $this->allow = $allow ?: ['/api/demo/start', '/api/auth/logout', '/api/mcp/tokens*'];
+        // Entries ending in '*' match by path prefix; entries starting with '*' match by suffix.
+        // The MCP token endpoints are allowed so the demo can mint/revoke a read-only "Connect an AI"
+        // link; '*/reports/run' is a read-only SELECT that just happens to POST its query spec.
+        $this->allow = $allow ?: ['/api/demo/start', '/api/auth/logout', '/api/mcp/tokens*', '*/reports/run'];
     }
 
     public function process(Request $request, RequestHandler $handler): Response
@@ -51,6 +52,10 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
         foreach ($this->allow as $allowed) {
             if (str_ends_with($allowed, '*')) {
                 if (str_starts_with($path, substr($allowed, 0, -1))) {
+                    return $handler->handle($request);
+                }
+            } elseif (str_starts_with($allowed, '*')) {
+                if (str_ends_with($path, substr($allowed, 1))) {
                     return $handler->handle($request);
                 }
             } elseif ($path === $allowed) {

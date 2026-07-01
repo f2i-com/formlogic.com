@@ -238,6 +238,11 @@ class AppService
             $params['custom_screen'] = !empty($data['customScreen']) ? json_encode($data['customScreen']) : null;
         }
 
+        if (array_key_exists('reports', $data)) {
+            $updates[] = "reports = :reports";
+            $params['reports'] = !empty($data['reports']) ? json_encode(array_values($data['reports'])) : null;
+        }
+
         if (!empty($updates)) {
             $updates[] = "updated_at = :updated_at";
             $params['updated_at'] = date('Y-m-d H:i:s');

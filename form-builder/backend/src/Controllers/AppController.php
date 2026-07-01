@@ -156,6 +156,16 @@ class AppController
             }
         }
 
+        if (isset($data['reports'])) {
+            if (!is_array($data['reports'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Reports must be an array'], 400);
+            }
+            $reportsJson = json_encode($data['reports']);
+            if ($reportsJson !== false && strlen($reportsJson) > 262144) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Reports data is too large'], 400);
+            }
+        }
+
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             $this->audit($request, 'app.update', 'app', $args['id']);
