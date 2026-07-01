@@ -101,6 +101,17 @@ class PackFixturesTest extends TestCase
         return $out;
     }
 
+    /** Only the shipped "Try a sample app" packs (full, linked, screened apps) — for the round-trip stress test. */
+    public static function sampleProvider(): array
+    {
+        $dir = dirname(__DIR__, 2) . '/resources/sample-apps';
+        $out = [];
+        foreach (glob($dir . '/*.json') ?: [] as $file) {
+            $out[basename($file)] = [$file];
+        }
+        return $out;
+    }
+
     /** @dataProvider fixtureProvider */
     public function testFixtureImports(string $file): void
     {
@@ -112,5 +123,68 @@ class PackFixturesTest extends TestCase
 
         $this->assertCount(count($pack['forms']), $result['forms'], 'all forms import');
         $this->assertCount(count($pack['apps'] ?? []), $result['apps'], 'all apps import');
+    }
+
+    /**
+     * Stress the export/import machinery on the shipped samples: import a pack, EXPORT the imported app
+     * (the hard case — exporting an app that was itself built by import), re-import the export, and assert
+     * structure survives the full cycle with no drift — form/app counts stable, the re-export stays portable
+     * (linked_record back to @pack:, no real ids/owner leaked), and the live re-imported app resolves its
+     * linked_record to a real new form id (no @pack: residue).
+     *
+     * @dataProvider sampleProvider
+     */
+    public function testSampleRoundTripSurvivesReExport(string $file): void
+    {
+        $pack = json_decode((string) file_get_contents($file), true);
+        $this->assertIsArray($pack, "$file must be valid JSON");
+
+        // Cycle 1: import the shipped pack.
+        $r1 = self::$packs->importPack($pack, $this->userId);
+        $this->assertNotEmpty($r1['apps'], "$file must contain at least one app");
+
+        foreach ($r1['apps'] as $app) {
+            $appId = $app['id'];
+
+            // Export the imported app, then assert the re-export is portable again.
+            $reExport = self::$packs->exportApp($appId, $this->userId);
+            $rawExport = json_encode($reExport);
+            $this->assertStringNotContainsString($appId, $rawExport, 're-export must not leak the real app id');
+            $this->assertStringNotContainsString('owner_id', $rawExport, 're-export must not leak owner');
+            $this->assertStringNotContainsString('ownerId', $rawExport, 're-export must not leak owner');
+            foreach ($reExport['forms'] as $f) {
+                foreach ($f['fields'] as $fld) {
+                    if (($fld['type'] ?? '') === 'linked_record') {
+                        $target = $fld['properties']['targetFormId'] ?? '';
+                        $this->assertStringStartsWith(
+                            '@pack:',
+                            $target,
+                            're-exported linked_record must be a portable @pack: ref, got: ' . $target
+                        );
+                    }
+                }
+            }
+
+            // Cycle 2: re-import the export — counts stay stable across the round trip. Give it a distinct
+            // pack identity so it isn't rejected by the same-pack-already-installed dedup guard (the source
+            // sample is already installed for this user); we're testing structural parity, not the guard.
+            $reExport['packMeta']['id'] = 'stress-' . bin2hex(random_bytes(8));
+            $r2 = self::$packs->importPack($reExport, $this->userId);
+            $this->assertCount(count($reExport['forms']), $r2['forms'], "$file: forms stable across re-import");
+            $this->assertCount(count($reExport['apps']), $r2['apps'], "$file: apps stable across re-import");
+
+            // The live re-imported forms resolve linked_record to a real new form id (no @pack: residue).
+            $newFormIds = array_map(static fn ($f) => $f['id'], $r2['forms']);
+            foreach ($r2['forms'] as $f) {
+                $form = self::$forms->getForm($f['id']);
+                foreach ($form['fields'] as $fld) {
+                    if (($fld['type'] ?? '') === 'linked_record') {
+                        $target = $fld['properties']['targetFormId'] ?? '';
+                        $this->assertFalse(str_starts_with($target, '@pack:'), 'live linked_record must be resolved, not an @pack: ref');
+                        $this->assertContains($target, $newFormIds, 'linked_record must resolve to a sibling form in the same import');
+                    }
+                }
+            }
+        }
     }
 }
