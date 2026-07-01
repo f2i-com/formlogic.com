@@ -70,6 +70,17 @@ and can't touch other apps or their forms.
 
 ---
 
+## Self-describing (zero prior knowledge)
+
+You can hand the link to any MCP-capable AI and just say *"build me an app"* — it doesn't need to know
+FormLogic in advance:
+
+- The **`initialize`** response carries an `instructions` string (the MCP client feeds it to the model) with
+  the whole workflow: `create_app` → `create_app_form` → `set_app_home` → publish, the field types, and the
+  custom-screen SDK.
+- **`get_started`** is the first tool listed and returns a full guide with a worked example. It needs no
+  scope, so an AI can always read it before acting.
+
 ## Tools
 
 | Tool | Scope | What it does |

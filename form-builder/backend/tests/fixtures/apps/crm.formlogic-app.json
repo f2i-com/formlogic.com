@@ -1,0 +1,43 @@
+{
+  "formatVersion": 1,
+  "packMeta": { "name": "Mini CRM", "description": "Contacts + deals, with a linked_record relation and a custom role.", "version": "1.0.0", "tags": [] },
+  "forms": [
+    {
+      "packFormId": "contact",
+      "title": "Contact",
+      "settings": {},
+      "theme": {},
+      "fields": [
+        { "id": "name", "type": "short_text", "label": "Name", "required": true, "properties": {} },
+        { "id": "email", "type": "email", "label": "Email", "required": false, "properties": {} }
+      ]
+    },
+    {
+      "packFormId": "deal",
+      "title": "Deal",
+      "settings": {},
+      "theme": {},
+      "logicScript": "function onSubmit(ctx) { return; }",
+      "fields": [
+        { "id": "amount", "type": "number", "label": "Amount", "required": true, "properties": {} },
+        { "id": "contact", "type": "linked_record", "label": "Contact", "required": false, "properties": { "targetFormId": "@pack:contact" } }
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "packAppId": "mini-crm",
+      "name": "Mini CRM",
+      "settings": {},
+      "theme": {},
+      "navConfig": [ { "formId": "@pack:deal", "label": "Deals", "icon": "Handshake" } ],
+      "forms": [
+        { "packFormId": "contact", "displayName": "Contacts", "sortOrder": 0, "isVisible": true, "settings": {} },
+        { "packFormId": "deal", "displayName": "Deals", "sortOrder": 1, "isVisible": true, "settings": {} }
+      ],
+      "roles": [
+        { "name": "Viewer", "description": "Read-only", "system": false, "permissions": [ { "packFormId": "@pack:deal", "permission": "view_all_responses" } ] }
+      ]
+    }
+  ]
+}

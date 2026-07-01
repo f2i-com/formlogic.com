@@ -302,6 +302,19 @@ class McpTest extends TestCase
         $this->assertSame($newAppId, $list[0]['id']);
     }
 
+    public function testSelfDescribingGuide(): void
+    {
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        // initialize carries model-facing instructions
+        $init = $this->rpc($tok, ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'initialize']);
+        $this->assertStringContainsString('FormLogic', $init['result']['instructions'] ?? '');
+        // get_started is always listed + callable (no scope), and returns the how-to
+        $this->assertContains('get_started', $this->toolNames($tok));
+        $guide = $this->tool($tok, 'get_started');
+        $this->assertFalse($guide['isError']);
+        $this->assertStringContainsString('create_app_form', $guide['text']);
+    }
+
     public function testIdleTimedOutTokenFails(): void
     {
         $t = self::$tokens->create($this->userId);

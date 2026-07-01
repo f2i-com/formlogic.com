@@ -1,0 +1,38 @@
+{
+  "formatVersion": 1,
+  "packMeta": { "name": "Tasks", "description": "A simple task list app with a custom screen.", "version": "1.0.0", "tags": [] },
+  "forms": [
+    {
+      "packFormId": "task",
+      "title": "Task",
+      "description": "",
+      "settings": {},
+      "theme": {},
+      "fields": [
+        { "id": "title", "type": "short_text", "label": "Title", "required": true, "properties": {} },
+        { "id": "done", "type": "checkbox", "label": "Done", "required": false, "properties": {} }
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "packAppId": "tasks",
+      "name": "Tasks",
+      "description": "",
+      "settings": { "hideNav": true },
+      "theme": {},
+      "navConfig": [],
+      "forms": [
+        { "packFormId": "task", "displayName": "Task", "sortOrder": 0, "isVisible": true, "settings": {} }
+      ],
+      "roles": [],
+      "customScreen": {
+        "enabled": true,
+        "files": [
+          { "path": "index.html", "content": "<div id=\"app\"></div>" },
+          { "path": "index.ts", "content": "const el = document.getElementById('app')!;\nasync function load(){ const ctx = await FormLogic.context(); const fid = ctx.forms[0].formId; const rows = await FormLogic.records(fid, { limit: 100 }); el.innerHTML = '<h1>Tasks (' + rows.length + ')</h1>' + rows.map(r => '<div>' + FormLogic.escapeHtml(r.answers.title) + '</div>').join(''); }\nload();" }
+        ]
+      }
+    }
+  ]
+}

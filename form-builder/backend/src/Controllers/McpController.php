@@ -141,6 +141,8 @@ class McpController
                     'protocolVersion' => self::PROTOCOL_VERSION,
                     'capabilities' => ['tools' => (object) []],
                     'serverInfo' => ['name' => 'FormLogic', 'version' => '1.0.0'],
+                    // Surfaced to the model by MCP clients — lets an AI build with zero prior knowledge.
+                    'instructions' => $this->serverInstructions(),
                 ]);
             case 'ping':
                 return $this->ok($id, (object) []);
@@ -174,6 +176,9 @@ class McpController
         $scopedApp = $session['appId'] ?? null;
         $creatorMode = is_array($session['created'] ?? null); // a "creator" token: confined to what it makes
         try {
+            if ($name === 'get_started') {
+                return ['content' => [['type' => 'text', 'text' => $this->guide()]]];
+            }
             $this->requireScope($session, self::TOOL_SCOPES[$name] ?? '__none__');
             switch ($name) {
                 case 'list_forms':
@@ -478,7 +483,9 @@ class McpController
             ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom frontend — a full sandboxed app (HTML/CSS/TypeScript) over the app's forms. The SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
         ];
-        $out = [];
+        // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
+        // knowledge. Listed first so it's the obvious first call.
+        $out = [['name' => 'get_started', 'description' => 'Read this FIRST. A complete guide to building/editing a FormLogic app over MCP: the workflow, field types, custom-screen SDK, and a worked example.', 'inputSchema' => $obj([])]];
         foreach ($all as $t) {
             if (!in_array($t['scope'], $scopes, true)) {
                 continue;
@@ -490,6 +497,81 @@ class McpController
             $out[] = $t;
         }
         return $out;
+    }
+
+    /** Short usage guide surfaced via initialize.instructions (MCP clients feed this to the model). */
+    private function serverInstructions(): string
+    {
+        return <<<'TXT'
+FormLogic builds self-hosted apps made of FORMS (fields + data), optional backend onSubmit SCRIPTS, and optional CUSTOM SCREENS (a sandboxed HTML/CSS/TypeScript frontend over the data). This MCP server creates and edits all of it. Call the get_started tool for a full guide with a worked example.
+
+Build an app from scratch:
+1. create_app { name } — a container for forms. (Skip if your token is already scoped to one app; then create_app is hidden.)
+2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
+3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
+4. (optional) set_app_home { appId, customScreen } — a full custom frontend over the app's forms. customScreen = { enabled:true, files:[{path,content}] } (a multi-file TypeScript project: index.html shell + index.ts entry + more, relative imports) OR { enabled:true, ts, html, css } (single file). Compiled/bundled automatically. Inside it, window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v). ALWAYS escapeHtml() record data before innerHTML.
+5. update_app { appId, status:"published" } — publish. Optional: slug, hideNav (full-screen, no menu).
+
+First inspect existing content with list_apps / list_forms / get_form. Your token is temporary and cannot read submissions unless explicitly granted. Prefer create_app_form over create_form + add_form_to_app.
+TXT;
+    }
+
+    /** The full get_started guide (returned by the get_started tool). */
+    private function guide(): string
+    {
+        return <<<'TXT'
+# Building a FormLogic app over MCP
+
+FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + optionally a CUSTOM SCREEN (a sandboxed HTML/CSS/TypeScript frontend that reads/writes the forms' data). You build all of this with the tools below.
+
+## Recommended workflow
+1. list_apps / list_forms — see what already exists (only if editing).
+2. create_app { name, description? } — unless your token is already app-scoped.
+3. For each form: create_app_form { title, fields, displayName? } — creates the form and attaches it to the app in one call.
+4. Optionally update_form { formId, logicScript } to add server-side automation.
+5. Optionally set_app_home { appId, customScreen } to add a custom frontend.
+6. update_app { appId, status: "published" } to publish (optionally slug, hideNav).
+
+## Fields
+A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
+Types: short_text, long_text, email, number, phone, url, date, time, dropdown, multiple_choice, checkbox, rating, scale, file_upload, statement (display-only), hidden (computed/script-set), linked_record.
+- dropdown / multiple_choice / checkbox: properties.options = [{ "id":"a", "label":"A", "value":"a" }].
+- linked_record: properties.targetFormId = the id of another form to relate to. (Over MCP the other form must exist; use its real id.)
+
+## onSubmit script (optional)
+logicScript is JavaScript: "function onSubmit(ctx) { /* ctx.answers, ctx.setField, ctx.reject, ctx.setStatus, ctx.addTag */ }". Runs server-side on every submission (sandboxed QuickJS).
+
+## Custom screen (optional but powerful)
+A sandboxed frontend over the app's forms. Two shapes:
+- Single file: customScreen = { enabled:true, html:"<div id='app'></div>", css:"…", ts:"…TypeScript…" }
+- Multi-file: customScreen = { enabled:true, files:[ {"path":"index.html","content":"<div id='app'></div>"}, {"path":"index.ts","content":"import { render } from './ui';"}, {"path":"ui.ts","content":"export function render(){…}"} , {"path":"styles.css","content":"…"} ] }
+It is compiled/bundled automatically (TypeScript, relative imports between files; no npm/CDN). The entry is index.ts/index.tsx.
+Inside the screen, window.FormLogic is the SDK:
+- await FormLogic.context() -> { appName, appSlug, forms:[{formId,displayName,fields}] }
+- await FormLogic.forms()
+- await FormLogic.submit(formId, answers)  // answers keyed by field id
+- await FormLogic.records(formId, { limit }) -> [{ id, answers, submittedAt }]
+- await FormLogic.currentUser()
+- FormLogic.navigate(formId)
+- FormLogic.toast.success(msg) / .error(msg)
+- FormLogic.escapeHtml(value)  // ALWAYS use this for record/user data placed into innerHTML
+Never fetch() — there is no network; only FormLogic reaches the backend.
+
+## Worked example — a "Tasks" app
+1. create_app { "name": "Tasks" }  -> returns { id }
+2. create_app_form { "title": "Task", "fields": [
+     { "id":"title", "type":"short_text", "label":"Title", "required":true },
+     { "id":"done", "type":"checkbox", "label":"Done", "required":false }
+   ] }  -> returns { form:{ id }, appId }
+3. set_app_home { "appId":"<id>", "customScreen": { "enabled":true,
+     "files":[
+       {"path":"index.html","content":"<div id=\"app\"></div>"},
+       {"path":"index.ts","content":"const el=document.getElementById('app')!;\nasync function load(){const ctx=await FormLogic.context();const f=ctx.forms[0].formId;const rows=await FormLogic.records(f,{limit:100});el.innerHTML='<h1>Tasks ('+rows.length+')</h1>'+rows.map(r=>'<div>'+FormLogic.escapeHtml(r.answers.title)+'</div>').join('');}\nload();"}
+     ] } }
+4. update_app { "appId":"<id>", "status":"published" }
+
+Notes: tools return their result as JSON text; a failed call returns isError:true with a message. Your token is temporary (idle-expires) and, by default, cannot read submissions.
+TXT;
     }
 
     private function rpc(Response $response, array $payload, int $status = 200): Response
