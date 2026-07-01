@@ -41,6 +41,18 @@ $mysqlConn = new MySQLConnection($conf);
 $pdo = $mysqlConn->getConnection();
 $sqlite = new SQLiteConnection(__DIR__ . '/../' . ($_ENV['SQLITE_STORAGE_PATH'] ?? 'storage/forms'));
 
+// Idempotent: ensure the marketplace-thumbnail column exists on dev/existing DBs (schema.sql has
+// it for fresh installs; migrate.php is left alone here).
+$colStmt = $pdo->prepare(
+    "SELECT 1 FROM information_schema.columns
+     WHERE table_schema = :db AND table_name = 'pack_catalog' AND column_name = 'screenshot' LIMIT 1"
+);
+$colStmt->execute(['db' => $conf['database']]);
+if (!$colStmt->fetchColumn()) {
+    $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshot` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `icon`");
+    echo "  added pack_catalog.screenshot column\n";
+}
+
 $forms = new FormService($mysqlConn, $sqlite);
 $apps = new AppService($mysqlConn, $forms);
 $appUsers = new AppUserService($mysqlConn);
@@ -81,6 +93,31 @@ function slugify(string $s): string
     return trim($s, '-') ?: 'pack';
 }
 
+/**
+ * Human-friendly browse category for a pack. Curated per known slug so the marketplace's category
+ * chips read cleanly ("Finance", "HR", "Safety & Quality"); unknown packs fall back to a title-cased
+ * first tag. Categories remain fully dynamic — this only controls the label, not a fixed taxonomy.
+ */
+function niceCategory(string $slug, array $tags): string
+{
+    static $map = [
+        'customer-service' => 'Customer Service',
+        'event-management' => 'Events',
+        'finance-os-au' => 'Finance',
+        'finance-os-us' => 'Finance',
+        'hr-people' => 'HR',
+        'ohs-qms' => 'Safety & Quality',
+        'sales-crm' => 'Sales & CRM',
+        'expense-manager' => 'Finance',
+        'people-onboarding-compliance' => 'HR',
+    ];
+    if (isset($map[$slug])) {
+        return $map[$slug];
+    }
+    $first = (string)($tags[0] ?? 'General');
+    return ucwords(str_replace('-', ' ', $first)) ?: 'General';
+}
+
 $officialId = ensureUser($pdo, $_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local', 'FormLogic');
 $demoId = ensureUser($pdo, $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local', 'Demo');
 
@@ -90,13 +127,15 @@ $sources = [];
 foreach (glob(__DIR__ . '/../resources/marketplace-packs/*.json') ?: [] as $file) {
     $e = json_decode((string) file_get_contents($file), true);
     if (!is_array($e) || empty($e['pack'])) { out("  skip (bad) " . basename($file)); continue; }
+    $slug = $e['id'] ?? slugify($e['name'] ?? basename($file, '.json'));
+    $tags = $e['tags'] ?? [];
     $sources[] = [
-        'slug' => $e['id'] ?? slugify($e['name'] ?? basename($file, '.json')),
+        'slug' => $slug,
         'name' => $e['name'] ?? 'Pack',
         'description' => $e['description'] ?? '',
         'icon' => $e['icon'] ?? null,
-        'tags' => $e['tags'] ?? [],
-        'category' => ($e['tags'][0] ?? 'general'),
+        'tags' => $tags,
+        'category' => niceCategory($slug, $tags),
         'pack' => $e['pack'],
     ];
 }
@@ -109,13 +148,15 @@ foreach (glob(__DIR__ . '/../resources/sample-apps/*.json') ?: [] as $file) {
     $key = basename($file, '.json');
     $icon = "\u{1F4E6}";
     foreach ($sampleIcons as $frag => $emoji) { if (str_contains(strtolower($key . ' ' . ($meta['name'] ?? '')), $frag)) { $icon = $emoji; break; } }
+    $slug = slugify($meta['name'] ?? $key);
+    $tags = $meta['tags'] ?? ['sample'];
     $sources[] = [
-        'slug' => slugify($meta['name'] ?? $key),
+        'slug' => $slug,
         'name' => $meta['name'] ?? 'Sample',
         'description' => $meta['description'] ?? '',
         'icon' => $icon,
-        'tags' => $meta['tags'] ?? ['sample'],
-        'category' => 'sample',
+        'tags' => $tags,
+        'category' => niceCategory($slug, $tags),
         'pack' => $p,
     ];
 }
@@ -135,8 +176,8 @@ foreach ($sources as $s) {
             $pdo->prepare("UPDATE pack_versions SET pack_data = ? WHERE id = ?")
                 ->execute([json_encode($s['pack']), $versionId]);
         }
-        $pdo->prepare("UPDATE pack_catalog SET featured = 1, description = ?, icon = ?, tags = ? WHERE id = ?")
-            ->execute([$s['description'], $s['icon'], json_encode($s['tags']), $catalogId]);
+        $pdo->prepare("UPDATE pack_catalog SET featured = 1, description = ?, icon = ?, tags = ?, category = ? WHERE id = ?")
+            ->execute([$s['description'], $s['icon'], json_encode($s['tags']), $s['category'], $catalogId]);
         out("catalog: '{$s['slug']}' refreshed");
     } else {
         $r = $catalog->publishPack($s['pack'], $officialId, [
@@ -173,6 +214,46 @@ foreach ($sources as $s) {
     $n = seedResponses($forms, $responses, $res['forms'] ?? []);
     out("  demo: installed " . count($res['forms'] ?? []) . " forms / " . count($res['apps'] ?? []) . " apps, seeded $n responses");
 }
+
+// ── Screenshot manifest + linking ───────────────────────────────────────────
+// Emit a manifest mapping each catalog pack → the demo app slug that renders its dashboard, so the
+// capture pipeline (ui/scripts/capture-pack-shots.mjs) can visit /app/<appSlug> and save
+// <catalogSlug>.png deterministically. Then attach the served URL to any pack whose image is on
+// disk (clearing it otherwise so a deleted file doesn't leave a broken thumbnail).
+$shotDirs = [__DIR__ . '/../storage/pack-screenshots', __DIR__ . '/../resources/pack-screenshots'];
+$appSlugByName = $pdo->prepare("SELECT slug FROM apps WHERE owner_id = ? AND name = ? LIMIT 1");
+$manifest = [];
+$linked = 0;
+foreach ($sources as $s) {
+    // Prefer the first app in the pack that has a custom-screen dashboard (that's what we want to
+    // snap); fall back to the first app.
+    $appName = null;
+    foreach ($s['pack']['apps'] ?? [] as $a) {
+        if (!empty($a['customScreen']['enabled'] ?? ($a['customScreen'] ?? null))) { $appName = $a['name'] ?? null; break; }
+    }
+    if ($appName === null) { $appName = $s['pack']['apps'][0]['name'] ?? null; }
+
+    $appSlug = null;
+    if ($appName !== null) {
+        $appSlugByName->execute([$demoId, $appName]);
+        $appSlug = $appSlugByName->fetchColumn() ?: null;
+    }
+    if ($appSlug) {
+        $manifest[] = ['catalogSlug' => $s['slug'], 'appSlug' => $appSlug, 'name' => $s['name']];
+    }
+
+    $found = null;
+    foreach (['png', 'jpg', 'jpeg', 'webp'] as $ext) {
+        foreach ($shotDirs as $dir) {
+            if (is_file("$dir/{$s['slug']}.$ext")) { $found = "{$s['slug']}.$ext"; break 2; }
+        }
+    }
+    $catalog->setScreenshotBySlug($s['slug'], $found ? "/api/packs/screenshots/$found" : null);
+    if ($found) { $linked++; }
+}
+@mkdir($shotDirs[0], 0775, true);
+file_put_contents($shotDirs[0] . '/manifest.json', json_encode($manifest, JSON_PRETTY_PRINT));
+out("screenshot manifest: " . count($manifest) . " app(s); linked: $linked / " . count($sources));
 
 out("\nDone. Demo apps: " . count($apps->getAllApps($demoId)));
 

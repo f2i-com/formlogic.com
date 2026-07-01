@@ -99,6 +99,75 @@ class PackCatalogService
     }
 
     /**
+     * Browsable facets derived dynamically from the published/public catalog: the set of
+     * categories and tags actually in use, each with a pack count. The marketplace renders these
+     * as filter chips, so browsing adapts automatically as packs are published/archived — there is
+     * no hardcoded taxonomy to maintain.
+     *
+     * @return array{categories: list<array{name:string,count:int}>, tags: list<array{name:string,count:int}>}
+     */
+    public function getFacets(): array
+    {
+        $where = "pc.status = 'published' AND pc.visibility = 'public'";
+
+        // Categories: a single indexed column, aggregate in SQL.
+        $catStmt = $this->mysql->query(
+            "SELECT pc.category AS name, COUNT(*) AS cnt
+             FROM pack_catalog pc
+             WHERE {$where} AND pc.category IS NOT NULL AND pc.category <> ''
+             GROUP BY pc.category
+             ORDER BY cnt DESC, name ASC"
+        );
+        $categories = array_map(
+            fn($r) => ['name' => (string)$r['name'], 'count' => (int)$r['cnt']],
+            $catStmt->fetchAll()
+        );
+
+        // Tags live in a JSON array column; aggregate in PHP (the public catalog is small).
+        $tagStmt = $this->mysql->query("SELECT pc.tags FROM pack_catalog pc WHERE {$where}");
+        $counts = [];
+        foreach ($tagStmt->fetchAll() as $row) {
+            $tags = json_decode($row['tags'] ?? '[]', true);
+            if (!is_array($tags)) {
+                continue;
+            }
+            foreach ($tags as $tag) {
+                if (!is_string($tag)) {
+                    continue;
+                }
+                $tag = trim($tag);
+                if ($tag === '') {
+                    continue;
+                }
+                $counts[$tag] = ($counts[$tag] ?? 0) + 1;
+            }
+        }
+        // Sort by count desc, then name asc for stable display.
+        uksort($counts, function ($a, $b) use ($counts) {
+            if ($counts[$a] !== $counts[$b]) {
+                return $counts[$b] <=> $counts[$a];
+            }
+            return strcasecmp($a, $b);
+        });
+        $tags = [];
+        foreach ($counts as $name => $cnt) {
+            $tags[] = ['name' => $name, 'count' => $cnt];
+        }
+
+        return ['categories' => $categories, 'tags' => $tags];
+    }
+
+    /**
+     * Attach a marketplace thumbnail URL to a pack by slug. Called by the screenshot-capture
+     * pipeline after a pack's dashboard has been rendered and snapped. Idempotent.
+     */
+    public function setScreenshotBySlug(string $slug, ?string $url): void
+    {
+        $stmt = $this->mysql->prepare("UPDATE pack_catalog SET screenshot = :url WHERE slug = :slug");
+        $stmt->execute(['url' => $url, 'slug' => $slug]);
+    }
+
+    /**
      * Get full pack detail by slug, including versions and rating summary.
      */
     public function getPackDetail(string $slug, ?string $viewerId = null): ?array
@@ -498,6 +567,7 @@ class PackCatalogService
             'name' => $row['name'],
             'description' => $row['description'],
             'icon' => $row['icon'],
+            'screenshot' => $row['screenshot'] ?? null,
             'tags' => json_decode($row['tags'] ?? '[]', true),
             'category' => $row['category'],
             'visibility' => $row['visibility'],

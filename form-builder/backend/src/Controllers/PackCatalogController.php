@@ -64,6 +64,20 @@ class PackCatalogController
     }
 
     /**
+     * GET /api/packs/catalog/facets
+     * Browsable categories + tags derived from the live catalog (public).
+     */
+    public function facets(Request $request, Response $response): Response
+    {
+        try {
+            $facets = $this->catalogService->getFacets();
+            return $this->jsonResponse($response, $facets);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to load facets'], 500);
+        }
+    }
+
+    /**
      * GET /api/packs/catalog/{slug}
      * Get full pack detail.
      */

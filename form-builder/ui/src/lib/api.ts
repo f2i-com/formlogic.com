@@ -1034,6 +1034,10 @@ class ApiClient {
     return this.request(`/packs/catalog${q ? `?${q}` : ''}`);
   }
 
+  async getPackFacets(): Promise<ApiResponse<PackFacets>> {
+    return this.request('/packs/catalog/facets');
+  }
+
   async getPackDetail(slug: string): Promise<ApiResponse<{ pack: CatalogPack & { versions: PackVersionInfo[] } }>> {
     return this.request(`/packs/catalog/${slug}`);
   }
@@ -1457,6 +1461,7 @@ interface CatalogPack {
   name: string;
   description: string | null;
   icon: string | null;
+  screenshot: string | null;
   tags: string[];
   category: string | null;
   visibility: string;
@@ -1489,6 +1494,16 @@ interface PackCatalogBrowseResult {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+interface PackFacet {
+  name: string;
+  count: number;
+}
+
+interface PackFacets {
+  categories: PackFacet[];
+  tags: PackFacet[];
 }
 
 interface PackRatingEntry {
@@ -1577,4 +1592,4 @@ export function resolveFileUrl(url?: string | null): string {
 }
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };

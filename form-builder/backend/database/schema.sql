@@ -300,6 +300,7 @@ CREATE TABLE `pack_catalog` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `icon` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `screenshot` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `tags` json DEFAULT NULL,
   `category` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `visibility` enum('public','private','unlisted') COLLATE utf8mb4_unicode_ci DEFAULT 'public',

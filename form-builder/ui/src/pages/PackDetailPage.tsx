@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../lib/api';
+import { api, resolveFileUrl, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../lib/api';
 import { toast } from '../stores/toastStore';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
@@ -254,6 +254,18 @@ export default function PackDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* Dashboard preview (captured screenshot) */}
+        {pack.screenshot && (
+          <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+            <img
+              src={resolveFileUrl(pack.screenshot)}
+              alt={`${pack.name} dashboard preview`}
+              loading="lazy"
+              className="w-full max-h-[420px] object-cover object-top"
+            />
+          </div>
+        )}
 
         {/* Stats + Install */}
         <div className="flex flex-wrap items-center gap-6 p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800">

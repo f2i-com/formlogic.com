@@ -42,6 +42,7 @@ lerna-debug.log*
 /backend/storage/forms/*.sqlite
 /backend/storage/uploads/
 /backend/storage/packs/
+/backend/storage/pack-screenshots/
 /backend/logs/*.log
 
 # OS files

@@ -939,6 +939,36 @@ $app->get('/api/packs/catalog', function ($request, $response) use ($container) 
     return $container->get(PackCatalogController::class)->browse($request, $response);
 })->add($authOptional);
 
+// Dynamic browse facets (categories + tags in use). Static segment, so FastRoute
+// resolves it ahead of /catalog/{slug}; registered here beside the other catalog reads.
+$app->get('/api/packs/catalog/facets', function ($request, $response) use ($container) {
+    return $container->get(PackCatalogController::class)->facets($request, $response);
+})->add($authOptional);
+
+// Serve marketplace pack thumbnails (public). Official packs' shots are committed under
+// resources/pack-screenshots; runtime-captured ones land in storage/pack-screenshots and take
+// precedence. Filename is sanitised to a flat basename to prevent path traversal.
+$app->get('/api/packs/screenshots/{file}', function ($request, $response) use ($getArgs) {
+    $file = (string)($getArgs($request)['file'] ?? '');
+    $file = basename($file);
+    if (!preg_match('/^[A-Za-z0-9._-]+\.(png|jpg|jpeg|webp)$/', $file)) {
+        return $response->withStatus(404);
+    }
+    $dirs = [__DIR__ . '/../storage/pack-screenshots', __DIR__ . '/../resources/pack-screenshots'];
+    foreach ($dirs as $dir) {
+        $path = $dir . '/' . $file;
+        if (is_file($path)) {
+            $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+            $mime = $ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg');
+            $response->getBody()->write((string)file_get_contents($path));
+            return $response
+                ->withHeader('Content-Type', $mime)
+                ->withHeader('Cache-Control', 'public, max-age=86400');
+        }
+    }
+    return $response->withStatus(404);
+});
+
 $app->post('/api/packs/catalog', function ($request, $response) use ($container) {
     return $container->get(PackCatalogController::class)->publish($request, $response);
 })->add($authRequired);
