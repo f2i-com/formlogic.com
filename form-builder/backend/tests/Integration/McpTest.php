@@ -302,6 +302,28 @@ class McpTest extends TestCase
         $this->assertSame($newAppId, $list[0]['id']);
     }
 
+    public function testExpiredAndRevokedSessionsArePurged(): void
+    {
+        // Create all three first (create() auto-purges, but nothing is dead yet), then kill two.
+        $active = self::$tokens->create($this->userId)['id'];
+        $expired = self::$tokens->create($this->userId)['id'];
+        $revoked = self::$tokens->create($this->userId)['id'];
+        self::$pdo->prepare('UPDATE mcp_sessions SET expires_at = ? WHERE id = ?')->execute([date('Y-m-d H:i:s', time() - 3600), $expired]);
+        self::$tokens->revoke($revoked, $this->userId);
+
+        $removed = self::$tokens->purgeExpired();
+        $this->assertGreaterThanOrEqual(2, $removed);
+
+        $exists = function (string $id): bool {
+            $s = self::$pdo->prepare('SELECT 1 FROM mcp_sessions WHERE id = ?');
+            $s->execute([$id]);
+            return (bool) $s->fetchColumn();
+        };
+        $this->assertTrue($exists($active), 'active session must survive the purge');
+        $this->assertFalse($exists($expired), 'expired session must be purged');
+        $this->assertFalse($exists($revoked), 'revoked session must be purged');
+    }
+
     public function testCreatorTokenConfinedToFormsItCreates(): void
     {
         $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];

@@ -38,6 +38,7 @@ class McpTokenService
      */
     public function create(string $userId, ?string $appId = null, int $ttl = self::DEFAULT_TTL, int $idle = self::DEFAULT_IDLE, ?array $scopes = null, bool $creator = false): array
     {
+        $this->purgeExpired(); // opportunistic GC of dead sessions
         $ttl = max(300, min($ttl, self::MAX_TTL));   // 5m … 24h
         $idle = max(300, min($idle, self::MAX_TTL));
         $scopes = array_values(array_intersect(self::ALL_SCOPES, $scopes ?? self::DEFAULT_SCOPES));
@@ -130,6 +131,7 @@ class McpTokenService
     /** Active (non-revoked, non-expired) sessions for a user — for the "Connect an AI" UI. */
     public function listActive(string $userId, ?string $appId = null): array
     {
+        $this->purgeExpired(); // tidy dead sessions whenever the Connect UI lists them
         $sql = "SELECT id, app_id, scopes, created_ids, expires_at, idle_timeout_seconds, last_used_at, created_at
                 FROM mcp_sessions WHERE user_id = :uid AND revoked_at IS NULL AND expires_at > NOW()";
         $params = ['uid' => $userId];
@@ -150,6 +152,26 @@ class McpTokenService
             'lastUsedAt' => $r['last_used_at'],
             'createdAt' => $r['created_at'],
         ], $stmt->fetchAll(PDO::FETCH_ASSOC));
+    }
+
+    /**
+     * Delete dead sessions: hard-expired (past TTL), idle-timed-out, or revoked. Runs opportunistically
+     * from create()/listActive() so expired "Connect an AI" links don't accumulate in the table. Global
+     * (cleans every user's) — the table is tiny and rows are only ever short-lived. Fails soft.
+     */
+    public function purgeExpired(): int
+    {
+        try {
+            $stmt = $this->db()->query(
+                "DELETE FROM mcp_sessions
+                 WHERE expires_at < NOW()
+                    OR revoked_at IS NOT NULL
+                    OR (last_used_at IS NOT NULL AND DATE_ADD(last_used_at, INTERVAL idle_timeout_seconds SECOND) < NOW())"
+            );
+            return $stmt->rowCount();
+        } catch (\Throwable $e) {
+            return 0;
+        }
     }
 
     /** Revoke a session the user owns. Returns true if a row was revoked. */
