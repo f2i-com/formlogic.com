@@ -1,18 +1,23 @@
 # FormLogic
 
-A full-stack form builder and business apps platform. Build forms with drag-and-drop, add scripting logic for validation and calculations, deploy multi-form applications with role-based access control, and collect responses with analytics.
+FormLogic is a self-hostable business app platform. Install ready-made business apps, customise forms and dashboards, collect linked records, generate reports and PDFs, and let your AI extend apps over MCP.
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with a business apps platform. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms can be composed into deployable applications with user management, roles, and permissions.
+FormLogic combines a Typeform-style form builder with a full business apps platform and a marketplace of 13 ready-made vertical apps — each a real, working system (forms, roles, linked records, custom dashboard, demo data, and reports). Install a vertical app in one click and customise it instead of starting from scratch. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms compose into deployable applications with user management, roles, and permissions, and each app gets a no-code Reports section for charts and exportable PDFs.
+
+A **Live Demo** (no signup required) has the full marketplace pre-installed, so you can explore a working business app before running your own instance.
 
 ### Key Capabilities
 
+- **App Marketplace** -- 13 ready-made vertical business apps, each a complete working system (forms, roles, linked records, custom dashboard, demo data). Install in one click, customise, or export as a portable `.json`. Verticals: Finance OS (US), Finance OS (AU), OHS & Quality Management, HR & People Management, Event Management, Customer Service, Plumbing & Trades Field Service, Job & Invoice Management, Hair Salon & Beauty Studio, Mechanic Workshop Manager, Property Maintenance & Handyman, Clinic Appointment & Intake, Inventory & Purchase Orders.
+- **Reports & PDFs** -- Each app has a no-code Reports section: bar, line, area, pie, donut, KPI, and table charts with grouping, measures, filters, and cross-form (linked-record) joins. Compose charts and text into exportable PDF documents.
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — one engine and prelude shared by the browser and the server
 - **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
+- **Build with AI / MCP** -- Generate forms and apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit apps — including forms, screens, and reports — for you
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
-- **Pack System** -- Import/export pre-built form + app bundles (e.g., Finance OS Pack with 12 templates and 2 apps)
+- **Pack System** -- Every app is a portable pack (forms + apps + screens + scripts + reports); import/export as a single `.json` — reports included
 - **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
 - **Analytics** -- Per-form response charts, completion rates, average times, field breakdowns
 - **Webhooks** -- Trigger HTTP callbacks on form submissions with delivery tracking

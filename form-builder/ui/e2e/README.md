@@ -38,6 +38,9 @@ Failures capture a screenshot + trace (open with `npx playwright show-trace <tra
 - Not yet covered (tracked in `LAUNCH_CHECKLIST.md`): app-runtime RBAC golden paths, CSV/JSON
   export authorization, billing-disabled self-host. App RBAC is also covered by backend
   integration tests.
-- CI note: this suite needs the full PHP/MySQL/SQLite stack running; wiring that into GitHub
-  Actions (or a `webServer` block) is a separate task. For now it's a documented local/pre-release
-  command.
+- CI: `.github/workflows/e2e.yml` runs this suite nightly + on demand (`workflow_dispatch`). It
+  brings up MySQL + PHP and serves the built SPA and the API on ONE origin
+  (`form-builder/ci/router.php`, `VITE_API_URL=/api`) so cookies are same-origin over HTTP, seeds the
+  `test@example.com` account, runs against `http://127.0.0.1:8080`, and uploads traces on failure. It
+  is intentionally NOT on every PR (slow full-stack gate). Locally it still runs against the WAMP
+  stack as described above.

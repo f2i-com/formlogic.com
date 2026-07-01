@@ -94,6 +94,8 @@ FormLogic in advance:
 | `update_app` | apps:write | Rename, set description, change the **slug**, or publish |
 | `add_form_to_app` | apps:write | Attach a form to an app |
 | `set_app_home` | screens:write | Set the app's custom **home** screen |
+| `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
+| `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_responses` | responses:read | List a form's responses (off by default) |
 
 Everything goes through the same services + ownership checks as the rest of the API, so an MCP token can
@@ -112,7 +114,111 @@ A good build flow for "hand a blank app to an AI":
 2. `create_form` — create each form with its fields.
 3. `add_form_to_app` — attach each form.
 4. `update_form` / `set_app_home` — add custom screens.
-5. `update_app` — `status: "published"`.
+5. (optional) `create_report` / `create_document` — add charts, KPIs, and PDF report pages (forms must exist first).
+6. `update_app` — `status: "published"`.
+
+### Reports & PDF documents
+
+`create_report` adds a single chart, KPI, or table to the app's Reports section. `create_document`
+combines existing reports with explanatory text into an exportable PDF page. Create chart reports
+first; documents reference them by the `id` returned from `create_report`.
+
+**`create_report` inputs**
+
+| Field | Required | Notes |
+|---|---|---|
+| `appId` | yes | |
+| `name` | yes | |
+| `description` | no | |
+| `spec.formId` | yes | Real form id (as returned by `create_app_form`) |
+| `spec.viz` | yes | `bar` \| `line` \| `area` \| `pie` \| `donut` \| `kpi` \| `table` |
+| `spec.groupBy` | no | `{ field, bucket? }` — `bucket`: `"day"` \| `"month"` \| `"year"` for date fields |
+| `spec.measure` | no | `{ fn, field? }` — `fn`: `count` \| `countDistinct` \| `sum` \| `avg` \| `min` \| `max` (`field` required except for `count`) |
+| `spec.joins` | no | `[{ via, formId, type }]` — cross-form joins |
+| `spec.filters` | no | `[{ field, op, value? }]` |
+| `spec.columns` | no | Array of field refs (table viz) |
+| `spec.seriesSort`, `spec.sort`, `spec.having`, `spec.limit` | no | Sorting, post-aggregate filter, row cap |
+
+**`create_document` inputs**
+
+| Field | Required | Notes |
+|---|---|---|
+| `appId` | yes | |
+| `name` | yes | |
+| `description` | no | |
+| `blocks` | yes | At least one. Each block: `{ kind:"text", title?, body }` or `{ kind:"report", reportId, caption? }` |
+
+**Examples**
+
+*(a) KPI — total submission count*
+
+```json
+{
+  "appId": "<appId>",
+  "name": "Total submissions",
+  "spec": { "formId": "<formId>", "viz": "kpi", "measure": { "fn": "count" } }
+}
+```
+
+*(b) Bar chart grouped by a status field*
+
+```json
+{
+  "appId": "<appId>",
+  "name": "Jobs by status",
+  "spec": {
+    "formId": "<jobFormId>",
+    "viz": "bar",
+    "groupBy": { "field": "status" },
+    "measure": { "fn": "count" }
+  }
+}
+```
+
+*(c) Table with specific columns*
+
+```json
+{
+  "appId": "<appId>",
+  "name": "Recent submissions",
+  "spec": {
+    "formId": "<formId>",
+    "viz": "table",
+    "columns": ["__submitted_at", "name", "email"],
+    "limit": 50
+  }
+}
+```
+
+*(d) PDF document — intro text block + two chart blocks*
+
+```json
+{
+  "appId": "<appId>",
+  "name": "Monthly summary",
+  "description": "KPIs and status breakdown",
+  "blocks": [
+    { "kind": "text", "title": "Overview", "body": "Submission counts and status breakdown for the current period." },
+    { "kind": "report", "reportId": "<id from create_report for example (a)>", "caption": "Total submissions" },
+    { "kind": "report", "reportId": "<id from create_report for example (b)>", "caption": "Breakdown by status" }
+  ]
+}
+```
+
+**Constraints**
+
+- Use **real form ids** (returned by `create_app_form` / `list_forms`). The `@pack:` reference syntax
+  is for offline pack files only — it is not valid over MCP.
+- `spec.formId`, and every form id in `joins`, **must belong to the target app**. A foreign form id is
+  rejected.
+- `joins[].via` must be the id of a `linked_record` field on the **base** form pointing to the joined
+  form.
+- Field references in `groupBy`, `measure`, `filters`, and `columns` are one of:
+  - a base form field id (e.g. `"status"`)
+  - a joined-form field ref: `"<joinFormId>::<fieldId>"`
+  - a pseudo-field: `__submitted_at` (submission timestamp) or `__status` (workflow status)
+- `responses:read` scope is **not** required to create reports. Runtime data access still respects
+  each user's response permissions.
 
 ---
 

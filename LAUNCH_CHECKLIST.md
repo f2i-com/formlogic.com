@@ -20,9 +20,10 @@ Last reconciled against code: 2026-06-30.
 - [x] **Launch E2E suite (Playwright)** — `e2e/launch-golden-paths.spec.ts` (6 tests, green):
   auth login/logout; build→publish→submit-public→view; required validation; hidden-field
   server-authority + calc; field-aware upload rejection; `onSubmit` reject + computed write.
-  Self-cleaning, traces/screenshots on failure, documented in `e2e/README.md`. Remaining
-  (follow-ups): app-RBAC / export / billing-disabled golden paths, and wiring the PHP/MySQL stack
-  into CI (currently a documented local/pre-release command).
+  Self-cleaning, traces/screenshots on failure, documented in `e2e/README.md`. Now wired into CI:
+  `.github/workflows/e2e.yml` brings up MySQL + PHP + the built SPA on one origin, seeds a test
+  account, and runs the suite nightly + on demand (`workflow_dispatch`), uploading traces on failure.
+  Remaining (follow-ups): app-RBAC / export / billing-disabled golden paths.
 
 ## P1 — security & data-integrity hardening
 

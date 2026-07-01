@@ -106,6 +106,98 @@
         "permissions": { "type": "array", "items": { "$ref": "#/definitions/permission" } }
       }
     },
+    "packReportSpec": {
+      "type": "object",
+      "description": "Chart query spec for a kind:'chart' report item. formId and joins[].formId use '@pack:<packFormId>' refs. Joined-form field refs are '@pack:<key>::<fieldId>'; base-form fields are bare ids. '__submitted_at' and '__status' are pseudo-fields available on every form.",
+      "required": ["formId", "viz"],
+      "properties": {
+        "formId": { "type": "string", "description": "'@pack:<packFormId>' — the primary/base form for this query." },
+        "viz": { "type": "string", "enum": ["table", "bar", "line", "area", "pie", "donut", "kpi"] },
+        "joins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "via": { "type": "string", "description": "Field id of a linked_record field on the base form (bare id, not a @pack: ref)." },
+              "formId": { "type": "string", "description": "'@pack:<packFormId>' of the joined form." },
+              "type": { "type": "string", "enum": ["inner", "left"] }
+            }
+          }
+        },
+        "filters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": { "type": "string", "description": "Bare field id (base form) or '@pack:<key>::<fieldId>' (joined form)." },
+              "op": { "type": "string" },
+              "value": {}
+            }
+          }
+        },
+        "groupBy": {
+          "type": "object",
+          "properties": {
+            "field": { "type": "string" },
+            "bucket": { "type": "string", "enum": ["none", "day", "month", "year"] }
+          }
+        },
+        "measure": {
+          "type": "object",
+          "properties": {
+            "fn": { "type": "string", "enum": ["count", "countDistinct", "sum", "avg", "min", "max"] },
+            "field": { "type": "string" }
+          }
+        },
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "seriesSort": { "type": "string", "enum": ["value", "label"] },
+        "sort": { "description": "'asc'/'desc' (shorthand) or { by: fieldRef, dir: 'asc'|'desc' } (field sort)." },
+        "having": {
+          "type": "object",
+          "properties": {
+            "op": { "type": "string" },
+            "value": { "type": "number" }
+          }
+        },
+        "limit": { "type": "integer" }
+      }
+    },
+    "packReportBlock": {
+      "description": "A block inside a kind:'document' report item — free text or an embedded chart.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "body"],
+          "properties": {
+            "kind": { "const": "text" },
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "reportId"],
+          "properties": {
+            "kind": { "const": "report" },
+            "reportId": { "type": "string", "description": "Pack-local reportId of a sibling kind:'chart' item." },
+            "caption": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "packReportItem": {
+      "type": "object",
+      "required": ["reportId", "kind", "name"],
+      "description": "A pre-configured chart (kind:'chart', carries spec) or PDF document (kind:'document', carries blocks).",
+      "properties": {
+        "reportId": { "type": "string", "description": "Pack-local stable id. Referenced by document blocks and remapped to a real UUID on install." },
+        "kind": { "type": "string", "enum": ["chart", "document"] },
+        "name": { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "spec": { "$ref": "#/definitions/packReportSpec" },
+        "blocks": { "type": "array", "items": { "$ref": "#/definitions/packReportBlock" } }
+      }
+    },
     "packApp": {
       "type": "object",
       "required": ["packAppId", "name"],
@@ -135,7 +227,12 @@
             }
           }
         },
-        "roles": { "type": "array", "items": { "$ref": "#/definitions/role" } }
+        "roles": { "type": "array", "items": { "$ref": "#/definitions/role" } },
+        "reports": {
+          "type": "array",
+          "description": "Optional pre-configured chart reports and PDF documents shown in the app's Reports section. The full array is capped at 256KB. @pack: refs in specs are remapped to real form ids on install; items with unresolvable refs are dropped.",
+          "items": { "$ref": "#/definitions/packReportItem" }
+        }
       }
     }
   }

@@ -1,8 +1,8 @@
 # FormLogic
 
-**A self-hosted internal-app platform with a marketplace of ready-made business apps — install one, customise it, or let your AI build one.**
+**FormLogic is a self-hostable business app platform. Install a ready-made vertical app, customise forms and dashboards, collect linked records, generate reports and PDFs, and let your AI extend apps over MCP.**
 
-Every app is *forms + workflow + a live dashboard*, deployable with role-based access. Install a niche app from the marketplace (plumbing field service, salon bookings, job & invoicing, mechanic workshop, HR, OHS…), adapt it to your business, or point your own AI at it over MCP to generate and edit apps for you. Under the hood it's a full drag-and-drop form builder with a sandboxed JavaScript runtime, linked records, analytics, and audit logging.
+Every app is *forms + workflow + a live dashboard + reports*, deployable with role-based access. Install a niche app from the marketplace (plumbing field service, salon bookings, job & invoicing, mechanic workshop, HR, OHS…), adapt it to your business, or point your own AI at it over MCP to generate and edit apps for you. Under the hood it's a full drag-and-drop form builder with a sandboxed JavaScript runtime, linked records, analytics, and audit logging.
 
 ![FormLogic form builder — drag-and-drop canvas, field palette, and per-field settings](docs/images/builder.png)
 
@@ -25,14 +25,15 @@ FormLogic is built around a simple loop: **land → try the live demo → instal
 
 ### Key Capabilities
 
-- **App Marketplace** -- Install ready-made business apps in one click. Each app = forms + workflow + a live dashboard, seeded with realistic demo data. Browse by dynamic categories/tags derived from the catalog; every app is customisable and fully export/import-able. See [App Marketplace](#app-marketplace) below.
+- **App Marketplace** -- 13 ready-made vertical business apps, each a real working system (forms + workflow + custom dashboard + demo data). Install in one click, customise, hand to your AI, or export as a portable `.json`. Browse by dynamic categories/tags. See [App Marketplace](#app-marketplace) below.
 - **Live Demo** -- A no-signup shared Demo account with the whole marketplace pre-installed and populated, so dashboards are live on first look. Visitors' changes (new records, new forms, settings) stay in *their* browser — the shared demo never gets polluted.
+- **Reports & PDFs** -- Each app has a no-code Reports section: compose bar, line, area, pie, donut, KPI, and table charts with grouping, measures, filters, and cross-form (linked-record) joins. Arrange charts and text blocks into exportable PDF documents.
 - **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a sandboxed custom-screen dashboard.
-- **Build with AI / MCP** -- Generate forms/apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit whole apps for you. See [Build with your own AI (MCP)](#build-with-your-own-ai-mcp).
+- **Build with AI / MCP** -- Generate forms/apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit whole apps — including forms, screens, and reports — for you. See [Build with your own AI (MCP)](#build-with-your-own-ai-mcp).
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — the same engine and standard-library prelude run in the browser and on the server
 - **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
-- **Pack System** -- Every app is a portable pack (forms + apps + screens + scripts); publish to the catalog, install into an account, or export/import as a single `.json`
+- **Pack System** -- Every app is a portable pack (forms + apps + screens + scripts + reports); publish to the catalog, install into an account, or export/import as a single `.json` — reports included
 - **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
 - **Analytics** -- Per-form response charts, completion rates, average times, field breakdowns
 - **Webhooks** -- Trigger HTTP callbacks on form submissions with delivery tracking
