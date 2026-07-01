@@ -222,6 +222,34 @@ foreach ($sources as $s) {
     out("  demo: installed " . count($res['forms'] ?? []) . " forms / " . count($res['apps'] ?? []) . " apps, seeded $n responses");
 }
 
+// ── Optional: regenerate demo data in place (RESEED_DEMO=1) ──────────────────
+// Re-run the (domain-aware) seeder over ALREADY-installed demo apps without reinstalling — app slugs and
+// screenshots stay stable. Clears each pack's form responses + linked-record rows, then re-seeds per pack
+// so the 2-pass linked-record resolution stays within the pack. createResponse re-syncs response_count.
+if ($_ENV['RESEED_DEMO'] ?? getenv('RESEED_DEMO')) {
+    $instStmt = $pdo->prepare("SELECT form_ids FROM pack_installations WHERE user_id = ? ORDER BY installed_at");
+    $instStmt->execute([$demoId]);
+    $reseeded = 0; $packsReseeded = 0;
+    foreach ($instStmt->fetchAll(PDO::FETCH_COLUMN) as $fj) {
+        $formIds = json_decode((string) $fj, true) ?: [];
+        if (!$formIds) { continue; }
+        foreach ($formIds as $fid) {
+            if ($sqlite->formDatabaseExists($fid)) {
+                try {
+                    $db = $sqlite->getFormDatabase($fid);
+                    foreach (['responses', 'computed', 'tags', 'script_logs'] as $t) {
+                        try { $db->exec("DELETE FROM $t"); } catch (\Throwable $e) { /* table may not exist */ }
+                    }
+                } catch (\Throwable $e) { /* skip */ }
+            }
+            $pdo->prepare("DELETE FROM response_links WHERE source_form_id = ? OR target_form_id = ?")->execute([$fid, $fid]);
+        }
+        $reseeded += seedResponses($forms, $responses, array_map(static fn ($id) => ['id' => $id], $formIds));
+        $packsReseeded++;
+    }
+    out("RESEED: regenerated $reseeded responses across $packsReseeded demo pack(s)");
+}
+
 // ── Screenshot manifest + linking ───────────────────────────────────────────
 // Emit a manifest mapping each catalog pack → the demo app slug that renders its dashboard, so the
 // capture pipeline (ui/scripts/capture-pack-shots.mjs) can visit /app/<appSlug> and save
@@ -290,7 +318,7 @@ function seedResponses(FormService $formService, ResponseService $responseServic
     $defs = [];
     foreach ($createdForms as $cf) {
         $full = $formService->getForm($cf['id']);
-        if ($full) { $defs[$cf['id']] = $full['fields'] ?? []; }
+        if ($full) { $defs[$cf['id']] = ['title' => (string) ($full['title'] ?? ''), 'fields' => $full['fields'] ?? []]; }
     }
     $hasLink = static function (array $fields): bool {
         foreach ($fields as $f) { if (($f['type'] ?? '') === 'linked_record') { return true; } }
@@ -299,29 +327,31 @@ function seedResponses(FormService $formService, ResponseService $responseServic
     $seeded = []; // formId => [responseIds]
     $total = 0;
     // Pass A: forms with no linked_record.
-    foreach ($defs as $fid => $fields) {
-        if ($hasLink($fields)) { continue; }
-        $seeded[$fid] = seedForm($responseService, $fid, $fields, $seeded);
+    foreach ($defs as $fid => $def) {
+        if ($hasLink($def['fields'])) { continue; }
+        $seeded[$fid] = seedForm($responseService, $fid, $def, $seeded);
         $total += count($seeded[$fid]);
     }
     // Pass B: forms that reference others.
-    foreach ($defs as $fid => $fields) {
-        if (!$hasLink($fields)) { continue; }
-        $seeded[$fid] = seedForm($responseService, $fid, $fields, $seeded);
+    foreach ($defs as $fid => $def) {
+        if (!$hasLink($def['fields'])) { continue; }
+        $seeded[$fid] = seedForm($responseService, $fid, $def, $seeded);
         $total += count($seeded[$fid]);
     }
     return $total;
 }
 
 /** Create N plausible responses for one form. Returns the created response ids. */
-function seedForm(ResponseService $responseService, string $formId, array $fields, array $seeded): array
+function seedForm(ResponseService $responseService, string $formId, array $def, array $seeded): array
 {
+    $fields = $def['fields'] ?? [];
+    $formName = strtolower((string) ($def['title'] ?? ''));
     $ids = [];
     $count = random_int(9, 14);
     for ($i = 0; $i < $count; $i++) {
         $answers = [];
         foreach ($fields as $f) {
-            $v = genValue($f, $i, $seeded);
+            $v = genValue($f, $i, $seeded, $formName);
             if ($v !== null) { $answers[$f['id']] = $v; }
         }
         try {
@@ -334,18 +364,33 @@ function seedForm(ResponseService $responseService, string $formId, array $field
     return $ids;
 }
 
-/** Generate a plausible value for a field, or null to leave it empty. */
-function genValue(array $field, int $i, array $seeded)
+/**
+ * Generate a plausible value for a field, or null to leave it empty. Uses the FORM name + field label
+ * together (`$ctx`) so demo data is domain-relevant — a "Name" field in a Product form yields a product,
+ * in a Vehicle form the make/model yields a car, in a Salon Service form yields a service, etc.
+ */
+function genValue(array $field, int $i, array $seeded, string $formName = '')
 {
     $type = $field['type'] ?? 'short_text';
     $label = strtolower((string) ($field['label'] ?? $field['id'] ?? ''));
+    $ctx = trim($formName . ' ' . $label); // form + field context drives domain-aware values
     $props = $field['properties'] ?? [];
     $opts = $props['options'] ?? [];
 
     $NAMES = ['Ada Lovelace', 'Alan Turing', 'Grace Hopper', 'Katherine Johnson', 'Linus Pauling', 'Rosalind Franklin', 'Nikola Tesla', 'Marie Curie', 'Ada Byron', 'Claude Shannon', 'Dorothy Vaughan', 'Tim Berners-Lee'];
-    $COMPANIES = ['Acme Corp', 'Globex', 'Initech', 'Umbrella Co', 'Soylent', 'Hooli', 'Stark Industries', 'Wayne Enterprises', 'Wonka Inc', 'Cyberdyne'];
-    $WORDS = ['Follow-up required', 'Reviewed and approved', 'Pending manager sign-off', 'Great progress this week', 'Needs additional detail', 'On track for delivery', 'Escalated to the lead', 'Resolved successfully'];
+    $COMPANIES = ['Acme Corp', 'Globex', 'Initech', 'Umbrella Co', 'Soylent Foods', 'Hooli', 'Stark Industries', 'Wayne Enterprises', 'Wonka Inc', 'Cyberdyne Systems', 'Northwind Traders', 'Contoso Ltd'];
+    $PARTS = ['Brake Pads', 'Oil Filter', 'Spark Plug Set', 'Air Filter', 'Timing Belt', 'Alternator', 'Radiator Hose', 'Clutch Kit', 'Wiper Blades', 'Battery', 'Brake Disc', 'Fuel Pump'];
+    $PRODUCTS = ['Copper Pipe 15mm', 'PVC Elbow Joint', 'Silicone Sealant', 'Ball Valve', 'Cable Ties (100pk)', 'LED Downlight', 'Extension Lead', 'Safety Gloves', 'Paint Roller Set', 'Masking Tape', 'Cordless Drill', 'Screw Assortment'];
+    $SERVICES = ['Cut & Blow Dry', 'Full Head Colour', 'Balayage', 'Gel Manicure', 'Facial Treatment', 'Deep Tissue Massage', 'Beard Trim', 'Highlights', 'Keratin Treatment', 'Pedicure'];
+    $CAR_MAKES = ['Toyota', 'Ford', 'Mazda', 'Honda', 'Hyundai', 'Volkswagen', 'Subaru', 'Nissan', 'Kia', 'Holden'];
+    $CAR_MODELS = ['Corolla', 'Ranger', 'CX-5', 'Civic', 'i30', 'Golf', 'Outback', 'X-Trail', 'Cerato', 'Commodore'];
+    $STREETS = ['Baker Street', 'Elm Avenue', 'Maple Court', 'King Road', 'Station Street', 'Harbour Lane', 'Victoria Parade', 'Rosewood Drive', 'George Street', 'Park Terrace'];
+    $CITIES = ['Springfield', 'Riverton', 'Fairview', 'Lakeside', 'Newport', 'Ashford'];
+    $WORDS = ['Follow-up required', 'Reviewed and approved', 'Pending manager sign-off', 'On track for delivery', 'Escalated to the lead', 'Resolved successfully'];
     $rand = static fn (array $a) => $a[array_rand($a)];
+    $has = static function (string $s, array $kw): bool { foreach ($kw as $k) { if (str_contains($s, $k)) { return true; } } return false; };
+    $addr = static fn () => random_int(1, 199) . ' ' . $STREETS[array_rand($STREETS)] . ', ' . $CITIES[array_rand($CITIES)];
+    $code = static fn (string $p) => $p . '-' . str_pad((string) (1001 + $i), 4, '0', STR_PAD_LEFT);
 
     $optValue = static function (array $opts) {
         if (empty($opts)) { return null; }
@@ -355,20 +400,45 @@ function genValue(array $field, int $i, array $seeded)
 
     switch ($type) {
         case 'short_text':
-            if (str_contains($label, 'name') && !str_contains($label, 'company') && !str_contains($label, 'file') && !str_contains($label, 'user')) {
+            // Codes / reference numbers
+            if ($has($ctx, ['sku', 'item code', 'product code', 'part number', 'part no'])) { return 'SKU-' . str_pad((string) (1000 + $i), 5, '0', STR_PAD_LEFT); }
+            if ($has($ctx, ['invoice']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('INV'); }
+            if ($has($ctx, ['purchase order', 'po number', 'p.o']) || ($has($ctx, ['order']) && $has($ctx, ['number', ' no', '#']))) { return $code('PO'); }
+            if ($has($ctx, ['quote']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('QT'); }
+            if ($has($ctx, ['reference', 'ref no', 'ticket', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
+            if ($has($ctx, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate'])) { return strtoupper($rand(['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK'])) . '-' . random_int(100, 999); }
+            if ($has($ctx, ['vin', 'chassis'])) { return strtoupper(substr(bin2hex(random_bytes(9)), 0, 17)); }
+            // Domain nouns (form context matters: a "Name" in a Product/Vehicle/Service form isn't a person)
+            if ($has($ctx, ['make']) && !$has($ctx, ['maker', 'remake'])) { return $rand($CAR_MAKES); }
+            if ($has($ctx, ['model'])) { return $rand($CAR_MODELS); }
+            if ($has($ctx, ['service']) && !$has($ctx, ['customer service'])) { return $rand($SERVICES); }
+            if ($has($ctx, ['part', 'material', 'component'])) { return $rand($PARTS); }
+            if ($has($ctx, ['product', 'item', 'stock'])) { return $rand($PRODUCTS); }
+            if ($has($ctx, ['address', 'street', 'site'])) { return $addr(); }
+            if ($has($ctx, ['supplier', 'vendor', 'company', 'business', 'organization', 'organisation', 'employer', 'agency', 'manufacturer', 'brand'])) { return $rand($COMPANIES); }
+            // People
+            if ($has($ctx, ['name', 'client', 'customer', 'patient', 'contact', 'tenant', 'stylist', 'technician', 'provider', 'staff', 'assigned', 'attendee', 'applicant', 'employee', 'owner', 'manager'])
+                && !$has($ctx, ['file', 'username', 'filename'])) {
                 $full = $rand($NAMES);
-                if (str_contains($label, 'first') || str_contains($label, 'given')) { return explode(' ', $full)[0]; }
-                if (str_contains($label, 'last') || str_contains($label, 'surname') || str_contains($label, 'family')) { return explode(' ', $full)[1] ?? 'Smith'; }
+                if ($has($ctx, ['first', 'given'])) { return explode(' ', $full)[0]; }
+                if ($has($ctx, ['last', 'surname', 'family'])) { return explode(' ', $full)[1] ?? 'Smith'; }
                 return $full;
             }
-            if (str_contains($label, 'company') || str_contains($label, 'organization') || str_contains($label, 'organisation') || str_contains($label, 'employer') || str_contains($label, 'vendor')) {
-                return $rand($COMPANIES);
-            }
-            if (str_contains($label, 'title') || str_contains($label, 'subject') || str_contains($label, 'position') || str_contains($label, 'role')) {
+            if ($has($ctx, ['title', 'subject', 'position', 'role'])) {
                 return $rand(['Q3 Review', 'Onboarding kit', 'System access', 'Budget approval', 'Site inspection', 'Client meeting', 'Policy update']);
             }
-            return $rand(['Sample entry', 'Reference #' . (1000 + $i), $rand($COMPANIES), $rand($WORDS)]);
+            return $rand(['Sample entry', $code('REF'), $rand($COMPANIES)]);
         case 'long_text':
+            if ($has($ctx, ['address'])) { return $addr(); }
+            if ($has($ctx, ['complaint', 'problem', 'issue', 'fault', 'symptom'])) {
+                return $rand(['Intermittent fault reported by the customer.', 'Not working as expected since last week.', 'Making an unusual noise under load.', 'Needs inspection and diagnosis.', 'Reported shortly after the last service.']);
+            }
+            if ($has($ctx, ['performed', 'work done', 'resolution', 'action taken'])) {
+                return $rand(['Completed the requested work and tested.', 'Replaced the faulty part and verified operation.', 'Serviced, cleaned and signed off.', 'Diagnosed the issue and scheduled a follow-up.']);
+            }
+            if ($has($ctx, ['description', 'reason', 'notes', 'detail', 'summary', 'comment', 'instruction', 'preference', 'medication', 'work'])) {
+                return $rand(['Standard request logged for review.', 'Customer prefers a morning appointment.', 'Follow-up required within the week.', 'Awaiting parts before completion.', 'Routine item, no issues noted.', 'Please call ahead before attending.']);
+            }
             return $rand($WORDS) . '. ' . $rand($WORDS) . '.';
         case 'email':
             $n = strtolower(str_replace(' ', '.', $rand($NAMES)));
@@ -381,12 +451,16 @@ function genValue(array $field, int $i, array $seeded)
             $min = isset($props['min']) ? (int) $props['min'] : 0;
             $max = isset($props['max']) ? (int) $props['max'] : 0;
             if ($max > $min) { return random_int($min, $max); }
-            if (str_contains($label, 'amount') || str_contains($label, 'cost') || str_contains($label, 'value') || str_contains($label, 'price') || str_contains($label, 'budget') || str_contains($label, 'salary') || str_contains($label, 'aum')) {
-                return random_int(5, 250) * 100;
+            if ($has($ctx, ['year'])) { return random_int(2015, 2024); }
+            if ($has($ctx, ['odometer', 'mileage', 'kms', ' km'])) { return random_int(15, 190) * 1000; }
+            if ($has($ctx, ['duration', 'minute', 'mins'])) { return $rand([15, 30, 45, 60, 90, 120]); }
+            if ($has($ctx, ['hour'])) { return random_int(1, 8); }
+            if ($has($ctx, ['lead time', 'lead-time', 'days'])) { return random_int(1, 14); }
+            if ($has($ctx, ['reorder', 'on hand', 'on-hand', 'stock', 'quantity', 'qty', 'count', 'units'])) { return random_int(0, 80); }
+            if ($has($ctx, ['amount', 'cost', 'value', 'price', 'budget', 'salary', 'aum', 'total', 'subtotal', 'tax', 'fee', 'rate', 'labour', 'labor', 'parts', 'paid'])) {
+                return random_int(5, 950) * 10;
             }
-            if (str_contains($label, 'day') || str_contains($label, 'qty') || str_contains($label, 'quantity') || str_contains($label, 'count') || str_contains($label, 'score') || str_contains($label, 'age')) {
-                return random_int(1, 30);
-            }
+            if ($has($ctx, ['age'])) { return random_int(18, 75); }
             return random_int(1, 100);
         }
         case 'dropdown':

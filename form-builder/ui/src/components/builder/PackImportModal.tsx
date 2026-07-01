@@ -24,7 +24,7 @@ import {
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
-import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack } from '../../lib/api';
+import { api, resolveFileUrl, type PackData, type PackImportResult, type PackInstallation, type CatalogPack } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -501,6 +501,18 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                         onClick={() => setSelectedSlug(pack.slug)}
                         className="text-left p-4 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/80 hover:border-primary-300 dark:hover:border-primary-500/40 hover:shadow-md hover:shadow-primary-500/5 transition-all cursor-pointer group"
                       >
+                        {/* Dashboard preview (captured screenshot) */}
+                        {pack.screenshot && (
+                          <div className="mb-3 aspect-[16/10] overflow-hidden rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800">
+                            <img
+                              src={resolveFileUrl(pack.screenshot)}
+                              alt={`${pack.name} dashboard preview`}
+                              loading="lazy"
+                              className="h-full w-full object-cover object-top"
+                            />
+                          </div>
+                        )}
+
                         {/* Card header: icon + name row */}
                         <div className="flex items-center gap-3 mb-2">
                           <span className="text-2xl leading-none flex-shrink-0">{pack.icon || '📦'}</span>
