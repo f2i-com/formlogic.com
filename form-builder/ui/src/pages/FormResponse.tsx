@@ -716,9 +716,19 @@ function normalizeFormData(raw: any) {
     settings: Array.isArray(raw.settings) || !raw.settings
       ? DEFAULT_FORM_SETTINGS
       : { ...DEFAULT_FORM_SETTINGS, ...raw.settings },
-    theme: Array.isArray(raw.theme) || !raw.theme
-      ? DEFAULT_FORM_THEME
-      : { ...DEFAULT_FORM_THEME, ...raw.theme },
+    // Merge non-color defaults, but PRESERVE whether the creator actually set a
+    // background/text colour. When they didn't, we leave these unset so the renderer
+    // can fall back to the viewer's light/dark mode (an un-themed form shouldn't render
+    // with no background — that looked like white-on-white in dark mode).
+    theme: (() => {
+      const rawTheme = Array.isArray(raw.theme) || !raw.theme ? {} : raw.theme;
+      return {
+        ...DEFAULT_FORM_THEME,
+        ...rawTheme,
+        backgroundColor: rawTheme.backgroundColor,
+        textColor: rawTheme.textColor,
+      };
+    })(),
     fields: raw.fields ?? [],
     responseCount: raw.responseCount ?? 0,
   };
@@ -829,7 +839,26 @@ export default function FormResponse() {
   }, [formId, storeForm?.id, storeForm?.fields.length]);
 
   // Use store form (with fields) if available, otherwise fetched form
-  const form = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
+  const rawForm = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm ?? storeForm;
+  const appTheme = useUIStore((s) => s.theme);
+  // A form the creator never themed should follow the viewer's light/dark mode rather
+  // than rendering with no background/text (which showed as white-on-white in dark mode).
+  // Explicitly-themed forms keep their own colours in both modes.
+  const form = useMemo(() => {
+    if (!rawForm) return rawForm;
+    const th = (rawForm.theme || {}) as unknown as { backgroundColor?: string; textColor?: string; [k: string]: unknown };
+    if (th.backgroundColor && th.textColor) return rawForm;
+    const dark = appTheme === 'dark';
+    return {
+      ...rawForm,
+      theme: {
+        ...DEFAULT_FORM_THEME,
+        ...th,
+        backgroundColor: th.backgroundColor || (dark ? '#0b1220' : '#ffffff'),
+        textColor: th.textColor || (dark ? '#e8edf5' : '#1f2937'),
+      },
+    };
+  }, [rawForm, appTheme]);
   useDocumentTitle(form?.title);
 
   // The public form must render in its OWN theme, not the visitor's app dark-mode
