@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
-import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReport, AppReportSpec, AppReportResult } from '../types/app';
+import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult } from '../types/app';
 
 // Demo report authoring stays per-browser (the shared demo is read-only on the server).
 const demoReportsKey = (appId: string) => `formlogic-demo-reports-${appId}`;
@@ -35,7 +35,7 @@ interface AppRuntimeState {
 
   // Reports
   runReport: (spec: AppReportSpec) => Promise<AppReportResult | null>;
-  saveReports: (reports: AppReport[]) => Promise<boolean>;
+  saveReports: (reports: AppReportItem[]) => Promise<boolean>;
 
   // Permission helpers
   canSubmit: (formId: string) => boolean;
@@ -87,7 +87,7 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             if (api.isDemoMode() && app?.id) {
               try {
                 const raw = localStorage.getItem(demoReportsKey(app.id));
-                if (raw) { app.reports = JSON.parse(raw) as AppReport[]; }
+                if (raw) { app.reports = JSON.parse(raw) as AppReportItem[]; }
               } catch { /* ignore */ }
             }
             const config: AppRuntimeConfig = {

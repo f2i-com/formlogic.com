@@ -47,8 +47,8 @@ export interface App {
   navConfig: AppNavItem[];
   /** Optional sandboxed custom HOME screen ({ html, css, js }) shown instead of the form list. */
   customScreen?: CustomScreen;
-  /** Optional saved reports shown in the app's Reports section. */
-  reports?: AppReport[];
+  /** Optional saved reports + composed PDF documents shown in the app's Reports section. */
+  reports?: AppReportItem[];
   createdAt: string;
   updatedAt: string;
 }
@@ -62,9 +62,32 @@ export interface AppReport {
   spec: AppReportSpec;
 }
 
+/** A block inside a PDF document: free text, or a chart that references a saved report. */
+export type ReportDocBlock =
+  | { id: string; kind: 'text'; title?: string; body: string }
+  | { id: string; kind: 'report'; reportId: string; caption?: string };
+
+/** A composed multi-chart PDF document (title + description + ordered blocks). */
+export interface AppReportDocument {
+  id: string;
+  name: string;
+  description?: string;
+  type: 'document';
+  blocks: ReportDocBlock[];
+}
+
+/** Items stored in `app.reports`: individual chart reports and composed PDF documents. */
+export type AppReportItem = AppReport | AppReportDocument;
+
+export function isReportDocument(item: AppReportItem): item is AppReportDocument {
+  return (item as AppReportDocument).type === 'document';
+}
+
+export type ReportViz = 'table' | 'bar' | 'line' | 'area' | 'pie' | 'donut' | 'kpi';
+
 export interface AppReportSpec {
   formId: string;
-  viz: 'table' | 'bar' | 'pie' | 'kpi';
+  viz: ReportViz;
   /** Cross-form joins along linked_record relationships. Joined fields are referenced as "<formId>::<fieldId>". */
   joins?: Array<{ via: string; formId: string; type: 'inner' | 'left' }>;
   /** Field refs may be a base field id, "<formId>::<fieldId>" (joined), or pseudo-fields "__submitted_at"/"__status". */

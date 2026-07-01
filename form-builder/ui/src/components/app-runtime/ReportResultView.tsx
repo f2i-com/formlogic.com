@@ -1,95 +1,195 @@
+import { useMemo, cloneElement, type ReactElement } from 'react';
+import {
+  ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area,
+  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList,
+} from 'recharts';
 import type { AppReportResult } from '../../types/app';
 
-const PIE_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f43f5e', '#84cc16', '#eab308'];
+const PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f43f5e', '#84cc16', '#eab308', '#ec4899', '#06b6d4'];
+const PRINT_WIDTH = 660;
 
 const fmt = (n: unknown): string => {
   const v = Number(n || 0);
   return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
 
-/** Renders a report result (KPI number, bar list, pie/donut, or data table). Theme-aware. */
-export function ReportResultView({ result }: { result: AppReportResult }) {
+/** Read the app's accent + whether we're in dark mode, so charts match the runtime theme. */
+function useChartTheme(primaryColor?: string, forceLight = false) {
+  return useMemo(() => {
+    const isDark = !forceLight && typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+    let primary = primaryColor;
+    if (!primary && typeof document !== 'undefined') {
+      const host = document.querySelector('[data-app-runtime]') as HTMLElement | null;
+      primary = host ? getComputedStyle(host).getPropertyValue('--app-primary').trim() : '';
+    }
+    if (!primary) primary = PALETTE[0];
+    // Accent leads the categorical palette (de-duplicated), so single-series charts use the app colour.
+    const palette = [primary, ...PALETTE.filter((c) => c.toLowerCase() !== primary!.toLowerCase())];
+    return {
+      isDark,
+      primary,
+      palette,
+      axis: isDark ? '#94a3b8' : '#64748b',
+      grid: isDark ? '#1e293b' : '#e2e8f0',
+      tooltip: {
+        background: isDark ? '#0f172a' : '#ffffff',
+        border: `1px solid ${isDark ? '#1e293b' : '#e2e8f0'}`,
+        borderRadius: 10,
+        fontSize: 12,
+        color: isDark ? '#e2e8f0' : '#0f172a',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+      } as const,
+    };
+  }, [primaryColor, forceLight]);
+}
+
+interface Props {
+  result: AppReportResult;
+  /** Explicit accent (used by the detached PDF print root, which is outside [data-app-runtime]). */
+  primaryColor?: string;
+  /** Print mode: fixed dimensions + no animation, so charts are fully drawn before window.print(). */
+  print?: boolean;
+}
+
+export function ReportResultView({ result, primaryColor, print = false }: Props) {
+  const t = useChartTheme(primaryColor, print);
+
+  // KPI ─────────────────────────────────────────────
   if (result.viz === 'kpi') {
     return (
-      <div className="py-8 text-center">
+      <div className={print ? 'py-6 text-center' : 'py-10 text-center'}>
         <div className="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">{fmt(result.value)}</div>
       </div>
     );
   }
 
-  if (result.viz === 'bar') {
-    const series = result.series ?? [];
-    if (series.length === 0) return <EmptyResult />;
-    const max = Math.max(1, ...series.map((s) => s.value));
+  // Table ───────────────────────────────────────────
+  if (result.viz === 'table') {
+    const cols = result.columns ?? [];
+    const rows = result.rows ?? [];
+    if (rows.length === 0) return <EmptyResult />;
     return (
-      <div className="space-y-3 py-2">
-        {series.map((s, i) => (
-          <div key={s.label + i} className="grid grid-cols-[minmax(80px,140px)_1fr_auto] items-center gap-3">
-            <span className="text-sm text-gray-700 dark:text-slate-300 truncate" title={s.label}>{s.label}</span>
-            <div className="h-2.5 rounded-full bg-gray-100 dark:bg-slate-800 overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${Math.max(3, Math.round((s.value / max) * 100))}%`, backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
-            </div>
-            <span className="text-sm text-gray-500 dark:text-slate-400 tabular-nums text-right">{fmt(s.value)}</span>
-          </div>
+      <div className={print ? '' : 'overflow-x-auto -mx-1 px-1'}>
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="border-b-2 border-gray-200 dark:border-slate-700">
+              {cols.map((c) => (
+                <th key={c.id} className="text-left font-semibold text-gray-500 dark:text-slate-400 px-3 py-2 whitespace-nowrap">{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} className="border-b border-gray-100 dark:border-slate-800 even:bg-gray-50/60 dark:even:bg-slate-800/30">
+                {cols.map((c) => (
+                  <td key={c.id} className={`px-3 py-2 text-gray-800 dark:text-slate-200 ${print ? '' : 'max-w-[280px] truncate'}`} title={String(r[c.id] ?? '')}>{String(r[c.id] ?? '') || '—'}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  // Charts ──────────────────────────────────────────
+  const series = (result.series ?? []).map((s) => ({ ...s, label: s.label || '—' }));
+  if (series.length === 0) return <EmptyResult />;
+
+  // Wrap a chart either in a ResponsiveContainer (screen) or fixed dims (print).
+  const frame = (height: number, chart: ReactElement) =>
+    print
+      ? <div style={{ width: PRINT_WIDTH, height }}>{cloneElement(chart as ReactElement<{ width?: number; height?: number }>, { width: PRINT_WIDTH, height })}</div>
+      : <ResponsiveContainer width="100%" height={height}>{chart}</ResponsiveContainer>;
+
+  const anim = !print;
+  const tick = { fontSize: 12, fill: t.axis };
+
+  if (result.viz === 'line' || result.viz === 'area') {
+    const height = print ? 300 : 300;
+    const common = (
+      <>
+        <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
+        <XAxis dataKey="label" tick={tick} tickLine={false} axisLine={{ stroke: t.grid }} interval="preserveStartEnd" minTickGap={20} />
+        <YAxis tick={tick} tickLine={false} axisLine={false} allowDecimals={false} width={44} tickFormatter={(v) => fmt(v)} />
+        <Tooltip contentStyle={t.tooltip} formatter={(v) => fmt(v)} cursor={{ stroke: t.grid }} />
+      </>
+    );
+    return (
+      <div className={print ? '' : 'py-1'}>
+        {result.viz === 'area'
+          ? frame(height, (
+            <AreaChart data={series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="fl-area" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={t.primary} stopOpacity={0.35} />
+                  <stop offset="100%" stopColor={t.primary} stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              {common}
+              <Area type="monotone" name="Value" dataKey="value" stroke={t.primary} strokeWidth={2.5} fill="url(#fl-area)" isAnimationActive={anim} dot={{ r: 3, fill: t.primary }} activeDot={{ r: 5 }} />
+            </AreaChart>
+          ))
+          : frame(height, (
+            <LineChart data={series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              {common}
+              <Line type="monotone" name="Value" dataKey="value" stroke={t.primary} strokeWidth={2.5} isAnimationActive={anim} dot={{ r: 3, fill: t.primary }} activeDot={{ r: 5 }} />
+            </LineChart>
+          ))}
+      </div>
+    );
+  }
+
+  if (result.viz === 'pie' || result.viz === 'donut') {
+    const total = series.reduce((a, s) => a + s.value, 0) || 1;
+    const height = print ? 280 : 300;
+    return (
+      <div className={print ? '' : 'py-1'}>
+        {frame(height, (
+          <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <Pie
+              data={series}
+              dataKey="value"
+              nameKey="label"
+              cx="50%"
+              cy="50%"
+              innerRadius={result.viz === 'donut' ? '55%' : 0}
+              outerRadius="80%"
+              paddingAngle={series.length > 1 ? 2 : 0}
+              isAnimationActive={anim}
+              animationDuration={600}
+              label={({ percent }) => (percent && percent > 0.04 ? `${Math.round(percent * 100)}%` : '')}
+              labelLine={false}
+              stroke={t.isDark ? '#0f172a' : '#ffffff'}
+              strokeWidth={2}
+            >
+              {series.map((_, i) => <Cell key={i} fill={t.palette[i % t.palette.length]} />)}
+            </Pie>
+            <Tooltip contentStyle={t.tooltip} formatter={(v) => `${fmt(v)} · ${Math.round((Number(v) / total) * 100)}%`} />
+            <Legend iconType="circle" wrapperStyle={{ fontSize: 12, color: t.axis }} />
+          </PieChart>
         ))}
       </div>
     );
   }
 
-  if (result.viz === 'pie') {
-    const series = result.series ?? [];
-    if (series.length === 0) return <EmptyResult />;
-    const total = series.reduce((a, s) => a + s.value, 0) || 1;
-    // Cumulative start for each slice, computed without mutating a render-scoped accumulator.
-    const startAt = series.map((_, i) => series.slice(0, i).reduce((a, x) => a + x.value, 0));
-    const stops = series
-      .map((s, i) => `${PIE_COLORS[i % PIE_COLORS.length]} ${(startAt[i] / total) * 100}% ${((startAt[i] + s.value) / total) * 100}%`)
-      .join(', ');
-    return (
-      <div className="flex flex-wrap items-center gap-6 py-4">
-        <div
-          className="h-40 w-40 shrink-0 rounded-full"
-          style={{ background: `conic-gradient(${stops})` }}
-          role="img"
-          aria-label="Pie chart"
-        />
-        <div className="space-y-1.5 min-w-0">
-          {series.map((s, i) => (
-            <div key={s.label + i} className="flex items-center gap-2 text-sm">
-              <span className="h-3 w-3 rounded-sm shrink-0" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }} />
-              <span className="text-gray-700 dark:text-slate-300 truncate" title={s.label}>{s.label}</span>
-              <span className="ml-auto text-gray-500 dark:text-slate-400 tabular-nums">{fmt(s.value)} · {Math.round((s.value / total) * 100)}%</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // table
-  const cols = result.columns ?? [];
-  const rows = result.rows ?? [];
-  if (rows.length === 0) return <EmptyResult />;
+  // bar (horizontal — labels read left-to-right, wraps well on mobile)
+  const barHeight = Math.max(140, Math.min(series.length * 40 + 24, 520));
+  const labelWidth = print ? 130 : Math.min(140, Math.max(70, ...series.map((s) => s.label.length * 6.5)));
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-200 dark:border-slate-700">
-            {cols.map((c) => (
-              <th key={c.id} className="text-left font-semibold text-gray-500 dark:text-slate-400 px-3 py-2 whitespace-nowrap">{c.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} className="border-b border-gray-100 dark:border-slate-800">
-              {cols.map((c) => (
-                <td key={c.id} className="px-3 py-2 text-gray-800 dark:text-slate-200 max-w-[280px] truncate" title={String(r[c.id] ?? '')}>{String(r[c.id] ?? '') || '—'}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className={print ? '' : 'py-1'}>
+      {frame(barHeight, (
+        <BarChart data={series} layout="vertical" margin={{ top: 4, right: 34, left: 4, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={t.grid} horizontal={false} />
+          <XAxis type="number" tick={tick} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v) => fmt(v)} />
+          <YAxis type="category" dataKey="label" tick={tick} tickLine={false} axisLine={false} width={labelWidth} />
+          <Tooltip contentStyle={t.tooltip} formatter={(v) => fmt(v)} cursor={{ fill: t.isDark ? 'rgba(148,163,184,0.08)' : 'rgba(0,0,0,0.03)' }} />
+          <Bar dataKey="value" name="Value" radius={[0, 6, 6, 0]} isAnimationActive={anim} maxBarSize={38}>
+            {series.map((_, i) => <Cell key={i} fill={t.palette[i % t.palette.length]} />)}
+            <LabelList dataKey="value" position="right" formatter={(v: unknown) => fmt(v)} style={{ fontSize: 11, fill: t.axis }} />
+          </Bar>
+        </BarChart>
+      ))}
     </div>
   );
 }

@@ -346,3 +346,20 @@
   --radius-field: 0.75rem;
   --radius-panel: 1rem;
 }
+
+/* ── Report PDF export ──────────────────────────────────────────────────────
+   Documents are rendered into a detached #fl-print-root appended to <body>.
+   While printing we hide the whole app and show only that root, so the browser's
+   "Save as PDF" captures a clean, paginated document. */
+#fl-print-root { display: none; }
+@media print {
+  html, body { background: #fff !important; }
+  body > *:not(#fl-print-root) { display: none !important; }
+  #fl-print-root {
+    display: block !important;
+    background: #fff;
+    color: #111827;
+  }
+  .fl-print-block { break-inside: avoid; page-break-inside: avoid; }
+  @page { margin: 14mm; }
+}

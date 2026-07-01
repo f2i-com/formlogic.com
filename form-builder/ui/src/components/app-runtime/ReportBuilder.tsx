@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { Loader2, Plus, X } from 'lucide-react';
+import { Loader2, Plus, X, BarChart3, LineChart, AreaChart, PieChart, CircleDot, Hash, Table2 } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import type { AppReport, AppReportSpec, AppReportResult } from '../../types/app';
+import type { AppReport, AppReportSpec, AppReportResult, ReportViz } from '../../types/app';
 import { ReportResultView } from './ReportResultView';
 
 type Field = { id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }>; targetFormId?: string; allowMultiple?: boolean } };
@@ -15,6 +15,17 @@ const LAYOUT_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', '
 const CHOICE_TYPES = ['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio'];
 const DATE_TYPES = ['date', 'datetime'];
 const NUMERIC_TYPES = ['number', 'rating', 'scale'];
+const SERIES_VIZ: ReportViz[] = ['bar', 'line', 'area', 'pie', 'donut'];
+
+const VIZ_OPTIONS: Array<{ v: ReportViz; label: string; Icon: typeof BarChart3 }> = [
+  { v: 'bar', label: 'Bar', Icon: BarChart3 },
+  { v: 'line', label: 'Line', Icon: LineChart },
+  { v: 'area', label: 'Area', Icon: AreaChart },
+  { v: 'pie', label: 'Pie', Icon: PieChart },
+  { v: 'donut', label: 'Donut', Icon: CircleDot },
+  { v: 'kpi', label: 'Number', Icon: Hash },
+  { v: 'table', label: 'Table', Icon: Table2 },
+];
 
 // Submission time + workflow status are always-available dimensions (server pseudo-fields).
 const PSEUDO_FIELDS: FieldOpt[] = [
@@ -47,7 +58,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
   const [name, setName] = useState(report?.name ?? '');
   const [description, setDescription] = useState(report?.description ?? '');
   const [formId, setFormId] = useState(initSpec?.formId ?? forms[0]?.formId ?? '');
-  const [viz, setViz] = useState<AppReportSpec['viz']>(initSpec?.viz ?? 'bar');
+  const [viz, setViz] = useState<ReportViz>(initSpec?.viz ?? 'bar');
   const [groupField, setGroupField] = useState(initSpec?.groupBy?.field ?? '');
   const [bucket, setBucket] = useState<NonNullable<AppReportSpec['groupBy']>['bucket']>(initSpec?.groupBy?.bucket ?? 'month');
   const [measureFn, setMeasureFn] = useState<NonNullable<AppReportSpec['measure']>['fn']>(initSpec?.measure?.fn ?? 'count');
@@ -59,6 +70,8 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
   const [seriesSort, setSeriesSort] = useState<'value' | 'label'>((initSpec?.seriesSort as 'value' | 'label') ?? 'value');
   const initTableSort = (initSpec?.sort && typeof initSpec.sort === 'object') ? initSpec.sort as { by: string; dir: 'asc' | 'desc' } : { by: '__submitted_at', dir: 'desc' as const };
   const [tableSort, setTableSort] = useState<{ by: string; dir: 'asc' | 'desc' }>(initTableSort);
+
+  const isSeries = SERIES_VIZ.includes(viz);
 
   const baseForm = useMemo(() => forms.find((x) => x.formId === formId), [forms, formId]);
   const baseFields: Field[] = useMemo(() => ((baseForm?.fields ?? []) as Field[]).filter((fl) => !LAYOUT_TYPES.includes(fl.type)), [baseForm]);
@@ -99,7 +112,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
 
   // Default group/column choices when the form/viz changes and nothing is set yet.
   useEffect(() => {
-    if ((viz === 'bar' || viz === 'pie') && !groupable.some((g) => g.ref === groupField)) {
+    if (isSeries && !groupable.some((g) => g.ref === groupField)) {
       setGroupField(groupable[0]?.ref ?? '');
     }
     if (viz === 'table' && columns.length === 0) {
@@ -121,17 +134,16 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
   const spec: AppReportSpec = useMemo(() => {
     const base: AppReportSpec = { formId, viz, filters: filters.filter((f) => f.field), limit };
     if (joins.length) base.joins = joins;
-    if (viz === 'bar' || viz === 'pie') {
+    if (isSeries) {
       base.groupBy = { field: groupField, bucket: groupIsDate ? bucket : 'none' };
       base.measure = { fn: measureFn, field: measureField };
       base.seriesSort = seriesSort;
       base.sort = 'desc';
     }
     if (viz === 'kpi') base.measure = { fn: measureFn, field: measureField };
-    if (viz === 'table') base.sort = tableSort;
-    if (viz === 'table') base.columns = columns;
+    if (viz === 'table') { base.sort = tableSort; base.columns = columns; }
     return base;
-  }, [formId, viz, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit, seriesSort, tableSort]);
+  }, [formId, viz, isSeries, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit, seriesSort, tableSort]);
 
   const [preview, setPreview] = useState<AppReportResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -163,7 +175,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
 
   const canSave =
     name.trim().length > 0 && !!formId &&
-    ((viz !== 'bar' && viz !== 'pie') || !!groupField) &&
+    (!isSeries || !!groupField) &&
     (!measureNeedsField || !!measureField);
 
   const handleSave = () => {
@@ -171,32 +183,37 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
     onSave({ id: report?.id ?? uid(), name: name.trim(), description: description.trim() || undefined, type: 'builder', spec });
   };
 
-  const selectCls = 'rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-2.5 py-1.5';
+  const fieldCls = 'w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950/50 text-sm text-gray-900 dark:text-white px-3 py-2 focus:outline-none focus:ring-2 app-ring-primary focus:border-transparent transition-shadow';
+  const selCls = 'rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950/50 text-sm text-gray-900 dark:text-white px-2.5 py-1.5 focus:outline-none focus:ring-2 app-ring-primary';
+  const sectionLabel = 'text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500';
 
   return (
-    <Modal isOpen onClose={onClose} title={report ? 'Edit report' : 'New report'} size="xl">
-      <div className="flex flex-col-reverse lg:grid lg:grid-cols-[minmax(0,340px)_1fr] max-h-[80dvh] lg:max-h-[75dvh] min-h-0">
+    <Modal isOpen onClose={onClose} title={report ? 'Edit report' : 'New report'} size="2xl">
+      <div className="flex flex-col-reverse lg:grid lg:grid-cols-[minmax(0,360px)_1fr] max-h-[82dvh] lg:max-h-[76dvh] min-h-0">
         {/* Controls */}
-        <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0 lg:border-r border-gray-200 dark:border-slate-800">
-          <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Report name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Revenue by month" className={`w-full ${selectCls}`} />
+        <div className="p-5 space-y-5 overflow-y-auto flex-1 min-h-0 lg:border-r border-gray-200 dark:border-slate-800">
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className={sectionLabel}>Report name</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Revenue by month" className={`mt-1.5 ${fieldCls}`} />
+            </div>
+            <div>
+              <label className={sectionLabel}>Description <span className="normal-case font-normal text-gray-400">(optional)</span></label>
+              <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this report shows" className={`mt-1.5 ${fieldCls}`} />
+            </div>
           </div>
+
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Description (optional)</label>
-            <input value={description} onChange={(e) => setDescription(e.target.value)} className={`w-full ${selectCls}`} />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Data from</label>
-            <select value={formId} onChange={(e) => setFormId(e.target.value)} aria-label="Source form" className={`w-full ${selectCls}`}>
+            <label className={sectionLabel}>Data from</label>
+            <select value={formId} onChange={(e) => setFormId(e.target.value)} aria-label="Source form" className={`mt-1.5 ${fieldCls}`}>
               {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
             </select>
           </div>
 
           {linkedFields.length > 0 && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Related data</label>
-              <div className="space-y-2">
+              <label className={sectionLabel}>Related data</label>
+              <div className="mt-1.5 space-y-2">
                 {linkedFields.map((lf) => {
                   const targetId = lf.properties?.targetFormId as string;
                   const tf = forms.find((x) => x.formId === targetId);
@@ -208,7 +225,7 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
                         <span className="truncate">{tf?.displayName ?? 'Related'} <span className="text-gray-400 dark:text-slate-500">· via {lf.label}</span></span>
                       </label>
                       {join && (
-                        <select value={join.type} onChange={(e) => setJoins((js) => js.map((j) => j.via === lf.id && j.formId === targetId ? { ...j, type: e.target.value as 'inner' | 'left' } : j))} className={selectCls} aria-label="Join type">
+                        <select value={join.type} onChange={(e) => setJoins((js) => js.map((j) => j.via === lf.id && j.formId === targetId ? { ...j, type: e.target.value as 'inner' | 'left' } : j))} className={selCls} aria-label="Join type">
                           <option value="left">Include all</option>
                           <option value="inner">Only matched</option>
                         </select>
@@ -217,66 +234,95 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
                   );
                 })}
               </div>
-              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1">Pull fields from linked forms in to group by or list alongside.</p>
+              <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Pull in fields from linked forms to group by or list alongside.</p>
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Show as</label>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Visualization">
-              {(['bar', 'pie', 'kpi', 'table'] as const).map((v) => (
-                <button key={v} type="button" aria-pressed={viz === v} onClick={() => setViz(v)} className={`px-3 py-1.5 rounded-lg text-xs font-medium capitalize cursor-pointer ${viz === v ? 'app-bg-primary-light app-text-primary' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400'}`}>{v === 'kpi' ? 'Number' : v}</button>
+            <label className={sectionLabel}>Chart type</label>
+            <div className="mt-1.5 grid grid-cols-4 sm:grid-cols-7 lg:grid-cols-4 xl:grid-cols-7 gap-1.5" role="group" aria-label="Chart type">
+              {VIZ_OPTIONS.map(({ v, label, Icon }) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={viz === v}
+                  onClick={() => setViz(v)}
+                  className={`flex flex-col items-center gap-1 rounded-lg border py-2 px-1 text-[11px] font-medium cursor-pointer transition-colors ${viz === v ? 'app-bg-primary-light app-border-primary app-text-primary' : 'border-gray-200 dark:border-slate-700 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
               ))}
             </div>
           </div>
 
-          {(viz === 'bar' || viz === 'pie') && (
-            <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Group by</label>
-              {groupable.length === 0 ? (
-                <p className="text-xs text-amber-600 dark:text-amber-400">This form has no fields to group by — pick a different form or add a choice/date field.</p>
-              ) : (
-                <select value={groupField} onChange={(e) => setGroupField(e.target.value)} aria-label="Group by field" className={`w-full ${selectCls}`}>
-                  {groupable.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
-                </select>
-              )}
-              {groupIsDate && (
-                <select value={bucket} onChange={(e) => setBucket(e.target.value as typeof bucket)} aria-label="Date bucket" className={`w-full mt-2 ${selectCls}`}>
-                  <option value="day">By day</option><option value="month">By month</option><option value="year">By year</option>
-                </select>
-              )}
-              <div className="flex items-center gap-2 mt-2">
-                <select value={seriesSort} onChange={(e) => setSeriesSort(e.target.value as 'value' | 'label')} aria-label="Sort" className={selectCls}>
-                  <option value="value">Sort by value</option><option value="label">Sort by label</option>
-                </select>
-                <input type="number" min={1} max={50} value={Math.min(limit, 50)} onChange={(e) => setLimit(Math.max(1, Math.min(50, Number(e.target.value) || 10)))} aria-label="Show top N" title="Show top N" className={`w-20 ${selectCls}`} />
+          {isSeries && (
+            <div className="space-y-3 rounded-xl bg-gray-50 dark:bg-slate-950/40 p-3.5 border border-gray-100 dark:border-slate-800">
+              <div>
+                <label className={sectionLabel}>Group by</label>
+                {groupable.length === 0 ? (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">This form has no fields to group by — pick a different form or add a choice/date field.</p>
+                ) : (
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    <select value={groupField} onChange={(e) => setGroupField(e.target.value)} aria-label="Group by field" className={`${selCls} flex-1 min-w-[140px]`}>
+                      {groupable.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                    </select>
+                    {groupIsDate && (
+                      <select value={bucket} onChange={(e) => setBucket(e.target.value as typeof bucket)} aria-label="Date bucket" className={selCls}>
+                        <option value="day">By day</option><option value="month">By month</option><option value="year">By year</option>
+                      </select>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 mt-2">
+                  <select value={seriesSort} onChange={(e) => setSeriesSort(e.target.value as 'value' | 'label')} aria-label="Sort" className={selCls}>
+                    <option value="value">Sort by value</option><option value="label">Sort by label</option>
+                  </select>
+                  <label className="text-xs text-gray-500 dark:text-slate-400 ml-auto">Top</label>
+                  <input type="number" min={1} max={50} value={Math.min(limit, 50)} onChange={(e) => setLimit(Math.max(1, Math.min(50, Number(e.target.value) || 10)))} aria-label="Show top N" className={`w-16 ${selCls}`} />
+                </div>
+              </div>
+              <div>
+                <label className={sectionLabel}>Measure</label>
+                <div className="mt-1.5 flex flex-wrap gap-2">
+                  <select value={measureFn} onChange={(e) => setMeasureFn(e.target.value as typeof measureFn)} aria-label="Measure function" className={selCls}>
+                    <option value="count">Count</option><option value="countDistinct">Unique count</option><option value="sum">Sum</option><option value="avg">Average</option><option value="min">Min</option><option value="max">Max</option>
+                  </select>
+                  {measureNeedsField && (
+                    <select value={measureField} onChange={(e) => setMeasureField(e.target.value)} aria-label="Measure field" className={`${selCls} flex-1 min-w-[140px]`}>
+                      <option value="">Select field…</option>
+                      {measureFieldOptions.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                    </select>
+                  )}
+                </div>
+                {measureNeedsField && !measureField && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Choose a field to {measureFn === 'countDistinct' ? 'count uniquely' : measureFn}.</p>}
+                {measureFn !== 'count' && measureFn !== 'countDistinct' && numberFields.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">This form has no number fields to {measureFn}.</p>}
               </div>
             </div>
           )}
 
-          {(viz === 'bar' || viz === 'pie' || viz === 'kpi') && (
+          {viz === 'kpi' && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Measure</label>
-              <div className="flex gap-2">
-                <select value={measureFn} onChange={(e) => setMeasureFn(e.target.value as typeof measureFn)} aria-label="Measure function" className={selectCls}>
+              <label className={sectionLabel}>Measure</label>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                <select value={measureFn} onChange={(e) => setMeasureFn(e.target.value as typeof measureFn)} aria-label="Measure function" className={selCls}>
                   <option value="count">Count</option><option value="countDistinct">Unique count</option><option value="sum">Sum</option><option value="avg">Average</option><option value="min">Min</option><option value="max">Max</option>
                 </select>
                 {measureNeedsField && (
-                  <select value={measureField} onChange={(e) => setMeasureField(e.target.value)} aria-label="Measure field" className={`flex-1 ${selectCls}`}>
+                  <select value={measureField} onChange={(e) => setMeasureField(e.target.value)} aria-label="Measure field" className={`${selCls} flex-1 min-w-[140px]`}>
                     <option value="">Select field…</option>
                     {measureFieldOptions.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
                   </select>
                 )}
               </div>
               {measureNeedsField && !measureField && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Choose a field to {measureFn === 'countDistinct' ? 'count uniquely' : measureFn}.</p>}
-              {measureFn !== 'count' && measureFn !== 'countDistinct' && numberFields.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">This form has no number fields to {measureFn}.</p>}
             </div>
           )}
 
           {viz === 'table' && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Columns</label>
-              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 p-2 space-y-1">
+              <label className={sectionLabel}>Columns</label>
+              <div className="mt-1.5 max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 p-2 space-y-1">
                 {allFields.map((f) => (
                   <label key={f.ref} className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
                     <input type="checkbox" className="app-accent rounded" checked={columns.includes(f.ref)} onChange={(e) => setColumns((c) => e.target.checked ? [...c, f.ref] : c.filter((x) => x !== f.ref))} />
@@ -286,23 +332,23 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Sort by</span>
-                <select value={tableSort.by} onChange={(e) => setTableSort((s) => ({ ...s, by: e.target.value }))} aria-label="Sort column" className={selectCls}>
+                <select value={tableSort.by} onChange={(e) => setTableSort((s) => ({ ...s, by: e.target.value }))} aria-label="Sort column" className={selCls}>
                   <option value="__submitted_at">Submitted date</option>
                   {columns.map((r) => <option key={r} value={r}>{fieldByRef[r]?.label ?? r}</option>)}
                 </select>
-                <select value={tableSort.dir} onChange={(e) => setTableSort((s) => ({ ...s, dir: e.target.value as 'asc' | 'desc' }))} aria-label="Sort direction" className={selectCls}>
+                <select value={tableSort.dir} onChange={(e) => setTableSort((s) => ({ ...s, dir: e.target.value as 'asc' | 'desc' }))} aria-label="Sort direction" className={selCls}>
                   <option value="desc">Newest / high→low</option><option value="asc">Oldest / low→high</option>
                 </select>
-                <span className="text-xs font-medium text-gray-500 dark:text-slate-400 ml-1">Max rows</span>
-                <input type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value) || 100)))} aria-label="Max rows" className={`w-20 ${selectCls}`} />
+                <span className="text-xs font-medium text-gray-500 dark:text-slate-400 ml-auto">Max rows</span>
+                <input type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value) || 100)))} aria-label="Max rows" className={`w-20 ${selCls}`} />
               </div>
             </div>
           )}
 
           {/* Filters */}
           <div>
-            <label className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Filters</label>
-            <div className="space-y-2">
+            <label className={sectionLabel}>Filters</label>
+            <div className="mt-1.5 space-y-2">
               {filters.map((flt, i) => {
                 const fld = fieldByRef[flt.field];
                 const ops = fld ? opsForType(fld.type) : ['eq', 'ne', 'contains', 'notempty', 'empty'];
@@ -312,47 +358,52 @@ export function ReportBuilder({ report, onClose, onSave }: { report: AppReport |
                 const set = (patch: Partial<Filter>) => setFilters((fs) => fs.map((x, j) => j === i ? { ...x, ...patch } : x));
                 return (
                   <div key={i} className="flex items-center gap-1.5">
-                    <select value={flt.field} aria-label="Filter field" onChange={(e) => { const nf = fieldByRef[e.target.value]; const nops = nf ? opsForType(nf.type) : ['eq']; set({ field: e.target.value, op: nops.includes(flt.op) ? flt.op : nops[0], value: '' }); }} className={`${selectCls} flex-1 min-w-0`}>
+                    <select value={flt.field} aria-label="Filter field" onChange={(e) => { const nf = fieldByRef[e.target.value]; const nops = nf ? opsForType(nf.type) : ['eq']; set({ field: e.target.value, op: nops.includes(flt.op) ? flt.op : nops[0], value: '' }); }} className={`${selCls} flex-1 min-w-0`}>
                       <option value="">Field…</option>
                       {allFields.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
                     </select>
-                    <select value={flt.op} aria-label="Filter condition" onChange={(e) => set({ op: e.target.value })} className={selectCls}>
+                    <select value={flt.op} aria-label="Filter condition" onChange={(e) => set({ op: e.target.value })} className={selCls}>
                       {ops.map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}
                     </select>
                     {needsValue && (opts.length > 0 && flt.op !== 'contains' ? (
-                      <select value={flt.value} aria-label="Filter value" onChange={(e) => set({ value: e.target.value })} className={`${selectCls} flex-1 min-w-0`}>
+                      <select value={flt.value} aria-label="Filter value" onChange={(e) => set({ value: e.target.value })} className={`${selCls} flex-1 min-w-0`}>
                         <option value="">Value…</option>
                         {opts.map((o) => <option key={o.value} value={o.value}>{o.label ?? o.value}</option>)}
                       </select>
                     ) : (
-                      <input type={inputType} value={flt.value} aria-label="Filter value" onChange={(e) => set({ value: e.target.value })} placeholder={flt.op === 'last_n_days' ? 'days' : 'Value'} className={`${selectCls} flex-1 min-w-0`} />
+                      <input type={inputType} value={flt.value} aria-label="Filter value" onChange={(e) => set({ value: e.target.value })} placeholder={flt.op === 'last_n_days' ? 'days' : 'Value'} className={`${selCls} flex-1 min-w-0`} />
                     ))}
                     <button type="button" onClick={() => setFilters((fs) => fs.filter((_, j) => j !== i))} aria-label="Remove filter" className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"><X className="h-4 w-4" /></button>
                   </div>
                 );
               })}
-              <button type="button" onClick={() => setFilters((fs) => [...fs, { field: '', op: 'eq', value: '' }])} className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline cursor-pointer"><Plus className="h-3.5 w-3.5" /> Add filter</button>
+              <button type="button" onClick={() => setFilters((fs) => [...fs, { field: '', op: 'eq', value: '' }])} className="inline-flex items-center gap-1 text-xs font-medium app-text-primary hover:underline cursor-pointer"><Plus className="h-3.5 w-3.5" /> Add filter</button>
             </div>
           </div>
         </div>
 
         {/* Live preview — capped + on top on mobile, full right column on desktop */}
-        <div className="p-5 overflow-y-auto bg-gray-50 dark:bg-slate-950/40 max-h-[40dvh] lg:max-h-none shrink-0 border-b lg:border-b-0 border-gray-200 dark:border-slate-800">
+        <div className="p-5 overflow-y-auto bg-gray-50/60 dark:bg-slate-950/40 max-h-[42dvh] lg:max-h-none shrink-0 border-b lg:border-b-0 border-gray-200 dark:border-slate-800">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{name.trim() || 'Preview'}</h3>
-            {running && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{name.trim() || 'Live preview'}</h3>
+              {description.trim() && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{description.trim()}</p>}
+            </div>
+            {running && <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />}
           </div>
-          {previewErr ? (
-            <p className="py-10 text-center text-sm text-red-500">{previewErr}</p>
-          ) : preview ? (
-            <ReportResultView result={preview} />
-          ) : (
-            <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">Configure the report to see a preview.</p>
-          )}
+          <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 min-h-[220px] flex flex-col justify-center">
+            {previewErr ? (
+              <p className="py-10 text-center text-sm text-red-500">{previewErr}</p>
+            ) : preview ? (
+              <ReportResultView result={preview} />
+            ) : (
+              <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">Configure the report to see a preview.</p>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800">
+      <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
         <Button variant="outline" onClick={onClose}>Cancel</Button>
         <Button onClick={handleSave} disabled={!canSave}>{report ? 'Save changes' : 'Create report'}</Button>
       </div>

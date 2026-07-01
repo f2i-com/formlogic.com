@@ -11,7 +11,7 @@ interface ModalProps {
   title?: React.ReactNode;
   description?: string;
   children: React.ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
   showCloseButton?: boolean;
   // Accessible name for dialogs that render their own heading (so no visible
   // header is shown) — e.g. ConfirmDialog. Ignored when `title` is set.
@@ -122,6 +122,7 @@ export function Modal({
     md: 'max-w-[calc(100%-2rem)] sm:max-w-md',
     lg: 'max-w-[calc(100%-2rem)] sm:max-w-lg',
     xl: 'max-w-[calc(100%-2rem)] sm:max-w-xl',
+    '2xl': 'max-w-[calc(100%-2rem)] sm:max-w-5xl',
     full: 'max-w-[calc(100%-2rem)] sm:max-w-4xl',
   };
 

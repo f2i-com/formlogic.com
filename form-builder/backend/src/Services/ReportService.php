@@ -30,7 +30,9 @@ class ReportService
     private const DATE_OPS = ['last_n_days', 'this_month', 'this_year', 'today'];
     private const AGGS = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'];
     private const BUCKETS = ['none', 'day', 'month', 'year'];
-    private const VIZ = ['table', 'bar', 'pie', 'kpi'];
+    private const VIZ = ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'];
+    // Chart types that group + aggregate into a series (label/value pairs).
+    private const SERIES_VIZ = ['bar', 'line', 'area', 'pie', 'donut'];
     private const SKIP_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
     private const NUMERIC_TYPES = ['number', 'rating', 'scale'];
     private const DATE_TYPES = ['date', 'datetime'];
@@ -207,8 +209,8 @@ class ReportService
                 return ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
             }
 
-            // ── bar / pie (group + aggregate; array group-by values are unnested via json_each) ──
-            if (($viz === 'bar' || $viz === 'pie') && !empty($spec['groupBy']['field'])) {
+            // ── chart series (group + aggregate; array group-by values are unnested via json_each) ──
+            if (in_array($viz, self::SERIES_VIZ, true) && !empty($spec['groupBy']['field'])) {
                 $gref = (string) $spec['groupBy']['field'];
                 $gcol = $refExpr($gref);
                 if ($gcol === null) { return ['viz' => $viz, 'series' => []]; }
