@@ -12,35 +12,10 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
-import { api, resolveFileUrl, type CatalogPack, type PackFacet } from '../lib/api';
+import { api, type CatalogPack, type PackFacet } from '../lib/api';
 
-/**
- * A pack's marketplace thumbnail: the captured dashboard screenshot when we have one, otherwise a
- * branded gradient tile with the pack's emoji. Same aspect ratio either way so the grid stays even.
- */
-function PackThumb({ pack, className = '' }: { pack: CatalogPack; className?: string }) {
-  const [broken, setBroken] = useState(false);
-  const showImage = pack.screenshot && !broken;
-  return (
-    <div
-      className={`relative aspect-[16/10] w-full overflow-hidden rounded-lg bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-500/15 dark:to-slate-800 ${className}`}
-    >
-      {showImage ? (
-        <img
-          src={resolveFileUrl(pack.screenshot)}
-          alt={`${pack.name} dashboard preview`}
-          loading="lazy"
-          onError={() => setBroken(true)}
-          className="h-full w-full object-cover object-top"
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center">
-          <span className="text-5xl opacity-90" aria-hidden="true">{pack.icon || '📦'}</span>
-        </div>
-      )}
-    </div>
-  );
-}
+// Cards intentionally show only the emoji icon — the dashboard screenshot is too detailed to read at
+// card size, so it's shown (enlargeable) on the pack detail page instead.
 
 export default function PackGalleryPage() {
   const navigate = useNavigate();
@@ -199,12 +174,11 @@ export default function PackGalleryPage() {
                 <button
                   key={pack.id}
                   onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="group text-left rounded-xl border border-amber-200 dark:border-amber-500/30 bg-white dark:bg-slate-900 overflow-hidden hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+                  className="group text-left rounded-xl border border-amber-200 dark:border-amber-500/30 bg-white dark:bg-slate-900 p-4 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
                 >
-                  <PackThumb pack={pack} className="rounded-none" />
-                  <div className="p-4">
+                  <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xl" aria-hidden="true">{pack.icon || '📦'}</span>
+                      <span className="text-2xl shrink-0" aria-hidden="true">{pack.icon || '📦'}</span>
                       <p className="font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>
                       <Badge variant="warning" size="sm" className="ml-auto shrink-0">Featured</Badge>
                     </div>
@@ -324,12 +298,11 @@ export default function PackGalleryPage() {
                 <button
                   key={pack.id}
                   onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="group text-left rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+                  className="group text-left rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
                 >
-                  <PackThumb pack={pack} className="rounded-none" />
-                  <div className="p-4">
+                  <div>
                     <div className="flex items-center gap-2">
-                      <span className="text-xl shrink-0" aria-hidden="true">{pack.icon || '📦'}</span>
+                      <span className="text-2xl shrink-0" aria-hidden="true">{pack.icon || '📦'}</span>
                       <p className="font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>
                       {pack.featured && <Badge variant="warning" size="sm" className="ml-auto shrink-0">Featured</Badge>}
                     </div>
