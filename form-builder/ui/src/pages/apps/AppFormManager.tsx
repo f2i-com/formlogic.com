@@ -110,27 +110,29 @@ export function AppFormManager() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
-  // Form ids that already belong to ANOTHER app. A form should live in one app, so the "available"
-  // list only offers standalone (app-less) forms — never one that's part of a different app.
-  const [otherAppFormIds, setOtherAppFormIds] = useState<Set<string>>(new Set());
+  // Forms that aren't standalone: they belong to ANOTHER app, or came from a pack installation.
+  // The "available" list only offers truly single, self-created forms — a form should live in one
+  // place, and pack forms are managed through their pack.
+  const [nonStandaloneFormIds, setNonStandaloneFormIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await api.getApps();
-      const apps = (res.data?.apps ?? []) as Array<{ id: string }>;
+      const [appsRes, packsRes] = await Promise.all([api.getApps(), api.getInstalledPacks()]);
+      const apps = (appsRes.data?.apps ?? []) as Array<{ id: string }>;
       const memberships = await Promise.all(
         apps.filter((a) => a.id !== appId).map((a) => api.getAppForms(a.id))
       );
       if (cancelled) return;
       const ids = new Set<string>();
       memberships.forEach((m) => ((m.data?.forms ?? []) as Array<{ formId: string }>).forEach((f) => ids.add(f.formId)));
-      setOtherAppFormIds(ids);
+      (packsRes.data?.installations ?? []).forEach((inst) => (inst.formIds ?? []).forEach((id) => ids.add(id)));
+      setNonStandaloneFormIds(ids);
     })();
     return () => { cancelled = true; };
   }, [appId]);
 
   const includedFormIds = appForms.map((f) => f.formId);
-  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !otherAppFormIds.has(f.id));
+  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !nonStandaloneFormIds.has(f.id));
 
   const handleAdd = async (formId: string) => {
     if (!appId) return;
