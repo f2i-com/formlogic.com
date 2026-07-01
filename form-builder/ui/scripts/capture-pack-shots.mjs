@@ -58,14 +58,26 @@ async function main() {
   }, THEME);
 
   // Authenticate as the shared Demo account; the cookie is stored in the context jar and sent on the
-  // SPA's credentialed cross-origin calls to the API (same registrable domain).
-  const start = await context.request.post(`${API_BASE}/demo/start`, { headers: { 'Content-Type': 'application/json' }, data: {} });
-  if (!start.ok()) { log(`demo/start failed: ${start.status()}`); await browser.close(); process.exit(1); }
+  // SPA's credentialed cross-origin calls to the API (same registrable domain). The session can be
+  // invalidated MID-RUN (a burst of ~19 dashboards can trip per-user rate limits, which the SPA
+  // treats as expiry and purges) — so re-minting is available to the retry loop below.
+  const mintSession = async () => {
+    const r = await context.request.post(`${API_BASE}/demo/start`, { headers: { 'Content-Type': 'application/json' }, data: {} });
+    return r.ok();
+  };
+  if (!(await mintSession())) { log('demo/start failed'); await browser.close(); process.exit(1); }
 
   const page = await context.newPage();
 
   async function snap(appSlug, file) {
-    await page.goto(`${APP_BASE}/app/${appSlug}`, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(`${APP_BASE}/app/${appSlug}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(1000);
+    // Session dropped mid-run → the app shell shows its auth guard instead of the dashboard.
+    if (await page.getByText('Sign in to continue').count()) {
+      await mintSession();
+      await page.waitForTimeout(600);
+      await page.goto(`${APP_BASE}/app/${appSlug}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    }
     // The dashboard is a sandboxed iframe; wait for it to mount, then give the SDK time to fetch
     // records and paint charts before snapping.
     await page.waitForSelector('iframe', { timeout: 30000 });
@@ -88,7 +100,7 @@ async function main() {
   for (const { catalogSlug, appSlug, label, file } of manifest) {
     const outFile = file || `${catalogSlug}.png`;
     let lastErr;
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await snap(appSlug, outFile);
         ok++;
@@ -97,6 +109,8 @@ async function main() {
         break;
       } catch (e) {
         lastErr = e;
+        await mintSession(); // most mid-run failures are a dropped demo session
+        await page.waitForTimeout(800);
       }
     }
     if (lastErr) log(`✗ ${outFile}  (${label || catalogSlug}) — ${lastErr.message}`);

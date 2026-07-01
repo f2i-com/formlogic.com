@@ -6,16 +6,116 @@ import {
   Star,
   Download,
   ChevronLeft,
-  Loader2,
+  ArrowRight,
   Sparkles,
   Tag as TagIcon,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Badge } from '../components/ui/Badge';
-import { api, type CatalogPack, type PackFacet } from '../lib/api';
+import { Skeleton } from '../components/ui/Skeleton';
+import { PackIcon } from '../components/ui/PackIcon';
+import { api, resolveFileUrl, type CatalogPack, type PackFacet } from '../lib/api';
+import { useMarketplaceChrome, useReveal } from '../lib/marketplaceChrome';
 
-// Cards intentionally show only the emoji icon — the dashboard screenshot is too detailed to read at
-// card size, so it's shown (enlargeable) on the pack detail page instead.
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** Numbered mono eyebrow — the landing page's "engineered catalog" section marker. */
+function SectionTag({ index, label }: { index: string; label: string }) {
+  return (
+    <div className="fl-mono inline-flex items-center gap-2.5 text-xs uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 mb-5">
+      <span className="opacity-60">{index}</span>
+      <span className="h-px w-8 bg-primary-500/40" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+/**
+ * One pack card, used for both the featured row and the main grid. Leads with the
+ * captured dashboard screenshot (16:10) — the fastest way to judge a pack — and
+ * hides zero-value social proof: no star row until someone has rated, no download
+ * count until someone has installed.
+ */
+function PackCard({ pack, onOpen }: { pack: CatalogPack; onOpen: () => void }) {
+  const shot = pack.screenshots?.[0]?.url || pack.screenshot;
+  return (
+    <button
+      onClick={onOpen}
+      className="group flex flex-col text-left rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/50 overflow-hidden hover:border-primary-300 dark:hover:border-primary-500/30 hover:shadow-xl hover:shadow-primary-500/[0.05] hover:-translate-y-0.5 transition-all duration-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+    >
+      <div className="relative w-full aspect-[16/10] overflow-hidden border-b border-gray-200/80 dark:border-slate-800 bg-gray-50 dark:bg-slate-900">
+        {shot ? (
+          <img
+            src={resolveFileUrl(shot)}
+            alt=""
+            loading="lazy"
+            className="absolute inset-0 h-full w-full object-cover object-top"
+          />
+        ) : (
+          <div className="fl-grid absolute inset-0 flex items-center justify-center">
+            <PackIcon icon={pack.icon} className="h-10 w-10 text-primary-500/60" emojiClassName="text-4xl" />
+          </div>
+        )}
+        {pack.featured && (
+          <span className="fl-mono absolute top-2.5 right-2.5 rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary-foreground shadow-md shadow-primary-600/30">
+            Featured
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex min-w-0 items-center gap-2">
+          {pack.icon && shot && (
+            <PackIcon icon={pack.icon} className="h-4 w-4 shrink-0 text-primary-500" emojiClassName="shrink-0 text-lg leading-none" />
+          )}
+          <p className="truncate font-semibold text-gray-900 dark:text-white">{pack.name}</p>
+        </div>
+        {pack.description && (
+          <p className="mt-1.5 text-sm text-gray-500 dark:text-slate-400 line-clamp-2">{pack.description}</p>
+        )}
+        <div className="fl-mono mt-auto flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-3 text-[11px] text-gray-400 dark:text-slate-500">
+          <span className="whitespace-nowrap">
+            {plural(pack.formCount, 'form')} · {plural(pack.appCount, 'app')}
+          </span>
+          {pack.category && (
+            <span className="rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-wider text-gray-500 dark:text-slate-400">
+              {pack.category}
+            </span>
+          )}
+          {pack.ratingCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 text-gray-500 dark:text-slate-400"
+              aria-label={`Rated ${pack.avgRating.toFixed(1)} out of 5 by ${pack.ratingCount}`}
+            >
+              <Star className="h-3 w-3 fill-amber-400 text-amber-400" aria-hidden="true" />
+              {pack.avgRating.toFixed(1)}
+              <span className="opacity-70">({pack.ratingCount})</span>
+            </span>
+          )}
+          {pack.downloadCount > 0 && (
+            <span className="inline-flex items-center gap-1" aria-label={`${pack.downloadCount} installs`}>
+              <Download className="h-3 w-3" aria-hidden="true" />
+              {pack.downloadCount}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+/** Card-shaped placeholder so the grid doesn't jump when the catalog arrives. */
+function PackCardSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/50">
+      <Skeleton className="aspect-[16/10] w-full rounded-none" />
+      <div className="space-y-2.5 border-t border-gray-200/80 dark:border-slate-800 p-4">
+        <Skeleton className="h-4 w-2/3" />
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-1/2" />
+      </div>
+    </div>
+  );
+}
 
 export default function PackGalleryPage() {
   const navigate = useNavigate();
@@ -33,6 +133,13 @@ export default function PackGalleryPage() {
   const [error, setError] = useState<string | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadSeqRef = useRef(0);
+
+  useMarketplaceChrome();
+  useReveal();
+
+  useEffect(() => {
+    document.title = 'Marketplace — FormLogic';
+  }, []);
 
   const filtering = Boolean(searchQuery || categoryFilter || tagFilter);
 
@@ -105,100 +212,101 @@ export default function PackGalleryPage() {
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [searchQuery, sortBy, categoryFilter, tagFilter, page, loadPacks]);
 
-  const renderStars = (rating: number) => (
-    <div className="flex items-center gap-0.5" role="img" aria-label={`Rated ${rating.toFixed(1)} out of 5`}>
-      {[1, 2, 3, 4, 5].map((s) => (
-        <Star
-          key={s}
-          aria-hidden="true"
-          className={`h-3.5 w-3.5 ${s <= Math.round(rating) ? 'fill-amber-400 text-amber-400' : 'text-gray-300 dark:text-slate-600'}`}
-        />
-      ))}
-    </div>
-  );
-
   const chipClass = (active: boolean) =>
-    `px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+    `fl-mono px-3 py-1.5 rounded-full text-[11px] uppercase tracking-wider border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
       active
-        ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300'
-        : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-700'
+        ? 'border-primary-500/50 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+        : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 text-gray-500 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-700 hover:text-gray-700 dark:hover:text-slate-200'
     }`;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
-      {/* Header */}
-      <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800">
-        <div className="max-w-6xl mx-auto px-4 py-3">
+    <div className="min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
+      {/* Slim top bar */}
+      <header className="relative z-20 border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
           <button
             onClick={() => navigate(-1)}
-            className="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            className="fl-mono inline-flex cursor-pointer items-center gap-1.5 rounded text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             Back
           </button>
+          <a
+            href="/#demo"
+            className="fl-mono inline-flex items-center gap-1.5 rounded text-xs uppercase tracking-wider text-primary-600 dark:text-primary-400 transition-colors hover:text-primary-700 dark:hover:text-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            Try them live in the demo
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
         </div>
-      </div>
+      </header>
 
-      {/* Hero */}
-      <div className="bg-gradient-to-b from-primary-50 to-white dark:from-primary-950/30 dark:to-slate-950 border-b border-gray-200 dark:border-slate-800">
-        <div className="max-w-6xl mx-auto px-4 py-12 text-center">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">App Marketplace</h1>
-          <p className="text-gray-600 dark:text-slate-400 mt-2 max-w-lg mx-auto">
-            Install a ready-made business app — forms, workflow, and a live dashboard — in one click. Browse by
-            category, or search for your trade.
+      {/* Hero — same blueprint-grid + glow grammar as the landing page */}
+      <section className="relative overflow-hidden border-b border-gray-100 dark:border-slate-800/60 px-4 pt-14 pb-12 sm:px-6 sm:pt-20 sm:pb-16 lg:px-8">
+        <div
+          className="fl-grid pointer-events-none absolute inset-0"
+          style={{
+            maskImage: 'radial-gradient(ellipse 75% 80% at 50% 20%, #000 0%, transparent 78%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 75% 80% at 50% 20%, #000 0%, transparent 78%)',
+          }}
+        />
+        <div className="pointer-events-none absolute -top-24 left-1/2 h-[420px] w-[900px] -translate-x-1/2 rounded-full bg-primary-600/10 opacity-70 blur-[120px]" />
+
+        <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center text-center">
+          <div data-reveal className="fl-reveal">
+            <SectionTag index="01" label="Marketplace" />
+          </div>
+          <h1
+            data-reveal
+            className="fl-display fl-reveal text-4xl text-gray-900 dark:text-white sm:text-6xl"
+            style={{ transitionDelay: '80ms' }}
+          >
+            Install a working
+            <br />
+            <span className="fl-grad">business app</span>
+          </h1>
+          <p
+            data-reveal
+            className="fl-reveal mt-5 max-w-xl text-base leading-relaxed text-gray-500 dark:text-slate-400 sm:text-lg"
+            style={{ transitionDelay: '160ms' }}
+          >
+            Every pack is a complete app — forms, workflow, and a live dashboard — ready to install in one
+            click. Browse by category, or search for your trade.
           </p>
-          <div className="max-w-md mx-auto mt-6 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <div data-reveal className="fl-reveal relative mt-8 w-full max-w-md" style={{ transitionDelay: '240ms' }}>
+            <Search className="absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400 dark:text-slate-500" aria-hidden="true" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
               placeholder="Search apps…"
               aria-label="Search packs"
-              className="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white shadow-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              className="w-full rounded-xl border border-gray-200 dark:border-slate-800 bg-white/90 dark:bg-slate-900/70 py-3 pl-11 pr-4 text-gray-900 dark:text-white shadow-sm backdrop-blur-sm placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
         {/* Featured row */}
         {!filtering && featuredPacks.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-amber-500" />
-              Featured
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="mb-10">
+            <div className="fl-mono mb-4 flex items-center gap-2.5 text-xs uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400">
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              <span>Featured</span>
+              <span className="h-px flex-1 bg-primary-500/20" />
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {featuredPacks.map((pack) => (
-                <button
-                  key={pack.id}
-                  onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="group text-left rounded-xl border border-amber-200 dark:border-amber-500/30 bg-white dark:bg-slate-900 p-4 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl shrink-0" aria-hidden="true">{pack.icon || '📦'}</span>
-                      <p className="font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>
-                      <Badge variant="warning" size="sm" className="ml-auto shrink-0">Featured</Badge>
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5 line-clamp-2">{pack.description}</p>
-                    <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 dark:text-slate-400">
-                      {renderStars(pack.avgRating)}
-                      <span className="inline-flex items-center gap-0.5 ml-1">
-                        <Download className="h-3 w-3" /> {pack.downloadCount}
-                      </span>
-                    </div>
-                  </div>
-                </button>
+                <PackCard key={pack.id} pack={pack} onOpen={() => navigate(`/packs/${pack.slug}`)} />
               ))}
             </div>
           </div>
         )}
 
         {/* Category chips (dynamic) */}
-        <div className="flex flex-wrap items-center gap-3 mb-4">
-          <div className="flex-1 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="flex flex-1 flex-wrap gap-2">
             <button
               onClick={() => { setCategoryFilter(''); setTagFilter(''); setPage(1); }}
               className={chipClass(!categoryFilter && !tagFilter)}
@@ -220,10 +328,10 @@ export default function PackGalleryPage() {
             value={sortBy}
             onChange={(e) => { setSortBy(e.target.value); setPage(1); }}
             aria-label="Sort packs"
-            className="rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm text-gray-900 dark:text-white px-3 py-1.5"
+            className="rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <option value="popular">Popular</option>
-            <option value="top_rated">Top Rated</option>
+            <option value="top_rated">Top rated</option>
             <option value="newest">Newest</option>
             <option value="name">Name</option>
           </select>
@@ -231,9 +339,9 @@ export default function PackGalleryPage() {
 
         {/* Tag cloud (dynamic) */}
         {tags.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 mb-6">
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-400 dark:text-slate-500">
-              <TagIcon className="h-3.5 w-3.5" /> Tags
+          <div className="mb-6 flex flex-wrap items-center gap-2">
+            <span className="fl-mono inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-gray-400 dark:text-slate-500">
+              <TagIcon className="h-3.5 w-3.5" aria-hidden="true" /> Tags
             </span>
             {tags.slice(0, 14).map((tag) => (
               <button
@@ -244,7 +352,7 @@ export default function PackGalleryPage() {
                   if (next) setCategoryFilter('');
                   setPage(1);
                 }}
-                className={`px-2.5 py-1 rounded-md text-xs transition-colors cursor-pointer border ${
+                className={`fl-mono cursor-pointer rounded-md border px-2.5 py-1 text-[11px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                   tagFilter === tag.name
                     ? 'border-primary-300 dark:border-primary-500/40 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
                     : 'border-transparent bg-gray-100 dark:bg-slate-800/60 text-gray-500 dark:text-slate-400 hover:bg-gray-200 dark:hover:bg-slate-700'
@@ -258,7 +366,7 @@ export default function PackGalleryPage() {
 
         {/* Active filter summary */}
         {filtering && (
-          <div className="flex items-center gap-2 mb-4 text-sm text-gray-500 dark:text-slate-400">
+          <div className="mb-4 flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
             <span>
               {categoryFilter && <>Category: <strong className="text-gray-700 dark:text-slate-200">{categoryFilter}</strong></>}
               {tagFilter && <>Tag: <strong className="text-gray-700 dark:text-slate-200">{tagFilter}</strong></>}
@@ -266,7 +374,7 @@ export default function PackGalleryPage() {
             </span>
             <button
               onClick={() => { setSearchQuery(''); setCategoryFilter(''); setTagFilter(''); setPage(1); }}
-              className="text-xs text-primary-600 dark:text-primary-400 hover:underline cursor-pointer"
+              className="cursor-pointer rounded text-xs text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             >
               Clear
             </button>
@@ -275,77 +383,39 @@ export default function PackGalleryPage() {
 
         {/* Pack grid */}
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading apps">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <PackCardSkeleton key={i} />
+            ))}
           </div>
         ) : error ? (
-          <div role="alert" className="text-center py-16 text-gray-500 dark:text-slate-400">
-            <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+          <div role="alert" className="py-16 text-center text-gray-500 dark:text-slate-400">
+            <Package className="mx-auto mb-3 h-12 w-12 opacity-50" />
             <p className="text-lg font-medium text-gray-700 dark:text-slate-300">Couldn’t load apps</p>
-            <p className="text-sm mt-1">{error}</p>
+            <p className="mt-1 text-sm">{error}</p>
             <Button variant="outline" className="mt-4" onClick={() => loadPacks()}>Try again</Button>
           </div>
         ) : packs.length === 0 ? (
-          <div className="text-center py-16 text-gray-400 dark:text-slate-500">
-            <Package className="h-12 w-12 mx-auto mb-3 opacity-50" />
+          <div className="py-16 text-center text-gray-400 dark:text-slate-500">
+            <Package className="mx-auto mb-3 h-12 w-12 opacity-50" />
             <p className="text-lg font-medium">No apps found</p>
-            <p className="text-sm mt-1">Try adjusting your search or filters.</p>
+            <p className="mt-1 text-sm">Try adjusting your search or filters.</p>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {packs.map((pack) => (
-                <button
-                  key={pack.id}
-                  onClick={() => navigate(`/packs/${pack.slug}`)}
-                  className="group text-left rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 hover:border-gray-300 dark:hover:border-slate-700 hover:shadow-lg transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
-                >
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl shrink-0" aria-hidden="true">{pack.icon || '📦'}</span>
-                      <p className="font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>
-                      {pack.featured && <Badge variant="warning" size="sm" className="ml-auto shrink-0">Featured</Badge>}
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5 line-clamp-2">{pack.description}</p>
-                    <div className="flex items-center gap-3 mt-2.5 text-xs text-gray-500 dark:text-slate-400">
-                      <span className="inline-flex items-center gap-1">
-                        {renderStars(pack.avgRating)}
-                        <span className="ml-0.5">({pack.ratingCount})</span>
-                      </span>
-                      <span className="inline-flex items-center gap-0.5">
-                        <Download className="h-3 w-3" /> {pack.downloadCount}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 dark:text-slate-400">
-                      <span>{pack.formCount} forms</span>
-                      <span className="text-gray-300 dark:text-slate-600">&middot;</span>
-                      <span>{pack.appCount} apps</span>
-                      {pack.publisherName && (
-                        <>
-                          <span className="text-gray-300 dark:text-slate-600">&middot;</span>
-                          <span className="truncate">by {pack.publisherName}</span>
-                        </>
-                      )}
-                    </div>
-                    {pack.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2.5">
-                        {pack.tags.slice(0, 3).map((tag) => (
-                          <Badge key={tag} variant="default" size="sm">{tag}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </button>
+                <PackCard key={pack.id} pack={pack} onOpen={() => navigate(`/packs/${pack.slug}`)} />
               ))}
             </div>
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-8">
+              <div className="mt-8 flex items-center justify-center gap-2">
                 <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
                   Previous
                 </Button>
-                <span className="text-sm text-gray-600 dark:text-slate-400">
+                <span className="fl-mono text-xs text-gray-500 dark:text-slate-400">
                   Page {page} of {totalPages}
                 </span>
                 <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>

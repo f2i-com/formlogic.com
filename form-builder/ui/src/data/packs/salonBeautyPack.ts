@@ -341,7 +341,7 @@ export const salonBeautyPack: PackData = {
       name: 'Salon',
       description:
         'A salon operations hub: manage clients, the service menu and stylist roster, book and track appointments, and record product sales from one dashboard.',
-      settings: {},
+      settings: { icon: 'Scissors' },
       theme: {
         primaryColor: '#db2777',
         backgroundColor: '#0f172a',

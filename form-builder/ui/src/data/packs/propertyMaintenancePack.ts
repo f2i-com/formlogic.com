@@ -386,7 +386,7 @@ export const propertyMaintenancePack: PackData = {
       name: 'Maintenance',
       description:
         'A property-maintenance operations hub for property managers and handymen: track properties, tenants, maintenance requests, work orders and inspections from one dashboard.',
-      settings: {},
+      settings: { icon: 'Hammer' },
       theme: {
         primaryColor: '#0d9488',
         backgroundColor: '#0f172a',

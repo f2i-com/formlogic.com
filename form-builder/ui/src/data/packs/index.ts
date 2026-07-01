@@ -33,7 +33,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['finance', 'compliance', 'onboarding', 'united-states'],
     formCount: financeOsPack.forms.length,
     appCount: financeOsPack.apps?.length ?? 0,
-    icon: '\uD83C\uDFE6', // 🏦
+    icon: 'DollarSign',
     pack: financeOsPack as unknown as PackData,
   },
   {
@@ -44,7 +44,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['finance', 'compliance', 'onboarding', 'australia', 'afsl'],
     formCount: financeOsAuPack.forms.length,
     appCount: financeOsAuPack.apps?.length ?? 0,
-    icon: '\uD83E\uDD98', // 🦘
+    icon: 'Wallet',
     pack: financeOsAuPack as unknown as PackData,
   },
   {
@@ -55,7 +55,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['safety', 'quality', 'ohs', 'iso-45001', 'iso-9001', 'compliance'],
     formCount: ohsQmsPack.forms.length,
     appCount: ohsQmsPack.apps?.length ?? 0,
-    icon: '\u26D1\uFE0F', // ⛑️
+    icon: 'ShieldCheck',
     pack: ohsQmsPack as unknown as PackData,
   },
   {
@@ -66,7 +66,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['hr', 'people', 'recruitment', 'onboarding', 'leave', 'performance'],
     formCount: hrPeoplePack.forms.length,
     appCount: hrPeoplePack.apps?.length ?? 0,
-    icon: '\uD83D\uDC65', // 👥
+    icon: 'Users',
     pack: hrPeoplePack as unknown as PackData,
   },
   {
@@ -77,7 +77,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['events', 'registration', 'speakers', 'vendors', 'volunteers', 'feedback'],
     formCount: eventManagementPack.forms.length,
     appCount: eventManagementPack.apps?.length ?? 0,
-    icon: '\uD83C\uDF89', // 🎉
+    icon: 'Ticket',
     pack: eventManagementPack as unknown as PackData,
   },
   {
@@ -88,7 +88,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['customer-service', 'support', 'crm', 'tickets', 'feedback', 'helpdesk'],
     formCount: customerServicePack.forms.length,
     appCount: customerServicePack.apps?.length ?? 0,
-    icon: '\uD83C\uDFA7', // 🎧
+    icon: 'LifeBuoy',
     pack: customerServicePack as unknown as PackData,
   },
   {
@@ -99,7 +99,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['plumbing', 'trades', 'field-service', 'jobs', 'scheduling'],
     formCount: plumbingFieldServicePack.forms.length,
     appCount: plumbingFieldServicePack.apps?.length ?? 0,
-    icon: '🔧', // 🔧
+    icon: 'Wrench',
     pack: plumbingFieldServicePack as unknown as PackData,
   },
   {
@@ -110,7 +110,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['invoicing', 'jobs', 'quotes', 'billing', 'operations'],
     formCount: jobInvoicePack.forms.length,
     appCount: jobInvoicePack.apps?.length ?? 0,
-    icon: '🧾', // 🧾
+    icon: 'Receipt',
     pack: jobInvoicePack as unknown as PackData,
   },
   {
@@ -121,7 +121,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['salon', 'beauty', 'appointments', 'bookings', 'clients'],
     formCount: salonBeautyPack.forms.length,
     appCount: salonBeautyPack.apps?.length ?? 0,
-    icon: '💇', // 💇
+    icon: 'Scissors',
     pack: salonBeautyPack as unknown as PackData,
   },
   {
@@ -132,7 +132,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['mechanic', 'automotive', 'workshop', 'repairs', 'vehicles'],
     formCount: mechanicWorkshopPack.forms.length,
     appCount: mechanicWorkshopPack.apps?.length ?? 0,
-    icon: '🚗', // 🚗
+    icon: 'Car',
     pack: mechanicWorkshopPack as unknown as PackData,
   },
   {
@@ -143,7 +143,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['property', 'maintenance', 'handyman', 'jobs', 'landlord'],
     formCount: propertyMaintenancePack.forms.length,
     appCount: propertyMaintenancePack.apps?.length ?? 0,
-    icon: '🏠', // 🏠
+    icon: 'Home',
     pack: propertyMaintenancePack as unknown as PackData,
   },
   {
@@ -154,7 +154,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['clinic', 'appointments', 'intake', 'patients', 'front-desk'],
     formCount: clinicIntakePack.forms.length,
     appCount: clinicIntakePack.apps?.length ?? 0,
-    icon: '🩺', // 🩺
+    icon: 'Stethoscope',
     pack: clinicIntakePack as unknown as PackData,
   },
   {
@@ -165,7 +165,7 @@ export const packCatalog: PackCatalogEntry[] = [
     tags: ['inventory', 'purchasing', 'stock', 'suppliers', 'warehouse'],
     formCount: inventoryPurchaseOrdersPack.forms.length,
     appCount: inventoryPurchaseOrdersPack.apps?.length ?? 0,
-    icon: '📦', // 📦
+    icon: 'Package',
     pack: inventoryPurchaseOrdersPack as unknown as PackData,
   },
 ];

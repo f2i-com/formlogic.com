@@ -165,13 +165,14 @@ foreach (glob(__DIR__ . '/../resources/marketplace-packs/*.json') ?: [] as $file
     ];
 }
 
-$sampleIcons = ['crm' => "\u{1F91D}", 'sales' => "\u{1F91D}", 'expense' => "\u{1F4B3}", 'onboard' => "\u{1F9D1}\u{200D}\u{1F4BC}", 'people' => "\u{1F9D1}\u{200D}\u{1F4BC}"];
+// Lucide icon NAMES (flat vector, rendered by the SPA's PackIcon/DynamicIcon), not emoji.
+$sampleIcons = ['crm' => 'Handshake', 'sales' => 'Handshake', 'expense' => 'CreditCard', 'onboard' => 'UserCheck', 'people' => 'UserCheck'];
 foreach (glob(__DIR__ . '/../resources/sample-apps/*.json') ?: [] as $file) {
     $p = json_decode((string) file_get_contents($file), true);
     if (!is_array($p) || empty($p['packMeta'])) { out("  skip (bad sample) " . basename($file)); continue; }
     $meta = $p['packMeta'];
     $key = basename($file, '.json');
-    $icon = "\u{1F4E6}";
+    $icon = 'Package';
     foreach ($sampleIcons as $frag => $emoji) { if (str_contains(strtolower($key . ' ' . ($meta['name'] ?? '')), $frag)) { $icon = $emoji; break; } }
     $slug = slugify($meta['name'] ?? $key);
     $tags = $meta['tags'] ?? ['sample'];
@@ -367,6 +368,23 @@ function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
         $stmt = $pdo->prepare("UPDATE apps SET custom_screen = ? WHERE owner_id = ? AND name = ?");
         $stmt->execute([json_encode($cs), $demoId, $name]);
         $n += $stmt->rowCount();
+        // Also sync the pack-authored app icon (settings.icon) onto already-installed demo apps —
+        // installs copy settings once, so icon additions would otherwise never reach the demo.
+        $icon = is_array($app['settings'] ?? null) ? ($app['settings']['icon'] ?? null) : null;
+        if (is_string($icon) && $icon !== '') {
+            $sel = $pdo->prepare("SELECT id, settings FROM apps WHERE owner_id = ? AND name = ?");
+            $sel->execute([$demoId, $name]);
+            foreach ($sel->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $settings = json_decode((string) ($row['settings'] ?? '{}'), true);
+                $settings = is_array($settings) ? $settings : [];
+                if (($settings['icon'] ?? null) === $icon) {
+                    continue;
+                }
+                $settings['icon'] = $icon;
+                $pdo->prepare("UPDATE apps SET settings = ? WHERE id = ?")
+                    ->execute([json_encode($settings), $row['id']]);
+            }
+        }
     }
     return $n;
 }

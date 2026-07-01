@@ -24,6 +24,7 @@ import {
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
+import { PackIcon } from '../ui/PackIcon';
 import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
@@ -503,7 +504,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       >
                         {/* Card header: icon + name row (screenshot shown on the detail view, not here) */}
                         <div className="flex items-center gap-3 mb-2">
-                          <span className="text-2xl leading-none flex-shrink-0">{pack.icon || '📦'}</span>
+                          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-primary-500/10" aria-hidden="true">
+                            <PackIcon icon={pack.icon} className="h-4.5 w-4.5 text-primary-600 dark:text-primary-400" emojiClassName="text-2xl leading-none" />
+                          </span>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-700 dark:group-hover:text-primary-300 transition-colors">
                               {pack.name}
@@ -720,7 +723,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       className="p-3 rounded-lg border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900"
                     >
                       <div className="flex items-start gap-3">
-                        <span className="text-2xl leading-none">{pack.icon || '📦'}</span>
+                        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary-50 dark:bg-primary-500/10" aria-hidden="true">
+                          <PackIcon icon={pack.icon} className="h-4.5 w-4.5 text-primary-600 dark:text-primary-400" emojiClassName="text-2xl leading-none" />
+                        </span>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{pack.name}</p>

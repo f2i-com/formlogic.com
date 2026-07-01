@@ -372,7 +372,7 @@ export const clinicIntakePack: PackData = {
       name: 'Front Desk',
       description:
         'A front-desk hub for a small clinic: register patients, manage providers, book appointments, capture intake and consent, and schedule follow-ups from one dashboard.',
-      settings: {},
+      settings: { icon: 'Stethoscope' },
       theme: {
         primaryColor: '#0891b2',
         backgroundColor: '#0f172a',

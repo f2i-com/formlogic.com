@@ -6,8 +6,8 @@ import {
   Download,
   Star,
   Package,
-  FileJson,
-  Globe,
+  FileText,
+  LayoutGrid,
   Calendar,
   User,
   ChevronDown,
@@ -17,17 +17,28 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { PackIcon } from '../components/ui/PackIcon';
 import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../lib/api';
 import { PackScreenshots } from '../components/builder/PackScreenshots';
 import { toast } from '../stores/toastStore';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
 import { useAuthStore } from '../stores/authStore';
+import { useMarketplaceChrome } from '../lib/marketplaceChrome';
+
+type PackDetail = CatalogPack & {
+  versions: PackVersionInfo[];
+  formTitles?: string[];
+  appNames?: string[];
+};
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export default function PackDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  useMarketplaceChrome();
   // Send anonymous visitors to sign in (preserving where they were) instead of
   // letting install/rate dead-end on an auth error.
   const goSignIn = useCallback(
@@ -35,7 +46,7 @@ export default function PackDetailPage() {
     [navigate]
   );
 
-  const [pack, setPack] = useState<(CatalogPack & { versions: PackVersionInfo[] }) | null>(null);
+  const [pack, setPack] = useState<PackDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
@@ -48,9 +59,16 @@ export default function PackDetailPage() {
   const [ratingInput, setRatingInput] = useState(0);
   const [reviewInput, setReviewInput] = useState('');
   const [submittingRating, setSubmittingRating] = useState(false);
+  // With no reviews the ratings block collapses to one quiet line; this expands
+  // the rating form for whoever wants to be first.
+  const [showRatingForm, setShowRatingForm] = useState(false);
 
   const refreshForms = useFormStore((s) => s.refreshForms);
   const fetchApps = useAppStore((s) => s.fetchApps);
+
+  useEffect(() => {
+    document.title = pack ? `${pack.name} — FormLogic marketplace` : 'Marketplace — FormLogic';
+  }, [pack]);
 
   useEffect(() => {
     if (!slug) return;
@@ -200,7 +218,7 @@ export default function PackDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
         <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
       </div>
     );
@@ -208,141 +226,223 @@ export default function PackDetailPage() {
 
   if (!pack) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-white dark:bg-slate-950">
         <div className="text-center">
-          <Package className="h-12 w-12 mx-auto mb-3 text-gray-400 opacity-50" />
+          <Package className="mx-auto mb-3 h-12 w-12 text-gray-400 opacity-50" />
           <p className="text-lg font-medium text-gray-600 dark:text-slate-400">Pack not found</p>
           <Button variant="outline" className="mt-4" onClick={() => navigate('/packs')}>
-            Browse Packs
+            Back to marketplace
           </Button>
         </div>
       </div>
     );
   }
 
+  const formTitles = pack.formTitles ?? [];
+  const appNames = pack.appNames ?? [];
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
+    <div className="min-h-screen overflow-x-clip bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50">
       {/* Breadcrumb */}
-      <div className="bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400">
-          <Link to="/packs" className="hover:text-gray-700 dark:hover:text-slate-300 inline-flex items-center gap-1">
-            <ArrowLeft className="h-4 w-4" />
-            Packs
+      <div className="border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
+        <div className="fl-mono mx-auto flex h-12 max-w-4xl items-center gap-2 px-4 text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 sm:px-6">
+          <Link
+            to="/packs"
+            className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+            Marketplace
           </Link>
-          <span>/</span>
-          <span className="text-gray-900 dark:text-white font-medium">{pack.name}</span>
+          <span className="text-gray-300 dark:text-slate-700">/</span>
+          <span className="truncate normal-case tracking-normal font-medium text-gray-900 dark:text-white">{pack.name}</span>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-        {/* Header */}
-        <div className="flex items-start gap-5">
-          <span className="text-5xl leading-none">{pack.icon || '📦'}</span>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{pack.name}</h1>
-            <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-gray-500 dark:text-slate-400">
-              <span className="inline-flex items-center gap-1">
-                <User className="h-4 w-4" />
-                {pack.publisherName || 'Unknown'}
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="h-4 w-4" />
-                Published {parseServerDate(pack.createdAt).toLocaleDateString()}
-              </span>
-              {pack.latestVersion && (
-                <Badge variant="default" size="sm">v{pack.latestVersion}</Badge>
+      {/* Header, on the landing page's blueprint-grid backdrop */}
+      <div className="relative overflow-hidden">
+        <div
+          className="fl-grid pointer-events-none absolute inset-0"
+          style={{
+            maskImage: 'radial-gradient(ellipse 70% 95% at 50% 0%, #000 0%, transparent 75%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 70% 95% at 50% 0%, #000 0%, transparent 75%)',
+          }}
+        />
+        <div className="pointer-events-none absolute -top-24 left-1/2 h-[320px] w-[700px] -translate-x-1/2 rounded-full bg-primary-600/10 opacity-70 blur-[110px]" />
+
+        <div className="relative mx-auto max-w-4xl px-4 pt-10 pb-6 sm:px-6">
+          <div className="flex items-start gap-5">
+            <span
+              className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 text-4xl leading-none shadow-sm"
+              aria-hidden="true"
+            >
+              <PackIcon icon={pack.icon} className="h-8 w-8 text-primary-500" emojiClassName="text-4xl leading-none" />
+            </span>
+            <div className="min-w-0 flex-1">
+              {pack.category && (
+                <p className="fl-mono mb-1.5 text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400">
+                  {pack.category}
+                </p>
               )}
+              <h1 className="fl-display text-3xl text-gray-900 dark:text-white sm:text-4xl">{pack.name}</h1>
+              <div className="fl-mono mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-gray-500 dark:text-slate-400">
+                <span className="inline-flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5" aria-hidden="true" />
+                  {pack.publisherName || 'Unknown'}
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
+                  Published {parseServerDate(pack.createdAt).toLocaleDateString()}
+                </span>
+                {pack.latestVersion && (
+                  <span className="rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5">
+                    v{pack.latestVersion}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Dashboard preview(s) — one per app, click to enlarge */}
+      <div className="mx-auto max-w-4xl space-y-6 px-4 pb-12 sm:px-6">
+        {/* Dashboard preview(s) — one per app, aspect-true, click to enlarge */}
         <PackScreenshots
           shots={pack.screenshots?.length ? pack.screenshots : (pack.screenshot ? [{ label: pack.name, url: pack.screenshot }] : [])}
           maxHeight="max-h-[420px]"
         />
 
-        {/* Stats + Install */}
-        <div className="flex flex-wrap items-center gap-6 p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800">
-          <div className="flex items-center gap-2">
-            {renderStars(Math.round(pack.avgRating), 'h-5 w-5')}
-            <span className="text-gray-700 dark:text-slate-300 font-medium">
-              {pack.avgRating.toFixed(1)}
-            </span>
-            <span className="text-gray-500 dark:text-slate-400">({pack.ratingCount} ratings)</span>
+        {/* Stats + install. Zero-value social proof stays hidden: no star row or
+            download count until the pack has actually been rated/installed. */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
+          {pack.ratingCount > 0 && (
+            <div className="flex items-center gap-2">
+              {renderStars(Math.round(pack.avgRating))}
+              <span className="fl-mono text-sm font-medium text-gray-700 dark:text-slate-300">
+                {pack.avgRating.toFixed(1)}
+              </span>
+              <span className="fl-mono text-xs text-gray-400 dark:text-slate-500">
+                ({plural(pack.ratingCount, 'rating')})
+              </span>
+            </div>
+          )}
+          {pack.downloadCount > 0 && (
+            <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+              <Download className="h-4 w-4" aria-hidden="true" />
+              <span>{plural(pack.downloadCount, 'install')}</span>
+            </div>
+          )}
+          <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+            <FileText className="h-4 w-4" aria-hidden="true" />
+            <span>{plural(pack.formCount, 'form')}</span>
           </div>
-          <div className="flex items-center gap-1.5 text-gray-500 dark:text-slate-400">
-            <Download className="h-4 w-4" />
-            <span>{pack.downloadCount} downloads</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-gray-500 dark:text-slate-400">
-            <FileJson className="h-4 w-4" />
-            <span>{pack.formCount} forms</span>
-          </div>
-          <div className="flex items-center gap-1.5 text-gray-500 dark:text-slate-400">
-            <Globe className="h-4 w-4" />
-            <span>{pack.appCount} apps</span>
+          <div className="fl-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+            <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+            <span>{plural(pack.appCount, 'app')}</span>
           </div>
           <div className="flex-1" />
           {installed ? (
             <Button variant="outline" disabled>
-              <CheckCircle className="h-4 w-4 mr-1.5 text-green-500" />
+              <CheckCircle className="mr-1.5 h-4 w-4 text-green-500" />
               Installed
             </Button>
           ) : (
             <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
-              {!installing && <Package className="h-4 w-4 mr-1.5" />}
-              {installing ? 'Installing...' : (user ? 'Install Pack' : 'Sign in to install')}
+              {!installing && <Package className="mr-1.5 h-4 w-4" />}
+              {installing ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
             </Button>
           )}
         </div>
 
         {/* Description */}
         {pack.description && (
-          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800">
-            <h2 className="font-semibold text-gray-900 dark:text-white mb-2">About</h2>
-            <p className="text-sm text-gray-600 dark:text-slate-400 leading-relaxed whitespace-pre-line">
+          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
+            <h2 className="font-semibold text-gray-900 dark:text-white">About</h2>
+            <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-gray-600 dark:text-slate-400">
               {pack.description}
             </p>
             {pack.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
+              <div className="mt-3 flex flex-wrap gap-1.5">
                 {pack.tags.map((tag) => (
-                  <Badge key={tag} variant="default" size="sm">{tag}</Badge>
+                  <span
+                    key={tag}
+                    className="fl-mono rounded-full border border-gray-200 dark:border-slate-700 px-2 py-0.5 text-[11px] text-gray-500 dark:text-slate-400"
+                  >
+                    {tag}
+                  </span>
                 ))}
               </div>
             )}
           </div>
         )}
 
-        {/* Version History */}
+        {/* What's inside — the actual forms and apps this pack installs */}
+        {(appNames.length > 0 || formTitles.length > 0) && (
+          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
+            <h2 className="font-semibold text-gray-900 dark:text-white">What’s inside</h2>
+            <div className="mt-4 grid gap-6 sm:grid-cols-2">
+              {appNames.length > 0 && (
+                <div>
+                  <p className="fl-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500">
+                    {plural(appNames.length, 'app')}
+                  </p>
+                  <ul className="space-y-2">
+                    {appNames.map((name, i) => (
+                      <li key={`${name}-${i}`} className="flex items-start gap-2.5 text-sm text-gray-700 dark:text-slate-300">
+                        <LayoutGrid className="mt-0.5 h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                        <span className="min-w-0 break-words">{name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {formTitles.length > 0 && (
+                <div>
+                  <p className="fl-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500">
+                    {plural(formTitles.length, 'form')}
+                  </p>
+                  <ul className="space-y-2">
+                    {formTitles.map((title, i) => (
+                      <li key={`${title}-${i}`} className="flex items-start gap-2.5 text-sm text-gray-700 dark:text-slate-300">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                        <span className="min-w-0 break-words">{title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Version history */}
         {pack.versions && pack.versions.length > 0 && (
-          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800">
+          <div className="rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
             <button
               type="button"
               onClick={() => setVersionsExpanded((v) => !v)}
-              className="flex items-center gap-2 font-semibold text-gray-900 dark:text-white cursor-pointer w-full text-left"
+              className="flex w-full cursor-pointer items-center gap-2 rounded text-left font-semibold text-gray-900 dark:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             >
               {versionsExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              Version History ({pack.versions.length})
+              Version history ({pack.versions.length})
             </button>
             {versionsExpanded && (
               <div className="mt-3 space-y-3">
                 {pack.versions.map((v, i) => (
-                  <div key={v.id} className="flex items-start gap-3 text-sm border-l-2 border-gray-200 dark:border-slate-700 pl-3">
+                  <div key={v.id} className="flex items-start gap-3 border-l-2 border-gray-200 dark:border-slate-700 pl-3 text-sm">
                     <Badge variant={i === 0 ? 'success' : 'default'} size="sm">v{v.version}</Badge>
                     <div className="flex-1">
-                      <span className="text-gray-500 dark:text-slate-400 text-xs">
+                      <span className="fl-mono text-xs text-gray-500 dark:text-slate-400">
                         {new Date(v.created_at).toLocaleDateString()} &middot; {v.form_count} forms, {v.app_count} apps{i === 0 ? ' · latest' : ''}
                       </span>
                       {v.changelog && (
-                        <p className="text-gray-600 dark:text-slate-400 text-xs mt-0.5">{v.changelog}</p>
+                        <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-400">{v.changelog}</p>
                       )}
                     </div>
                     {!installed && (
                       <button
                         onClick={() => handleInstall(v.id)}
                         disabled={installing}
-                        className="flex-shrink-0 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 cursor-pointer"
+                        className="flex-shrink-0 cursor-pointer rounded text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
                       >
                         Install this version
                       </button>
@@ -354,90 +454,104 @@ export default function PackDetailPage() {
           </div>
         )}
 
-        {/* Ratings & Reviews */}
-        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 space-y-4">
-          <h2 className="font-semibold text-gray-900 dark:text-white">Ratings & Reviews</h2>
+        {/* Ratings & reviews. With no reviews this collapses to a single quiet
+            line so an empty pack page isn't dominated by an empty ratings block. */}
+        {ratings.length > 0 || userRating || showRatingForm ? (
+          <div className="space-y-4 rounded-2xl border border-gray-200/80 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 sm:p-5">
+            <h2 className="font-semibold text-gray-900 dark:text-white">Ratings and reviews</h2>
 
-          {/* Rating form */}
-          <div className="p-3 rounded-lg bg-gray-50 dark:bg-slate-800/50 border border-gray-200 dark:border-slate-700">
-            <p className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
-              {userRating ? 'Update your rating' : 'Rate this pack'}
-            </p>
-            <div className="flex items-center gap-1 mb-2">
-              {[1, 2, 3, 4, 5].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setRatingInput(s)}
-                  onMouseEnter={() => setHoverRating(s)}
-                  onMouseLeave={() => setHoverRating(0)}
-                  aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`}
-                  aria-pressed={s === ratingInput}
-                  className="cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-                >
-                  <Star
-                    aria-hidden="true"
-                    className={`h-6 w-6 transition-colors ${
-                      s <= (hoverRating || ratingInput)
-                        ? 'fill-amber-400 text-amber-400'
-                        : 'text-gray-300 dark:text-slate-600'
-                    }`}
-                  />
-                </button>
-              ))}
-            </div>
-            <textarea
-              value={reviewInput}
-              onChange={(e) => setReviewInput(e.target.value)}
-              placeholder="Write a review (optional)..."
-              rows={3}
-              className="w-full text-sm rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-900 dark:text-white p-2 resize-none focus:ring-1 focus:ring-primary-500"
-            />
-            <div className="flex justify-end gap-2 mt-2">
-              {userRating && (
+            {/* Rating form */}
+            <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3">
+              <p className="mb-2 text-sm font-medium text-gray-700 dark:text-slate-300">
+                {userRating ? 'Update your rating' : 'Rate this pack'}
+              </p>
+              <div className="mb-2 flex items-center gap-1">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setRatingInput(s)}
+                    onMouseEnter={() => setHoverRating(s)}
+                    onMouseLeave={() => setHoverRating(0)}
+                    aria-label={`Rate ${s} star${s === 1 ? '' : 's'}`}
+                    aria-pressed={s === ratingInput}
+                    className="cursor-pointer rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                  >
+                    <Star
+                      aria-hidden="true"
+                      className={`h-6 w-6 transition-colors ${
+                        s <= (hoverRating || ratingInput)
+                          ? 'fill-amber-400 text-amber-400'
+                          : 'text-gray-300 dark:text-slate-600'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={reviewInput}
+                onChange={(e) => setReviewInput(e.target.value)}
+                placeholder="Write a review (optional)…"
+                rows={3}
+                className="w-full resize-none rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 text-sm text-gray-900 dark:text-white focus:ring-1 focus:ring-primary-500"
+              />
+              <div className="mt-2 flex justify-end gap-2">
+                {userRating && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleRemoveRating}
+                    disabled={submittingRating}
+                  >
+                    Remove
+                  </Button>
+                )}
                 <Button
                   size="sm"
-                  variant="ghost"
-                  onClick={handleRemoveRating}
-                  disabled={submittingRating}
+                  variant="primary"
+                  onClick={handleSubmitRating}
+                  disabled={!ratingInput}
+                  isLoading={submittingRating}
                 >
-                  Remove
+                  {userRating ? 'Update rating' : 'Submit rating'}
                 </Button>
-              )}
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={handleSubmitRating}
-                disabled={!ratingInput}
-                isLoading={submittingRating}
-              >
-                {userRating ? 'Update Rating' : 'Submit Rating'}
-              </Button>
+              </div>
             </div>
-          </div>
 
-          {/* Reviews */}
-          {ratings.length > 0 ? (
-            <div className="space-y-3">
-              {ratings.map((r) => (
-                <div key={r.id} className="border-b border-gray-100 dark:border-slate-800 pb-3 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-gray-700 dark:text-slate-300">{r.userName}</span>
-                    {renderStars(r.rating)}
-                    <span className="text-xs text-gray-400 dark:text-slate-500">
-                      {parseServerDate(r.createdAt).toLocaleDateString()}
-                    </span>
+            {/* Reviews */}
+            {ratings.length > 0 ? (
+              <div className="space-y-3">
+                {ratings.map((r) => (
+                  <div key={r.id} className="border-b border-gray-100 dark:border-slate-800 pb-3 last:border-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-700 dark:text-slate-300">{r.userName}</span>
+                      {renderStars(r.rating)}
+                      <span className="fl-mono text-xs text-gray-400 dark:text-slate-500">
+                        {parseServerDate(r.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {r.review && (
+                      <p className="mt-1 text-sm text-gray-600 dark:text-slate-400">{r.review}</p>
+                    )}
                   </div>
-                  {r.review && (
-                    <p className="mt-1 text-sm text-gray-600 dark:text-slate-400">{r.review}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 dark:text-slate-500">No reviews yet. Be the first to rate this pack!</p>
-          )}
-        </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 dark:text-slate-500">No reviews yet.</p>
+            )}
+          </div>
+        ) : (
+          <p className="px-1 text-sm text-gray-400 dark:text-slate-500">
+            No reviews yet.{' '}
+            <button
+              type="button"
+              onClick={() => (user ? setShowRatingForm(true) : goSignIn())}
+              className="cursor-pointer rounded text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+            >
+              Be the first to review this pack
+            </button>
+          </p>
+        )}
       </div>
     </div>
   );

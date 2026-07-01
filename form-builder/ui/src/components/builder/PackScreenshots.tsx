@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { resolveFileUrl, type PackScreenshot } from '../../lib/api';
 
 /**
- * A pack's dashboard screenshots — one per app. Shows the selected shot at a readable size (click to
- * enlarge in a fullscreen lightbox); when a pack has more than one app, a labelled tab row switches
- * between them. Renders nothing when there are no screenshots.
+ * A pack's dashboard screenshots — one per app. Shows the selected shot aspect-true (object-contain
+ * on a fixed 16:10 surface, so tall dashboards aren't beheaded by a top crop); click to enlarge in a
+ * fullscreen lightbox. When a pack has more than one app, a labelled tab row switches between them.
+ * Renders nothing when there are no screenshots. `maxHeight` caps the surface in tight layouts —
+ * the image letterboxes inside it.
  */
 export function PackScreenshots({ shots, maxHeight = 'max-h-[420px]' }: { shots: PackScreenshot[]; maxHeight?: string }) {
   const [active, setActive] = useState(0);
@@ -39,15 +41,17 @@ export function PackScreenshots({ shots, maxHeight = 'max-h-[420px]' }: { shots:
       <button
         type="button"
         onClick={() => setZoom(true)}
-        className="group block w-full overflow-hidden rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        className="group block w-full overflow-hidden rounded-xl border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900 cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
         aria-label={`View ${cur.label || 'dashboard'} preview`}
       >
-        <img
-          src={resolveFileUrl(cur.url)}
-          alt={`${cur.label || 'Dashboard'} preview`}
-          loading="lazy"
-          className={`w-full ${maxHeight} object-cover object-top transition-opacity group-hover:opacity-95`}
-        />
+        <div className={`aspect-[16/10] ${maxHeight} w-full`}>
+          <img
+            src={resolveFileUrl(cur.url)}
+            alt={`${cur.label || 'Dashboard'} preview`}
+            loading="lazy"
+            className="h-full w-full object-contain transition-opacity group-hover:opacity-95"
+          />
+        </div>
       </button>
 
       {zoom && (

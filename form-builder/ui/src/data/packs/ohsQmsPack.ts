@@ -1489,7 +1489,7 @@ export const ohsQmsPack: PackData = {
       name: 'Safety Management',
       description:
         'Centralised OHS management hub for incident reporting, injury tracking, hazard identification, safety meetings, and plant/equipment management.',
-      settings: {},
+      settings: { icon: 'HardHat' },
       theme: {
         primaryColor: '#dc2626',
         backgroundColor: '#0f172a',
@@ -1846,7 +1846,7 @@ export const ohsQmsPack: PackData = {
       name: 'Quality & Compliance',
       description:
         'Quality management hub for audits, corrective actions, non-conformance tracking, complaint management, and training compliance.',
-      settings: {},
+      settings: { icon: 'ClipboardCheck' },
       theme: {
         primaryColor: '#2563eb',
         backgroundColor: '#0f172a',

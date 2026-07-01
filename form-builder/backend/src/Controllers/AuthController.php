@@ -266,11 +266,15 @@ class AuthController
                 continue;
             }
             $info = $packInfo[$app['id'] ?? ''] ?? ['packName' => '', 'tags' => []];
+            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
             $out[] = [
                 'slug' => $app['slug'] ?? null,
                 'name' => $app['name'] ?? 'App',
                 'description' => $app['description'] ?? '',
                 'logoUrl' => $app['logoUrl'] ?? null,
+                'icon' => is_string($settings['icon'] ?? null) ? $settings['icon'] : null,
+                'accent' => is_string($theme['primaryColor'] ?? null) ? $theme['primaryColor'] : null,
                 'packName' => $info['packName'],
                 'tags' => $info['tags'],
             ];

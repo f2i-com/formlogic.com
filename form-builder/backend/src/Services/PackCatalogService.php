@@ -191,7 +191,8 @@ class PackCatalogService
                    u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,
-                   pv.app_count
+                   pv.app_count,
+                   pv.pack_data AS latest_pack_data
             FROM pack_catalog pc
             JOIN users u ON u.id = pc.publisher_id
             LEFT JOIN pack_versions pv ON pv.id = (
@@ -209,6 +210,31 @@ class PackCatalogService
         }
 
         $result = $this->formatPack($pack);
+
+        // "What's inside" for the marketplace detail page: the actual form/app
+        // names, parsed from the latest version's stored pack JSON. Detail-only —
+        // browse/list queries never pay for decoding the pack_data blob.
+        $formTitles = [];
+        $appNames = [];
+        if (!empty($pack['latest_pack_data'])) {
+            $packData = json_decode((string) $pack['latest_pack_data'], true);
+            if (is_array($packData)) {
+                $forms = is_array($packData['forms'] ?? null) ? $packData['forms'] : [];
+                foreach ($forms as $form) {
+                    if (is_array($form) && is_string($form['title'] ?? null) && $form['title'] !== '') {
+                        $formTitles[] = $form['title'];
+                    }
+                }
+                $apps = is_array($packData['apps'] ?? null) ? $packData['apps'] : [];
+                foreach ($apps as $app) {
+                    if (is_array($app) && is_string($app['name'] ?? null) && $app['name'] !== '') {
+                        $appNames[] = $app['name'];
+                    }
+                }
+            }
+        }
+        $result['formTitles'] = $formTitles;
+        $result['appNames'] = $appNames;
 
         // Get all versions
         $vStmt = $this->mysql->prepare("

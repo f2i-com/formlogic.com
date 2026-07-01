@@ -405,7 +405,7 @@ export const mechanicWorkshopPack: PackData = {
       name: 'Workshop',
       description:
         'A workshop operations hub for an auto mechanic: track customers, vehicles, job cards, parts used and invoices from one dashboard.',
-      settings: {},
+      settings: { icon: 'Car' },
       theme: {
         primaryColor: '#ea580c',
         backgroundColor: '#0f172a',

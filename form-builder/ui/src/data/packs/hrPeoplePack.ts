@@ -967,7 +967,7 @@ export const hrPeoplePack: PackData = {
       name: 'People Hub',
       description:
         'Centralised HR management platform covering recruitment, employee onboarding, leave management, performance reviews, expenses, training, and exit processes.',
-      settings: {},
+      settings: { icon: 'Users' },
       theme: {
         primaryColor: '#7c3aed',
         backgroundColor: '#0f172a',

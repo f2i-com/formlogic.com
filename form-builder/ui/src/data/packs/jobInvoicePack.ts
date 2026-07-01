@@ -428,7 +428,7 @@ export const jobInvoicePack: PackData = {
       name: 'Billing Pipeline',
       description:
         'A universal job-to-cash workspace for any service business: manage clients, jobs, quotes, invoices, and payments with a live billing dashboard.',
-      settings: {},
+      settings: { icon: 'Receipt' },
       theme: {
         primaryColor: '#7c3aed',
         backgroundColor: '#0f172a',

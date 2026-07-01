@@ -754,7 +754,7 @@ export const eventManagementPack: PackData = {
       name: 'Event Hub',
       description:
         'Centralised event management platform covering registration, speaker coordination, vendor management, volunteer sign-ups, incident logging, budget tracking, and post-event feedback.',
-      settings: {},
+      settings: { icon: 'Ticket' },
       theme: {
         primaryColor: '#0891b2',
         backgroundColor: '#0f172a',

@@ -380,7 +380,7 @@ export const inventoryPurchaseOrdersPack: PackData = {
       name: 'Inventory',
       description:
         'A stock-control and purchasing hub: track products, suppliers, purchase orders, line items and stock movements — with low-stock alerts and live stock value — from one dashboard.',
-      settings: {},
+      settings: { icon: 'Package' },
       theme: {
         primaryColor: '#6366f1',
         backgroundColor: '#0f172a',

@@ -713,7 +713,7 @@ export const customerServicePack: PackData = {
       name: 'Service Desk',
       description:
         'Centralised customer service platform covering support tickets, bug reports, feature requests, escalation management, refund processing, customer feedback, and knowledge base.',
-      settings: {},
+      settings: { icon: 'LifeBuoy' },
       theme: {
         primaryColor: '#059669',
         backgroundColor: '#0f172a',

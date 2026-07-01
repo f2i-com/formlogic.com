@@ -10,7 +10,7 @@
     "leave",
     "performance"
   ],
-  "icon": "👥",
+  "icon": "Users",
   "pack": {
     "formatVersion": 1,
     "packMeta": {
@@ -1589,7 +1589,9 @@
         "packAppId": "people-hub",
         "name": "People Hub",
         "description": "Centralised HR management platform covering recruitment, employee onboarding, leave management, performance reviews, expenses, training, and exit processes.",
-        "settings": {},
+        "settings": {
+          "icon": "Users"
+        },
         "theme": {
           "primaryColor": "#7c3aed",
           "backgroundColor": "#0f172a",

@@ -1436,7 +1436,7 @@ export const financeOsPack: PackData = {
       name: 'Client Onboarding Navigator',
       description:
         'Guide new clients through the full onboarding workflow: intake, risk assessment, disclosures, document collection, tax forms, and beneficiary designations.',
-      settings: {},
+      settings: { icon: 'Briefcase' },
       theme: {
         primaryColor: '#4f46e5',
         backgroundColor: '#0f172a',
@@ -1797,7 +1797,7 @@ export const financeOsPack: PackData = {
       name: 'Advisor Transition Hub',
       description:
         'Manage all aspects of an advisor book-of-business transition: client re-papering, account transfers, fee agreements, exchanges, and rollovers.',
-      settings: {},
+      settings: { icon: 'Send' },
       theme: {
         primaryColor: '#059669',
         backgroundColor: '#0f172a',

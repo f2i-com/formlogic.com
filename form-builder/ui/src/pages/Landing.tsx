@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Database,
@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Check,
   Menu,
+  Minus,
   X,
   Zap,
   Globe,
@@ -80,6 +81,34 @@ function useReveal() {
   }, []);
 }
 
+// Minimal browser chrome around a real product screenshot — same traffic-light
+// treatment as the terminal window further down, so the page reads as one set.
+function BrowserFrame({
+  url,
+  className = '',
+  children,
+}: {
+  url: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-gray-200/90 dark:border-slate-700/60 bg-white dark:bg-slate-900 overflow-hidden shadow-[0_1px_2px_rgba(15,23,42,0.05),0_16px_40px_-12px_rgba(15,23,42,0.18)] dark:shadow-[0_1px_2px_rgba(0,0,0,0.5),0_24px_56px_-16px_rgba(0,0,0,0.55)] ${className}`}
+    >
+      <div className="h-10 flex items-center gap-2 px-4 bg-gray-50 dark:bg-slate-900 border-b border-gray-200/80 dark:border-slate-800">
+        <div className="flex items-center gap-1.5" aria-hidden="true">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F57]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#FEBC2E]" />
+          <span className="w-2.5 h-2.5 rounded-full bg-[#28C840]" />
+        </div>
+        <span className="fl-mono text-[11px] text-gray-400 dark:text-slate-500 ml-3 min-w-0 truncate">{url}</span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 // Small mono eyebrow used to give each section an "engineered catalog" rhythm.
 function SectionTag({ index, label }: { index: string; label: string }) {
   return (
@@ -96,28 +125,46 @@ export function Landing() {
   useLandingChrome();
   useReveal();
 
-  // Capability highlights rather than (pre-launch, unverifiable) traction numbers.
-  const stats = [
-    { value: 'Self-host', label: 'Ready to deploy' },
-    { value: 'QuickJS', label: 'Sandboxed scripts' },
-    { value: 'SQLite', label: 'Per-form exports' },
-    { value: 'Yours', label: 'No vendor lock-in' },
+  // Quiet capability proof — no fake numerals, just what the product actually is.
+  const proofPoints = [
+    { icon: Globe, label: 'Self-hosted or cloud' },
+    { icon: Shield, label: 'Sandboxed JS runtime' },
+    { icon: Database, label: 'SQLite per form' },
+    { icon: Download, label: 'Your data, exportable' },
+  ];
+
+  // Marketplace apps shown as the real, running product — both themes represented.
+  const showcaseApps = [
+    {
+      src: '/landing/app-salon-light.png',
+      url: 'formlogic.app/apps/salon',
+      name: 'Salon',
+      caption: 'appointment book',
+      alt: "Salon app from the FormLogic marketplace — appointment book with today's bookings and client records",
+    },
+    {
+      src: '/landing/app-safety-dark.png',
+      url: 'formlogic.app/apps/safety',
+      name: 'Safety',
+      caption: 'days-without-incident',
+      alt: 'Safety app from the FormLogic marketplace — days-without-incident counter and incident log, in dark mode',
+    },
   ];
 
   const features = [
     {
       icon: Database,
-      title: 'Enterprise-Grade Data',
+      title: 'Enterprise-grade data',
       description: 'Each form gets a dedicated SQLite database. Export anytime, query with any tool. Your data, your format.',
     },
     {
       icon: Code2,
-      title: 'Programmable Logic',
+      title: 'Programmable logic',
       description: 'Execute server-side scripts on every submission. Score leads, validate data, route workflows automatically.',
     },
     {
       icon: Shield,
-      title: 'Secure by Design',
+      title: 'Secure by design',
       description: 'Sandboxed execution with strict limits. No client-side tampering. Your logic runs safely on our servers.',
     },
     {
@@ -127,34 +174,34 @@ export function Landing() {
     },
     {
       icon: Globe,
-      title: 'Self-Host Ready',
+      title: 'Self-host ready',
       description: 'Deploy on your own infrastructure with full source access. No vendor lock-in, complete control.',
     },
     {
       icon: BarChart3,
-      title: 'Built-in Analytics',
+      title: 'Built-in analytics',
       description: 'Track submissions, conversion rates, and response patterns. Insights out of the box, no setup required.',
     },
   ];
 
   const useCases = [
     {
-      title: 'Lead Qualification',
+      title: 'Lead qualification',
       description: 'Automatically score and route leads based on responses, company size, and budget.',
       icon: Users,
     },
     {
-      title: 'Application Processing',
+      title: 'Application processing',
       description: 'Build multi-step applications with server-validated eligibility and instant decisions.',
       icon: Building2,
     },
     {
-      title: 'Survey Intelligence',
+      title: 'Survey intelligence',
       description: 'Enrich responses with computed scores, classifications, and real-time analysis.',
       icon: BarChart3,
     },
     {
-      title: 'Workflow Automation',
+      title: 'Workflow automation',
       description: 'Trigger actions, update databases, and integrate with your stack on every submission.',
       icon: Zap,
     },
@@ -212,18 +259,33 @@ export function Landing() {
     },
   ];
 
-  // Detailed feature comparison shown under the plan cards.
-  const comparison: Array<{ feature: string; personal: string; enterprise: string }> = [
+  // Detailed feature comparison shown under the plan cards. Boolean cells
+  // render as Check/Minus icons instead of text.
+  const comparison: Array<{ feature: string; personal: string | boolean; enterprise: string | boolean }> = [
     { feature: 'Forms', personal: '100', enterprise: 'Unlimited' },
     { feature: 'Responses', personal: 'Unlimited (fair use)', enterprise: 'Unlimited' },
     { feature: 'Storage', personal: '1 GB', enterprise: 'Configurable' },
     { feature: 'Business apps', personal: 'Included', enterprise: 'Included' },
-    { feature: 'Backend scripts', personal: '✅', enterprise: '✅' },
-    { feature: 'API', personal: '✅', enterprise: '✅' },
+    { feature: 'Backend scripts', personal: true, enterprise: true },
+    { feature: 'API', personal: true, enterprise: true },
     { feature: 'AI (local)', personal: 'Unlimited', enterprise: 'Unlimited' },
-    { feature: 'Packs', personal: '✅', enterprise: '✅' },
+    { feature: 'Packs', personal: true, enterprise: true },
     { feature: 'Self-hosting', personal: 'Free', enterprise: 'Free / Commercial support' },
   ];
+
+  const renderPlanCell = (value: string | boolean) =>
+    typeof value === 'boolean' ? (
+      <span className="inline-flex items-center justify-end">
+        {value ? (
+          <Check className="h-4 w-4 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+        ) : (
+          <Minus className="h-4 w-4 text-gray-400 dark:text-slate-600" aria-hidden="true" />
+        )}
+        <span className="sr-only">{value ? 'Included' : 'Not included'}</span>
+      </span>
+    ) : (
+      value
+    );
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-primary-500/20 overflow-x-hidden">
@@ -239,6 +301,9 @@ export function Landing() {
               <a href="#solutions" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Solutions
               </a>
+              <Link to="/packs" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+                Marketplace
+              </Link>
               <a href="#pricing" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Pricing
               </a>
@@ -249,11 +314,11 @@ export function Landing() {
             <div className="hidden md:flex items-center gap-4">
               <ThemeToggle />
               <Link to="/login" className="text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
-                Sign In
+                Sign in
               </Link>
               <Link to="/signup">
                 <Button className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0 shadow-md shadow-primary-600/20">
-                  Get Started Free
+                  Get started free
                 </Button>
               </Link>
             </div>
@@ -284,6 +349,13 @@ export function Landing() {
             >
               Solutions
             </a>
+            <Link
+              to="/packs"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
+            >
+              Marketplace
+            </Link>
             <a
               href="#pricing"
               onClick={() => setMobileMenuOpen(false)}
@@ -308,10 +380,10 @@ export function Landing() {
                 onClick={() => setMobileMenuOpen(false)}
                 className="py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
               >
-                Sign In
+                Sign in
               </Link>
               <Link to="/signup" onClick={() => setMobileMenuOpen(false)}>
-                <Button className="w-full bg-primary-600 text-primary-foreground">Get Started Free</Button>
+                <Button className="w-full bg-primary-600 text-primary-foreground">Get started free</Button>
               </Link>
             </div>
           </div>
@@ -333,7 +405,7 @@ export function Landing() {
         <div className="absolute top-24 right-[8%] w-[440px] h-[440px] bg-primary-500/10 blur-[110px] rounded-full opacity-40 pointer-events-none" />
         <div className="absolute -bottom-10 left-[6%] w-[380px] h-[380px] bg-primary-400/8 blur-[110px] rounded-full opacity-30 pointer-events-none" />
 
-        <div className="relative max-w-5xl mx-auto text-center z-10">
+        <div className="relative max-w-6xl mx-auto text-center z-10">
           <div
             data-reveal
             className="fl-reveal inline-flex items-center gap-2.5 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm border border-primary-200/60 dark:border-primary-500/20 text-primary-700 dark:text-primary-300 pl-3 pr-4 py-1.5 rounded-full text-xs font-medium mb-8 shadow-sm shadow-primary-500/5"
@@ -385,7 +457,7 @@ export function Landing() {
           {/* Pipeline glimpse — the product's actual shape: submit → run logic → store */}
           <div
             data-reveal
-            className="fl-reveal flex flex-wrap items-center justify-center gap-x-3 gap-y-2 fl-mono text-xs text-gray-400 dark:text-slate-500 mb-16"
+            className="fl-reveal flex flex-wrap items-center justify-center gap-x-3 gap-y-2 fl-mono text-xs text-gray-400 dark:text-slate-500 mb-14"
             style={{ transitionDelay: '320ms' }}
           >
             <span className="px-3 py-1.5 rounded-full bg-gray-100/80 dark:bg-slate-900/70 border border-gray-200/70 dark:border-slate-800">submit()</span>
@@ -395,21 +467,45 @@ export function Landing() {
             <span className="px-3 py-1.5 rounded-full bg-primary-50 dark:bg-primary-500/10 border border-primary-200/70 dark:border-primary-500/25 text-primary-700 dark:text-primary-300">db.write()</span>
           </div>
 
-          {/* Stats */}
+          {/* Product visual — the actual app runtime, in a browser frame. Loaded
+              eagerly: it's the hero. Light/dark variants swap via CSS. */}
           <div
             data-reveal
-            className="fl-reveal grid grid-cols-2 md:grid-cols-4 gap-px max-w-4xl mx-auto rounded-2xl overflow-hidden border border-gray-200/80 dark:border-slate-800 bg-gray-200/60 dark:bg-slate-800/60"
+            className="fl-reveal relative max-w-5xl mx-auto"
             style={{ transitionDelay: '400ms' }}
           >
-            {stats.map((stat) => (
-              <div
-                key={stat.label}
-                className="text-center py-7 px-4 bg-white dark:bg-slate-950 group hover:bg-primary-50/50 dark:hover:bg-primary-500/[0.04] transition-colors duration-300"
-              >
-                <div className="fl-display text-3xl sm:text-[2.5rem] text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors tabular-nums">
-                  {stat.value}
-                </div>
-                <div className="fl-mono text-[11px] uppercase tracking-wider text-gray-400 dark:text-slate-500 mt-2">{stat.label}</div>
+            <div
+              aria-hidden="true"
+              className="absolute -inset-x-8 -top-10 h-72 bg-primary-500/15 dark:bg-primary-500/10 blur-[90px] rounded-full pointer-events-none"
+            />
+            <BrowserFrame url="formlogic.app/apps/inventory" className="relative">
+              <img
+                src="/landing/app-inventory-light.png"
+                width={1360}
+                height={900}
+                fetchPriority="high"
+                alt="FormLogic inventory app — sidebar navigation, stock dashboard, and a live records table, all built from forms"
+                className="block w-full h-auto dark:hidden"
+              />
+              <img
+                src="/landing/app-inventory-dark.png"
+                width={1360}
+                height={900}
+                alt="FormLogic inventory app in dark mode — sidebar navigation, stock dashboard, and a live records table"
+                className="hidden w-full h-auto dark:block"
+              />
+            </BrowserFrame>
+          </div>
+
+          {/* Quiet proof strip — capabilities, not fake traction numerals */}
+          <div
+            data-reveal
+            className="fl-reveal mt-12 flex flex-wrap items-center justify-center gap-x-9 gap-y-3 fl-mono text-[11px] uppercase tracking-wider text-gray-400 dark:text-slate-500"
+          >
+            {proofPoints.map((point) => (
+              <div key={point.label} className="flex items-center gap-2.5">
+                <point.icon className="h-4 w-4 text-primary-500/80 dark:text-primary-400/80" aria-hidden="true" />
+                <span>{point.label}</span>
               </div>
             ))}
           </div>
@@ -418,30 +514,6 @@ export function Landing() {
 
       {/* Live demo band — try a real app with no signup */}
       <LiveDemoSection />
-
-      {/* Trust Banner */}
-      <section className="py-9 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/30 border-y border-gray-100 dark:border-slate-800/50 backdrop-blur-sm">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-14 fl-mono text-gray-400 dark:text-slate-500 text-xs uppercase tracking-wider">
-            <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Shield className="h-4 w-4" />
-              <span>Sandboxed scripting</span>
-            </div>
-            <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Database className="h-4 w-4" />
-              <span>Per-form database</span>
-            </div>
-            <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Download className="h-4 w-4" />
-              <span>Export your data</span>
-            </div>
-            <div className="flex items-center gap-2.5 hover:text-gray-700 dark:hover:text-slate-300 transition-colors">
-              <Globe className="h-4 w-4" />
-              <span>Self-host or cloud</span>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* Features Section */}
       <section id="features" className="py-24 sm:py-32 px-4 sm:px-6 lg:px-8 relative">
@@ -666,6 +738,59 @@ export function Landing() {
               </div>
             ))}
           </div>
+
+          {/* Marketplace showcase — real installable apps, not mockups */}
+          <div data-reveal className="fl-reveal mt-24 text-center flex flex-col items-center">
+            <h3 className="fl-display text-2xl sm:text-4xl text-gray-900 dark:text-white mb-4">
+              Real apps on <span className="fl-grad">day one</span>
+            </h3>
+            <p className="text-lg text-gray-500 dark:text-slate-400 max-w-2xl mx-auto">
+              Install a ready-made app from the marketplace — forms, screens, and backend logic
+              included — then make it yours.
+            </p>
+          </div>
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-8 mt-12">
+            {showcaseApps.map((app, i) => (
+              <Link
+                key={app.name}
+                to="/packs"
+                data-reveal
+                className="fl-reveal group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-4 focus-visible:ring-offset-gray-50 dark:focus-visible:ring-offset-slate-950"
+                style={{ transitionDelay: `${i * 100}ms` }}
+              >
+                <figure>
+                  <BrowserFrame
+                    url={app.url}
+                    className="transition-all duration-300 group-hover:border-primary-300 dark:group-hover:border-primary-500/40 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:shadow-primary-500/[0.07]"
+                  >
+                    <img
+                      src={app.src}
+                      width={1360}
+                      height={900}
+                      loading="lazy"
+                      alt={app.alt}
+                      className="block w-full h-auto"
+                    />
+                  </BrowserFrame>
+                  <figcaption className="fl-mono mt-4 flex items-center justify-center gap-2 text-xs uppercase tracking-wider text-gray-400 dark:text-slate-500">
+                    <span className="text-gray-700 dark:text-slate-200">{app.name}</span>
+                    <span aria-hidden="true" className="opacity-50">·</span>
+                    <span>{app.caption}</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-primary-500/80 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all" aria-hidden="true" />
+                  </figcaption>
+                </figure>
+              </Link>
+            ))}
+          </div>
+          <div data-reveal className="fl-reveal text-center mt-10">
+            <Link
+              to="/packs"
+              className="group inline-flex items-center gap-2 text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 font-medium transition-colors"
+            >
+              Browse the marketplace
+              <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -695,7 +820,7 @@ export function Landing() {
                 {plan.highlighted && (
                   <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
                     <span className="fl-mono bg-primary-600 text-primary-foreground text-[11px] uppercase tracking-wider font-semibold px-4 py-1.5 rounded-full shadow-lg shadow-primary-600/30 whitespace-nowrap">
-                      Most Popular
+                      Most popular
                     </span>
                   </div>
                 )}
@@ -754,8 +879,8 @@ export function Landing() {
                   {comparison.map((row, i) => (
                     <tr key={row.feature} className={i > 0 ? 'border-t border-gray-100 dark:border-slate-800/60' : ''}>
                       <td className="px-4 sm:px-6 py-3 text-gray-600 dark:text-slate-300">{row.feature}</td>
-                      <td className="px-3 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{row.personal}</td>
-                      <td className="px-4 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{row.enterprise}</td>
+                      <td className="px-3 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{renderPlanCell(row.personal)}</td>
+                      <td className="px-4 sm:px-6 py-3 text-right text-gray-700 dark:text-slate-200">{renderPlanCell(row.enterprise)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -785,7 +910,7 @@ export function Landing() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
             <Link to="/signup">
               <Button size="lg" className="bg-white text-primary-700 hover:bg-primary-50 h-14 px-8 text-lg font-semibold shadow-2xl shadow-black/20 border-0">
-                Get Started Free
+                Get started free
                 <ArrowRight className="h-5 w-5 ml-2" />
               </Button>
             </Link>
@@ -806,7 +931,7 @@ export function Landing() {
             <div className="md:col-span-1">
               <Logo size="md" />
               <p className="text-gray-400 dark:text-slate-500 mt-6 text-sm leading-relaxed">
-                The form platform with backend logic. Built for developers and enterprises.
+                Build business apps from forms. Self-hosted or cloud, with your data in portable SQLite.
               </p>
             </div>
             <div>
@@ -818,13 +943,23 @@ export function Landing() {
                   </a>
                 </li>
                 <li>
-                  <a href="#pricing" className="hover:text-gray-900 dark:hover:text-white transition-colors">
-                    Pricing
+                  <a href="#solutions" className="hover:text-gray-900 dark:hover:text-white transition-colors">
+                    Solutions
                   </a>
                 </li>
                 <li>
-                  <a href="#solutions" className="hover:text-gray-900 dark:hover:text-white transition-colors">
-                    Solutions
+                  <Link to="/packs" className="hover:text-gray-900 dark:hover:text-white transition-colors">
+                    Marketplace
+                  </Link>
+                </li>
+                <li>
+                  <a href="#demo" className="hover:text-gray-900 dark:hover:text-white transition-colors">
+                    Live demo
+                  </a>
+                </li>
+                <li>
+                  <a href="#pricing" className="hover:text-gray-900 dark:hover:text-white transition-colors">
+                    Pricing
                   </a>
                 </li>
                 <li>
@@ -835,16 +970,16 @@ export function Landing() {
               </ul>
             </div>
             <div>
-              <h4 className="fl-mono text-gray-900 dark:text-white font-semibold mb-6 text-xs tracking-[0.2em] uppercase">Get Started</h4>
+              <h4 className="fl-mono text-gray-900 dark:text-white font-semibold mb-6 text-xs tracking-[0.2em] uppercase">Get started</h4>
               <ul className="space-y-4 text-gray-500 dark:text-slate-500 text-sm">
                 <li>
                   <Link to="/signup" className="hover:text-gray-900 dark:hover:text-white transition-colors">
-                    Sign Up
+                    Sign up
                   </Link>
                 </li>
                 <li>
                   <Link to="/login" className="hover:text-gray-900 dark:hover:text-white transition-colors">
-                    Sign In
+                    Sign in
                   </Link>
                 </li>
               </ul>

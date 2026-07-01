@@ -416,7 +416,7 @@ export const plumbingFieldServicePack: PackData = {
       name: 'Field Service',
       description:
         'A field-service operations hub for a plumbing or trades business: track customers, jobs, site visits, invoices and parts requests from one dashboard.',
-      settings: {},
+      settings: { icon: 'Wrench' },
       theme: {
         primaryColor: '#0284c7',
         backgroundColor: '#0f172a',

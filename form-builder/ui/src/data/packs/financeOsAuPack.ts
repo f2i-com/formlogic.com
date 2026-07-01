@@ -1376,7 +1376,7 @@ export const financeOsAuPack: PackData = {
       name: 'Client Onboarding (Australia)',
       description:
         'Guide new clients through the full Australian onboarding workflow: intake, risk assessment, FSG disclosure, document collection, TFN declaration, and death benefit nominations.',
-      settings: {},
+      settings: { icon: 'Compass' },
       theme: {
         primaryColor: '#4f46e5',
         backgroundColor: '#0f172a',
@@ -1740,7 +1740,7 @@ export const financeOsAuPack: PackData = {
       name: 'Portfolio Management Hub (Australia)',
       description:
         'Manage all aspects of Australian portfolio management: client records, off-market transfers, annual reviews, fee agreements, death benefit nominations, and superannuation rollovers.',
-      settings: {},
+      settings: { icon: 'PieChart' },
       theme: {
         primaryColor: '#0d9488',
         backgroundColor: '#0f172a',

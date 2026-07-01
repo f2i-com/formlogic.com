@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { PackIcon } from '../ui/PackIcon';
 import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../../lib/api';
 import { PackScreenshots } from './PackScreenshots';
 import { toast } from '../../stores/toastStore';
@@ -214,7 +215,9 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
 
       {/* Header */}
       <div className="flex items-start gap-4">
-        <span className="text-4xl leading-none">{pack.icon || '📦'}</span>
+        <span className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary-50 dark:bg-primary-500/10" aria-hidden="true">
+          <PackIcon icon={pack.icon} className="h-6 w-6 text-primary-600 dark:text-primary-400" emojiClassName="text-4xl leading-none" />
+        </span>
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white">{pack.name}</h2>
           <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-slate-400">

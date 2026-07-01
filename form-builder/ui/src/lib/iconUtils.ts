@@ -23,10 +23,10 @@ import {
   School, Presentation,
   Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
   Rocket,
-  // Names used by bundled packs' form icons (must be here or DynamicIcon falls
+  // Names used by bundled packs' form/app icons (must be here or DynamicIcon falls
   // back to the generic FileText for those forms).
   ArrowUpCircle, CalendarDays, HandHelping, LayoutGrid, LifeBuoy, LogOut, Mic,
-  Newspaper, PartyPopper, RotateCcw, Ticket,
+  Newspaper, PartyPopper, RotateCcw, Scissors, Ticket,
 } from 'lucide-react';
 
 // Explicit icon map. Importing lucide's `{ icons }` barrel and looking up by
@@ -59,7 +59,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Car, Truck, Plane, Ship, Train, Bus, Bike, Navigation, MapPin, Compass, Anchor,
   Rocket,
   ArrowUpCircle, CalendarDays, HandHelping, LayoutGrid, LifeBuoy, LogOut, Mic,
-  Newspaper, PartyPopper, RotateCcw, Ticket,
+  Newspaper, PartyPopper, RotateCcw, Scissors, Ticket,
 };
 
 export function getLucideIcon(name: string): LucideIcon | null {
@@ -96,7 +96,7 @@ export const ICON_CATEGORIES: Record<string, string[]> = {
     'Syringe', 'Cross', 'Hospital', 'Dna', 'Microscope',
   ],
   Tools: [
-    'Wrench', 'Hammer', 'Settings', 'Cog', 'SlidersHorizontal', 'Gauge',
+    'Wrench', 'Hammer', 'Scissors', 'Settings', 'Cog', 'SlidersHorizontal', 'Gauge',
     'Zap', 'Plug', 'Cpu', 'Database', 'Server', 'Terminal', 'Code', 'RotateCcw',
   ],
   Nature: [
