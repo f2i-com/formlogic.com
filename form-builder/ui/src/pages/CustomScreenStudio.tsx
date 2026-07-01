@@ -33,6 +33,9 @@ export default function CustomScreenStudio() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [compileError, setCompileError] = useState<string | null>(null);
+  // The AI "Describe the screen" panel is opt-in (default: just the editor), separate from whether the
+  // local AI is enabled in the env. When AI is available, a button reveals it.
+  const [showAi, setShowAi] = useState(false);
   const previewTimer = useRef<number | undefined>(undefined);
   const aiAvailable = useAiAvailable();
   useDocumentTitle(`Custom screen — ${title || 'Form'}`);
@@ -134,9 +137,12 @@ export default function CustomScreenStudio() {
         {/* Editor */}
         <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800 overflow-y-auto">
           <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
-            {aiAvailable ? (
+            {aiAvailable && showAi ? (
               <>
-                <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the screen</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-gray-500 dark:text-slate-400">Describe the screen</label>
+                  <button type="button" onClick={() => setShowAi(false)} className="text-xs text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer">Hide</button>
+                </div>
                 <textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -157,9 +163,11 @@ export default function CustomScreenStudio() {
                   </Button>
                 </div>
               </>
-            ) : (
-              <p className="text-xs text-gray-500 dark:text-slate-400">Write the screen code in the tabs below — it uses the FormLogic SDK (submit/records) over <span className="font-medium">{title || 'this form'}</span>. Or connect an external AI via the MCP server (Settings → Connect an AI).</p>
-            )}
+            ) : aiAvailable ? (
+              <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
+                <Sparkles className="h-3.5 w-3.5" /> Generate with AI
+              </button>
+            ) : null}
             <div className="pt-1 space-y-2">
               <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                 <input
