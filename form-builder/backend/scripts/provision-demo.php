@@ -416,14 +416,80 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
             $v = genValue($f, $i, $seeded, $formName);
             if ($v !== null) { $answers[$f['id']] = $v; }
         }
+        coherencePass($fields, $answers);
         try {
             $r = $responseService->createResponse($formId, ['answers' => $answers]);
-            if (is_array($r) && isset($r['id'])) { $ids[] = $r['id']; }
+            if (is_array($r) && isset($r['id'])) {
+                $ids[] = $r['id'];
+                backdateResponse($formId, (string) $r['id']);
+            }
         } catch (\Throwable $e) {
             // skip a bad row, keep going
         }
     }
     return $ids;
+}
+
+/**
+ * Keep generated answers self-consistent: end dates never precede their start dates, and a record
+ * whose schedule date is in the future can't carry a past-tense status (a July-20 appointment must
+ * not read "completed" on July 2 — that instantly breaks the demo's believability).
+ */
+function coherencePass(array $fields, array &$answers): void
+{
+    $today = date('Y-m-d');
+    $schedIsFuture = false;
+    foreach ($fields as $f) {
+        $id = (string) ($f['id'] ?? '');
+        if (($f['type'] ?? '') !== 'date') { continue; }
+        if (str_contains($id, 'end')) {
+            $startId = str_replace('end', 'start', $id);
+            if (isset($answers[$startId], $answers[$id]) && is_string($answers[$id]) && is_string($answers[$startId])
+                && $answers[$id] < $answers[$startId]) {
+                $answers[$id] = date('Y-m-d', strtotime($answers[$startId] . ' +' . random_int(1, 7) . ' days'));
+            }
+        }
+        if (($id === 'date' || str_contains($id, 'appt') || str_contains($id, 'scheduled') || str_contains($id, 'visit'))
+            && isset($answers[$id]) && is_string($answers[$id]) && $answers[$id] > $today) {
+            $schedIsFuture = true;
+        }
+    }
+    if (!$schedIsFuture) { return; }
+    $pastTense = ['completed', 'no-show', 'no_show', 'arrived', 'invoiced', 'paid', 'part-paid', 'received', 'part-received', 'closed'];
+    $futureOk = ['scheduled', 'booked', 'confirmed', 'pending', 'new', 'requested', 'ordered', 'draft', 'sent', 'on-hold', 'lead', 'quoted', 'won'];
+    foreach ($fields as $f) {
+        $id = (string) ($f['id'] ?? '');
+        if (!str_contains($id, 'status') || empty($answers[$id]) || !is_string($answers[$id])) { continue; }
+        if (!in_array(strtolower($answers[$id]), $pastTense, true)) { continue; }
+        $vals = [];
+        foreach (($f['properties']['options'] ?? []) as $o) {
+            $v = is_array($o) ? ($o['value'] ?? null) : $o;
+            if (is_string($v) && in_array(strtolower($v), $futureOk, true)) { $vals[] = $v; }
+        }
+        if ($vals) { $answers[$id] = $vals[array_rand($vals)]; }
+    }
+}
+
+/**
+ * Spread demo submissions over the past ~8 weeks (skewed toward recent) instead of "everything
+ * seeded just now" — dashboards' sparklines/"Nd ago" chips read as a live business, not a fresh
+ * seed. Updates the per-form SQLite row AND the MySQL response_metadata mirror. Cosmetic: failures
+ * are swallowed.
+ */
+function backdateResponse(string $formId, string $responseId): void
+{
+    global $sqlite, $pdo;
+    try {
+        $daysAgo = (int) floor((random_int(0, 1000) / 1000) ** 1.7 * 55);
+        $ts = date('Y-m-d H:i:s', strtotime("-{$daysAgo} days") - random_int(0, 36000));
+        $db = $sqlite->getFormDatabase($formId);
+        $st = $db->prepare('UPDATE responses SET submitted_at = :ts, updated_at = :ts2 WHERE id = :id');
+        $st->execute(['ts' => $ts, 'ts2' => $ts, 'id' => $responseId]);
+        $ms = $pdo->prepare('UPDATE response_metadata SET submitted_at = :ts WHERE id = :id');
+        $ms->execute(['ts' => $ts, 'id' => $responseId]);
+    } catch (\Throwable $e) {
+        // cosmetic only — never fail provisioning over a backdate
+    }
 }
 
 /**
@@ -467,7 +533,9 @@ function genValue(array $field, int $i, array $seeded, string $formName = '')
             if ($has($ctx, ['invoice']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('INV'); }
             if ($has($ctx, ['purchase order', 'po number', 'p.o']) || ($has($ctx, ['order']) && $has($ctx, ['number', ' no', '#']))) { return $code('PO'); }
             if ($has($ctx, ['quote']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('QT'); }
-            if ($has($ctx, ['reference', 'ref no', 'ticket', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
+            // Label-only on purpose: matching $ctx would turn EVERY short_text in a "Support Tickets"
+            // form into a REF code (subject, customer name, ...) via the form name.
+            if ($has($label, ['reference', 'ref no', 'ref number', 'ticket number', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
             if ($has($ctx, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate'])) { return strtoupper($rand(['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK'])) . '-' . random_int(100, 999); }
             if ($has($ctx, ['vin', 'chassis'])) { return strtoupper(substr(bin2hex(random_bytes(9)), 0, 17)); }
             // Domain nouns (form context matters: a "Name" in a Product/Vehicle/Service form isn't a person)
@@ -518,6 +586,11 @@ function genValue(array $field, int $i, array $seeded, string $formName = '')
             if ($has($ctx, ['duration', 'minute', 'mins'])) { return $rand([15, 30, 45, 60, 90, 120]); }
             if ($has($ctx, ['hour'])) { return random_int(1, 8); }
             if ($has($ctx, ['lead time', 'lead-time', 'days'])) { return random_int(1, 14); }
+            // Portfolio-scale money (AUM, account/transfer values) — $80k–$2.5M, not pocket change.
+            // MUST precede the stock/quantity rule: "acCOUNT value" would otherwise match 'count'.
+            if ($has($ctx, ['aum', 'account value', 'estimated value', 'estimated account', 'portfolio', 'assets under'])) {
+                return random_int(8, 250) * 10000;
+            }
             if ($has($ctx, ['reorder', 'on hand', 'on-hand', 'stock', 'quantity', 'qty', 'count', 'units'])) { return random_int(0, 80); }
             if ($has($ctx, ['amount', 'cost', 'value', 'price', 'budget', 'salary', 'aum', 'total', 'subtotal', 'tax', 'fee', 'rate', 'labour', 'labor', 'parts', 'paid'])) {
                 return random_int(5, 950) * 10;
@@ -536,11 +609,24 @@ function genValue(array $field, int $i, array $seeded, string $formName = '')
             return array_values(array_filter($picked));
         }
         case 'date': {
-            $days = random_int(-30, 20);
+            // Semantics-aware: log-style dates (incidents, receipts, visits) stay in the past;
+            // planning dates (due, expiry, scheduled, reviews) lean future; birthdays are adult ages.
+            if ($has($ctx, ['birth'])) {
+                return date('Y-m-d', strtotime('-' . random_int(7300, 25500) . ' days'));
+            }
+            if ($has($ctx, ['due', 'next', 'expiry', 'expire', 'expected', 'scheduled', 'follow', 'valid', 'review date', 'start date', 'availability', 'effective'])) {
+                $days = random_int(-4, 45);
+            } elseif ($has($ctx, ['incident', 'received', 'raised', 'reported', 'issue', 'meeting', 'visit', 'acknowledg', 'declaration', 'nomination', 'payment', 'expense', 'sale', 'order date', 'date in', 'date_in', 'audit', 'client since', 'lease', 'hire', 'interview', 'inspection', 'registration date'])) {
+                $days = random_int(-60, -1);
+            } else {
+                $days = random_int(-30, 14);
+            }
             return date('Y-m-d', strtotime("$days days"));
         }
         case 'datetime': {
-            $days = random_int(-20, 5);
+            $days = $has($ctx, ['due', 'scheduled', 'expected', 'next', 'follow'])
+                ? random_int(-2, 14)
+                : random_int(-20, 5);
             return date('Y-m-d\TH:i', strtotime("$days days"));
         }
         case 'time':
