@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { WifiOff } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { MobileNav } from './MobileNav';
+import { DemoBanner } from './DemoBanner';
 import { useUIStore } from '../../stores/uiStore';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { cn } from '../../lib/utils';
@@ -76,6 +77,9 @@ export function AppShell() {
           !isOnline && 'pt-8'
         )}
       >
+        {/* Live-demo banner (only for the shared Demo account) */}
+        <DemoBanner />
+
         {/* Content-area Suspense so lazy pages load WITHOUT blanking the sidebar/
             nav (the app-level boundary would unmount the whole shell). */}
         <Suspense

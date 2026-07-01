@@ -18,6 +18,7 @@ import {
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { LiveDemoSection } from '../components/landing/LiveDemoSection';
 
 // Landing-only chrome: a characterful display face (Bricolage Grotesque) + a
 // monospace signature (JetBrains Mono) for the technical/data accents, plus the
@@ -414,6 +415,9 @@ export function Landing() {
           </div>
         </div>
       </section>
+
+      {/* Live demo band — try a real app with no signup */}
+      <LiveDemoSection />
 
       {/* Trust Banner */}
       <section className="py-9 px-4 sm:px-6 lg:px-8 bg-gray-50/80 dark:bg-slate-900/30 border-y border-gray-100 dark:border-slate-800/50 backdrop-blur-sm">

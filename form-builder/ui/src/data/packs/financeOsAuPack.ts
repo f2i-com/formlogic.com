@@ -1392,6 +1392,62 @@ export const financeOsAuPack: PackData = {
         { packFormId: 'au-tfn-declaration', displayName: 'TFN Declaration', sortOrder: 5, isVisible: true },
         { packFormId: 'au-bdbn', displayName: 'Binding Death Benefit Nomination', sortOrder: 6, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading onboarding dashboard…</div></div></div>`,
+        css: `:root{--accent:#4f46e5;--accent2:#818cf8;--glow1:rgba(79,70,229,.20);--glow2:rgba(129,140,248,.10);}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+.wrap{min-height:100vh;padding:26px clamp(16px,4vw,40px) 44px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e2e8f0;background:radial-gradient(1100px 560px at 12% -12%,var(--glow1),transparent 60%),radial-gradient(900px 480px at 108% -6%,var(--glow2),transparent 55%),#0b1120;}
+.empty{color:#94a3b8;padding:64px 20px;text-align:center;font-size:15px;}
+.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px;}
+.hdr h1{font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em;color:#f8fafc;}
+.hdr .sub{color:#94a3b8;font-size:13px;}
+.hdr .who{color:var(--accent2);font-weight:600;}
+.btn{cursor:pointer;border:0;border-radius:10px;font-family:inherit;font-size:13px;font-weight:600;padding:10px 16px;transition:transform .12s ease,filter .12s ease;}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px);}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:0 8px 20px -8px var(--accent);}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px;}
+.card{background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.14);border-radius:14px;padding:16px 18px;}
+.stat .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.stat .ic{font-size:15px;opacity:.9;}
+.stat .v{font-size:26px;font-weight:750;color:#f8fafc;letter-spacing:-.02em;line-height:1.05;}
+.stat .l{font-size:11.5px;color:#94a3b8;margin-top:6px;text-transform:uppercase;letter-spacing:.05em;}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+@media(max-width:820px){.panels{grid-template-columns:1fr;}}
+.panel h2{font-size:14px;font-weight:700;margin:0 0 15px;color:#f1f5f9;}
+.bar-row{display:grid;grid-template-columns:132px 1fr 48px;align-items:center;gap:10px;margin-bottom:11px;}
+.bar-row:last-child{margin-bottom:0;}
+.bar-name{font-size:12.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bar-track{height:9px;background:rgba(148,163,184,.12);border-radius:6px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:6px;transition:width .9s cubic-bezier(.22,1,.36,1);}
+.bar-val{font-size:12.5px;color:#e2e8f0;font-weight:600;text-align:right;}
+.list .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid rgba(148,163,184,.1);}
+.list .row:first-child{border-top:0;padding-top:0;}
+.list .nm{font-size:13.5px;color:#f1f5f9;font-weight:600;}
+.list .meta{font-size:12px;color:#94a3b8;margin-top:2px;}
+.badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap;}
+.sec-title{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:700;margin:0 0 12px;}
+.actions{display:flex;flex-wrap:wrap;gap:10px;}
+.qa{cursor:pointer;border:1px solid rgba(148,163,184,.16);background:rgba(15,23,42,.6);color:#cbd5e1;border-radius:11px;padding:11px 15px;font-size:13px;font-weight:600;font-family:inherit;display:flex;align-items:center;gap:9px;transition:border-color .14s,background .14s,transform .12s,color .14s;}
+.qa:hover{border-color:var(--accent);background:var(--glow1);transform:translateY(-1px);color:#f8fafc;}
+.qa .qi{color:var(--accent2);font-size:14px;}
+.mini-empty{color:#64748b;font-size:13px;padding:14px 0;}`,
+        js: `var FL=window.FormLogic;
+function h(s){return FL.escapeHtml(s==null?'':String(s));}
+function findForm(ctx,name){var t=String(name).toLowerCase();for(var i=0;i<ctx.forms.length;i++){if(String(ctx.forms[i].displayName||'').toLowerCase()===t)return ctx.forms[i];}return null;}
+function optMap(form,fieldId){var m={};if(!form)return m;for(var i=0;i<form.fields.length;i++){var f=form.fields[i];if(f.id===fieldId&&f.properties&&f.properties.options){for(var j=0;j<f.properties.options.length;j++){var o=f.properties.options[j];m[o.value]=o.label;}}}return m;}
+function fmtDate(v){if(!v)return '';var d=new Date(v);if(isNaN(d.getTime()))return String(v);return d.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});}
+function loadRecords(form){return form?FL.records(form.formId,{limit:500}).catch(function(){return [];}):Promise.resolve([]);}
+function bar(label,count,max,color){var pct=(max>0&&count>0)?Math.max(4,Math.round(count/max*100)):0;return '<div class="bar-row"><span class="bar-name">'+h(label)+'</span><div class="bar-track"><div class="bar-fill" data-pct="'+pct+'" style="width:0;background:'+color+'"></div></div><span class="bar-val">'+count.toLocaleString()+'</span></div>';}
+function breakdown(records,fieldId,map,palette){var order=[];var counts={};for(var k in map){order.push(k);counts[k]=0;}for(var i=0;i<records.length;i++){var a=records[i].answers||{};var v=a[fieldId];if(v==null||v==='')continue;if(Object.prototype.toString.call(v)==='[object Array]'){for(var q=0;q<v.length;q++){var vv=v[q];if(!(vv in counts)){counts[vv]=0;order.push(vv);}counts[vv]++;}}else{if(!(v in counts)){counts[v]=0;order.push(v);}counts[v]++;}}var max=0;for(var m=0;m<order.length;m++){if(counts[order[m]]>max)max=counts[order[m]];}var out='';for(var j=0;j<order.length;j++){var key=order[j];out+=bar(map[key]||key,counts[key],max,palette[j%palette.length]);}return out;}
+function statCard(value,label,color,icon){return '<div class="card stat"><div class="top"><span class="dot" style="background:'+color+'"></span><span class="ic">'+icon+'</span></div><div class="v">'+value+'</div><div class="l">'+h(label)+'</div></div>';}
+function qa(form,label,icon){if(!form)return '';return '<button class="qa" data-fid="'+h(form.formId)+'"><span class="qi">'+icon+'</span>'+h(label)+'</button>';}
+function recentClients(records){if(!records.length)return '<div class="mini-empty">No clients onboarded yet.</div>';var out='';var n=Math.min(6,records.length);for(var i=0;i<n;i++){var a=records[i].answers||{};var name=((a.first_name||'')+' '+(a.last_name||'')).trim()||'Unnamed client';var rs=(a.risk_score!=null&&a.risk_score!=='')?('Risk score '+h(a.risk_score)):'Risk score n/a';var when=fmtDate(records[i].submittedAt);var ws=String(a.wholesale_status||'').toLowerCase()==='yes';var badge=ws?'<span class="badge" style="background:rgba(52,211,153,.15);color:#6ee7b7">Wholesale</span>':'<span class="badge" style="background:rgba(148,163,184,.14);color:#cbd5e1">Retail</span>';out+='<div class="row"><div><div class="nm">'+h(name)+'</div><div class="meta">'+rs+(when?(' · '+h(when)):'')+'</div></div>'+badge+'</div>';}return out;}
+async function main(){var root=document.getElementById('app');var ctx;try{ctx=await FL.context();}catch(e){root.innerHTML='<div class="wrap"><div class="empty">Could not load dashboard.</div></div>';return;}var user=await FL.currentUser().catch(function(){return null;});var intake=findForm(ctx,'New Client Onboarding');var risk=findForm(ctx,'Risk Profile Assessment');var fsg=findForm(ctx,'FSG Acknowledgement');var vault=findForm(ctx,'Document Vault');var tfn=findForm(ctx,'TFN Declaration');var bdbn=findForm(ctx,'Binding Death Benefit Nomination');var res=await Promise.all([loadRecords(intake),loadRecords(risk),loadRecords(fsg),loadRecords(vault),loadRecords(tfn),loadRecords(bdbn)]);var rIntake=res[0],rRisk=res[1],rFsg=res[2],rVault=res[3],rTfn=res[4],rBdbn=res[5];var palette=['#4f46e5','#818cf8','#22d3ee','#34d399','#fbbf24','#f472b6'];var wholesale=0;for(var i=0;i<rIntake.length;i++){if(String((rIntake[i].answers||{}).wholesale_status||'').toLowerCase()==='yes')wholesale++;}var stages=[['Intake',rIntake.length],['Risk Profile',rRisk.length],['FSG',rFsg.length],['Documents',rVault.length],['TFN Decl.',rTfn.length],['Death Benefit',rBdbn.length]];var maxStage=0;for(var s=0;s<stages.length;s++){if(stages[s][1]>maxStage)maxStage=stages[s][1];}var pipeHtml='';for(var s2=0;s2<stages.length;s2++){pipeHtml+=bar(stages[s2][0],stages[s2][1],maxStage,palette[s2%palette.length]);}var objHtml=rIntake.length?breakdown(rIntake,'investment_objectives',optMap(intake,'investment_objectives'),palette):'<div class="mini-empty">No client data yet.</div>';var uname=user&&user.name?user.name:(user&&user.email?user.email:'');var whoHtml=uname?'<div class="sub">Signed in as <span class="who">'+h(uname)+'</span></div>':'<div class="sub">Australian advisory onboarding</div>';var newBtn=intake?'<button class="btn btn-primary" data-fid="'+h(intake.formId)+'">+ New Client</button>':'';var statsHtml=statCard(rIntake.length.toLocaleString(),'Clients',palette[0],'👥')+statCard(rRisk.length.toLocaleString(),'Risk Profiles',palette[1],'🧭')+statCard(rFsg.length.toLocaleString(),'FSG Signed',palette[2],'📄')+statCard(rVault.length.toLocaleString(),'Documents',palette[3],'🗂️')+statCard(wholesale.toLocaleString(),'Wholesale',palette[4],'🏦');var actionsHtml=qa(intake,'New Client','+')+qa(risk,'Risk Assessment','🧭')+qa(fsg,'FSG Acknowledgement','📄')+qa(vault,'Document Vault','🗂️')+qa(tfn,'TFN Declaration','🧾')+qa(bdbn,'Death Benefit Nomination','❤');root.innerHTML='<div class="wrap"><div class="hdr"><div><h1>'+h(ctx.appName||'Client Onboarding')+'</h1>'+whoHtml+'</div>'+newBtn+'</div><div class="stats">'+statsHtml+'</div><div class="panels"><div class="card panel"><h2>Onboarding Pipeline</h2>'+pipeHtml+'</div><div class="card panel"><h2>Investment Objectives</h2>'+objHtml+'</div></div><div class="card panel" style="margin-bottom:16px"><h2>Recent Clients</h2><div class="list">'+recentClients(rIntake)+'</div></div><div><p class="sec-title">Quick actions</p><div class="actions">'+actionsHtml+'</div></div></div>';var nav=root.querySelectorAll('[data-fid]');for(var n2=0;n2<nav.length;n2++){(function(el){el.addEventListener('click',function(){var id=el.getAttribute('data-fid');if(id)FL.navigate(id);});})(nav[n2]);}requestAnimationFrame(function(){requestAnimationFrame(function(){var b=root.querySelectorAll('.bar-fill');for(var i=0;i<b.length;i++){b[i].style.width=(b[i].getAttribute('data-pct')||0)+'%';}});});}
+main();`,
+      },
       roles: [
         {
           name: 'Adviser',
@@ -1502,6 +1558,64 @@ export const financeOsAuPack: PackData = {
         { packFormId: 'au-bdbn', displayName: 'Binding Death Benefit Nomination', sortOrder: 5, isVisible: true },
         { packFormId: 'au-super-rollover', displayName: 'Superannuation Rollover', sortOrder: 6, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading portfolio dashboard…</div></div></div>`,
+        css: `:root{--accent:#0d9488;--accent2:#2dd4bf;--glow1:rgba(13,148,136,.20);--glow2:rgba(45,212,191,.10);}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+.wrap{min-height:100vh;padding:26px clamp(16px,4vw,40px) 44px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e2e8f0;background:radial-gradient(1100px 560px at 12% -12%,var(--glow1),transparent 60%),radial-gradient(900px 480px at 108% -6%,var(--glow2),transparent 55%),#0b1120;}
+.empty{color:#94a3b8;padding:64px 20px;text-align:center;font-size:15px;}
+.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px;}
+.hdr h1{font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-.01em;color:#f8fafc;}
+.hdr .sub{color:#94a3b8;font-size:13px;}
+.hdr .who{color:var(--accent2);font-weight:600;}
+.btn{cursor:pointer;border:0;border-radius:10px;font-family:inherit;font-size:13px;font-weight:600;padding:10px 16px;transition:transform .12s ease,filter .12s ease;}
+.btn:hover{filter:brightness(1.08);transform:translateY(-1px);}
+.btn-primary{background:var(--accent);color:#03201d;box-shadow:0 8px 20px -8px var(--accent);}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:22px;}
+.card{background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.14);border-radius:14px;padding:16px 18px;}
+.stat .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;}
+.stat .ic{font-size:15px;opacity:.9;}
+.stat .v{font-size:24px;font-weight:750;color:#f8fafc;letter-spacing:-.02em;line-height:1.05;}
+.stat .l{font-size:11.5px;color:#94a3b8;margin-top:6px;text-transform:uppercase;letter-spacing:.05em;}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+@media(max-width:820px){.panels{grid-template-columns:1fr;}}
+.panel h2{font-size:14px;font-weight:700;margin:0 0 15px;color:#f1f5f9;}
+.bar-row{display:grid;grid-template-columns:132px 1fr 48px;align-items:center;gap:10px;margin-bottom:11px;}
+.bar-row:last-child{margin-bottom:0;}
+.bar-name{font-size:12.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bar-track{height:9px;background:rgba(148,163,184,.12);border-radius:6px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:6px;transition:width .9s cubic-bezier(.22,1,.36,1);}
+.bar-val{font-size:12.5px;color:#e2e8f0;font-weight:600;text-align:right;}
+.list .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid rgba(148,163,184,.1);}
+.list .row:first-child{border-top:0;padding-top:0;}
+.list .nm{font-size:13.5px;color:#f1f5f9;font-weight:600;}
+.list .meta{font-size:12px;color:#94a3b8;margin-top:2px;}
+.badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap;}
+.sec-title{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:700;margin:0 0 12px;}
+.actions{display:flex;flex-wrap:wrap;gap:10px;}
+.qa{cursor:pointer;border:1px solid rgba(148,163,184,.16);background:rgba(15,23,42,.6);color:#cbd5e1;border-radius:11px;padding:11px 15px;font-size:13px;font-weight:600;font-family:inherit;display:flex;align-items:center;gap:9px;transition:border-color .14s,background .14s,transform .12s,color .14s;}
+.qa:hover{border-color:var(--accent);background:var(--glow1);transform:translateY(-1px);color:#f8fafc;}
+.qa .qi{color:var(--accent2);font-size:14px;}
+.mini-empty{color:#64748b;font-size:13px;padding:14px 0;}`,
+        js: `var FL=window.FormLogic;
+function h(s){return FL.escapeHtml(s==null?'':String(s));}
+function findForm(ctx,name){var t=String(name).toLowerCase();for(var i=0;i<ctx.forms.length;i++){if(String(ctx.forms[i].displayName||'').toLowerCase()===t)return ctx.forms[i];}return null;}
+function optMap(form,fieldId){var m={};if(!form)return m;for(var i=0;i<form.fields.length;i++){var f=form.fields[i];if(f.id===fieldId&&f.properties&&f.properties.options){for(var j=0;j<f.properties.options.length;j++){var o=f.properties.options[j];m[o.value]=o.label;}}}return m;}
+function num(v){var n=parseFloat(v);return isNaN(n)?0:n;}
+function aud(n){try{return new Intl.NumberFormat('en-AU',{style:'currency',currency:'AUD',maximumFractionDigits:0}).format(n||0);}catch(e){return '$'+Math.round(n||0).toLocaleString();}}
+function fmtDate(v){if(!v)return '';var d=new Date(v);if(isNaN(d.getTime()))return String(v);return d.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});}
+function loadRecords(form){return form?FL.records(form.formId,{limit:500}).catch(function(){return [];}):Promise.resolve([]);}
+function bar(label,count,max,color){var pct=(max>0&&count>0)?Math.max(4,Math.round(count/max*100)):0;return '<div class="bar-row"><span class="bar-name">'+h(label)+'</span><div class="bar-track"><div class="bar-fill" data-pct="'+pct+'" style="width:0;background:'+color+'"></div></div><span class="bar-val">'+count.toLocaleString()+'</span></div>';}
+function breakdown(records,fieldId,map,palette){var order=[];var counts={};for(var k in map){order.push(k);counts[k]=0;}for(var i=0;i<records.length;i++){var a=records[i].answers||{};var v=a[fieldId];if(v==null||v==='')continue;if(Object.prototype.toString.call(v)==='[object Array]'){for(var q=0;q<v.length;q++){var vv=v[q];if(!(vv in counts)){counts[vv]=0;order.push(vv);}counts[vv]++;}}else{if(!(v in counts)){counts[v]=0;order.push(v);}counts[v]++;}}var max=0;for(var m=0;m<order.length;m++){if(counts[order[m]]>max)max=counts[order[m]];}var out='';for(var j=0;j<order.length;j++){var key=order[j];out+=bar(map[key]||key,counts[key],max,palette[j%palette.length]);}return out;}
+function statCard(value,label,color,icon){return '<div class="card stat"><div class="top"><span class="dot" style="background:'+color+'"></span><span class="ic">'+icon+'</span></div><div class="v">'+value+'</div><div class="l">'+h(label)+'</div></div>';}
+function qa(form,label,icon){if(!form)return '';return '<button class="qa" data-fid="'+h(form.formId)+'"><span class="qi">'+icon+'</span>'+h(label)+'</button>';}
+function recentReviews(records){if(!records.length)return '<div class="mini-empty">No annual reviews recorded yet.</div>';var out='';var n=Math.min(6,records.length);var today=new Date();today.setHours(0,0,0,0);for(var i=0;i<n;i++){var a=records[i].answers||{};var pv=aud(num(a.current_portfolio_value));var nrd=a.next_review_date;var nd=nrd?new Date(nrd):null;var overdue=nd&&!isNaN(nd.getTime())&&nd<today;var meta=nrd?('Next review '+h(fmtDate(nrd))):'Review completed';var gp=num(a.goal_progress);var badge;if(overdue){badge='<span class="badge" style="background:rgba(248,113,113,.15);color:#fca5a5">Overdue</span>';}else if(gp>=7){badge='<span class="badge" style="background:rgba(45,212,191,.15);color:#5eead4">On track</span>';}else if(gp>=4){badge='<span class="badge" style="background:rgba(251,191,36,.15);color:#fcd34d">Monitor</span>';}else if(gp>0){badge='<span class="badge" style="background:rgba(248,113,113,.15);color:#fca5a5">Behind</span>';}else{badge='<span class="badge" style="background:rgba(148,163,184,.14);color:#cbd5e1">Logged</span>';}out+='<div class="row"><div><div class="nm">'+h(pv)+'</div><div class="meta">'+meta+'</div></div>'+badge+'</div>';}return out;}
+async function main(){var root=document.getElementById('app');var ctx;try{ctx=await FL.context();}catch(e){root.innerHTML='<div class="wrap"><div class="empty">Could not load dashboard.</div></div>';return;}var user=await FL.currentUser().catch(function(){return null;});var intake=findForm(ctx,'New Client Onboarding');var transfer=findForm(ctx,'Off-Market Transfer');var review=findForm(ctx,'Annual Client Review');var fee=findForm(ctx,'Fee Disclosure Statement');var bdbn=findForm(ctx,'Binding Death Benefit Nomination');var rollover=findForm(ctx,'Superannuation Rollover');var res=await Promise.all([loadRecords(intake),loadRecords(transfer),loadRecords(review),loadRecords(fee),loadRecords(bdbn),loadRecords(rollover)]);var rIntake=res[0],rTransfer=res[1],rReview=res[2],rFee=res[3],rBdbn=res[4],rRollover=res[5];var palette=['#0d9488','#2dd4bf','#22d3ee','#818cf8','#fbbf24','#f472b6'];var fua=0;for(var i=0;i<rReview.length;i++){fua+=num((rReview[i].answers||{}).current_portfolio_value);}var today=new Date();today.setHours(0,0,0,0);var reviewsDue=0;for(var i2=0;i2<rReview.length;i2++){var nrd=(rReview[i2].answers||{}).next_review_date;if(!nrd)continue;var nd=new Date(nrd);if(!isNaN(nd.getTime())&&nd<=today)reviewsDue++;}var transfersHtml=rTransfer.length?breakdown(rTransfer,'delivering_platform',optMap(transfer,'delivering_platform'),palette):'<div class="mini-empty">No transfers recorded yet.</div>';var presHtml=rRollover.length?breakdown(rRollover,'preservation_status',optMap(rollover,'preservation_status'),palette):'<div class="mini-empty">No rollovers recorded yet.</div>';var uname=user&&user.name?user.name:(user&&user.email?user.email:'');var whoHtml=uname?'<div class="sub">Signed in as <span class="who">'+h(uname)+'</span></div>':'<div class="sub">Australian portfolio operations</div>';var newBtn=intake?'<button class="btn btn-primary" data-fid="'+h(intake.formId)+'">+ New Client</button>':'';var statsHtml=statCard(aud(fua),'Funds Under Advice',palette[0],'💰')+statCard(rIntake.length.toLocaleString(),'Clients',palette[1],'👥')+statCard(rTransfer.length.toLocaleString(),'Transfers',palette[2],'🔁')+statCard(rRollover.length.toLocaleString(),'Rollovers',palette[3],'🏦')+statCard(reviewsDue.toLocaleString(),'Reviews Due',palette[4],'📅');var actionsHtml=qa(intake,'New Client','+')+qa(transfer,'Off-Market Transfer','🔁')+qa(review,'Annual Review','📅')+qa(fee,'Fee Disclosure','💵')+qa(bdbn,'Death Benefit Nomination','❤')+qa(rollover,'Super Rollover','🏦');root.innerHTML='<div class="wrap"><div class="hdr"><div><h1>'+h(ctx.appName||'Portfolio Management Hub')+'</h1>'+whoHtml+'</div>'+newBtn+'</div><div class="stats">'+statsHtml+'</div><div class="panels"><div class="card panel"><h2>Transfers by Platform</h2>'+transfersHtml+'</div><div class="card panel"><h2>Rollovers by Preservation</h2>'+presHtml+'</div></div><div class="card panel" style="margin-bottom:16px"><h2>Recent Annual Reviews</h2><div class="list">'+recentReviews(rReview)+'</div></div><div><p class="sec-title">Quick actions</p><div class="actions">'+actionsHtml+'</div></div></div>';var nav=root.querySelectorAll('[data-fid]');for(var n2=0;n2<nav.length;n2++){(function(el){el.addEventListener('click',function(){var id=el.getAttribute('data-fid');if(id)FL.navigate(id);});})(nav[n2]);}requestAnimationFrame(function(){requestAnimationFrame(function(){var b=root.querySelectorAll('.bar-fill');for(var i=0;i<b.length;i++){b[i].style.width=(b[i].getAttribute('data-pct')||0)+'%';}});});}
+main();`,
+      },
       roles: [
         {
           name: 'Senior Adviser',

@@ -597,6 +597,12 @@ $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/logout', [AuthController::class, 'logout']);
 })->add($authRequired);
 
+// Public no-signup demo: start a shared "Demo" session (mints a cookie, no password)
+// and list the demoable apps for the landing page. Rate-limited to deter abuse.
+$demoRateLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'demo');
+$app->post('/api/demo/start', [AuthController::class, 'demoStart'])->add($demoRateLimiter);
+$app->get('/api/demo/apps', [AuthController::class, 'demoApps']);
+
 // AI routes - status is public, everything else requires auth
 $app->get('/api/ai/status', function ($request, $response) use ($container) {
     return $container->get(AIController::class)->status($request, $response);

@@ -730,6 +730,219 @@ export const customerServicePack: PackData = {
         { packFormId: 'customer-feedback', displayName: 'Customer Feedback', sortOrder: 6, isVisible: true },
         { packFormId: 'knowledge-base-entry', displayName: 'Knowledge Base', sortOrder: 7, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading Service Desk…</div></div></div>`,
+        css: `
+:root{color-scheme:dark;}
+*{box-sizing:border-box;}
+#app{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e2e8f0;min-height:100vh;padding:28px 22px;background:radial-gradient(1100px 560px at 12% -12%,rgba(5,150,105,.20),transparent 60%),radial-gradient(900px 520px at 108% -6%,rgba(56,189,248,.10),transparent 55%),#0f172a;}
+.wrap{max-width:1080px;margin:0 auto;}
+.empty{padding:64px 0;text-align:center;color:#94a3b8;}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap;}
+.hd-left{display:flex;align-items:center;gap:14px;}
+.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;font-size:22px;background:linear-gradient(140deg,rgba(5,150,105,.92),rgba(4,120,87,.7));box-shadow:0 6px 18px rgba(5,150,105,.35);}
+.hd h1{margin:0;font-size:21px;font-weight:700;letter-spacing:-.01em;color:#f8fafc;}
+.hd .sub{margin:2px 0 0;font-size:13px;color:#94a3b8;}
+.btn{font:inherit;cursor:pointer;border-radius:10px;border:1px solid transparent;padding:10px 16px;font-weight:600;font-size:13.5px;color:#e2e8f0;background:rgba(148,163,184,.12);transition:transform .12s ease,background .2s ease,border-color .2s ease;}
+.btn:hover{transform:translateY(-1px);}
+.btn:focus-visible{outline:2px solid #34d399;outline-offset:2px;}
+.btn.primary{background:linear-gradient(140deg,#059669,#047857);color:#f0fdf4;box-shadow:0 6px 16px rgba(5,150,105,.32);}
+.btn.ghost{background:rgba(148,163,184,.08);border-color:rgba(148,163,184,.16);}
+.btn.sm{padding:7px 12px;font-size:12.5px;}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:18px;}
+.card{background:linear-gradient(180deg,rgba(30,41,59,.72),rgba(15,23,42,.5));border:1px solid rgba(148,163,184,.14);border-radius:16px;padding:16px;}
+.stat-top{display:flex;align-items:center;gap:8px;}
+.dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 0 3px rgba(148,163,184,.08);}
+.stat-label{font-size:11.5px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
+.stat-val{font-size:29px;font-weight:750;color:#f8fafc;margin-top:8px;line-height:1;}
+.stat-hint{font-size:12px;color:#64748b;margin-top:6px;}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;}
+.panel{background:linear-gradient(180deg,rgba(30,41,59,.6),rgba(15,23,42,.45));border:1px solid rgba(148,163,184,.14);border-radius:16px;padding:18px;}
+.panel h2{margin:0 0 14px;font-size:14px;font-weight:700;color:#e2e8f0;display:flex;align-items:center;gap:8px;}
+.panel h2 .tag{margin-left:auto;font-size:11px;font-weight:600;color:#94a3b8;background:rgba(148,163,184,.12);padding:3px 8px;border-radius:20px;}
+.bar-row{display:grid;grid-template-columns:92px 1fr 34px;align-items:center;gap:10px;margin-bottom:12px;}
+.bar-row:last-child{margin-bottom:0;}
+.bar-name{font-size:12.5px;color:#cbd5e1;text-transform:capitalize;}
+.bar-track{height:9px;border-radius:6px;background:rgba(148,163,184,.12);overflow:hidden;}
+.bar-fill{height:100%;border-radius:6px;transition:width 1s cubic-bezier(.22,1,.36,1);}
+.bar-val{font-size:12.5px;color:#94a3b8;text-align:right;font-variant-numeric:tabular-nums;}
+.item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10);}
+.item:last-child{border-bottom:none;}
+.item-main{min-width:0;flex:1;}
+.item-title{display:block;font-size:13.5px;color:#e2e8f0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.item-meta{display:block;font-size:11.5px;color:#64748b;margin-top:2px;text-transform:capitalize;}
+.badge{flex:none;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;border:1px solid;text-transform:capitalize;}
+.empty-panel{text-align:center;color:#94a3b8;font-size:13px;padding:26px 0;display:flex;flex-direction:column;align-items:center;gap:12px;}
+.actions{display:flex;flex-wrap:wrap;gap:10px;}
+.actions .btn{display:flex;align-items:center;gap:8px;}
+@media(max-width:860px){.stats{grid-template-columns:repeat(2,1fr);}.panels{grid-template-columns:1fr;}}
+@media(max-width:460px){.stats{grid-template-columns:1fr;}}
+`,
+        js: `
+var FL = window.FormLogic;
+function h(s){ return FL.escapeHtml(s == null ? '' : String(s)); }
+function findForm(ctx, name){
+  var t = String(name).toLowerCase();
+  for (var i=0;i<ctx.forms.length;i++){ if (String(ctx.forms[i].displayName||'').toLowerCase()===t) return ctx.forms[i]; }
+  return null;
+}
+function fieldOptions(form, fieldId){
+  if(!form) return [];
+  for (var i=0;i<form.fields.length;i++){ var f=form.fields[i]; if(f.id===fieldId && f.properties && f.properties.options) return f.properties.options; }
+  return [];
+}
+function optLabel(opts, val){
+  for (var i=0;i<opts.length;i++){ if(opts[i].value===val) return opts[i].label; }
+  return val ? String(val) : '';
+}
+function recs(form){ return form ? FL.records(form.formId, { limit: 500 }).catch(function(){ return []; }) : Promise.resolve([]); }
+function fmtDate(s){
+  if(!s) return '';
+  var d = new Date(s); if(isNaN(d.getTime())) return '';
+  var diff = Math.floor((Date.now() - d.getTime())/86400000);
+  if(diff <= 0) return 'today';
+  if(diff === 1) return 'yesterday';
+  if(diff < 7) return diff + 'd ago';
+  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+}
+function statCard(label, value, hint, color){
+  return '<div class="card stat">'
+    + '<div class="stat-top"><span class="dot" style="background:'+color+'"></span><span class="stat-label">'+h(label)+'</span></div>'
+    + '<div class="stat-val">'+h(value)+'</div>'
+    + '<div class="stat-hint">'+h(hint)+'</div>'
+    + '</div>';
+}
+function bar(label, count, max, color){
+  var pct = max>0 ? Math.max(4, Math.round(count/max*100)) : 0;
+  return '<div class="bar-row"><span class="bar-name">'+h(label)+'</span>'
+    + '<div class="bar-track"><div class="bar-fill" data-pct="'+pct+'" style="width:0;background:'+color+'"></div></div>'
+    + '<span class="bar-val">'+count+'</span></div>';
+}
+async function main(){
+  var root = document.getElementById('app');
+  var ctx;
+  try { ctx = await FL.context(); } catch(e){ root.innerHTML = '<div class="wrap"><div class="empty">Could not load the dashboard.</div></div>'; return; }
+  var user = await FL.currentUser().catch(function(){ return null; });
+
+  var ticketForm = findForm(ctx, 'Support Tickets');
+  var bugForm = findForm(ctx, 'Bug Reports');
+  var featForm = findForm(ctx, 'Feature Requests');
+  var escForm = findForm(ctx, 'Escalations');
+  var refundForm = findForm(ctx, 'Refund Requests');
+  var feedbackForm = findForm(ctx, 'Customer Feedback');
+  var kbForm = findForm(ctx, 'Knowledge Base');
+
+  var out = await Promise.all([recs(ticketForm), recs(bugForm), recs(featForm), recs(escForm), recs(feedbackForm)]);
+  var tickets = out[0], bugs = out[1], feats = out[2], escs = out[3], feedback = out[4];
+
+  var priOpts = fieldOptions(ticketForm, 'priority');
+  var catOpts = fieldOptions(ticketForm, 'category');
+
+  var priColors = { urgent:'#ef4444', high:'#f59e0b', medium:'#38bdf8', low:'#64748b' };
+  var priOrder = ['urgent','high','medium','low'];
+  var priCounts = { urgent:0, high:0, medium:0, low:0 };
+  for (var i=0;i<tickets.length;i++){ var p = (tickets[i].answers||{}).priority; if(priCounts[p]!=null) priCounts[p]++; }
+  var urgentHigh = priCounts.urgent + priCounts.high;
+
+  var critBugs = 0;
+  for (var i=0;i<bugs.length;i++){ var sv = (bugs[i].answers||{}).severity; if(sv==='critical'||sv==='high') critBugs++; }
+
+  var csSum=0, csN=0;
+  for (var i=0;i<feedback.length;i++){ var r = Number((feedback[i].answers||{}).overall_satisfaction); if(!isNaN(r) && r>0){ csSum+=r; csN++; } }
+  var csat = csN>0 ? (csSum/csN).toFixed(1) : '';
+
+  var head = '<header class="hd"><div class="hd-left"><div class="logo">🛟</div>'
+    + '<div><h1>'+h(ctx.appName || 'Service Desk')+'</h1>'
+    + '<p class="sub">'+ (user ? 'Signed in as '+h(user.name || user.email || 'agent') : 'Support operations') +' · Service Desk</p></div>'
+    + '</div><button class="btn primary" data-nav="ticket">+ New Ticket</button></header>';
+
+  var stats = '<div class="stats">'
+    + statCard('Open Tickets', tickets.length.toLocaleString(), urgentHigh + ' urgent / high', '#059669')
+    + statCard('Urgent & High', urgentHigh.toLocaleString(), priCounts.urgent + ' urgent now', '#ef4444')
+    + statCard('Bug Reports', bugs.length.toLocaleString(), critBugs + ' critical / high', '#f59e0b')
+    + statCard('Escalations', escs.length.toLocaleString(), 'need attention', '#a78bfa')
+    + statCard('Avg CSAT', (csN>0 ? csat + ' ★' : '—'), (csN>0 ? csN + ' ratings · of 5' : 'no ratings yet'), '#38bdf8')
+    + '</div>';
+
+  var maxPri = Math.max(priCounts.urgent, priCounts.high, priCounts.medium, priCounts.low, 0);
+  var barsHtml = '';
+  if(tickets.length === 0){
+    barsHtml = '<div class="empty-panel">No tickets yet<button class="btn primary sm" data-nav="ticket">Create a ticket</button></div>';
+  } else {
+    for (var pi=0; pi<priOrder.length; pi++){
+      var pk = priOrder[pi];
+      barsHtml += bar(optLabel(priOpts, pk) || pk, priCounts[pk], maxPri, priColors[pk]);
+    }
+  }
+  var priPanel = '<div class="panel"><h2>Tickets by priority<span class="tag">'+tickets.length+' total</span></h2>'+barsHtml+'</div>';
+
+  var itemsHtml = '';
+  if(tickets.length === 0){
+    itemsHtml = '<div class="empty-panel">Nothing to show yet<button class="btn ghost sm" data-nav="ticket">Add the first ticket</button></div>';
+  } else {
+    var n = Math.min(6, tickets.length);
+    for (var ri=0; ri<n; ri++){
+      var a = tickets[ri].answers || {};
+      var subj = a.subject || a.description || '(no subject)';
+      var catL = optLabel(catOpts, a.category) || 'Uncategorised';
+      var pk2 = a.priority;
+      var priL = optLabel(priOpts, pk2) || 'Unset';
+      var pc = priColors[pk2] || '#64748b';
+      var meta = catL;
+      var dt = fmtDate(tickets[ri].submittedAt);
+      if(dt) meta += ' · ' + dt;
+      itemsHtml += '<div class="item"><div class="item-main">'
+        + '<span class="item-title">'+h(subj)+'</span>'
+        + '<span class="item-meta">'+h(meta)+'</span></div>'
+        + '<span class="badge" style="color:'+pc+';border-color:'+pc+'66;background:'+pc+'22">'+h(priL)+'</span>'
+        + '</div>';
+    }
+  }
+  var recentPanel = '<div class="panel"><h2>Recent tickets<span class="tag">latest</span></h2>'+itemsHtml+'</div>';
+
+  var actionDefs = [
+    { key:'ticket', form:ticketForm, label:'New Ticket', icon:'🛟' },
+    { key:'bug', form:bugForm, label:'Report Bug', icon:'🐞' },
+    { key:'feature', form:featForm, label:'Request Feature', icon:'💡' },
+    { key:'escalation', form:escForm, label:'Escalate', icon:'⬆️' },
+    { key:'feedback', form:feedbackForm, label:'Log Feedback', icon:'⭐' },
+    { key:'kb', form:kbForm, label:'Knowledge Base', icon:'📚' }
+  ];
+  var actionsHtml = '';
+  for (var ai=0; ai<actionDefs.length; ai++){
+    if(!actionDefs[ai].form) continue;
+    actionsHtml += '<button class="btn ghost" data-nav="'+actionDefs[ai].key+'"><span aria-hidden="true">'+actionDefs[ai].icon+'</span>'+h(actionDefs[ai].label)+'</button>';
+  }
+  var actions = '<div class="panel"><h2>Quick actions</h2><div class="actions">'+actionsHtml+'</div></div>';
+
+  var navMap = {};
+  if(ticketForm) navMap.ticket = ticketForm.formId;
+  if(bugForm) navMap.bug = bugForm.formId;
+  if(featForm) navMap.feature = featForm.formId;
+  if(escForm) navMap.escalation = escForm.formId;
+  if(refundForm) navMap.refund = refundForm.formId;
+  if(feedbackForm) navMap.feedback = feedbackForm.formId;
+  if(kbForm) navMap.kb = kbForm.formId;
+
+  root.innerHTML = '<div class="wrap">'+head+stats+'<div class="panels">'+priPanel+recentPanel+'</div>'+actions+'</div>';
+
+  var btns = root.querySelectorAll('[data-nav]');
+  for (var bi=0; bi<btns.length; bi++){
+    btns[bi].addEventListener('click', function(){
+      var id = navMap[this.getAttribute('data-nav')];
+      if(id) FL.navigate(id); else FL.toast.error('That form is not available.');
+    });
+  }
+
+  requestAnimationFrame(function(){ setTimeout(function(){
+    var els = root.querySelectorAll('.bar-fill');
+    for (var i=0;i<els.length;i++){ els[i].style.width = (els[i].getAttribute('data-pct')||0)+'%'; }
+  }, 60); });
+}
+main();
+`,
+      },
       roles: [
         {
           name: 'Support Manager',

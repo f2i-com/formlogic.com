@@ -771,6 +771,226 @@ export const eventManagementPack: PackData = {
         { packFormId: 'budget-tracker', displayName: 'Budget Tracker', sortOrder: 6, isVisible: true },
         { packFormId: 'event-feedback', displayName: 'Post-Event Feedback', sortOrder: 7, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading dashboard…</div></div></div>`,
+        css: `
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+#app { min-height: 100vh; padding: 26px 20px 46px; color: #e2e8f0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: radial-gradient(1100px 560px at 12% -12%, rgba(8,145,178,0.20), transparent 60%), radial-gradient(900px 480px at 100% -6%, rgba(245,158,11,0.10), transparent 55%), #0f172a; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1060px; margin: 0 auto; }
+.empty { padding: 64px 20px; text-align: center; color: #94a3b8; font-size: 15px; }
+.hdr { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+.hdr-l { display: flex; align-items: center; gap: 14px; }
+.logo { width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; color: #06272e; background: linear-gradient(135deg, #22d3ee, #0891b2); box-shadow: 0 6px 20px rgba(8,145,178,0.35); }
+.hdr h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: #f8fafc; }
+.sub { margin: 2px 0 0; font-size: 13px; color: #94a3b8; }
+.hdr-r { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.user { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #cbd5e1; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 7px 12px; border-radius: 999px; }
+.udot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+.btn-primary { border: 0; cursor: pointer; font-size: 13px; font-weight: 700; color: #06272e; background: linear-gradient(135deg, #22d3ee, #0891b2); padding: 9px 15px; border-radius: 10px; box-shadow: 0 6px 18px rgba(8,145,178,0.35); transition: transform .12s, box-shadow .12s; }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 9px 24px rgba(8,145,178,0.45); }
+.card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 13px; margin-bottom: 16px; }
+.stat { padding: 16px 17px; }
+.stat-val { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; }
+.stat-lbl { margin-top: 7px; font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.stat-sub { margin-top: 6px; font-size: 12px; color: #64748b; }
+.warn { color: #f97316; font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.panel { padding: 18px 19px; }
+.panel-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
+.panel-h h2 { margin: 0; font-size: 15px; font-weight: 700; color: #f1f5f9; }
+.panel-n { font-size: 12px; color: #94a3b8; }
+.link { background: none; border: 0; cursor: pointer; color: #22d3ee; font-size: 12px; font-weight: 600; padding: 0; }
+.link:hover { text-decoration: underline; }
+.bars { display: flex; flex-direction: column; gap: 11px; }
+.bar-row { display: grid; grid-template-columns: 116px 1fr 36px; align-items: center; gap: 11px; }
+.bar-name { font-size: 13px; color: #cbd5e1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { height: 9px; background: rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 6px; transition: width 1s cubic-bezier(.22,1,.36,1); }
+.bar-val { font-size: 13px; font-weight: 700; color: #e2e8f0; text-align: right; }
+.reclist { display: flex; flex-direction: column; }
+.rec-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+.rec-row:first-child { border-top: 0; padding-top: 2px; }
+.rec-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.rec-name { font-size: 14px; color: #f1f5f9; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rec-org { font-size: 12px; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.badge { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+.rec-date { font-size: 12px; color: #94a3b8; white-space: nowrap; min-width: 76px; text-align: right; }
+.empty-sm { padding: 28px 8px; text-align: center; color: #94a3b8; font-size: 13px; }
+.bud-nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.bud { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
+.bud-l { font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+.bud-v { font-size: 18px; font-weight: 800; color: #f1f5f9; }
+.bud-v.pos { color: #22c55e; }
+.bud-v.neg { color: #ef4444; }
+.prog { display: flex; align-items: center; gap: 12px; }
+.prog-track { flex: 1; height: 10px; background: rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden; }
+.prog-fill { height: 100%; border-radius: 6px; transition: width 1s cubic-bezier(.22,1,.36,1); }
+.prog-lbl { font-size: 12px; color: #94a3b8; white-space: nowrap; }
+.quick { margin-top: 6px; }
+.quick-l { display: block; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; margin-bottom: 10px; }
+.qbtns { display: flex; flex-wrap: wrap; gap: 10px; }
+.qbtn { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #cbd5e1; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); padding: 9px 14px; border-radius: 10px; transition: background .12s, border-color .12s, transform .12s; }
+.qbtn:hover { background: rgba(255,255,255,0.08); border-color: rgba(34,211,238,0.4); transform: translateY(-1px); }
+.qi { font-size: 15px; line-height: 1; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } .bar-row { grid-template-columns: 96px 1fr 32px; } }
+`,
+        js: `
+var FL = window.FormLogic;
+function h(s){ return FL && FL.escapeHtml ? FL.escapeHtml(s == null ? '' : String(s)) : String(s == null ? '' : s); }
+function findForm(ctx, name){
+  var t = String(name).toLowerCase();
+  for (var i = 0; i < ctx.forms.length; i++){ if (String(ctx.forms[i].displayName || '').toLowerCase() === t) return ctx.forms[i]; }
+  return null;
+}
+function fieldOptions(form, fieldId){
+  if (!form || !form.fields) return [];
+  for (var i = 0; i < form.fields.length; i++){ var f = form.fields[i]; if (f.id === fieldId && f.properties && f.properties.options) return f.properties.options; }
+  return [];
+}
+function labelMap(form, fieldId){
+  var m = {}; var o = fieldOptions(form, fieldId);
+  for (var i = 0; i < o.length; i++){ m[o[i].value] = o[i].label; }
+  return m;
+}
+function fmtInt(n){ return Number(n || 0).toLocaleString(); }
+function fmtMoney(n){ return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }); }
+function fmtDate(s){ if (!s) return ''; var d = new Date(s); if (isNaN(d.getTime())) return ''; return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+function num(v){ var n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function bar(label, count, max, color){
+  var pct = max > 0 ? Math.max(3, Math.round(count / max * 100)) : 0;
+  return '<div class="bar-row"><span class="bar-name">' + h(label) + '</span>'
+    + '<div class="bar-track"><div class="bar-fill" data-pct="' + pct + '" style="width:0;background:' + color + '"></div></div>'
+    + '<span class="bar-val">' + fmtInt(count) + '</span></div>';
+}
+function stat(value, label, accent, sub){
+  return '<div class="card stat"><div class="stat-val" style="color:' + accent + '">' + value + '</div>'
+    + '<div class="stat-lbl">' + h(label) + '</div>' + (sub ? '<div class="stat-sub">' + sub + '</div>' : '') + '</div>';
+}
+function qa(form, label, icon){
+  if (!form) return '';
+  return '<button class="qbtn" data-nav="' + h(form.formId) + '"><span class="qi">' + icon + '</span><span>' + h(label) + '</span></button>';
+}
+async function main(){
+  var root = document.getElementById('app');
+  var ctx;
+  try { ctx = await FL.context(); } catch (e){ root.innerHTML = '<div class="wrap"><div class="empty">Could not load the dashboard.</div></div>'; return; }
+  if (!ctx || !ctx.forms){ root.innerHTML = '<div class="wrap"><div class="empty">No forms available.</div></div>'; return; }
+  var user = await FL.currentUser().catch(function(){ return null; });
+  var userName = user && user.name ? user.name : (user && user.email ? user.email : 'Guest');
+
+  var regForm = findForm(ctx, 'Event Registration');
+  var speakerForm = findForm(ctx, 'Speaker Submissions');
+  var vendorForm = findForm(ctx, 'Vendor Applications');
+  var volForm = findForm(ctx, 'Volunteer Sign-Ups');
+  var incidentForm = findForm(ctx, 'Incident Log');
+  var budgetForm = findForm(ctx, 'Budget Tracker');
+  var feedbackForm = findForm(ctx, 'Post-Event Feedback');
+
+  function recs(f){ return f ? FL.records(f.formId, { limit: 500 }).catch(function(){ return []; }) : Promise.resolve([]); }
+  var res = await Promise.all([recs(regForm), recs(speakerForm), recs(vendorForm), recs(volForm), recs(incidentForm), recs(budgetForm), recs(feedbackForm)]);
+  var regRecs = res[0], speakerRecs = res[1], vendorRecs = res[2], volRecs = res[3], incRecs = res[4], budRecs = res[5];
+
+  var i, r, a;
+
+  var urgent = 0;
+  for (i = 0; i < incRecs.length; i++){ var sv = incRecs[i].answers ? incRecs[i].answers.severity : null; if (sv === 'high' || sv === 'critical') urgent++; }
+
+  var estTotal = 0, actTotal = 0;
+  for (i = 0; i < budRecs.length; i++){ a = budRecs[i].answers || {}; estTotal += num(a.estimated_cost); actTotal += num(a.actual_cost); }
+  var variance = estTotal - actTotal;
+  var budPct = estTotal > 0 ? Math.min(100, Math.round(actTotal / estTotal * 100)) : 0;
+
+  var ticketOpts = fieldOptions(regForm, 'ticket_type');
+  var ticketColors = { general: '#38bdf8', vip: '#f59e0b', early_bird: '#22c55e', student: '#a78bfa', speaker: '#f472b6' };
+  var tCounts = {}, tMax = 0;
+  for (i = 0; i < regRecs.length; i++){ a = regRecs[i].answers || {}; if (a.ticket_type){ tCounts[a.ticket_type] = (tCounts[a.ticket_type] || 0) + 1; } }
+  for (i = 0; i < ticketOpts.length; i++){ var cc = tCounts[ticketOpts[i].value] || 0; if (cc > tMax) tMax = cc; }
+  var barsHtml = '';
+  for (i = 0; i < ticketOpts.length; i++){ var opt = ticketOpts[i]; barsHtml += bar(opt.label, tCounts[opt.value] || 0, tMax, ticketColors[opt.value] || '#0891b2'); }
+
+  var ticketLbl = labelMap(regForm, 'ticket_type');
+  var recentHtml = '';
+  var rn = Math.min(6, regRecs.length);
+  for (i = 0; i < rn; i++){
+    r = regRecs[i]; a = r.answers || {};
+    var nm = a.attendee_name || 'Unknown attendee';
+    var tv = a.ticket_type;
+    var tl = ticketLbl[tv] || tv || 'General Admission';
+    var tc = ticketColors[tv] || '#0891b2';
+    var org = a.organization || '';
+    var dt = fmtDate(r.submittedAt);
+    recentHtml += '<div class="rec-row"><div class="rec-main"><span class="rec-name">' + h(nm) + '</span>'
+      + (org ? '<span class="rec-org">' + h(org) + '</span>' : '') + '</div>'
+      + '<span class="badge" style="color:' + tc + ';border-color:' + tc + '55;background:' + tc + '1f">' + h(tl) + '</span>'
+      + '<span class="rec-date">' + h(dt) + '</span></div>';
+  }
+
+  var html = '<div class="wrap">';
+  html += '<header class="hdr"><div class="hdr-l"><div class="logo">EH</div>'
+    + '<div><h1>' + h(ctx.appName || 'Event Hub') + '</h1><p class="sub">Event operations dashboard</p></div></div>'
+    + '<div class="hdr-r"><div class="user"><span class="udot"></span>' + h(userName) + '</div>'
+    + (regForm ? '<button class="btn-primary" data-nav="' + h(regForm.formId) + '">+ New Registration</button>' : '')
+    + '</div></header>';
+
+  html += '<div class="stats">'
+    + stat(fmtInt(regRecs.length), 'Registrations', '#38bdf8', '')
+    + stat(fmtInt(speakerRecs.length), 'Speaker Subs', '#f472b6', '')
+    + stat(fmtInt(vendorRecs.length), 'Vendors', '#f59e0b', '')
+    + stat(fmtInt(volRecs.length), 'Volunteers', '#22c55e', '')
+    + stat(fmtInt(incRecs.length), 'Incidents', '#ef4444', urgent > 0 ? '<span class="warn">' + urgent + ' high / critical</span>' : 'all clear')
+    + '</div>';
+
+  html += '<div class="grid2">';
+  html += '<section class="card panel"><div class="panel-h"><h2>Registrations by Ticket Type</h2><span class="panel-n">' + fmtInt(regRecs.length) + ' total</span></div>'
+    + (regRecs.length && ticketOpts.length ? '<div class="bars">' + barsHtml + '</div>'
+      : '<div class="empty-sm">No registrations yet.' + (regForm ? ' <button class="link" data-nav="' + h(regForm.formId) + '">Add one</button>' : '') + '</div>')
+    + '</section>';
+  html += '<section class="card panel"><div class="panel-h"><h2>Recent Registrations</h2>' + (regForm ? '<button class="link" data-nav="' + h(regForm.formId) + '">View all</button>' : '') + '</div>'
+    + (recentHtml ? '<div class="reclist">' + recentHtml + '</div>' : '<div class="empty-sm">No registrations yet.</div>')
+    + '</section>';
+  html += '</div>';
+
+  html += '<section class="card panel wide"><div class="panel-h"><h2>Budget Overview</h2>' + (budgetForm ? '<button class="link" data-nav="' + h(budgetForm.formId) + '">Manage</button>' : '') + '</div>'
+    + (budRecs.length ? (
+        '<div class="bud-nums">'
+        + '<div class="bud"><span class="bud-l">Estimated</span><span class="bud-v">' + fmtMoney(estTotal) + '</span></div>'
+        + '<div class="bud"><span class="bud-l">Actual</span><span class="bud-v">' + fmtMoney(actTotal) + '</span></div>'
+        + '<div class="bud"><span class="bud-l">Variance</span><span class="bud-v ' + (variance >= 0 ? 'pos' : 'neg') + '">' + (variance >= 0 ? '+' : '−') + fmtMoney(Math.abs(variance)) + '</span></div>'
+        + '<div class="bud"><span class="bud-l">Line Items</span><span class="bud-v">' + fmtInt(budRecs.length) + '</span></div>'
+        + '</div>'
+        + '<div class="prog"><div class="prog-track"><div class="prog-fill bar-fill" data-pct="' + budPct + '" style="width:0;background:' + (actTotal > estTotal ? '#ef4444' : '#0891b2') + '"></div></div><span class="prog-lbl">' + budPct + '% of budget spent</span></div>'
+      ) : '<div class="empty-sm">No budget items yet.' + (budgetForm ? ' <button class="link" data-nav="' + h(budgetForm.formId) + '">Add one</button>' : '') + '</div>')
+    + '</section>';
+
+  html += '<div class="quick"><span class="quick-l">Quick actions</span><div class="qbtns">'
+    + qa(regForm, 'Register Attendee', '🎟️')
+    + qa(speakerForm, 'Add Speaker', '🎤')
+    + qa(vendorForm, 'Add Vendor', '🏪')
+    + qa(volForm, 'Add Volunteer', '🙋')
+    + qa(incidentForm, 'Log Incident', '⚠️')
+    + qa(budgetForm, 'Add Budget Item', '💰')
+    + qa(feedbackForm, 'Collect Feedback', '💬')
+    + '</div></div>';
+
+  html += '</div>';
+  root.innerHTML = html;
+
+  var navs = root.querySelectorAll('[data-nav]');
+  for (i = 0; i < navs.length; i++){
+    (function(btn){ btn.addEventListener('click', function(){ FL.navigate(btn.getAttribute('data-nav')); }); })(navs[i]);
+  }
+
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){
+    var els = root.querySelectorAll('.bar-fill');
+    for (var k = 0; k < els.length; k++){ els[k].style.width = (els[k].getAttribute('data-pct') || 0) + '%'; }
+  }); });
+}
+main();
+`,
+      },
       roles: [
         {
           name: 'Event Manager',

@@ -14,6 +14,8 @@ interface User {
   name?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** True for the shared public "Demo" account (drives the demo banner). */
+  isDemo?: boolean;
 }
 
 interface AuthState {
@@ -25,6 +27,7 @@ interface AuthState {
   // Actions
   initialize: () => Promise<void>;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  startDemo: () => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string, name?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateProfile: (data: Partial<User>) => Promise<{ success: boolean; error?: string }>;
@@ -144,6 +147,23 @@ export const useAuthStore = create<AuthState>()(
           return { success: true };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Login failed';
+          set({ isLoading: false, error: errorMessage });
+          return { success: false, error: errorMessage };
+        }
+      },
+
+      startDemo: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await api.startDemo();
+          if (result.error || !result.data) {
+            set({ isLoading: false, error: result.error || 'Could not start the demo' });
+            return { success: false, error: result.error || 'Could not start the demo' };
+          }
+          set({ user: result.data.user, isLoading: false, error: null });
+          return { success: true };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Could not start the demo';
           set({ isLoading: false, error: errorMessage });
           return { success: false, error: errorMessage };
         }

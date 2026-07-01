@@ -209,6 +209,20 @@ class ApiClient {
     return result;
   }
 
+  /** Start (or resume) the public no-signup demo — mints a session for the shared "Demo" account. */
+  async startDemo(): Promise<ApiResponse<{ user: User }>> {
+    const result = await this.request<{ user: User }>('/demo/start', { method: 'POST' });
+    if (result.data?.user) {
+      this.setAuthenticated(true);
+    }
+    return result;
+  }
+
+  /** Public list of demoable apps (published apps owned by the Demo account). */
+  async getDemoApps(): Promise<ApiResponse<{ apps: Array<{ slug: string; name: string; description: string; logoUrl: string | null }> }>> {
+    return this.request('/demo/apps');
+  }
+
   async requestPasswordReset(email: string): Promise<ApiResponse<{ message: string }>> {
     // The reset-link host is resolved server-side from trusted config — we do
     // NOT send it from the client (that would be a reset-poisoning vector).
@@ -1228,6 +1242,8 @@ interface User {
   name?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** True when this is the shared public "Demo" account (drives the demo banner). */
+  isDemo?: boolean;
 }
 
 interface FormResponse {

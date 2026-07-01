@@ -1507,6 +1507,129 @@ export const ohsQmsPack: PackData = {
         { packFormId: 'contractor-approval', displayName: 'Contractor Approval', sortOrder: 7, isVisible: true },
         { packFormId: 'training-record', displayName: 'Training Records', sortOrder: 8, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading safety dashboard…</div></div></div>`,
+        css: `
+*{box-sizing:border-box;margin:0;padding:0}
+#app{min-height:100vh;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e8edf6;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 640px at 12% -12%,rgba(220,38,38,.20),transparent 58%),radial-gradient(900px 620px at 112% 4%,rgba(249,115,22,.12),transparent 55%),#0b1120}
+.wrap{max-width:1080px;margin:0 auto;padding:30px 20px 56px}
+.empty{padding:80px 20px;text-align:center;color:#8b98ad;font-size:15px}
+.hd{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:26px}
+.hd-l{display:flex;flex-direction:column;gap:5px;min-width:0}
+.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#f87171;font-weight:700}
+.hd h1{font-size:26px;font-weight:750;letter-spacing:-.02em;color:#f6f8fc}
+.hd-user{font-size:13px;color:#8b98ad}
+.btn-primary{background:#dc2626;color:#fff;border:0;padding:11px 18px;border-radius:12px;font:inherit;font-weight:650;font-size:14px;cursor:pointer;box-shadow:0 6px 20px rgba(220,38,38,.35);transition:transform .12s ease,box-shadow .12s ease}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(220,38,38,.45)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px;margin-bottom:20px}
+.stat{position:relative;padding:17px 18px;border:1px solid rgba(255,255,255,.09);border-radius:16px;background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015));overflow:hidden}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#dc2626}
+.stat-val{font-size:30px;font-weight:750;line-height:1;letter-spacing:-.02em;color:#f6f8fc}
+.stat-label{font-size:13px;color:#c2cbdb;margin-top:8px;font-weight:550}
+.stat-sub{font-size:12px;color:#8b98ad;margin-top:4px}
+.t-good{color:#34d399}.t-warn{color:#fbbf24}.t-bad{color:#f87171}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px}
+.panel{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden}
+.panel-head{padding:16px 18px 2px}
+.panel-head h2{font-size:14px;font-weight:650;color:#e8edf6}
+.panel-body{padding:12px 18px 18px}
+.bar-row{display:grid;grid-template-columns:112px 1fr 34px;align-items:center;gap:10px;margin:11px 0;font-size:13px}
+.bar-name{color:#d6dded;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:8px;background:rgba(255,255,255,.07);border-radius:999px;overflow:hidden}
+.bar-fill{height:100%;width:0;border-radius:999px;transition:width .95s cubic-bezier(.22,1,.36,1)}
+.bar-val{text-align:right;color:#9aa6ba;font-variant-numeric:tabular-nums}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,.07)}
+.row:first-child{border-top:0}
+.row-main{min-width:0}
+.row-title{font-size:14px;font-weight:550;color:#eef2f8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-meta{font-size:12px;color:#8b98ad;margin-top:2px}
+.badge{font-size:11px;font-weight:650;padding:3px 9px;border-radius:999px;border:1px solid;white-space:nowrap}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+.qa{display:inline-flex;align-items:center;gap:8px;padding:10px 15px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#e8edf6;font:inherit;font-size:13px;font-weight:550;cursor:pointer;transition:border-color .12s,background .12s,transform .12s}
+.qa:hover{border-color:#dc2626;background:rgba(220,38,38,.12);transform:translateY(-1px)}
+.empty-sm{padding:20px 4px;text-align:center;color:#8b98ad;font-size:13px}
+.cta{margin-top:12px;background:rgba(220,38,38,.15);color:#fca5a5;border:1px solid rgba(220,38,38,.4);padding:8px 14px;border-radius:10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.cta:hover{background:rgba(220,38,38,.25)}
+`,
+        js: `(function(){
+var FL=window.FormLogic;
+function h(s){return FL.escapeHtml(s==null?'':String(s));}
+function findForm(ctx,names){for(var n=0;n<names.length;n++){var t=String(names[n]).toLowerCase();for(var i=0;i<ctx.forms.length;i++){if(String(ctx.forms[i].displayName||'').toLowerCase()===t)return ctx.forms[i];}}return null;}
+function fieldOptions(f,id){if(!f)return[];for(var i=0;i<f.fields.length;i++){var x=f.fields[i];if(x.id===id&&x.properties&&x.properties.options)return x.properties.options;}return[];}
+function optLabels(f,id){var m={};var o=fieldOptions(f,id);for(var i=0;i<o.length;i++){m[o[i].value]=o[i].label;}return m;}
+function ans(r,id){return r&&r.answers?r.answers[id]:undefined;}
+function countBy(rs,id){var m={};for(var i=0;i<rs.length;i++){var v=ans(rs[i],id);if(v==null||v==='')continue;m[v]=(m[v]||0)+1;}return m;}
+function parseDate(v){if(!v)return null;var d=new Date(v);return isNaN(d.getTime())?null:d;}
+function startToday(){var d=new Date();d.setHours(0,0,0,0);return d;}
+function fmtDate(v){var d=parseDate(v);if(!d)return '—';return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});}
+function num(n){return (n||0).toLocaleString();}
+var SEV={low:'#22c55e',medium:'#f59e0b',high:'#f97316',critical:'#ef4444'};
+var RISK={Low:'#22c55e',Medium:'#f59e0b',High:'#f97316',Critical:'#ef4444'};
+function bar(l,c,mx,col){var p=mx>0?Math.max(3,Math.round(c/mx*100)):0;return '<div class="bar-row"><span class="bar-name">'+h(l)+'</span><div class="bar-track"><div class="bar-fill" data-pct="'+p+'" style="background:'+col+'"></div></div><span class="bar-val">'+num(c)+'</span></div>';}
+function stat(v,l,sub,tone){return '<div class="stat"><div class="stat-val">'+h(v)+'</div><div class="stat-label">'+h(l)+'</div>'+(sub!=null?'<div class="stat-sub'+(tone?' t-'+tone:'')+'">'+h(sub)+'</div>':'')+'</div>';}
+function panel(t,b){return '<section class="panel"><div class="panel-head"><h2>'+h(t)+'</h2></div><div class="panel-body">'+b+'</div></section>';}
+function badge(t,col){return '<span class="badge" style="color:'+col+';border-color:'+col+'55;background:'+col+'22">'+h(t)+'</span>';}
+function vbadge(v,labels,colors){if(v==null||v==='')return '';return badge(labels[v]||v,colors[v]||'#94a3b8');}
+function listRow(t,m,bd){return '<div class="row"><div class="row-main"><div class="row-title">'+h(t)+'</div><div class="row-meta">'+h(m)+'</div></div>'+(bd||'')+'</div>';}
+function emptyBody(msg,fid,cta){var b='<div class="empty-sm">'+h(msg);if(fid){b+='<div><button class="cta" data-nav="'+h(fid)+'">'+h(cta||'Add one')+'</button></div>';}return b+'</div>';}
+function optBars(f,fid,counts,colors){var o=fieldOptions(f,fid);var mx=0;for(var i=0;i<o.length;i++){var c=counts[o[i].value]||0;if(c>mx)mx=c;}var body='';var any=false;for(var i=0;i<o.length;i++){var c=counts[o[i].value]||0;body+=bar(o[i].label,c,mx,colors[o[i].value]||'#64748b');if(c>0)any=true;}return {body:body,any:any};}
+async function recs(f){return f?await FL.records(f.formId,{limit:500}).catch(function(){return[];}):[];}
+async function main(){
+var root=document.getElementById('app');
+var ctx;try{ctx=await FL.context();}catch(e){root.innerHTML='<div class="wrap"><div class="empty">Could not load dashboard.</div></div>';return;}
+var user=await FL.currentUser().catch(function(){return null;});
+var incF=findForm(ctx,['Incident Report']);
+var injF=findForm(ctx,['Injury Record']);
+var hazF=findForm(ctx,['Hazard Identification']);
+var actF=findForm(ctx,['Action Items','Action Item']);
+var meetF=findForm(ctx,['Meetings & Toolbox Talks','Meeting / Toolbox Talk']);
+var contF=findForm(ctx,['Contractor Approval']);
+var inc=await recs(incF),inj=await recs(injF),haz=await recs(hazF),act=await recs(actF);
+var sevC=countBy(inc,'severity');
+var highCrit=(sevC.high||0)+(sevC.critical||0);
+var riskC=countBy(haz,'risk_level');
+var highRisk=(riskC.High||0)+(riskC.Critical||0);
+var lostTime=0;for(var i=0;i<inj.length;i++){if(ans(inj[i],'lost_time')==='yes')lostTime++;}
+var today=startToday();var overdue=0;for(var i=0;i<act.length;i++){var d=parseDate(ans(act[i],'due_date'));if(d&&d<today)overdue++;}
+var html='';
+html+='<header class="hd"><div class="hd-l"><div class="eyebrow">'+h(ctx.appName||'Safety Management')+'</div><h1>Safety Command Center</h1><div class="hd-user">'+(user&&user.name?'Signed in as '+h(user.name):'Workplace health and safety overview')+'</div></div>';
+if(incF)html+='<button class="btn-primary" data-nav="'+h(incF.formId)+'">+ Report Incident</button>';
+html+='</header>';
+html+='<div class="stats">';
+html+=stat(num(inc.length),'Incidents Logged',highCrit+' high / critical',highCrit>0?'warn':'good');
+html+=stat(num(highCrit),'High / Critical','severity high or above',highCrit>0?'bad':'good');
+html+=stat(num(haz.length),'Open Hazards',highRisk+' high-risk',highRisk>0?'warn':'good');
+html+=stat(num(overdue),'Overdue Actions',act.length+' actions total',overdue>0?'bad':'good');
+html+=stat(num(lostTime),'Lost-Time Injuries',inj.length+' injuries logged',lostTime>0?'warn':'good');
+html+='</div>';
+html+='<div class="panels">';
+var sb=optBars(incF,'severity',sevC,SEV);
+html+=panel('Incidents by Severity',sb.any?sb.body:emptyBody('No incidents reported yet.',incF?incF.formId:'','Report an incident'));
+var sevL=optLabels(incF,'severity');var rb='';
+if(inc.length){for(var i=0;i<Math.min(6,inc.length);i++){var r=inc[i];rb+=listRow(ans(r,'incident_title')||'Untitled incident',fmtDate(ans(r,'incident_date'))+' · '+(ans(r,'location')||'—'),vbadge(ans(r,'severity'),sevL,SEV));}}else rb=emptyBody('No incidents reported yet.',incF?incF.formId:'','Report an incident');
+html+=panel('Recent Incidents',rb);
+html+='</div>';
+html+='<div class="panels">';
+var order=['Critical','High','Medium','Low'];var mxR=0;for(var i=0;i<order.length;i++){if((riskC[order[i]]||0)>mxR)mxR=riskC[order[i]]||0;}
+var hb='';var hany=false;for(var i=0;i<order.length;i++){var c=riskC[order[i]]||0;hb+=bar(order[i],c,mxR,RISK[order[i]]);if(c>0)hany=true;}
+html+=panel('Hazards by Risk Level',hany?hb:emptyBody('No hazards recorded yet.',hazF?hazF.formId:'','Report a hazard'));
+var priL=optLabels(actF,'priority');var due=[];for(var i=0;i<act.length;i++){var d=parseDate(ans(act[i],'due_date'));if(d)due.push({r:act[i],d:d});}
+due.sort(function(a,b){return a.d-b.d;});
+var ab='';if(due.length){for(var i=0;i<Math.min(6,due.length);i++){var r=due[i].r;var od=due[i].d<today;ab+=listRow(ans(r,'action_title')||'Action',(od?'Overdue · ':'Due ')+fmtDate(ans(r,'due_date'))+' · '+(ans(r,'assigned_to')||'Unassigned'),vbadge(ans(r,'priority'),priL,SEV));}}else ab=emptyBody('No open actions.',actF?actF.formId:'','Create an action');
+html+=panel('Actions Due Soon',ab);
+html+='</div>';
+var qa=[[incF,'Report Incident'],[injF,'Log Injury'],[hazF,'Report Hazard'],[actF,'New Action'],[meetF,'Toolbox Talk'],[contF,'Approve Contractor']];
+var qh='';for(var i=0;i<qa.length;i++){if(qa[i][0])qh+='<button class="qa" data-nav="'+h(qa[i][0].formId)+'">'+h(qa[i][1])+'</button>';}
+if(qh)html+='<div class="actions">'+qh+'</div>';
+root.innerHTML='<div class="wrap">'+html+'</div>';
+var bs=root.querySelectorAll('[data-nav]');for(var i=0;i<bs.length;i++){(function(el){el.addEventListener('click',function(){FL.navigate(el.getAttribute('data-nav'));});})(bs[i]);}
+requestAnimationFrame(function(){requestAnimationFrame(function(){var el=root.querySelectorAll('.bar-fill');for(var i=0;i<el.length;i++){el[i].style.width=(el[i].getAttribute('data-pct')||0)+'%';}});});
+}
+main();
+})();`,
+      },
       roles: [
         {
           name: 'Safety Officer',
@@ -1607,6 +1730,131 @@ export const ohsQmsPack: PackData = {
         { packFormId: 'training-record', displayName: 'Training Records', sortOrder: 6, isVisible: true },
         { packFormId: 'contractor-approval', displayName: 'Contractor Approval', sortOrder: 7, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading quality dashboard…</div></div></div>`,
+        css: `
+*{box-sizing:border-box;margin:0;padding:0}
+#app{min-height:100vh;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e8edf6;-webkit-font-smoothing:antialiased;
+  background:radial-gradient(1100px 640px at 12% -12%,rgba(37,99,235,.20),transparent 58%),radial-gradient(900px 620px at 112% 4%,rgba(34,211,238,.12),transparent 55%),#0b1120}
+.wrap{max-width:1080px;margin:0 auto;padding:30px 20px 56px}
+.empty{padding:80px 20px;text-align:center;color:#8b98ad;font-size:15px}
+.hd{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:26px}
+.hd-l{display:flex;flex-direction:column;gap:5px;min-width:0}
+.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#60a5fa;font-weight:700}
+.hd h1{font-size:26px;font-weight:750;letter-spacing:-.02em;color:#f6f8fc}
+.hd-user{font-size:13px;color:#8b98ad}
+.btn-primary{background:#2563eb;color:#fff;border:0;padding:11px 18px;border-radius:12px;font:inherit;font-weight:650;font-size:14px;cursor:pointer;box-shadow:0 6px 20px rgba(37,99,235,.35);transition:transform .12s ease,box-shadow .12s ease}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(37,99,235,.45)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:14px;margin-bottom:20px}
+.stat{position:relative;padding:17px 18px;border:1px solid rgba(255,255,255,.09);border-radius:16px;background:linear-gradient(160deg,rgba(255,255,255,.055),rgba(255,255,255,.015));overflow:hidden}
+.stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:#2563eb}
+.stat-val{font-size:30px;font-weight:750;line-height:1;letter-spacing:-.02em;color:#f6f8fc}
+.stat-label{font-size:13px;color:#c2cbdb;margin-top:8px;font-weight:550}
+.stat-sub{font-size:12px;color:#8b98ad;margin-top:4px}
+.t-good{color:#34d399}.t-warn{color:#fbbf24}.t-bad{color:#f87171}
+.panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px}
+.panel{background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);border-radius:16px;overflow:hidden}
+.panel-head{padding:16px 18px 2px}
+.panel-head h2{font-size:14px;font-weight:650;color:#e8edf6}
+.panel-body{padding:12px 18px 18px}
+.bar-row{display:grid;grid-template-columns:112px 1fr 34px;align-items:center;gap:10px;margin:11px 0;font-size:13px}
+.bar-name{color:#d6dded;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:8px;background:rgba(255,255,255,.07);border-radius:999px;overflow:hidden}
+.bar-fill{height:100%;width:0;border-radius:999px;transition:width .95s cubic-bezier(.22,1,.36,1)}
+.bar-val{text-align:right;color:#9aa6ba;font-variant-numeric:tabular-nums}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid rgba(255,255,255,.07)}
+.row:first-child{border-top:0}
+.row-main{min-width:0}
+.row-title{font-size:14px;font-weight:550;color:#eef2f8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-meta{font-size:12px;color:#8b98ad;margin-top:2px}
+.badge{font-size:11px;font-weight:650;padding:3px 9px;border-radius:999px;border:1px solid;white-space:nowrap}
+.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+.qa{display:inline-flex;align-items:center;gap:8px;padding:10px 15px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#e8edf6;font:inherit;font-size:13px;font-weight:550;cursor:pointer;transition:border-color .12s,background .12s,transform .12s}
+.qa:hover{border-color:#2563eb;background:rgba(37,99,235,.12);transform:translateY(-1px)}
+.empty-sm{padding:20px 4px;text-align:center;color:#8b98ad;font-size:13px}
+.cta{margin-top:12px;background:rgba(37,99,235,.15);color:#93c5fd;border:1px solid rgba(37,99,235,.4);padding:8px 14px;border-radius:10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.cta:hover{background:rgba(37,99,235,.25)}
+`,
+        js: `(function(){
+var FL=window.FormLogic;
+function h(s){return FL.escapeHtml(s==null?'':String(s));}
+function findForm(ctx,names){for(var n=0;n<names.length;n++){var t=String(names[n]).toLowerCase();for(var i=0;i<ctx.forms.length;i++){if(String(ctx.forms[i].displayName||'').toLowerCase()===t)return ctx.forms[i];}}return null;}
+function fieldOptions(f,id){if(!f)return[];for(var i=0;i<f.fields.length;i++){var x=f.fields[i];if(x.id===id&&x.properties&&x.properties.options)return x.properties.options;}return[];}
+function optLabels(f,id){var m={};var o=fieldOptions(f,id);for(var i=0;i<o.length;i++){m[o[i].value]=o[i].label;}return m;}
+function ans(r,id){return r&&r.answers?r.answers[id]:undefined;}
+function countBy(rs,id){var m={};for(var i=0;i<rs.length;i++){var v=ans(rs[i],id);if(v==null||v==='')continue;m[v]=(m[v]||0)+1;}return m;}
+function parseDate(v){if(!v)return null;var d=new Date(v);return isNaN(d.getTime())?null:d;}
+function startToday(){var d=new Date();d.setHours(0,0,0,0);return d;}
+function fmtDate(v){var d=parseDate(v);if(!d)return '—';return d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});}
+function num(n){return (n||0).toLocaleString();}
+var NSEV={minor:'#22c55e',major:'#f59e0b',critical:'#ef4444'};
+var FIND={observation:'#38bdf8',minor:'#f59e0b',major:'#f97316',critical:'#ef4444',opportunity:'#22c55e'};
+var PRI={low:'#22c55e',medium:'#f59e0b',high:'#f97316',critical:'#ef4444'};
+function bar(l,c,mx,col){var p=mx>0?Math.max(3,Math.round(c/mx*100)):0;return '<div class="bar-row"><span class="bar-name">'+h(l)+'</span><div class="bar-track"><div class="bar-fill" data-pct="'+p+'" style="background:'+col+'"></div></div><span class="bar-val">'+num(c)+'</span></div>';}
+function stat(v,l,sub,tone){return '<div class="stat"><div class="stat-val">'+h(v)+'</div><div class="stat-label">'+h(l)+'</div>'+(sub!=null?'<div class="stat-sub'+(tone?' t-'+tone:'')+'">'+h(sub)+'</div>':'')+'</div>';}
+function panel(t,b){return '<section class="panel"><div class="panel-head"><h2>'+h(t)+'</h2></div><div class="panel-body">'+b+'</div></section>';}
+function badge(t,col){return '<span class="badge" style="color:'+col+';border-color:'+col+'55;background:'+col+'22">'+h(t)+'</span>';}
+function vbadge(v,labels,colors){if(v==null||v==='')return '';return badge(labels[v]||v,colors[v]||'#94a3b8');}
+function listRow(t,m,bd){return '<div class="row"><div class="row-main"><div class="row-title">'+h(t)+'</div><div class="row-meta">'+h(m)+'</div></div>'+(bd||'')+'</div>';}
+function emptyBody(msg,fid,cta){var b='<div class="empty-sm">'+h(msg);if(fid){b+='<div><button class="cta" data-nav="'+h(fid)+'">'+h(cta||'Add one')+'</button></div>';}return b+'</div>';}
+function optBars(f,fid,counts,colors){var o=fieldOptions(f,fid);var mx=0;for(var i=0;i<o.length;i++){var c=counts[o[i].value]||0;if(c>mx)mx=c;}var body='';var any=false;for(var i=0;i<o.length;i++){var c=counts[o[i].value]||0;body+=bar(o[i].label,c,mx,colors[o[i].value]||'#64748b');if(c>0)any=true;}return {body:body,any:any};}
+async function recs(f){return f?await FL.records(f.formId,{limit:500}).catch(function(){return[];}):[];}
+async function main(){
+var root=document.getElementById('app');
+var ctx;try{ctx=await FL.context();}catch(e){root.innerHTML='<div class="wrap"><div class="empty">Could not load dashboard.</div></div>';return;}
+var user=await FL.currentUser().catch(function(){return null;});
+var audF=findForm(ctx,['Audit Reports','Audit Report']);
+var carF=findForm(ctx,['Corrective Actions','Corrective Action Request']);
+var ncrF=findForm(ctx,['Non-Conformances','Non-Conformance Report']);
+var cmpF=findForm(ctx,['Complaints','Complaint Report']);
+var trnF=findForm(ctx,['Training Records','Training Record']);
+var contF=findForm(ctx,['Contractor Approval']);
+var aud=await recs(audF),car=await recs(carF),ncr=await recs(ncrF),cmp=await recs(cmpF),trn=await recs(trnF);
+var needCA=0;for(var i=0;i<aud.length;i++){if(ans(aud[i],'corrective_actions_required')==='yes')needCA++;}
+var today=startToday();var carOver=0;for(var i=0;i<car.length;i++){var d=parseDate(ans(car[i],'due_date'));if(d&&d<today)carOver++;}
+var ncrSev=countBy(ncr,'severity');var ncrCrit=ncrSev.critical||0;
+var findC=countBy(aud,'finding_severity');
+var cmpPr=countBy(cmp,'priority');var cmpHigh=(cmpPr.high||0)+(cmpPr.critical||0);
+var in30=new Date(today.getTime());in30.setDate(in30.getDate()+30);
+var expired=0,expSoon=0;for(var i=0;i<trn.length;i++){var d=parseDate(ans(trn[i],'expiry_date'));if(!d)continue;if(d<today)expired++;else if(d<=in30)expSoon++;}
+var certAttn=expired+expSoon;
+var html='';
+html+='<header class="hd"><div class="hd-l"><div class="eyebrow">'+h(ctx.appName||'Quality & Compliance')+'</div><h1>Quality Control Center</h1><div class="hd-user">'+(user&&user.name?'Signed in as '+h(user.name):'Audits, non-conformances and compliance')+'</div></div>';
+if(audF)html+='<button class="btn-primary" data-nav="'+h(audF.formId)+'">+ New Audit</button>';
+html+='</header>';
+html+='<div class="stats">';
+html+=stat(num(aud.length),'Audits Completed',needCA+' need corrective action',needCA>0?'warn':'good');
+html+=stat(num(car.length),'Corrective Actions',carOver+' overdue',carOver>0?'bad':'good');
+html+=stat(num(ncr.length),'Non-Conformances',ncrCrit+' critical',ncrCrit>0?'bad':(ncr.length?'warn':'good'));
+html+=stat(num(cmp.length),'Complaints',cmpHigh+' high priority',cmpHigh>0?'warn':'good');
+html+=stat(num(certAttn),'Certs Expiring',expired+' expired',expired>0?'bad':(expSoon?'warn':'good'));
+html+='</div>';
+html+='<div class="panels">';
+var nb=optBars(ncrF,'severity',ncrSev,NSEV);
+html+=panel('Non-Conformances by Severity',nb.any?nb.body:emptyBody('No non-conformances logged yet.',ncrF?ncrF.formId:'','Log an NCR'));
+var atL=optLabels(audF,'audit_type');var fsL=optLabels(audF,'finding_severity');var rb='';
+if(aud.length){for(var i=0;i<Math.min(6,aud.length);i++){var r=aud[i];rb+=listRow(ans(r,'audit_title')||'Untitled audit',fmtDate(ans(r,'audit_date'))+' · '+(atL[ans(r,'audit_type')]||'Audit'),vbadge(ans(r,'finding_severity'),fsL,FIND));}}else rb=emptyBody('No audits recorded yet.',audF?audF.formId:'','Start an audit');
+html+=panel('Recent Audits',rb);
+html+='</div>';
+html+='<div class="panels">';
+var fb=optBars(audF,'finding_severity',findC,FIND);
+html+=panel('Audit Findings',fb.any?fb.body:emptyBody('No audit findings yet.',audF?audF.formId:'','Start an audit'));
+var priL=optLabels(carF,'priority');var due=[];for(var i=0;i<car.length;i++){var d=parseDate(ans(car[i],'due_date'));if(d)due.push({r:car[i],d:d});}
+due.sort(function(a,b){return a.d-b.d;});
+var cb='';if(due.length){for(var i=0;i<Math.min(6,due.length);i++){var r=due[i].r;var od=due[i].d<today;cb+=listRow(ans(r,'car_title')||'Corrective action',(od?'Overdue · ':'Due ')+fmtDate(ans(r,'due_date'))+' · '+(ans(r,'assigned_to')||'Unassigned'),vbadge(ans(r,'priority'),priL,PRI));}}else cb=emptyBody('No corrective actions open.',carF?carF.formId:'','Raise a CAR');
+html+=panel('Corrective Actions Due',cb);
+html+='</div>';
+var qa=[[audF,'New Audit'],[carF,'Raise CAR'],[ncrF,'Log NCR'],[cmpF,'Log Complaint'],[trnF,'Add Training'],[contF,'Approve Contractor']];
+var qh='';for(var i=0;i<qa.length;i++){if(qa[i][0])qh+='<button class="qa" data-nav="'+h(qa[i][0].formId)+'">'+h(qa[i][1])+'</button>';}
+if(qh)html+='<div class="actions">'+qh+'</div>';
+root.innerHTML='<div class="wrap">'+html+'</div>';
+var bs=root.querySelectorAll('[data-nav]');for(var i=0;i<bs.length;i++){(function(el){el.addEventListener('click',function(){FL.navigate(el.getAttribute('data-nav'));});})(bs[i]);}
+requestAnimationFrame(function(){requestAnimationFrame(function(){var el=root.querySelectorAll('.bar-fill');for(var i=0;i<el.length;i++){el[i].style.width=(el[i].getAttribute('data-pct')||0)+'%';}});});
+}
+main();
+})();`,
+      },
       roles: [
         {
           name: 'Quality Manager',

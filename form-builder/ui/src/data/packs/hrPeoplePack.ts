@@ -985,6 +985,242 @@ export const hrPeoplePack: PackData = {
         { packFormId: 'training-request', displayName: 'Training Requests', sortOrder: 7, isVisible: true },
         { packFormId: 'exit-interview', displayName: 'Exit Interviews', sortOrder: 8, isVisible: true },
       ],
+      customScreen: {
+        enabled: true,
+        html: `<div id="app"><div class="wrap"><div class="empty">Loading your people dashboard…</div></div></div>`,
+        css: `
+*{box-sizing:border-box;margin:0;padding:0}
+#app{min-height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#e2e8f0;
+  background:radial-gradient(1200px 600px at 12% -12%,rgba(124,58,237,.20),transparent 60%),radial-gradient(900px 520px at 112% 8%,rgba(34,211,238,.12),transparent 55%),#0f172a}
+.wrap{max-width:1140px;margin:0 auto;padding:28px 24px 52px}
+.empty{padding:72px 20px;text-align:center;color:#94a3b8;font-size:14px}
+.hd{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:26px;flex-wrap:wrap}
+.hd-l{display:flex;align-items:center;gap:14px}
+.logo{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,#7c3aed,#a855f7);box-shadow:0 8px 24px rgba(124,58,237,.42)}
+.logo svg{width:25px;height:25px}
+.hd h1{font-size:22px;font-weight:700;letter-spacing:-.02em;color:#f8fafc}
+.sub{font-size:13px;color:#94a3b8;margin-top:2px}
+.btn{border:0;cursor:pointer;font:inherit;font-weight:600;border-radius:10px;padding:11px 18px;font-size:14px;transition:transform .12s ease,box-shadow .2s ease}
+.btn.primary{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;box-shadow:0 6px 18px rgba(124,58,237,.42)}
+.btn.primary:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(124,58,237,.52)}
+.card{background:rgba(30,41,59,.6);border:1px solid rgba(148,163,184,.14);border-radius:16px}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:20px}
+.stat{padding:18px}
+.stat-ic{width:34px;height:34px;margin-bottom:11px}
+.stat-ic svg{width:27px;height:27px}
+.stat-v{font-size:27px;font-weight:750;color:#f8fafc;letter-spacing:-.02em;line-height:1}
+.stat-l{font-size:13px;color:#cbd5e1;margin-top:7px;font-weight:600}
+.stat-s{font-size:11.5px;color:#8598ad;margin-top:3px}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.panel{padding:18px 20px 20px}
+.panel-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px}
+.panel-h h2{font-size:14px;font-weight:700;color:#f1f5f9;letter-spacing:-.01em}
+.link{background:none;border:0;color:#a78bfa;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;padding:0}
+.link:hover{color:#c4b5fd;text-decoration:underline}
+.bars{display:flex;flex-direction:column;gap:11px}
+.bar-row{display:grid;grid-template-columns:112px 1fr 52px;align-items:center;gap:12px}
+.bar-name{font-size:12.5px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar-track{height:9px;background:rgba(148,163,184,.14);border-radius:6px;overflow:hidden}
+.bar-fill{height:100%;width:0;border-radius:6px;transition:width .95s cubic-bezier(.22,1,.36,1)}
+.bar-val{font-size:12.5px;color:#e2e8f0;font-weight:600;text-align:right}
+.list{list-style:none;display:flex;flex-direction:column}
+.li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(148,163,184,.10)}
+.li:last-child{border-bottom:0}
+.li-main{display:flex;align-items:center;gap:9px;min-width:0}
+.li-title{font-size:13.5px;color:#f1f5f9;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:rgba(124,58,237,.18);color:#c4b5fd;white-space:nowrap}
+.li-date{font-size:12px;color:#94a3b8;white-space:nowrap}
+.empty-sm{padding:24px 6px;text-align:center;color:#8598ad;font-size:13px}
+.qa{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.qa-btn{display:flex;flex-direction:column;align-items:center;gap:9px;padding:16px 8px;cursor:pointer;font:inherit;
+  background:rgba(30,41,59,.5);border:1px solid rgba(148,163,184,.14);border-radius:14px;color:#cbd5e1;font-size:12.5px;font-weight:600;text-align:center;transition:transform .12s ease,border-color .2s ease,background .2s ease}
+.qa-btn:hover{transform:translateY(-2px);border-color:rgba(124,58,237,.5);background:rgba(124,58,237,.10);color:#f1f5f9}
+.qa-ic{width:22px;height:22px}
+.qa-ic svg{width:22px;height:22px}
+@media (max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.panels{grid-template-columns:1fr}.qa{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:520px){.stats{grid-template-columns:1fr}.qa{grid-template-columns:repeat(2,1fr)}}
+`,
+        js: `
+var FL = window.FormLogic;
+var PRIMARY = '#7c3aed', ACCENT = '#22d3ee';
+var PALETTE = ['#7c3aed','#a855f7','#22d3ee','#38bdf8','#34d399','#f59e0b','#f472b6','#fb7185'];
+var IC = {
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m16 11 2 2 4-4"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
+  receipt: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>',
+  book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>'
+};
+function h(s){ return FL.escapeHtml(s == null ? '' : String(s)); }
+function findForm(ctx, name){
+  var t = String(name).toLowerCase();
+  for (var i=0;i<ctx.forms.length;i++){ if (String(ctx.forms[i].displayName||'').toLowerCase()===t) return ctx.forms[i]; }
+  return null;
+}
+function labelMap(form, fieldId){
+  var m = {}; if(!form) return m;
+  for (var i=0;i<form.fields.length;i++){ var f=form.fields[i];
+    if(f.id===fieldId && f.properties && f.properties.options){
+      for (var j=0;j<f.properties.options.length;j++){ m[f.properties.options[j].value]=f.properties.options[j].label; } } }
+  return m;
+}
+function fmtDate(v){
+  if(!v) return '';
+  var d = new Date(v);
+  if (isNaN(d.getTime())) return String(v);
+  return d.toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
+}
+function money(n){ return '$' + (Number(n)||0).toLocaleString(undefined, { maximumFractionDigits:0 }); }
+function num(n){ return (Number(n)||0).toLocaleString(); }
+function monthCount(records){
+  var now=new Date(), m=now.getMonth(), y=now.getFullYear(), c=0;
+  for (var i=0;i<records.length;i++){ var d=new Date(records[i].submittedAt); if(!isNaN(d.getTime()) && d.getMonth()===m && d.getFullYear()===y) c++; }
+  return c;
+}
+function countBy(records, fieldId){
+  var m={}; for (var i=0;i<records.length;i++){ var a=records[i].answers||{}; var v=a[fieldId]; if(v==null||v==='') continue; m[v]=(m[v]||0)+1; }
+  return m;
+}
+function sumBy(records, keyField, valField){
+  var m={}; for (var i=0;i<records.length;i++){ var a=records[i].answers||{}; var k=a[keyField]; if(k==null||k==='') continue; m[k]=(m[k]||0)+(Number(a[valField])||0); }
+  return m;
+}
+function bars(counts, lm, fmt){
+  var keys=Object.keys(counts);
+  keys.sort(function(a,b){ return counts[b]-counts[a]; });
+  var max=0; for (var i=0;i<keys.length;i++){ if(counts[keys[i]]>max) max=counts[keys[i]]; }
+  if(!keys.length) return '<div class="empty-sm">No data yet</div>';
+  var html='';
+  for (var i=0;i<keys.length;i++){
+    var k=keys[i], c=counts[k];
+    var pct = max>0 ? Math.max(6, Math.round(c/max*100)) : 0;
+    var color = PALETTE[i % PALETTE.length];
+    var label = lm[k] || k;
+    var val = fmt ? fmt(c) : num(c);
+    html += '<div class="bar-row"><span class="bar-name" title="'+h(label)+'">'+h(label)+'</span>'
+      + '<div class="bar-track"><div class="bar-fill" data-pct="'+pct+'" style="background:'+color+'"></div></div>'
+      + '<span class="bar-val">'+h(val)+'</span></div>';
+  }
+  return html;
+}
+function stat(icon, value, label, sub, accent){
+  return '<div class="card stat"><div class="stat-ic" style="color:'+accent+'">'+icon+'</div>'
+    + '<div class="stat-v">'+h(value)+'</div><div class="stat-l">'+h(label)+'</div>'
+    + (sub ? '<div class="stat-s">'+h(sub)+'</div>' : '') + '</div>';
+}
+function qa(f, label, icon, accent){
+  if(!f) return '';
+  return '<button class="qa-btn" data-nav="'+h(f.formId)+'"><span class="qa-ic" style="color:'+accent+'">'+icon+'</span><span>'+h(label)+'</span></button>';
+}
+function panel(title, body, navForm, navLabel){
+  var head = '<div class="panel-h"><h2>'+h(title)+'</h2>'
+    + (navForm ? '<button class="link" data-nav="'+h(navForm.formId)+'">'+h(navLabel||'View all')+'</button>' : '') + '</div>';
+  return '<div class="card panel">'+head+body+'</div>';
+}
+async function main(){
+  var root = document.getElementById('app');
+  var ctx;
+  try { ctx = await FL.context(); } catch(e){ root.innerHTML = '<div class="wrap"><div class="empty">Could not load the dashboard.</div></div>'; return; }
+  var user = await FL.currentUser().catch(function(){ return null; });
+
+  var fApp = findForm(ctx, 'Job Applications');
+  var fOnb = findForm(ctx, 'Employee Onboarding');
+  var fLeave = findForm(ctx, 'Leave Requests');
+  var fPerf = findForm(ctx, 'Performance Reviews');
+  var fExp = findForm(ctx, 'Expense Claims');
+  var fTrain = findForm(ctx, 'Training Requests');
+
+  async function load(f){ return f ? await FL.records(f.formId, { limit: 500 }).catch(function(){ return []; }) : []; }
+  var apps = await load(fApp);
+  var onb = await load(fOnb);
+  var leave = await load(fLeave);
+  var perf = await load(fPerf);
+  var exp = await load(fExp);
+
+  var totalExpense=0; for (var i=0;i<exp.length;i++){ totalExpense += Number((exp[i].answers||{}).amount)||0; }
+  var totalLeaveDays=0; for (var i=0;i<leave.length;i++){ totalLeaveDays += Number((leave[i].answers||{}).total_days)||0; }
+  var ratingSum=0, ratingN=0;
+  for (var i=0;i<perf.length;i++){ var r=Number((perf[i].answers||{}).overall_rating); if(!isNaN(r)&&r>0){ ratingSum+=r; ratingN++; } }
+  var avgRating = ratingN ? Math.round(ratingSum/ratingN*10)/10 : 0;
+
+  var posLm = labelMap(fApp, 'position');
+  var leaveLm = labelMap(fLeave, 'leave_type');
+  var catLm = labelMap(fExp, 'category');
+
+  var uname = (user && user.name) ? user.name : 'there';
+  var html = '<div class="wrap">';
+
+  html += '<header class="hd"><div class="hd-l"><div class="logo">'+IC.users+'</div>'
+    + '<div><h1>'+h(ctx.appName||'People Hub')+'</h1><p class="sub">Welcome back, '+h(uname)+'</p></div></div>'
+    + '<div class="hd-r">' + (fApp ? '<button class="btn primary" data-nav="'+h(fApp.formId)+'">+ New Application</button>' : '') + '</div></header>';
+
+  html += '<div class="stats">'
+    + stat(IC.doc, num(apps.length), 'Applicants', monthCount(apps)+' this month', PRIMARY)
+    + stat(IC.check, num(onb.length), 'Onboarding', monthCount(onb)+' new this month', ACCENT)
+    + stat(IC.cal, num(leave.length), 'Leave Requests', num(totalLeaveDays)+' days total', '#f59e0b')
+    + stat(IC.star, num(perf.length), 'Reviews', (avgRating ? avgRating+' avg rating' : 'no ratings yet'), '#34d399')
+    + stat(IC.receipt, money(totalExpense), 'Expenses', num(exp.length)+' claims', '#f472b6')
+    + '</div>';
+
+  html += '<div class="panels">';
+
+  html += panel('Applications by position',
+    '<div class="bars">' + (apps.length ? bars(countBy(apps,'position'), posLm, null) : '<div class="empty-sm">No applications yet</div>') + '</div>',
+    fApp, 'View all');
+
+  var recent = '';
+  if (apps.length){
+    recent = '<ul class="list">';
+    for (var i=0;i<Math.min(apps.length,6);i++){
+      var a = apps[i].answers||{};
+      var nm = ((a.first_name||'')+' '+(a.last_name||'')).trim() || 'Candidate';
+      var pos = posLm[a.position] || a.position || '';
+      recent += '<li class="li"><div class="li-main"><span class="li-title">'+h(nm)+'</span>'
+        + (pos ? '<span class="badge">'+h(pos)+'</span>' : '') + '</div>'
+        + '<span class="li-date">'+h(fmtDate(apps[i].submittedAt))+'</span></li>';
+    }
+    recent += '</ul>';
+  } else {
+    recent = '<div class="empty-sm">No applications yet' + (fApp ? ' — <button class="link" data-nav="'+h(fApp.formId)+'">add one</button>' : '') + '</div>';
+  }
+  html += panel('Recent applications', recent, null, null);
+
+  html += panel('Leave by type',
+    '<div class="bars">' + (leave.length ? bars(countBy(leave,'leave_type'), leaveLm, null) : '<div class="empty-sm">No leave requests yet</div>') + '</div>',
+    fLeave, 'View all');
+
+  html += panel('Expense spend by category',
+    '<div class="bars">' + (exp.length ? bars(sumBy(exp,'category','amount'), catLm, money) : '<div class="empty-sm">No expense claims yet</div>') + '</div>',
+    fExp, 'View all');
+
+  html += '</div>';
+
+  html += '<div class="qa">'
+    + qa(fApp, 'New application', IC.doc, PRIMARY)
+    + qa(fOnb, 'Onboard employee', IC.check, ACCENT)
+    + qa(fLeave, 'Log leave', IC.cal, '#f59e0b')
+    + qa(fExp, 'Submit expense', IC.receipt, '#f472b6')
+    + qa(fTrain, 'Request training', IC.book, '#38bdf8')
+    + qa(fPerf, 'Performance review', IC.star, '#34d399')
+    + '</div>';
+
+  html += '</div>';
+  root.innerHTML = html;
+
+  var navs = root.querySelectorAll('[data-nav]');
+  for (var i=0;i<navs.length;i++){ (function(el){ el.addEventListener('click', function(){ FL.navigate(el.getAttribute('data-nav')); }); })(navs[i]); }
+
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){
+    var fills = root.querySelectorAll('.bar-fill');
+    for (var i=0;i<fills.length;i++){ fills[i].style.width = (fills[i].getAttribute('data-pct')||0) + '%'; }
+  }); });
+}
+main();
+`,
+      },
       roles: [
         {
           name: 'HR Manager',

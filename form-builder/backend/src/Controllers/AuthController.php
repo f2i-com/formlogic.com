@@ -193,8 +193,85 @@ class AuthController
         }
 
         return $this->jsonResponse($response, [
-            'user' => $user->toArray(),
+            'user' => $this->decorateUser($user),
         ]);
+    }
+
+    /** The shared public demo account's email (also used to detect demo sessions). */
+    private function demoEmail(): string
+    {
+        $email = $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local';
+        return is_string($email) && $email !== '' ? $email : 'demo@formlogic.local';
+    }
+
+    /** Whether the public no-signup demo is available. Defaults on. */
+    private function demoEnabled(): bool
+    {
+        return strtolower((string)($_ENV['DEMO_ENABLED'] ?? 'true')) !== 'false';
+    }
+
+    /** User payload + an `isDemo` flag so the UI can show the demo banner. */
+    private function decorateUser($user): array
+    {
+        $arr = $user->toArray();
+        $arr['isDemo'] = ($user->email === $this->demoEmail());
+        return $arr;
+    }
+
+    /**
+     * Start (or resume) the public no-signup demo: mint a session cookie for the shared
+     * "Demo" account without a password, so a visitor lands in the full product with the
+     * demo apps + sample data already there.
+     * POST /api/demo/start
+     */
+    public function demoStart(Request $request, Response $response): Response
+    {
+        if (!$this->demoEnabled()) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'The live demo is not available right now.'], 403);
+        }
+
+        $user = $this->authService->ensureDemoUser($this->demoEmail());
+        $token = $this->authService->issueToken($user);
+        $response = $this->setAuthCookie($response, $token);
+
+        if ($this->auditService) {
+            try {
+                $this->auditService->log('demo.start', 'user', $user->id, $user->id, $this->ipResolver->getClientIp($request), []);
+            } catch (\Throwable $e) {
+                // best-effort audit only
+            }
+        }
+
+        return $this->jsonResponse($response, ['user' => $this->decorateUser($user)]);
+    }
+
+    /**
+     * Public list of the demoable apps (published apps owned by the Demo account),
+     * so the landing page can render cards that deep-link into each one.
+     * GET /api/demo/apps
+     */
+    public function demoApps(Request $request, Response $response): Response
+    {
+        if (!$this->demoEnabled() || $this->appService === null) {
+            return $this->jsonResponse($response, ['apps' => []]);
+        }
+
+        $user = $this->authService->ensureDemoUser($this->demoEmail());
+        $apps = $this->appService->getAllApps($user->id);
+        $out = [];
+        foreach ($apps as $app) {
+            if (($app['status'] ?? '') !== 'published') {
+                continue;
+            }
+            $out[] = [
+                'slug' => $app['slug'] ?? null,
+                'name' => $app['name'] ?? 'App',
+                'description' => $app['description'] ?? '',
+                'logoUrl' => $app['logoUrl'] ?? null,
+            ];
+        }
+
+        return $this->jsonResponse($response, ['apps' => $out]);
     }
 
     /**

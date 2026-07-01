@@ -576,6 +576,52 @@ class AuthService
     }
 
     /**
+     * Find-or-create the shared public "Demo" account. It has an unusable random
+     * password (the demo is entered via a passwordless minted token, never a login),
+     * and a far-future cloud_until so demo apps are never plan-gated. Idempotent.
+     */
+    public function ensureDemoUser(string $email, string $name = 'Demo'): User
+    {
+        $stmt = $this->mysql->prepare("SELECT * FROM users WHERE email = :email");
+        $stmt->execute(['email' => $email]);
+        $row = $stmt->fetch();
+        if ($row) {
+            return User::fromArray($row);
+        }
+
+        $userId = $this->generateUuid();
+        $passwordHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT);
+        $now = date('Y-m-d H:i:s');
+        try {
+            $stmt = $this->mysql->prepare("
+                INSERT INTO users (id, email, password_hash, name, cloud_until, created_at, updated_at)
+                VALUES (:id, :email, :password_hash, :name, DATE_ADD(NOW(), INTERVAL 100 YEAR), :created_at, :updated_at)
+            ");
+            $stmt->execute([
+                'id' => $userId,
+                'email' => $email,
+                'password_hash' => $passwordHash,
+                'name' => $name,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        } catch (\PDOException $e) {
+            // Lost a create race — the row now exists, so just read it back.
+            if ($e->getCode() === '23000' || strpos($e->getMessage(), 'Duplicate entry') !== false) {
+                $stmt = $this->mysql->prepare("SELECT * FROM users WHERE email = :email");
+                $stmt->execute(['email' => $email]);
+                $row = $stmt->fetch();
+                if ($row) {
+                    return User::fromArray($row);
+                }
+            }
+            throw $e;
+        }
+
+        return $this->getUserById($userId);
+    }
+
+    /**
      * Generate a JWT token for a user
      */
     private function generateToken(User $user): string
