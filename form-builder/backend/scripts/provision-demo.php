@@ -110,6 +110,8 @@ function niceCategory(string $slug, array $tags): string
         'sales-crm' => 'Sales & CRM',
         'expense-manager' => 'Finance',
         'people-onboarding-compliance' => 'HR',
+        'plumbing-field-service' => 'Trades & Field Service',
+        'job-invoice-management' => 'Billing & Invoicing',
     ];
     if (isset($map[$slug])) {
         return $map[$slug];

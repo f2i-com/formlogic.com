@@ -5,6 +5,8 @@ import { ohsQmsPack } from './ohsQmsPack';
 import { hrPeoplePack } from './hrPeoplePack';
 import { eventManagementPack } from './eventManagementPack';
 import { customerServicePack } from './customerServicePack';
+import { plumbingFieldServicePack } from './plumbingFieldServicePack';
+import { jobInvoicePack } from './jobInvoicePack';
 
 export interface PackCatalogEntry {
   id: string;
@@ -83,5 +85,27 @@ export const packCatalog: PackCatalogEntry[] = [
     appCount: customerServicePack.apps?.length ?? 0,
     icon: '\uD83C\uDFA7', // 🎧
     pack: customerServicePack as unknown as PackData,
+  },
+  {
+    id: 'plumbing-field-service',
+    name: 'Plumbing & Trades Field Service',
+    description:
+      'Field-service operations for a plumbing or trades business: manage customers, schedule and track jobs, log on-site work orders, raise invoices, and request parts and materials — all linked together. Includes 5 forms and 1 app.',
+    tags: ['plumbing', 'trades', 'field-service', 'jobs', 'scheduling'],
+    formCount: plumbingFieldServicePack.forms.length,
+    appCount: plumbingFieldServicePack.apps?.length ?? 0,
+    icon: '🔧', // 🔧
+    pack: plumbingFieldServicePack as unknown as PackData,
+  },
+  {
+    id: 'job-invoice-management',
+    name: 'Job & Invoice Management',
+    description:
+      'A universal job-to-quote-to-invoice-to-payment pipeline for any service business, with clients, jobs, quotes, invoices, and payments plus a live billing dashboard. Includes 5 forms and 1 app.',
+    tags: ['invoicing', 'jobs', 'quotes', 'billing', 'operations'],
+    formCount: jobInvoicePack.forms.length,
+    appCount: jobInvoicePack.apps?.length ?? 0,
+    icon: '🧾', // 🧾
+    pack: jobInvoicePack as unknown as PackData,
   },
 ];
