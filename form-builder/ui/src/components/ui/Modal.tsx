@@ -152,7 +152,9 @@ export function Modal({
             transition={{ duration: 0.15 }}
             className={cn(
               'relative w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl shadow-black/20',
-              'max-h-[90vh] overflow-hidden flex flex-col',
+              // dvh (not vh) so the popup caps to the VISIBLE viewport on mobile toolbars; the body
+              // scrolls internally, so any popup stays fully on-screen and flexes to any window height.
+              'max-h-[90dvh] overflow-hidden flex flex-col',
               'ring-1 ring-black/5 dark:ring-white/[0.06] border border-gray-200/50 dark:border-slate-800',
               sizes[size]
             )}

@@ -23,6 +23,7 @@ import {
   Undo2,
   Redo2,
   MonitorPlay,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   DndContext,
@@ -45,6 +46,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconPicker } from '../components/ui/IconPicker';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
+import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
@@ -60,7 +62,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useUIStore } from '../stores/uiStore';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 
-type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | null;
+type ModalType = 'script' | 'embed' | 'ai' | 'theme' | 'settings' | 'shortcuts' | 'versions' | 'publishPack' | 'screen' | null;
 
 /**
  * Serialize the current form into a single-form PackData so it can be published to the
@@ -685,6 +687,14 @@ export default function FormBuilder() {
             <span className="hidden lg:inline ml-2">Screen</span>
           </Button>
 
+          {/* View the custom screen as a flexible popup dashboard (only when one is enabled) */}
+          {form.customScreen?.enabled && (
+            <Button variant="outline" size="sm" onClick={() => setActiveModal('screen')} title="View dashboard" aria-label="View dashboard">
+              <LayoutDashboard className="h-4 w-4" />
+              <span className="hidden lg:inline ml-2">Dashboard</span>
+            </Button>
+          )}
+
           {/* Share - hidden on smallest screens */}
           <Button
             variant="outline"
@@ -1047,6 +1057,17 @@ export default function FormBuilder() {
         formId={form.id}
         formTitle={form.title}
       />
+
+      {activeModal === 'screen' && form.customScreen?.enabled && (
+        <ScreenModal
+          isOpen
+          onClose={closeModal}
+          screen={form.customScreen}
+          formId={form.id}
+          formTitle={form.title}
+          fields={(form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+        />
+      )}
 
       {/* AI Form Generator Modal */}
       <AIFormGenerator
