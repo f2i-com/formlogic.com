@@ -1071,14 +1071,33 @@ export function AppFormView() {
             </CalculatedFieldDisplay>
           </div>
         ))}
-      {/* Back button + Mode toggle */}
-      <div className="pt-2 pb-0 px-1 flex items-center justify-between">
-        <button
-          onClick={() => navigate(`/app/${appSlug}`)}
-          className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors cursor-pointer"
-        >
-          <ArrowLeft className="h-4 w-4" /> {runtimeForm?.displayName || 'Back'}
-        </button>
+      {/* Back button + NIGO toggle (left) · Mode toggle (right) */}
+      <div className="pt-2 pb-0 px-1 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => navigate(`/app/${appSlug}`)}
+            className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors cursor-pointer min-w-0"
+          >
+            <ArrowLeft className="h-4 w-4 flex-shrink-0" /> <span className="truncate">{runtimeForm?.displayName || 'Back'}</span>
+          </button>
+          {nigoEnabled && (
+            <button
+              type="button"
+              onClick={() => setShowNigo((v) => !v)}
+              className={cn(
+                'p-1.5 rounded-lg border transition-colors flex-shrink-0',
+                showNigo
+                  ? 'app-btn-primary app-border-primary'
+                  : 'text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 border-gray-200 dark:border-slate-700'
+              )}
+              aria-label="Toggle NIGO Dashboard"
+              aria-pressed={showNigo}
+              title="Completion checklist"
+            >
+              <ClipboardCheck className="h-4 w-4" />
+            </button>
+          )}
+        </div>
         {showModeToggle && (
           <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5" role="group" aria-label="Presentation mode">
             <button
@@ -1218,37 +1237,20 @@ export function AppFormView() {
         {safeStep + 1} / {fields.length}
       </div>
 
-      {/* NIGO Dashboard toggle & panel (bottom-left area, above step counter) */}
-      {nigoEnabled && (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowNigo((v) => !v)}
-            className={cn(
-              'absolute bottom-14 left-4 p-2 rounded-lg shadow-md border transition-colors z-10',
-              showNigo
-                ? 'app-btn-primary app-border-primary'
-                : 'bg-white dark:bg-slate-800 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white border-gray-100 dark:border-slate-700'
-            )}
-            aria-label="Toggle NIGO Dashboard"
-          >
-            <ClipboardCheck className="h-4 w-4" />
-          </button>
-          {showNigo && (
-            <div className="absolute bottom-24 left-4 w-72 z-20">
-              <NigoDashboard
-                fields={fields as unknown as FormFieldType[]}
-                formData={answers}
-                visibleFields={visibleFieldIds}
-                requiredFields={requiredFieldIds}
-                onFieldClick={(fieldId) => {
-                  const idx = fields.findIndex((f) => f.id === fieldId);
-                  if (idx >= 0) setCurrentStep(idx);
-                }}
-              />
-            </div>
-          )}
-        </>
+      {/* NIGO Dashboard panel — opens below the header toggle button, bounded to the viewport. */}
+      {nigoEnabled && showNigo && (
+        <div className="absolute top-14 left-4 w-72 max-w-[calc(100vw-2rem)] z-20 flex max-h-[min(calc(100%-4.5rem),32rem)]">
+          <NigoDashboard
+            fields={fields as unknown as FormFieldType[]}
+            formData={answers}
+            visibleFields={visibleFieldIds}
+            requiredFields={requiredFieldIds}
+            onFieldClick={(fieldId) => {
+              const idx = fields.findIndex((f) => f.id === fieldId);
+              if (idx >= 0) setCurrentStep(idx);
+            }}
+          />
+        </div>
       )}
 
       {/* Navigation arrows (bottom-right) */}

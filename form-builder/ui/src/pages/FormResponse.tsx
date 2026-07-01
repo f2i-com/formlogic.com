@@ -1398,7 +1398,7 @@ export default function FormResponse() {
         </button>
       )}
       {showNigo && form.settings?.showNigoDashboard && (
-        <div className="fixed top-14 right-4 w-72 max-w-[calc(100vw-2rem)] z-20">
+        <div className="fixed top-14 right-4 w-72 max-w-[calc(100vw-2rem)] z-20 flex max-h-[calc(100dvh-5rem)]">
           <NigoDashboard
             fields={form.fields}
             formData={allFormData}

@@ -129,7 +129,7 @@ export function NigoDashboard({
   const progressColor = getProgressBarColor(dashboard.score);
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl shadow-lg overflow-hidden">
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl shadow-lg overflow-hidden flex flex-col min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800">
         <div className="flex items-center gap-3 min-w-0">
@@ -181,9 +181,11 @@ export function NigoDashboard({
         </div>
       </div>}
 
-      {/* Field List (hidden when collapsed) */}
+      {/* Field List (hidden when collapsed). flex-1 so it fills whatever height the (capped) panel has and
+          scrolls internally — the callers bound the panel's max-height to the viewport, so the whole panel
+          always fits and only this list scrolls. */}
       {!isCollapsed && (
-        <div className="max-h-80 overflow-y-auto px-1 pb-2">
+        <div className="flex-1 min-h-0 overflow-y-auto px-1 pb-2">
           {dashboard.fields.length === 0 ? (
             <p className="px-4 py-3 text-sm text-gray-400 dark:text-gray-500 text-center">
               No fields to evaluate
