@@ -1,0 +1,235 @@
+<?php
+
+declare(strict_types=1);
+
+namespace FormLogic\Services;
+
+/**
+ * Validates + sanitizes saved report definitions (apps.reports = AppReportItem[]) against a specific app,
+ * so stored/AI-created report config can never reference forms outside the app, non-existent fields, joins
+ * that aren't real linked_record relationships, or dangling document blocks. Runtime execution is already
+ * permission-scoped (AppPublicController::runReport); this hardens the SAVE boundary.
+ *
+ * `sanitizeReports()` drops invalid pieces (safe for bulk saves / imports). `validateChartSpec()` rejects
+ * hard errors (foreign base form) for the MCP create path so the AI gets clear feedback.
+ */
+class AppReportService
+{
+    private const VIZ = ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'];
+    private const OPS = ['eq', 'ne', 'gt', 'lt', 'gte', 'lte', 'contains', 'empty', 'notempty', 'last_n_days', 'this_month', 'this_year', 'today', 'has', 'not_has'];
+    private const HAVING_OPS = ['eq', 'ne', 'gt', 'lt', 'gte', 'lte'];
+    private const AGG = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'];
+    private const BUCKETS = ['none', 'day', 'month', 'year'];
+    private const PSEUDO = ['__submitted_at', '__status'];
+    private const NAME_MAX = 200;
+    private const DESC_MAX = 1000;
+    private const TEXT_TITLE_MAX = 200;
+    private const TEXT_BODY_MAX = 5000;
+    private const MAX_ITEMS = 200;
+    private const MAX_BLOCKS = 100;
+
+    public function __construct(private AppService $appService, private FormService $formService) {}
+
+    /** [formId => [fieldId => fieldDef]] for the forms that belong to this app. */
+    private function appFormFields(string $appId): array
+    {
+        $map = [];
+        foreach ($this->appService->getAppForms($appId) as $af) {
+            $fid = $af['formId'] ?? null;
+            if (!$fid) { continue; }
+            $form = $this->formService->getForm($fid);
+            if (!$form) { continue; }
+            $byId = [];
+            foreach (($form['fields'] ?? []) as $f) {
+                if (!empty($f['id'])) { $byId[$f['id']] = $f; }
+            }
+            $map[$fid] = $byId;
+        }
+        return $map;
+    }
+
+    private function clamp(mixed $v, int $max): ?string
+    {
+        if ($v === null) { return null; }
+        $s = trim((string) $v);
+        if ($s === '') { return null; }
+        return mb_substr($s, 0, $max);
+    }
+
+    /**
+     * Validate + normalize ONE chart spec against the app (strict: a foreign/invalid base form is an error).
+     * @return array{ok:bool, error:?string, spec:array}
+     */
+    public function validateChartSpec(array $spec, string $appId): array
+    {
+        return $this->cleanChartSpec($spec, $this->appFormFields($appId));
+    }
+
+    /**
+     * Sanitize a whole reports array against the app: drop invalid charts, invalid joins/field-refs, and
+     * document report-blocks that don't reference a surviving chart. Returns cleaned AppReportItem[].
+     */
+    public function sanitizeReports(array $reports, string $appId): array
+    {
+        $formFields = $this->appFormFields($appId);
+        $items = array_slice(array_values(array_filter($reports, 'is_array')), 0, self::MAX_ITEMS);
+
+        // First resolve every chart (so document blocks can validate their references), then emit in the
+        // ORIGINAL order so a save never silently reshuffles the user's list.
+        $cleanChartById = [];
+        foreach ($items as $item) {
+            if (($item['type'] ?? '') === 'document') { continue; }
+            $id = (string) ($item['id'] ?? '');
+            if ($id === '' || isset($cleanChartById[$id])) { continue; }
+            $res = $this->cleanChartSpec(is_array($item['spec'] ?? null) ? $item['spec'] : [], $formFields);
+            if ($res['ok']) { $cleanChartById[$id] = $res['spec']; }
+        }
+
+        $out = [];
+        $seen = [];
+        foreach ($items as $item) {
+            $id = (string) ($item['id'] ?? '');
+            if ($id === '' || isset($seen[$id])) { continue; }
+
+            if (($item['type'] ?? '') === 'document') {
+                $blocks = [];
+                foreach (array_slice((array) ($item['blocks'] ?? []), 0, self::MAX_BLOCKS) as $b) {
+                    if (!is_array($b)) { continue; }
+                    if (($b['kind'] ?? '') === 'text') {
+                        $blocks[] = array_filter([
+                            'id' => (string) ($b['id'] ?? '') ?: $this->rid('blk'),
+                            'kind' => 'text',
+                            'title' => $this->clamp($b['title'] ?? null, self::TEXT_TITLE_MAX),
+                            'body' => $this->clamp($b['body'] ?? null, self::TEXT_BODY_MAX) ?? '',
+                        ], static fn ($v) => $v !== null);
+                    } elseif (($b['kind'] ?? '') === 'report' && isset($cleanChartById[(string) ($b['reportId'] ?? '')])) {
+                        $blocks[] = array_filter([
+                            'id' => (string) ($b['id'] ?? '') ?: $this->rid('blk'),
+                            'kind' => 'report',
+                            'reportId' => (string) $b['reportId'],
+                            'caption' => $this->clamp($b['caption'] ?? null, self::TEXT_TITLE_MAX),
+                        ], static fn ($v) => $v !== null);
+                    }
+                }
+                if (!$blocks) { continue; } // drop an empty/all-broken document
+                $seen[$id] = true;
+                $doc = ['id' => $id, 'name' => $this->clamp($item['name'] ?? 'Document', self::NAME_MAX) ?? 'Document', 'type' => 'document', 'blocks' => array_values($blocks)];
+                $desc = $this->clamp($item['description'] ?? null, self::DESC_MAX);
+                if ($desc !== null) { $doc['description'] = $desc; }
+                $out[] = $doc;
+            } elseif (isset($cleanChartById[$id])) {
+                $seen[$id] = true;
+                $clean = ['id' => $id, 'name' => $this->clamp($item['name'] ?? 'Report', self::NAME_MAX) ?? 'Report', 'type' => 'builder', 'spec' => $cleanChartById[$id]];
+                $desc = $this->clamp($item['description'] ?? null, self::DESC_MAX);
+                if ($desc !== null) { $clean['description'] = $desc; }
+                $out[] = $clean;
+            }
+        }
+
+        return $out;
+    }
+
+    private function rid(string $prefix): string
+    {
+        return $prefix . '_' . bin2hex(random_bytes(5));
+    }
+
+    /**
+     * Clean a chart spec: base form must be in the app; joins must be real linked_record relationships to
+     * in-app forms; every field ref must resolve (base field, declared-join field, or pseudo-field). Invalid
+     * sub-parts are dropped. ok=false only when the base form is missing/foreign.
+     *
+     * @return array{ok:bool, error:?string, spec:array}
+     */
+    private function cleanChartSpec(array $spec, array $formFields): array
+    {
+        $baseId = (string) ($spec['formId'] ?? '');
+        if ($baseId === '' || !isset($formFields[$baseId])) {
+            return ['ok' => false, 'error' => 'Report form is not part of this app', 'spec' => []];
+        }
+        $baseFields = $formFields[$baseId];
+
+        $viz = in_array($spec['viz'] ?? '', self::VIZ, true) ? (string) $spec['viz'] : 'bar';
+        $clean = ['formId' => $baseId, 'viz' => $viz];
+
+        // Joins: keep only those along a real linked_record field on the base form pointing at an in-app form.
+        $joinedFields = []; // joinFormId => [fieldId => def]
+        if (!empty($spec['joins']) && is_array($spec['joins'])) {
+            $joins = [];
+            foreach ($spec['joins'] as $j) {
+                if (!is_array($j)) { continue; }
+                $via = (string) ($j['via'] ?? '');
+                $jf = (string) ($j['formId'] ?? '');
+                $viaField = $baseFields[$via] ?? null;
+                if (!$viaField || ($viaField['type'] ?? '') !== 'linked_record') { continue; }
+                if (($viaField['properties']['targetFormId'] ?? null) !== $jf) { continue; }
+                if (!isset($formFields[$jf])) { continue; }
+                $joins[] = ['via' => $via, 'formId' => $jf, 'type' => ($j['type'] ?? 'left') === 'inner' ? 'inner' : 'left'];
+                $joinedFields[$jf] = $formFields[$jf];
+            }
+            if ($joins) { $clean['joins'] = $joins; }
+        }
+
+        // A field ref resolves if it's a pseudo-field, a base field, or a declared-join field ("<jf>::<fid>").
+        $refValid = function (mixed $ref) use ($baseFields, $joinedFields): bool {
+            if (!is_string($ref) || $ref === '') { return false; }
+            if (in_array($ref, self::PSEUDO, true)) { return true; }
+            if (str_contains($ref, '::')) {
+                [$jf, $fid] = explode('::', $ref, 2);
+                return isset($joinedFields[$jf][$fid]);
+            }
+            return isset($baseFields[$ref]);
+        };
+
+        if (!empty($spec['groupBy']['field']) && $refValid($spec['groupBy']['field'])) {
+            $gb = ['field' => (string) $spec['groupBy']['field']];
+            if (in_array($spec['groupBy']['bucket'] ?? '', self::BUCKETS, true)) { $gb['bucket'] = $spec['groupBy']['bucket']; }
+            $clean['groupBy'] = $gb;
+        }
+
+        if (!empty($spec['measure']) && is_array($spec['measure'])) {
+            $fn = in_array($spec['measure']['fn'] ?? '', self::AGG, true) ? (string) $spec['measure']['fn'] : 'count';
+            $m = ['fn' => $fn];
+            $mf = $spec['measure']['field'] ?? null;
+            if ($mf !== null && $refValid($mf)) {
+                $m['field'] = (string) $mf;
+            } elseif (in_array($fn, ['sum', 'avg', 'min', 'max'], true)) {
+                $m['fn'] = 'count'; // an aggregate that needs a field but has none degrades to count
+            }
+            $clean['measure'] = $m;
+        }
+
+        if (!empty($spec['filters']) && is_array($spec['filters'])) {
+            $filters = [];
+            foreach ($spec['filters'] as $f) {
+                if (!is_array($f) || !$refValid($f['field'] ?? null) || !in_array($f['op'] ?? '', self::OPS, true)) { continue; }
+                $filters[] = array_filter(['field' => (string) $f['field'], 'op' => (string) $f['op'], 'value' => isset($f['value']) ? (string) $f['value'] : null], static fn ($v) => $v !== null);
+            }
+            if ($filters) { $clean['filters'] = $filters; }
+        }
+
+        if (!empty($spec['columns']) && is_array($spec['columns'])) {
+            $cols = array_values(array_filter(array_map('strval', $spec['columns']), $refValid));
+            if ($cols) { $clean['columns'] = array_slice($cols, 0, 30); }
+        }
+
+        if (in_array($spec['seriesSort'] ?? '', ['value', 'label'], true)) { $clean['seriesSort'] = $spec['seriesSort']; }
+
+        // Sort: a plain 'asc'|'desc' (series direction) OR a table sort object { by, dir }.
+        if (isset($spec['sort'])) {
+            if (is_string($spec['sort']) && in_array($spec['sort'], ['asc', 'desc'], true)) {
+                $clean['sort'] = $spec['sort'];
+            } elseif (is_array($spec['sort']) && $refValid($spec['sort']['by'] ?? null)) {
+                $clean['sort'] = ['by' => (string) $spec['sort']['by'], 'dir' => ($spec['sort']['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc'];
+            }
+        }
+
+        if (!empty($spec['having']) && is_array($spec['having']) && in_array($spec['having']['op'] ?? '', self::HAVING_OPS, true) && is_numeric($spec['having']['value'] ?? null)) {
+            $clean['having'] = ['op' => (string) $spec['having']['op'], 'value' => $spec['having']['value'] + 0];
+        }
+
+        if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
+
+        return ['ok' => true, 'error' => null, 'spec' => $clean];
+    }
+}

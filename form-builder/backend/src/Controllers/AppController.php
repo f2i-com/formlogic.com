@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppReportService;
 use FormLogic\Services\AuditService;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -20,12 +21,14 @@ class AppController
     private AppService $appService;
     private LoggerInterface $logger;
     private ?AuditService $auditService;
+    private ?AppReportService $reportValidator;
 
-    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null)
+    public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null)
     {
         $this->appService = $appService;
         $this->logger = $logger ?? new NullLogger();
         $this->auditService = $auditService;
+        $this->reportValidator = $reportValidator;
     }
 
     private function authorizeAppOwnership(Request $request, string $appId): ?array
@@ -163,6 +166,11 @@ class AppController
             $reportsJson = json_encode($data['reports']);
             if ($reportsJson !== false && strlen($reportsJson) > 262144) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Reports data is too large'], 400);
+            }
+            // Sanitize against this app: drop reports/joins/field-refs that point outside the app or at
+            // non-existent fields, and documents whose blocks reference a missing chart.
+            if ($this->reportValidator !== null) {
+                $data['reports'] = $this->reportValidator->sanitizeReports($data['reports'], $args['id']);
             }
         }
 

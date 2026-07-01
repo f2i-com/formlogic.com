@@ -33,8 +33,11 @@ const PSEUDO_FIELDS: FieldOpt[] = [
   { ref: '__status', label: 'Status', type: 'short_text' },
 ];
 
+const MULTI_CHOICE_TYPES = ['multiple_choice', 'checkbox', 'checkboxes'];
+
 const OP_LABELS: Record<string, string> = {
   eq: 'is', ne: 'is not', contains: 'contains', gt: '>', lt: '<', gte: '≥', lte: '≤',
+  has: 'includes', not_has: "doesn't include",
   last_n_days: 'in last (days)', this_month: 'this month', this_year: 'this year', today: 'today',
   notempty: 'is answered', empty: 'is blank',
 };
@@ -42,6 +45,8 @@ const OP_LABELS: Record<string, string> = {
 function opsForType(type: string): string[] {
   if (NUMERIC_TYPES.includes(type)) return ['eq', 'ne', 'gt', 'lt', 'gte', 'lte', 'notempty', 'empty'];
   if (DATE_TYPES.includes(type)) return ['eq', 'ne', 'gt', 'lt', 'gte', 'lte', 'last_n_days', 'this_month', 'this_year', 'today', 'notempty', 'empty'];
+  // Multi-select fields store an array → membership ("includes"), not equality.
+  if (MULTI_CHOICE_TYPES.includes(type)) return ['has', 'not_has', 'notempty', 'empty'];
   if (CHOICE_TYPES.includes(type)) return ['eq', 'ne', 'notempty', 'empty'];
   return ['eq', 'ne', 'contains', 'notempty', 'empty'];
 }

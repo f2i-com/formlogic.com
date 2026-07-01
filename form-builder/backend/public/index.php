@@ -355,7 +355,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\AppService::class),
         $c->get(ResponseService::class),
         $c->get(AuditService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        $c->get(\FormLogic\Services\AppReportService::class)
     );
 });
 
@@ -398,6 +399,14 @@ $container->set(AppUserService::class, function (Container $c) {
     );
 });
 
+// Validates/sanitizes saved report definitions against an app (used on every reports save path).
+$container->set(\FormLogic\Services\AppReportService::class, function (Container $c) {
+    return new \FormLogic\Services\AppReportService(
+        $c->get(AppService::class),
+        $c->get(FormService::class)
+    );
+});
+
 $container->set(AppResponseService::class, function (Container $c) {
     return new AppResponseService(
         $c->get(MySQLConnection::class),
@@ -413,7 +422,8 @@ $container->set(AppController::class, function (Container $c) {
     return new AppController(
         $c->get(AppService::class),
         $c->get(LoggerInterface::class),
-        $c->get(AuditService::class)
+        $c->get(AuditService::class),
+        $c->get(\FormLogic\Services\AppReportService::class)
     );
 });
 

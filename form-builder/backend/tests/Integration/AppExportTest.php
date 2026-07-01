@@ -7,6 +7,7 @@ namespace FormLogic\Tests\Integration;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppReportService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\PackService;
@@ -267,5 +268,124 @@ class AppExportTest extends TestCase
         $this->assertNotEmpty($reviewer['permissions'], 'Reviewer keeps its permission');
         $this->assertNotNull($admin);
         $this->assertContains('view_analytics', array_map(static fn ($p) => $p['permission'], $admin['permissions']), 'Admin override applied to the system role');
+    }
+
+    // ── Reports: round-trip + validator ──────────────────────────────────────
+
+    public function testReportsRoundTripPreservesSortObjectAndHaving(): void
+    {
+        [$appId, $formAId, $formBId] = $this->buildSampleApp();
+        $reports = [
+            // Table sorted by a JOINED field (must remap through @pack: on export, back to a real ref on import).
+            ['id' => 'r1', 'name' => 'Orders table', 'type' => 'builder', 'spec' => [
+                'formId' => $formAId, 'viz' => 'table',
+                'joins' => [['via' => 'customer', 'formId' => $formBId, 'type' => 'left']],
+                'columns' => ['item', $formBId . '::name'],
+                'sort' => ['by' => $formBId . '::name', 'dir' => 'desc'],
+            ]],
+            // Grouped bar with HAVING.
+            ['id' => 'r2', 'name' => 'Items', 'type' => 'builder', 'spec' => [
+                'formId' => $formAId, 'viz' => 'bar', 'groupBy' => ['field' => 'item'], 'measure' => ['fn' => 'count'], 'having' => ['op' => 'gte', 'value' => 1],
+            ]],
+            ['id' => 'd1', 'name' => 'Overview', 'type' => 'document', 'blocks' => [
+                ['id' => 'b1', 'kind' => 'text', 'title' => 'Intro', 'body' => 'hi'],
+                ['id' => 'b2', 'kind' => 'report', 'reportId' => 'r1'],
+            ]],
+        ];
+        self::$apps->updateApp($appId, ['reports' => $reports]);
+
+        $pack = self::$packs->exportApp($appId, $this->userId);
+        $packReports = $pack['apps'][0]['reports'] ?? [];
+        $this->assertCount(3, $packReports, 'all reports export');
+        $r1 = $this->findBy($packReports, 'reportId', 'r1');
+        $this->assertIsArray($r1['spec']['sort'] ?? null, 'sort object survives export');
+        $this->assertStringStartsWith('@pack:', $r1['spec']['sort']['by'], 'joined sort field is portable');
+        $this->assertSame('desc', $r1['spec']['sort']['dir']);
+        $r2 = $this->findBy($packReports, 'reportId', 'r2');
+        $this->assertSame('gte', $r2['spec']['having']['op'] ?? null, 'having survives export');
+        // No real ids leak in the exported reports.
+        $raw = json_encode($packReports);
+        $this->assertStringNotContainsString($formBId, $raw);
+        $this->assertStringNotContainsString($formAId, $raw);
+
+        // Re-import into a second account and confirm refs remap to the new form ids.
+        $importer = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name, plan, cloud_until) VALUES (?, ?, 'x', 'T', 'personal', DATE_ADD(NOW(), INTERVAL 30 DAY))")
+            ->execute([$importer, $importer . '@test.local']);
+        try {
+            $res = self::$packs->importPack($pack, $importer);
+            $newApp = self::$apps->getApp($res['apps'][0]['id']);
+            $newReports = $newApp['reports'] ?? [];
+            $this->assertCount(3, $newReports);
+            $newR1 = $this->findFirst($newReports, static fn ($r) => ($r['name'] ?? '') === 'Orders table');
+            $this->assertIsArray($newR1['spec']['sort'] ?? null, 'sort object round-trips');
+            $this->assertStringContainsString('::', $newR1['spec']['sort']['by'], 'joined sort ref remapped to a real form id');
+            $this->assertStringNotContainsString('@pack:', $newR1['spec']['sort']['by']);
+            $this->assertSame('desc', $newR1['spec']['sort']['dir']);
+            $newR2 = $this->findFirst($newReports, static fn ($r) => ($r['name'] ?? '') === 'Items');
+            $this->assertSame('gte', $newR2['spec']['having']['op'] ?? null, 'having round-trips');
+            // The document's report block was remapped to the imported chart's new id.
+            $newDoc = $this->findFirst($newReports, static fn ($r) => ($r['type'] ?? '') === 'document');
+            $reportBlock = $this->findFirst($newDoc['blocks'], static fn ($b) => ($b['kind'] ?? '') === 'report');
+            $this->assertSame($newR1['id'], $reportBlock['reportId'], 'document report block points at the imported chart');
+        } finally {
+            $this->cleanupUser($importer);
+        }
+    }
+
+    public function testValidatorDropsForeignAndBrokenReports(): void
+    {
+        [$appId, $formAId, $formBId] = $this->buildSampleApp();
+        $foreign = $this->uuid();
+        self::$forms->createForm(['id' => $foreign, 'userId' => $this->userId, 'title' => 'Foreign', 'status' => 'published', 'fields' => [['id' => 'x', 'type' => 'short_text', 'label' => 'X', 'required' => false]]]);
+        $validator = new AppReportService(self::$apps, self::$forms);
+
+        $clean = $validator->sanitizeReports([
+            ['id' => 'ok', 'name' => 'Good', 'type' => 'builder', 'spec' => ['formId' => $formAId, 'viz' => 'bar', 'groupBy' => ['field' => 'item'], 'measure' => ['fn' => 'count']]],
+            ['id' => 'foreign', 'name' => 'Foreign base', 'type' => 'builder', 'spec' => ['formId' => $foreign, 'viz' => 'kpi', 'measure' => ['fn' => 'count']]],
+            ['id' => 'badjoin', 'name' => 'Bad join', 'type' => 'builder', 'spec' => ['formId' => $formAId, 'viz' => 'bar', 'joins' => [['via' => 'nope', 'formId' => $formBId]], 'groupBy' => ['field' => 'item'], 'measure' => ['fn' => 'count']]],
+            ['id' => 'badfield', 'name' => 'Bad field', 'type' => 'builder', 'spec' => ['formId' => $formAId, 'viz' => 'table', 'columns' => ['item', 'ghost_field']]],
+            ['id' => 'doc-broken', 'name' => 'Broken doc', 'type' => 'document', 'blocks' => [['kind' => 'report', 'reportId' => 'foreign']]],
+            ['id' => 'doc-ok', 'name' => 'Good doc', 'type' => 'document', 'blocks' => [['kind' => 'report', 'reportId' => 'ok']]],
+        ], $appId);
+
+        $ids = array_column($clean, 'id');
+        $this->assertContains('ok', $ids, 'a valid chart survives');
+        $this->assertNotContains('foreign', $ids, 'a chart on a form outside the app is dropped');
+        $this->assertNotContains('doc-broken', $ids, 'a document with only a broken report block is dropped');
+        $this->assertContains('doc-ok', $ids, 'a document referencing a valid chart survives');
+        // Bad join dropped but the report kept; ghost column dropped.
+        $badjoin = $this->findFirst($clean, static fn ($r) => ($r['id'] ?? '') === 'badjoin');
+        $this->assertArrayNotHasKey('joins', $badjoin['spec'], 'a join that is not a real linked_record is dropped');
+        $badfield = $this->findFirst($clean, static fn ($r) => ($r['id'] ?? '') === 'badfield');
+        $this->assertSame(['item'], $badfield['spec']['columns'], 'a non-existent column ref is dropped');
+    }
+
+    private function findBy(array $rows, string $key, string $val): array
+    {
+        foreach ($rows as $r) { if (($r[$key] ?? null) === $val) { return $r; } }
+        $this->fail("no row with $key=$val");
+    }
+
+    private function findFirst(array $rows, callable $pred): array
+    {
+        foreach ($rows as $r) { if ($pred($r)) { return $r; } }
+        $this->fail('no matching row');
+    }
+
+    private function cleanupUser(string $uid): void
+    {
+        $appIds = self::$pdo->prepare('SELECT id FROM apps WHERE owner_id = ?');
+        $appIds->execute([$uid]);
+        foreach ($appIds->fetchAll(PDO::FETCH_COLUMN) as $aid) {
+            self::$pdo->prepare('DELETE FROM app_forms WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_users WHERE app_id = ?')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_role_permissions WHERE role_id IN (SELECT id FROM app_roles WHERE app_id = ?)')->execute([$aid]);
+            self::$pdo->prepare('DELETE FROM app_roles WHERE app_id = ?')->execute([$aid]);
+        }
+        self::$pdo->prepare('DELETE FROM apps WHERE owner_id = ?')->execute([$uid]);
+        self::$pdo->prepare('DELETE FROM pack_installations WHERE user_id = ?')->execute([$uid]);
+        self::$pdo->prepare('DELETE FROM forms WHERE user_id = ?')->execute([$uid]);
+        self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$uid]);
     }
 }

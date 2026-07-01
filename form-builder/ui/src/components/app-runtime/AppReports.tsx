@@ -207,8 +207,8 @@ function ChartsPanel({ reports, appName, isOwner, onNew, onEdit, onDelete }: {
               {selected.description && <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">{selected.description}</p>}
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button onClick={handleExport} disabled={!result || running} aria-label="Export PDF" title="Export PDF" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50">
-                <Download className="h-4 w-4" /><span className="hidden sm:inline">PDF</span>
+              <button onClick={handleExport} disabled={!result || running} aria-label="Print or save as PDF" title="Opens your browser's print dialog — choose “Save as PDF”." className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50">
+                <Download className="h-4 w-4" /><span className="hidden sm:inline">Print / Save PDF</span>
               </button>
               {isOwner && <>
                 <button onClick={() => onEdit(selected)} aria-label="Edit report" className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"><Pencil className="h-4 w-4" /></button>
@@ -275,8 +275,8 @@ function DocumentsPanel({ documents, allItems, appName, isOwner, hasCharts, onNe
       <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 min-h-[240px]">
         {selected && (
           <div className="flex items-center justify-end gap-1 mb-3">
-            <button onClick={handleExport} aria-label="Export PDF" title="Export PDF" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">
-              <Download className="h-4 w-4" /><span className="hidden sm:inline">Export PDF</span>
+            <button onClick={handleExport} aria-label="Print or save as PDF" title="Opens your browser's print dialog — choose “Save as PDF”." className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">
+              <Download className="h-4 w-4" /><span className="hidden sm:inline">Print / Save PDF</span>
             </button>
             {isOwner && <>
               <button onClick={() => onEdit(selected)} aria-label="Edit document" className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-pointer"><Pencil className="h-4 w-4" /></button>

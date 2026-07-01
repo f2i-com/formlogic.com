@@ -42,7 +42,9 @@ export function DocumentBuilder({ document: doc, reports, appName, onClose, onSa
     return next;
   });
 
-  const canSave = name.trim().length > 0 && blocks.length > 0;
+  const chartIds = useMemo(() => new Set(chartReports.map((r) => r.id)), [chartReports]);
+  const blockBroken = (b: ReportDocBlock) => b.kind === 'report' && !(b.reportId && chartIds.has(b.reportId));
+  const canSave = name.trim().length > 0 && blocks.length > 0 && !blocks.some(blockBroken);
   const handleSave = () => {
     if (!canSave) return;
     onSave({ id: doc?.id ?? docId(), name: name.trim(), description: description.trim() || undefined, type: 'document', blocks });
@@ -99,10 +101,11 @@ export function DocumentBuilder({ document: doc, reports, appName, onClose, onSa
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <select value={block.reportId} onChange={(e) => update(block.id, { reportId: e.target.value })} className={fieldCls} aria-label="Chart report">
+                      <select value={block.reportId} onChange={(e) => update(block.id, { reportId: e.target.value })} className={`${fieldCls} ${blockBroken(block) ? 'border-amber-400 dark:border-amber-500/60' : ''}`} aria-label="Chart report">
                         <option value="">Select a report…</option>
                         {chartReports.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
+                      {blockBroken(block) && <p className="text-[11px] text-amber-600 dark:text-amber-400">Pick a chart for this block before saving.</p>}
                       <input value={block.caption ?? ''} onChange={(e) => update(block.id, { caption: e.target.value })} placeholder="Caption (optional)" className={fieldCls} aria-label="Chart caption" />
                     </div>
                   )}

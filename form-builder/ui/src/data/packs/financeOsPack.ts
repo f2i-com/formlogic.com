@@ -58,7 +58,8 @@ export interface PackReportSpec {
   measure?: { fn: 'count' | 'countDistinct' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
   columns?: string[];
   seriesSort?: 'value' | 'label';
-  sort?: 'asc' | 'desc';
+  sort?: 'asc' | 'desc' | { by: string; dir: 'asc' | 'desc' };
+  having?: { op: string; value: number };
   limit?: number;
 }
 

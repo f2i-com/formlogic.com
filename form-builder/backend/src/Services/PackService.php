@@ -1051,7 +1051,17 @@ class PackService
                 if ($cols) { $ns['columns'] = $cols; }
             }
             if (!empty($spec['seriesSort'])) { $ns['seriesSort'] = $spec['seriesSort']; }
-            if (isset($spec['sort']) && is_string($spec['sort'])) { $ns['sort'] = $spec['sort']; }
+            if (isset($spec['sort'])) {
+                if (is_string($spec['sort'])) {
+                    $ns['sort'] = $spec['sort'];
+                } elseif (is_array($spec['sort']) && isset($spec['sort']['by'])) {
+                    $sb = $resolveFieldRef($spec['sort']['by']);
+                    if ($sb !== null) { $ns['sort'] = ['by' => $sb, 'dir' => ($spec['sort']['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc']; }
+                }
+            }
+            if (!empty($spec['having']) && is_array($spec['having']) && isset($spec['having']['op'])) {
+                $ns['having'] = ['op' => (string) $spec['having']['op'], 'value' => $spec['having']['value'] ?? 0];
+            }
             if (isset($spec['limit'])) { $ns['limit'] = (int) $spec['limit']; }
 
             $out[] = ['id' => $id, 'name' => $r['name'] ?? 'Report', 'description' => $r['description'] ?? null, 'type' => 'builder', 'spec' => $ns];
@@ -1150,7 +1160,17 @@ class PackService
                 if ($cols) { $ns['columns'] = $cols; }
             }
             if (!empty($spec['seriesSort'])) { $ns['seriesSort'] = $spec['seriesSort']; }
-            if (isset($spec['sort']) && is_string($spec['sort'])) { $ns['sort'] = $spec['sort']; }
+            if (isset($spec['sort'])) {
+                if (is_string($spec['sort'])) {
+                    $ns['sort'] = $spec['sort'];
+                } elseif (is_array($spec['sort']) && isset($spec['sort']['by'])) {
+                    $sb = $packFieldRef($spec['sort']['by']);
+                    if ($sb !== null) { $ns['sort'] = ['by' => $sb, 'dir' => ($spec['sort']['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc']; }
+                }
+            }
+            if (!empty($spec['having']) && is_array($spec['having']) && isset($spec['having']['op'])) {
+                $ns['having'] = ['op' => (string) $spec['having']['op'], 'value' => $spec['having']['value'] ?? 0];
+            }
             if (isset($spec['limit'])) { $ns['limit'] = (int) $spec['limit']; }
 
             $out[] = array_filter(['reportId' => $rid, 'kind' => 'chart', 'name' => $item['name'] ?? 'Report', 'description' => $item['description'] ?? null, 'spec' => $ns], static fn ($v) => $v !== null);

@@ -1056,8 +1056,10 @@ class AppPublicController
         }
 
         try {
+            // Relative date filters are evaluated in the app's timezone (falls back to UTC).
+            $tz = (string) ($app['settings']['timezone'] ?? 'UTC') ?: 'UTC';
             $svc = new \FormLogic\Services\ReportService($this->sqlite);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId, $resolvedJoins);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId, $resolvedJoins, $tz);
             return $this->jsonResponse($response, $result);
         } catch (\Throwable $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run report'], 500);

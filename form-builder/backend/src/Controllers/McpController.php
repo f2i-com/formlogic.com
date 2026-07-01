@@ -8,6 +8,7 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppReportService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\AuditService;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -35,6 +36,7 @@ class McpController
         private ResponseService $responseService,
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
+        private ?AppReportService $reportValidator = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -321,6 +323,13 @@ class McpController
                     if (!in_array($spec['viz'] ?? 'bar', ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'], true)) {
                         throw new \Exception('spec.viz must be one of: table, bar, line, area, pie, donut, kpi');
                     }
+                    // Validate the spec against the app: base form must belong to it; joins/field-refs are
+                    // checked + sanitized (foreign form / bad field refs are rejected, not stored).
+                    if ($this->reportValidator !== null) {
+                        $v = $this->reportValidator->validateChartSpec($spec, $appId);
+                        if (!$v['ok']) { throw new \Exception($v['error'] ?? 'Invalid report spec'); }
+                        $spec = $v['spec'];
+                    }
                     $item = ['id' => 'rep_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Report'), 'type' => 'builder', 'spec' => $spec];
                     if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
                     $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
@@ -354,6 +363,10 @@ class McpController
                     $item = ['id' => 'doc_' . bin2hex(random_bytes(6)), 'name' => (string) ($args['name'] ?? 'Document'), 'type' => 'document', 'blocks' => $blocks];
                     if (!empty($args['description'])) { $item['description'] = (string) $args['description']; }
                     $reports[] = $item;
+                    // Defense-in-depth: sanitize the whole set against the app (drops broken refs, clamps text).
+                    if ($this->reportValidator !== null) {
+                        $reports = $this->reportValidator->sanitizeReports($reports, $appId);
+                    }
                     if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
                     $this->appService->updateApp($appId, ['reports' => $reports]);
                     $data = $item;

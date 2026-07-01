@@ -47,7 +47,7 @@ class ReportService
      * @param array $fields the base form's field definitions
      * @param array $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', scope:'all'|'own', fields, path }]
      */
-    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = []): array
+    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC'): array
     {
         $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
 
@@ -55,6 +55,16 @@ class ReportService
             return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];
         }
         $db = $this->sqlite->getFormDatabase($formId);
+
+        // Relative date filters ("today", "this month", …) are evaluated in the APP's timezone (not the
+        // server's UTC), so business users see predictable boundaries. Stored timestamps are UTC; we shift
+        // them by the tz's current offset (handles whole + half-hour zones; historical DST for old rows is
+        // approximated by the current offset — acceptable for relative filters).
+        try { $tz = new \DateTimeZone($timezone !== '' ? $timezone : 'UTC'); } catch (\Throwable $e) { $tz = new \DateTimeZone('UTC'); }
+        $nowLocal = new \DateTime('now', $tz);
+        $tzOffsetMin = (int) round($tz->getOffset($nowLocal) / 60);
+        $tzMod = $tzOffsetMin === 0 ? '' : (($tzOffsetMin > 0 ? '+' : '-') . abs($tzOffsetMin) . ' minutes');
+        $localExpr = static fn (string $e): string => $tzMod === '' ? $e : "datetime($e, '$tzMod')";
 
         $baseFieldById = [];
         foreach ($fields as $f) {
@@ -153,18 +163,37 @@ class ReportService
                 if ($op === 'empty') { $where[] = "($expr IS NULL OR $expr = '' OR $expr = '[]')"; continue; }
                 if ($op === 'notempty') { $where[] = "($expr IS NOT NULL AND $expr != '' AND $expr != '[]')"; continue; }
 
-                // Relative date filters (no client date math; only a clamped integer is interpolated).
+                // Relative date filters — boundaries computed in the app timezone (PHP), bound as params.
                 if (in_array($op, self::DATE_OPS, true)) {
+                    $le = $localExpr($expr);
                     if ($op === 'last_n_days') {
                         $n = max(1, min((int) ($flt['value'] ?? 30), 3650));
-                        $where[] = "date($expr) >= date('now', '-$n days')";
+                        $p = ':p' . $pi++;
+                        $params[$p] = (clone $nowLocal)->modify("-{$n} days")->format('Y-m-d');
+                        $where[] = "date($le) >= $p";
                     } elseif ($op === 'this_month') {
-                        $where[] = "strftime('%Y-%m', $expr) = strftime('%Y-%m', 'now')";
+                        $p = ':p' . $pi++;
+                        $params[$p] = $nowLocal->format('Y-m');
+                        $where[] = "strftime('%Y-%m', $le) = $p";
                     } elseif ($op === 'this_year') {
-                        $where[] = "strftime('%Y', $expr) = strftime('%Y', 'now')";
+                        $p = ':p' . $pi++;
+                        $params[$p] = $nowLocal->format('Y');
+                        $where[] = "strftime('%Y', $le) = $p";
                     } elseif ($op === 'today') {
-                        $where[] = "date($expr) = date('now')";
+                        $p = ':p' . $pi++;
+                        $params[$p] = $nowLocal->format('Y-m-d');
+                        $where[] = "date($le) = $p";
                     }
+                    continue;
+                }
+
+                // Array membership for multi-select / checkbox fields (and any array-valued answer).
+                if ($op === 'has' || $op === 'not_has') {
+                    $p = ':p' . $pi++;
+                    $params[$p] = (string) ($flt['value'] ?? '');
+                    $arr = "CASE WHEN json_valid($expr) AND json_type($expr) = 'array' THEN $expr ELSE json_array($expr) END";
+                    $cond = "EXISTS (SELECT 1 FROM json_each($arr) WHERE value = $p)";
+                    $where[] = $op === 'has' ? $cond : "NOT $cond";
                     continue;
                 }
 

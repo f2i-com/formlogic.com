@@ -8,6 +8,7 @@ use FormLogic\Controllers\McpController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppReportService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\ResponseService;
@@ -66,7 +67,7 @@ class McpTest extends TestCase
         $responses = new ResponseService($conn, $sqlite);
         self::$apps = new AppService($conn, $forms);
         self::$tokens = new McpTokenService($conn);
-        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses);
+        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, new AppReportService(self::$apps, $forms));
     }
 
     protected function setUp(): void
@@ -453,6 +454,17 @@ class McpTest extends TestCase
         $tok = self::$tokens->create($this->userId, $this->appA)['token'];
         $res = $this->tool($tok, 'create_report', ['appId' => $this->appB, 'name' => 'Sneak', 'spec' => ['formId' => $this->formB, 'viz' => 'kpi', 'measure' => ['fn' => 'count']]]);
         $this->assertTrue($res['isError'], 'creating a report on another app must be rejected');
+    }
+
+    public function testCreateReportRejectsFormOutsideApp(): void
+    {
+        // Account-wide creator token; create a fresh app, then try to base a report on a form NOT in it.
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, null, true)['token'];
+        $newAppId = $this->tool($tok, 'create_app', ['name' => 'Reporty'])['data']['id'] ?? '';
+        $this->assertNotSame('', $newAppId);
+        $res = $this->tool($tok, 'create_report', ['appId' => $newAppId, 'name' => 'Foreign', 'spec' => ['formId' => $this->formA, 'viz' => 'kpi', 'measure' => ['fn' => 'count']]]);
+        $this->assertTrue($res['isError'], 'a report whose base form is not in the app must be rejected');
+        $this->assertStringContainsString('not part of this app', $res['text']);
     }
 
     public function testCreateDocumentReferencesExistingReports(): void
