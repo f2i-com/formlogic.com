@@ -225,7 +225,7 @@ export default function PackGalleryPage() {
       <header className="relative z-20 border-b border-gray-100 dark:border-slate-800/60 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/')}
             className="fl-mono inline-flex cursor-pointer items-center gap-1.5 rounded text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 transition-colors hover:text-gray-900 dark:hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />

@@ -976,10 +976,23 @@ $app->get('/api/packs/screenshots/{file}', function ($request, $response) use ($
         if (is_file($path)) {
             $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
             $mime = $ext === 'png' ? 'image/png' : ($ext === 'webp' ? 'image/webp' : 'image/jpeg');
-            $response->getBody()->write((string)file_get_contents($path));
-            return $response
+            // Thumbnails are regenerated IN PLACE under stable filenames, so a plain max-age left
+            // browsers showing day-old images after a re-capture. Serve with validators and force
+            // revalidation: unchanged files still answer with a cheap 304.
+            $mtime = (int) filemtime($path);
+            $etag = '"' . md5($file . ':' . $mtime . ':' . filesize($path)) . '"';
+            $ifNoneMatch = trim($request->getHeaderLine('If-None-Match'));
+            $ifModifiedSince = strtotime($request->getHeaderLine('If-Modified-Since')) ?: 0;
+            $headers = static fn ($r) => $r
                 ->withHeader('Content-Type', $mime)
-                ->withHeader('Cache-Control', 'public, max-age=86400');
+                ->withHeader('Cache-Control', 'public, no-cache')
+                ->withHeader('ETag', $etag)
+                ->withHeader('Last-Modified', gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
+            if ($ifNoneMatch === $etag || ($ifNoneMatch === '' && $ifModifiedSince >= $mtime)) {
+                return $headers($response)->withStatus(304);
+            }
+            $response->getBody()->write((string)file_get_contents($path));
+            return $headers($response);
         }
     }
     return $response->withStatus(404);

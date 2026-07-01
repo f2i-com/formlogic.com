@@ -285,6 +285,16 @@ $findShot = static function (string $base) use ($shotDirs): ?string {
     }
     return null;
 };
+/** Version-busted screenshot URL: filenames are stable but content changes on re-capture, so the
+ *  linked URL carries the file's mtime — every regeneration produces a new URL and old browser/CDN
+ *  cache entries simply stop being referenced. */
+$shotUrl = static function (string $file) use ($shotDirs): string {
+    $v = 0;
+    foreach ($shotDirs as $dir) {
+        if (is_file("$dir/$file")) { $v = (int) filemtime("$dir/$file"); break; }
+    }
+    return "/api/packs/screenshots/$file" . ($v ? "?v=$v" : '');
+};
 $manifest = []; // flat: [{catalogSlug, appSlug, label, file}] — one entry per dashboard app
 $linkedShots = 0;
 foreach ($sources as $s) {
@@ -303,13 +313,13 @@ foreach ($sources as $s) {
             $manifest[] = ['catalogSlug' => $s['slug'], 'appSlug' => $appSlug, 'label' => $appName, 'file' => "$base.png"];
         }
         if ($found = $findShot($base)) {
-            $shots[] = ['label' => $appName, 'url' => "/api/packs/screenshots/$found"];
+            $shots[] = ['label' => $appName, 'url' => $shotUrl($found)];
         }
         $idx++;
     }
     // Fallback for packs with no dashboard app but a legacy <slug>.png on disk.
     if (empty($shots) && ($found = $findShot($s['slug']))) {
-        $shots[] = ['label' => $s['name'], 'url' => "/api/packs/screenshots/$found"];
+        $shots[] = ['label' => $s['name'], 'url' => $shotUrl($found)];
     }
     $catalog->setPackScreenshots($s['slug'], $shots);
     $linkedShots += count($shots);
