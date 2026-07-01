@@ -115,6 +115,7 @@ export const useAuthStore = create<AuthState>()(
             // Mark the API client as authenticated so session-expired
             // callbacks will fire correctly on subsequent 401 responses
             api.setAuthenticated(true);
+            api.setDemoMode(!!result.data.user.isDemo);
             set({
               user: result.data.user,
               isLoading: false,
@@ -160,6 +161,7 @@ export const useAuthStore = create<AuthState>()(
             set({ isLoading: false, error: result.error || 'Could not start the demo' });
             return { success: false, error: result.error || 'Could not start the demo' };
           }
+          api.setDemoMode(!!result.data.user.isDemo);
           set({ user: result.data.user, isLoading: false, error: null });
           return { success: true };
         } catch (error) {
@@ -201,6 +203,7 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // Even if the API call fails, clear local state
         }
+        api.setDemoMode(false);
         set({ user: null, error: null });
 
         // Purge all user-specific in-memory + persisted + cached data (shared with the

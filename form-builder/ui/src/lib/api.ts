@@ -4,6 +4,7 @@
 
 import type { Form } from '../types/form';
 import { logger } from './logger';
+import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId } from './demoLocal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -64,9 +65,17 @@ class ApiClient {
   private _isAuthenticated: boolean = false;
   // Callbacks invoked when a 401 response invalidates the session (Set prevents duplicates)
   private _onSessionExpiredCallbacks: Set<() => void> = new Set();
+  // When true (the shared public Demo account), app-runtime writes stay in this browser's IndexedDB
+  // instead of hitting the server, so the demo can't be polluted for other visitors.
+  private _demoMode: boolean = false;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+  }
+
+  /** Toggle the demo local-overlay (set from the auth store when the Demo account is active). */
+  setDemoMode(on: boolean): void {
+    this._demoMode = on;
   }
 
   /**
@@ -833,7 +842,30 @@ class ApiClient {
     return this.request(`/app/${slug}/forms/${formId}/analytics`);
   }
 
+  /** Merge server-seeded rows with this browser's local demo records (local shown first, newest). */
+  private async _mergeDemoResponses(
+    server: ApiResponse<{ responses: unknown[]; count: number; scope: string }>,
+    formId: string
+  ): Promise<ApiResponse<{ responses: unknown[]; count: number; scope: string }>> {
+    const local = await getDemoRecords(formId);
+    const serverRows = server.data?.responses ?? [];
+    return {
+      ...server,
+      data: {
+        responses: [...local, ...serverRows],
+        count: (server.data?.count ?? serverRows.length) + local.length,
+        scope: server.data?.scope ?? 'all',
+      },
+    };
+  }
+
   async createAppResponse(slug: string, formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
+    if (this._demoMode) {
+      // Keep demo submissions in this browser only — never touch the shared demo on the server.
+      const answers = (data.answers as Record<string, unknown>) ?? {};
+      const response = await addDemoRecord(formId, answers);
+      return { data: { response } };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -845,14 +877,26 @@ class ApiClient {
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
     const query = params.toString();
-    return this.request(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
+    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses${query ? `?${query}` : ''}`);
+    return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
   }
 
   async getAppResponseById(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
+    if (this._demoMode && isDemoLocalId(responseId)) {
+      const response = await getDemoRecord(formId, responseId);
+      return response ? { data: { response } } : { error: 'Record not found' };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`);
   }
 
   async updateAppResponse(slug: string, formId: string, responseId: string, data: Record<string, unknown>): Promise<ApiResponse<{ response: unknown }>> {
+    if (this._demoMode) {
+      if (isDemoLocalId(responseId)) {
+        const response = await updateDemoRecord(formId, responseId, (data.answers as Record<string, unknown>) ?? {});
+        return response ? { data: { response } } : { error: 'Record not found' };
+      }
+      return { error: 'This is a shared live demo — the seeded data is read-only. Your own entries can be edited.' };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -860,6 +904,13 @@ class ApiClient {
   }
 
   async deleteAppResponse(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ success: boolean }>> {
+    if (this._demoMode) {
+      if (isDemoLocalId(responseId)) {
+        await deleteDemoRecord(formId, responseId);
+        return { data: { success: true } };
+      }
+      return { error: 'This is a shared live demo — the seeded data is read-only.' };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}`, {
       method: 'DELETE',
     });
@@ -897,11 +948,16 @@ class ApiClient {
     params.set('resolve', 'linked');
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
-    return this.request(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+    const res = await this.request<{ responses: unknown[]; count: number; scope: string }>(`/app/${slug}/forms/${formId}/responses?${params.toString()}`);
+    return this._demoMode ? this._mergeDemoResponses(res, formId) : res;
   }
 
   // Get single app response with resolve
   async getAppResponseByIdResolved(slug: string, formId: string, responseId: string): Promise<ApiResponse<{ response: unknown }>> {
+    if (this._demoMode && isDemoLocalId(responseId)) {
+      const response = await getDemoRecord(formId, responseId);
+      return response ? { data: { response } } : { error: 'Record not found' };
+    }
     return this.request(`/app/${slug}/forms/${formId}/responses/${responseId}?resolve=linked`);
   }
 

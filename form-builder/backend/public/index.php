@@ -520,6 +520,14 @@ $csrfSecret = hash('sha256', 'formlogic-csrf:' . ($settings['settings']['jwt']['
 // Add CSRF middleware (validates tokens on state-changing requests)
 $app->add(new CsrfMiddleware('formlogic_csrf', 'X-CSRF-Token', $cookieName, $csrfSecret));
 
+// Make the shared public "Demo" account read-only on the server (its visitors' data lives in their
+// browser via the client overlay). Self-contained token check, so global placement is fine.
+$app->add(new \FormLogic\Middleware\DemoReadOnlyMiddleware(
+    $container->get(AuthService::class),
+    $_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local',
+    $cookieName
+));
+
 // Add CORS middleware with allowlist support
 $corsSettings = $settings['settings']['cors'];
 $app->add(new CorsMiddleware(
