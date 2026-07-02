@@ -183,3 +183,140 @@ Roster + tasks + policy acknowledgements.
 
 Sample-app note: their APP home screens stay multi-file TS; the per-form section screens use the
 plain html/css/js string format inside the JSON (same import path as packs).
+
+## New operational packs (2026-07)
+
+15 packs for high-frequency small businesses; same kit, same mechanics. Full field/intent specs
+live in each pack `.ts` (and scratchpad `pack-build/specs/*.md`).
+
+### PawRoute — Dog Walking & Pet Care
+Manage pets, clients, walkers, walks and incidents.
+- **Pets** (roster): KPIs active pets / new / attention flags; species + temperament pills.
+- **Clients** (book): KPIs clients / overdue billing (bad); billing-status breakdown.
+- **Walks & Visits** (route board): KPIs today / this week / completion; Morning–Evening schedule lanes; service-type breakdown.
+- **Team Members** (dispatch): KPIs active / walkers vs sitters; availability-day chips.
+- **Incidents** (care alerts): KPIs open follow-ups / urgent; severity qRow stack; type breakdown.
+
+### BrewDesk — Cafe & Barista Ops
+Orders, barista queue, prep/stock, roster, daily close.
+- **Cafe Orders** (service board): open orders / served today / takeaway share; status qRows.
+- **Barista Queue** (coffee rail): in queue / ready / most-poured; milk breakdown.
+- **Stock & Prep** (prep fridge): low/out / OK / freshness; par bars; category breakdown.
+- **Staff Roster**: on today / baristas / opens; start-time schedule.
+- **Daily Close** (ritual): last register $ / tips / closes; beans+milk usage bars.
+- **Menu Items** (library): active / dietary-friendly / retired; station breakdown.
+
+### GrillStack — Burger Shop Command Center
+Orders, kitchen tickets, prep, shifts, daily close.
+- **Orders** (counter board): live / rush (bad) / collected; big order-number qRows; status breakdown.
+- **Kitchen Tickets** (the pass): on the pass / ready / held; station lanes w/ elapsed chips.
+- **Prep & Stock** (station): low-out / OK / checked; par bars.
+- **Staff Shifts** (crew): on shift / breaks / week; start-time schedule.
+- **Daily Close** (checklist): last takings $ / draft / reviewed; payment-mix bars.
+- **Menu Items** (board): active / combos / off-menu; prep-station breakdown.
+
+### CounterFlow — Retail Store Operations
+Products, suppliers, movements, tasks, staff, returns.
+- **Products** (stock wall): active / at reorder (warn) / stock value $; low-stock list.
+- **Stock Movements** (ledger): net 30d / deliveries / damage-returns; type breakdown.
+- **Store Tasks** (board): open / blocked (bad) / done; To do–Blocked lanes; area breakdown.
+- **Returns** (queue): open / resolved 30d / refund $; issue-type breakdown.
+- **Suppliers** (directory): suppliers / avg lead time / net-30+; terms breakdown.
+- **Staff** (team): active / managers / online cover; role breakdown.
+
+### StayReady — Short-Stay Turnover
+Properties, bookings, turnovers, inspections, supplies.
+- **Turnovers** (today's board): today / issues (bad) / week; time schedule w/ linen chips.
+- **Bookings** (timeline): in-house / arrivals 7d / 30d; platform breakdown.
+- **Properties** (portfolio): live / paused / avg beds; type breakdown.
+- **Inspections** (condition watch): follow-ups / avg rating / 30d; rating distribution.
+- **Cleaners** (dispatch): active / coverage / areas; availability chips.
+- **Supplies** (restock): low/out / OK / properties; par bars.
+
+### RepairBench — Device Repair Shop
+Customers, technicians, devices, repair jobs, parts, QA.
+- **Repair Jobs** (bench queue): on bench / ready (good) / express (warn); status pipeline lanes; issue breakdown.
+- **Devices** (registry): on file / phones vs laptops; type breakdown.
+- **Parts Orders** (board): awaiting / backordered (bad) / received; ETA chips.
+- **Quality Checks** (test bench): pass rate / fails / not notified; pass/fail bars.
+- **Customers** (book): customers / new / phone-preferred; contact breakdown.
+- **Technicians** (roster): active / skill cover / micro-solder; skill chips.
+
+### PassMaster — Restaurant Kitchen & Table Service
+Reservations, tables, kitchen tickets, prep, shift close.
+- **Tables** (floor board): turning / open / needs reset (warn); stage-colored tiles; section breakdown.
+- **Kitchen Tickets** (the pass): live / fired (bad) / served; course lanes w/ allergy pills.
+- **Reservations** (the book): covers tonight / 7d / no-shows; party-size schedule.
+- **Prep List** (board): not done / done / 86'd (bad); station completion bars.
+- **Staff** (brigade): active / servers / kitchen; role breakdown.
+- **Shift Close** (nightly): last sales $ / covers / voids; sales-by-close bars.
+
+### CaterCraft — Catering & Event Orders
+Clients, menu packages, jobs, production, delivery, dietary.
+- **Catering Jobs** (pipeline): confirmed+prep / pipeline $ / events 14d; status lanes.
+- **Production Tasks** (board): open / blocked (bad) / due today; station completion.
+- **Delivery Runs** (dispatch): today / en route / issues (bad); pickup→delivery rows.
+- **Dietary Requirements** (matrix): unconfirmed (warn) / guests / types; type bars.
+- **Menu Packages** (library): active / avg $/person / dietary; category breakdown.
+- **Clients** (book): clients / orgs / new; monthly bars.
+
+### CleanShift — Cleaning Business Scheduler
+Clients, teams, jobs, quality, supplies, issues.
+- **Cleaning Jobs** (run sheet): today / week / issues (bad); start-time schedule.
+- **Quality Checks** (QA): avg rating / follow-ups (warn) / 30d; rating distribution.
+- **Supplies** (cupboard): low/out / OK / categories; par bars.
+- **Client Issues** (resolution): open / high (bad) / resolved; severity qRows.
+- **Teams** (dispatch): active / areas / vehicles; coverage bars.
+- **Clients** (book): clients / overdue (warn) / commercial; type breakdown.
+
+### TutorTrack — Tutoring & Lessons Manager
+Students, tutors, lessons, progress, invoices.
+- **Lessons** (teaching week): week / today / no-shows; subject schedule.
+- **Students** (roster): active / waitlist / new; subject breakdown.
+- **Progress Notes** (board): avg score / follow-ups (warn) / 30d; progress-area breakdown.
+- **Invoices** (billing): outstanding $ / overdue (bad) / paid 30d; status breakdown.
+- **Tutors** (bench): active / subject cover / avg rate $; availability bars.
+
+### FitStudio — Personal Training & Gym Coaching
+Clients, trainers, sessions, assessments, programs, payments.
+- **Sessions** (coaching day): today / week / no-shows; type schedule.
+- **Clients** (floor): active / trials / new; goal breakdown.
+- **Assessments** (progress lab): 30d / avg mobility / clients; monthly bars.
+- **Programs** (timeline): active / finishing / drafts; goal breakdown.
+- **Payments** (revenue): collected 30d $ / pending (warn) / failed (bad); type breakdown.
+- **Trainers** (bench): active / specialties / PTs; role breakdown.
+
+### VenueOps — Venue Hire & Booking Manager
+Spaces, clients, bookings, setups, incidents, payments.
+- **Bookings** (diary): 7d / unpaid (warn) / enquiries; purpose schedule.
+- **Spaces** (catalogue): available / capacity / avg rate $; type breakdown.
+- **Setup Requirements** (sheet): not complete (warn) / catering / done; layout breakdown.
+- **Payments** (revenue): collected 30d $ / pending (warn) / refunds; method breakdown.
+- **Incidents** (register): open / cost $ / closed; type qRows.
+- **Clients** (hirer book): clients / orgs / new; monthly bars.
+
+### FleetFlow — Vehicle Fleet & Driver Log
+Vehicles, drivers, trips, maintenance, incidents.
+- **Vehicles** (fleet board): available / in workshop (warn) / compliance (rego+insurance); expiry chips.
+- **Trips** (log): km 30d / trips / fuel $; purpose breakdown.
+- **Maintenance** (service bay): overdue+due / in workshop / spend $; due-date rows.
+- **Drivers** (compliance): active / licences expiring (warn) / classes; class breakdown.
+- **Incidents** (register): open / high (bad) / 90d; type breakdown.
+
+### SitePulse — Construction Site Diary
+Projects, daily diaries, subbies, deliveries, defects, variations.
+- **Daily Diaries** (wall): week / avg workers / rain days; weather-mix breakdown.
+- **Defects** (board): open / critical (bad) / verified; priority qRows w/ due chips.
+- **Deliveries** (materials log): week / with issues (warn) / suppliers; monthly bars.
+- **Variations** (pipeline): approved $ / awaiting client (warn) / rejected; status breakdown.
+- **Projects** (portfolio): active / due 60d / on hold; status breakdown.
+- **Subcontractors** (register): approved / insurance expiring (warn) / trades; trade breakdown.
+
+### AgriLog — Farm Jobs & Harvest Tracker
+Paddocks, farm jobs, harvest, chemicals, machinery, maintenance.
+- **Farm Jobs** (work board): week / overdue (warn) / rained off; job-type breakdown.
+- **Paddocks** (block map): in crop / hectares / fallow; status breakdown.
+- **Harvest Logs** (tally): 30d / premium share / blocks; grade breakdown.
+- **Chemical Applications** (register): active WHP (warn) / 30d / operators; monthly bars.
+- **Machinery** (shed): running / service due (warn) / workshop; type breakdown.
+- **Maintenance Logs** (workshop log): spend 90d $ / 30d / repairs; type breakdown.

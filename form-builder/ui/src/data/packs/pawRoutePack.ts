@@ -930,7 +930,7 @@ export const pawRoutePack: PackData = {
           "  var qHtml='';",
           "  for(var p=0;p<Math.min(6,sorted.length);p++){var c=sorted[p].answers||{};",
           "    var ttl=c.incident_type?labelFor(typeMap,c.incident_type):'Care note';",
-          "    var right=(c.severity?sevPill(sevMap,c.severity):'')+(c.follow_up==='yes'?pill('Follow-up','warn'):'<span class=\"chip\">'+h(ago(sorted[p].submittedAt))+'</span>');",
+          "    var right=(c.severity?sevPill(sevMap,c.severity):'')+(c.follow_up==='yes'?pill('Follow-up','warn'):'')+'<span class=\"chip\">'+h(ago(sorted[p].submittedAt))+'</span>';",
           "    qHtml+=qRow(SEVC[c.severity]||'var(--fl-accent)',h(ttl),h(c.description||'Care note logged'),right);}",
           "  if(!qHtml)qHtml=emptyBlock(GL,'Incidents and care notes you log appear here, newest first.','+ Log incident');",
           "  var tHtml=breakdown(rows,'incident_type',typeMap)||emptyBlock(I.chart,'The type mix appears once care notes are logged.','+ Log incident');",
