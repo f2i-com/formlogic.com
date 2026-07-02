@@ -10,6 +10,7 @@ import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
 import { api, resolveFileUrl } from '../../lib/api';
+import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { cn, statusBadgeVariant, formatStatusLabel, parseServerDate } from '../../lib/utils';
 import { Badge } from '../ui/Badge';
 
@@ -41,17 +42,41 @@ export function AppResponseDetail() {
 
   useEffect(() => {
     if (appSlug && formId && responseId && config) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch effect: status reset must be synchronous when deps change
+       
       setLoading(true);
       setFetchError(null);
       let cancelled = false;
       const fetchFn = hasLinkedFields
         ? api.getAppResponseByIdResolved(appSlug, formId, responseId)
         : api.getAppResponseById(appSlug, formId, responseId);
-      fetchFn.then((result) => {
+      // Rows the server never resolved (demo-local records exist only in this browser) get their
+      // linked displays labelled client-side from the target forms' records.
+      const withClientResolution = async (r: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        const linked = fields.filter((f) => f.type === 'linked_record' && (f.properties as { targetFormId?: string } | undefined)?.targetFormId) as Array<{ id: string; properties?: { targetFormId?: string; displayFieldIds?: string[] } }>;
+        const answers = (r.answers as Record<string, unknown> | undefined) || {};
+        const already = (r._resolved as Record<string, unknown> | undefined) || {};
+        const targets = [...new Set(linked.filter((f) => !already[f.id] && answers[f.id] != null && answers[f.id] !== '').map((f) => f.properties!.targetFormId!))];
+        if (!targets.length) return r;
+        const labelByTarget = new Map<string, Map<string, string>>();
+        await Promise.all(targets.map(async (t) => {
+          try {
+            const res = await api.getAppResponses(appSlug, t, { limit: 500 });
+            const targetRows = ((res.data?.responses || []) as Array<{ id: string; answers?: Record<string, unknown> }>);
+            const tFields = ((config?.forms.find((x) => x.formId === t)?.fields || []) as Array<{ id: string; label?: string; type: string }>);
+            const displayIds = linked.find((f) => f.properties?.targetFormId === t)?.properties?.displayFieldIds;
+            const map = new Map<string, string>();
+            for (const tr of targetRows) map.set(tr.id, guessRecordLabel(tFields, tr.answers || {}, displayIds));
+            labelByTarget.set(t, map);
+          } catch { /* target not viewable — leave unresolved */ }
+        }));
+        return resolveLinkedDisplays([r], linked, labelByTarget)[0];
+      };
+      fetchFn.then(async (result) => {
         if (cancelled) return;
         if (result.data?.response) {
-          const r = result.data.response as Record<string, unknown>;
+          let r = result.data.response as Record<string, unknown>;
+          if (hasLinkedFields) r = await withClientResolution(r);
+          if (cancelled) return;
           setResponse(r);
           setEditedAnswers((r.answers as Record<string, unknown>) ?? {});
         } else if (result.error) {
@@ -65,6 +90,9 @@ export function AppResponseDetail() {
       });
       return () => { cancelled = true; };
     }
+    // `fields` derives purely from config+formId (already deps) but is a fresh array per render —
+    // listing it would refire the fetch every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appSlug, formId, responseId, config, hasLinkedFields]);
 
   // History-aware back: return to wherever the user came from (table, related-records
@@ -545,6 +573,13 @@ export function AppResponseDetail() {
                           </div>
                         );
                       })()}
+                    </div>
+                  ) : isLinked ? (
+                    // Linked answer with no resolution available — never print the raw response id.
+                    <div className="text-[15px]">
+                      {answers[field.id] != null && answers[field.id] !== ''
+                        ? <span className="italic text-gray-400 dark:text-slate-500">Linked record</span>
+                        : <span className="text-gray-300 dark:text-slate-600" aria-label="No answer">—</span>}
                     </div>
                   ) : (
                     <div className="text-[15px] text-gray-900 dark:text-slate-100 break-words">

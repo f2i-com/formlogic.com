@@ -522,6 +522,24 @@ function coherencePass(array $fields, array &$answers): void
             $schedIsFuture = true;
         }
     }
+    // Email follows the record's own name ("Ada Lovelace" → ada.lovelace@example.com) — names and
+    // emails drawn independently made linked-record pickers look wrong ("Linus Pauling -
+    // ada.lovelace@example.com").
+    $personName = null;
+    foreach ($fields as $f) {
+        $id = (string) ($f['id'] ?? '');
+        if (($f['type'] ?? '') !== 'short_text' || !preg_match('/name/i', $id . ' ' . (string) ($f['label'] ?? ''))) { continue; }
+        $v = $answers[$id] ?? null;
+        if (is_string($v) && preg_match('/^[A-Z][a-z]+ [A-Z][a-z-]+$/', $v)) { $personName = $v; break; }
+    }
+    if ($personName !== null) {
+        foreach ($fields as $f) {
+            if (($f['type'] ?? '') === 'email' && isset($answers[$f['id']])) {
+                $answers[$f['id']] = strtolower(str_replace(' ', '.', $personName)) . '@example.com';
+            }
+        }
+    }
+
     if (!$schedIsFuture) { return; }
     $pastTense = ['completed', 'no-show', 'no_show', 'arrived', 'invoiced', 'paid', 'part-paid', 'received', 'part-received', 'closed'];
     $futureOk = ['scheduled', 'booked', 'confirmed', 'pending', 'new', 'requested', 'ordered', 'draft', 'sent', 'on-hold', 'lead', 'quoted', 'won'];

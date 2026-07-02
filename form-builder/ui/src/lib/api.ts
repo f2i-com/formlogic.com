@@ -948,7 +948,36 @@ class ApiClient {
     if (options.limit) params.set('limit', String(options.limit));
     if (options.offset) params.set('offset', String(options.offset));
     if (options.ids?.length) params.set('ids', options.ids.join(','));
-    return this.request(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
+    const serverResult = await this.request<{ records: LinkedRecord[]; count: number }>(`/app/${slug}/forms/${formId}/lookup?${params.toString()}`);
+    // Demo: records created in this browser live only in the IndexedDB overlay — merge them into
+    // the picker so a locally-added client is selectable on a new appointment (local first).
+    if (this._demoMode) {
+      try {
+        const local = await getDemoRecords(options.targetFormId);
+        const q = (options.q || '').toLowerCase();
+        const wanted = options.ids ? new Set(options.ids) : null;
+        const toDisplay = (answers: Record<string, unknown>): string => {
+          if (options.displayFieldIds?.length) {
+            const parts = options.displayFieldIds
+              .map((id) => answers[id])
+              .filter((v) => v != null && v !== '')
+              .map((v) => (Array.isArray(v) ? v.join(', ') : String(v)));
+            if (parts.length) return parts.join(' - ');
+          }
+          const first = Object.values(answers).find((v) => typeof v === 'string' && v.trim());
+          return typeof first === 'string' ? first : 'New record';
+        };
+        const localRecords: LinkedRecord[] = local
+          .map((r) => ({ id: r.id, display: toDisplay(r.answers || {}), fields: r.answers || {}, submittedAt: r.submittedAt }))
+          .filter((r) => (wanted ? wanted.has(r.id) : true))
+          .filter((r) => (q ? r.display.toLowerCase().includes(q) : true));
+        if (localRecords.length) {
+          const server = serverResult.data?.records ?? [];
+          return { data: { records: [...localRecords, ...server], count: localRecords.length + (serverResult.data?.count ?? server.length) } };
+        }
+      } catch { /* overlay unavailable — server results only */ }
+    }
+    return serverResult;
   }
 
   /**
@@ -980,6 +1009,11 @@ class ApiClient {
 
   // Related records (inverse relations)
   async getRelatedRecords(slug: string, formId: string, responseId: string, options?: { limit?: number; offset?: number }): Promise<ApiResponse<{ related: Record<string, RelatedRecordGroup> }>> {
+    // Demo-local records exist only in this browser — the server 404s on their ids, and nothing
+    // server-side can reference them. Empty related-groups → the panel's quiet empty state.
+    if (this._demoMode && isDemoLocalId(responseId)) {
+      return { data: { related: {} } };
+    }
     const params = new URLSearchParams();
     if (options?.limit) params.set('limit', String(options.limit));
     if (options?.offset) params.set('offset', String(options.offset));
