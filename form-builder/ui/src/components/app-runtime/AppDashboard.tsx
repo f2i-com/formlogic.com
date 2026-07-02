@@ -317,7 +317,7 @@ export function AppDashboard() {
                 {submittableForms.map((form) => (
                   <button
                     key={form.formId}
-                    onClick={() => navigate(`/app/${appSlug}/form/${form.formId}`)}
+                    onClick={() => navigate(`/app/${appSlug}/form/${form.formId}?new=1`)}
                     className="group inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-full border border-gray-200/80 bg-white py-1.5 pl-2 pr-3.5 text-sm font-medium text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 app-ring-primary dark:border-slate-700/60 dark:bg-slate-900/50 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-800"
                   >
                     <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full app-bg-primary-light">
@@ -370,7 +370,7 @@ export function AppDashboard() {
                       <div className="mt-4 flex items-center gap-1.5">
                         {showSubmit && (
                           <button
-                            onClick={() => navigate(`/app/${appSlug}/form/${form.formId}`)}
+                            onClick={() => navigate(`/app/${appSlug}/form/${form.formId}?new=1`)}
                             className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium app-btn-primary transition-colors focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
                           >
                             <Send className="h-3.5 w-3.5" /> Submit

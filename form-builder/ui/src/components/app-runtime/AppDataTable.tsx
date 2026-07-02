@@ -14,6 +14,32 @@ import { toast } from '../../stores/toastStore';
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
 const SERVER_PAGE = 10; // rows per page in server mode — small pages keep queries fast and pagination visible
 
+/** Best-effort record label from a target form's answers (mirrors the server's RecordLabel guess). */
+function guessRecordLabel(
+  targetFields: Array<{ id: string; label?: string; type: string }>,
+  answers: Record<string, unknown>,
+  displayFieldIds?: string[]
+): string {
+  if (displayFieldIds?.length) {
+    const parts = displayFieldIds
+      .map((id) => answers[id])
+      .filter((v): v is string | number => v != null && v !== '')
+      .map((v) => (Array.isArray(v) ? (v as unknown[]).join(', ') : String(v)));
+    if (parts.length) return parts.join(' - ');
+  }
+  const textish = targetFields.filter((f) => ['short_text', 'email', 'phone', 'long_text'].includes(f.type));
+  // Prefer name-ish fields, then any text answer.
+  const ranked = [
+    ...textish.filter((f) => /name|title|subject/i.test(`${f.id} ${f.label || ''}`)),
+    ...textish,
+  ];
+  for (const f of ranked) {
+    const v = answers[f.id];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return '';
+}
+
 /** Flatten answers + resolved linked-record display onto each row so columns can render/sort by key. */
 function flattenResponses(data: Record<string, unknown>[]): Record<string, unknown>[] {
   return data.map((r) => {
@@ -65,7 +91,7 @@ export function AppDataTable() {
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
   const fields = useMemo(() =>
-    ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } }>)
+    ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }>; targetFormId?: string; displayFieldIds?: string[] } }>)
       .filter((f) => !EXCLUDED_FIELD_TYPES.has(f.type)),
     [runtimeForm?.fields]
   );
@@ -144,7 +170,70 @@ export function AppDataTable() {
       return { data: all, total: all.length };
     };
 
-    run().then(({ data, total: t }) => {
+    // Rows the server didn't resolve (demo-local submissions live only in this browser; the server
+    // never sees them) get their linked-record displays resolved client-side from the target form's
+    // records. No-permission targets stay unresolved — the renderer shows "Linked record", never a
+    // raw id.
+    const resolveMissingLinks = async (rows: Record<string, unknown>[]) => {
+      const linked = fields.filter((f) => f.type === 'linked_record' && f.properties?.targetFormId);
+      if (!linked.length || !appSlug || !config) return rows;
+      const needed = new Map<string, Set<string>>();
+      for (const r of rows) {
+        const resolved = (r._resolved as Record<string, unknown> | undefined) || {};
+        const answers = (r.answers as Record<string, unknown> | undefined) || {};
+        for (const f of linked) {
+          if (resolved[f.id]) continue;
+          const v = answers[f.id];
+          if (v == null || v === '') continue;
+          const t = f.properties!.targetFormId!;
+          let set = needed.get(t);
+          if (!set) { set = new Set(); needed.set(t, set); }
+          (Array.isArray(v) ? v : [v]).forEach((id) => { if (typeof id === 'string') set!.add(id); });
+        }
+      }
+      if (!needed.size) return rows;
+      const labelByTarget = new Map<string, Map<string, string>>();
+      await Promise.all([...needed.keys()].map(async (t) => {
+        try {
+          const res = await api.getAppResponses(appSlug, t, { limit: 500 });
+          const targetRows = ((res.data?.responses || []) as Array<{ id: string; answers?: Record<string, unknown> }>);
+          const tFields = ((config.forms.find((x) => x.formId === t)?.fields || []) as Array<{ id: string; label?: string; type: string }>);
+          const displayIds = linked.find((f) => f.properties?.targetFormId === t)?.properties?.displayFieldIds;
+          const map = new Map<string, string>();
+          for (const tr of targetRows) map.set(tr.id, guessRecordLabel(tFields, tr.answers || {}, displayIds));
+          labelByTarget.set(t, map);
+        } catch { /* target not viewable — leave unresolved */ }
+      }));
+      return rows.map((r) => {
+        const answers = (r.answers as Record<string, unknown> | undefined) || {};
+        const resolved: Record<string, unknown> = { ...((r._resolved as Record<string, unknown> | undefined) || {}) };
+        let changed = false;
+        for (const f of linked) {
+          if (resolved[f.id]) continue;
+          const v = answers[f.id];
+          if (v == null || v === '') continue;
+          const map = labelByTarget.get(f.properties!.targetFormId!);
+          if (!map) continue;
+          const toEntry = (id: unknown) => {
+            const display = typeof id === 'string' ? map.get(id) : undefined;
+            return display ? { id, display } : null;
+          };
+          if (Array.isArray(v)) {
+            const entries = v.map(toEntry);
+            if (entries.some(Boolean)) { resolved[f.id] = entries.map((e, i) => e ?? { id: v[i], display: '' }); changed = true; }
+          } else {
+            const e = toEntry(v);
+            if (e) { resolved[f.id] = e; changed = true; }
+          }
+        }
+        return changed ? { ...r, _resolved: resolved } : r;
+      });
+    };
+
+    run().then(async ({ data, total: t }) => {
+      const withLinks = hasLinkedFields ? await resolveMissingLinks(data) : data;
+      return { data: withLinks, total: t };
+    }).then(({ data, total: t }) => {
       if (cancelled) return;
       setResponses(flattenResponses(data));
       setTotal(t);
@@ -156,7 +245,7 @@ export function AppDataTable() {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch]);
+  }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch, appSlug, fields]);
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;
@@ -190,17 +279,22 @@ export function AppDataTable() {
     label: field.label,
     sortable: true,
     render: (r: Record<string, unknown>) => {
-      // For linked_record fields, use resolved display values
+      // For linked_record fields, use resolved display values \u2014 and NEVER fall back to the raw
+      // response id (a UUID in a data table reads as a bug and leaks nothing useful).
       if (field.type === 'linked_record') {
         const resolved = r._resolved as Record<string, unknown> | undefined;
         if (resolved?.[field.id]) {
           const resolvedVal = resolved[field.id] as { display?: string } | Array<{ display?: string }>;
           if (Array.isArray(resolvedVal)) {
-            const joined = resolvedVal.map((rv) => rv.display || '?').join(', ');
+            const joined = resolvedVal.map((rv) => rv.display || 'Linked record').join(', ');
             return joined.length > 50 ? joined.substring(0, 50) + '\u2026' : joined;
           }
-          return (resolvedVal as { display?: string }).display || '-';
+          return (resolvedVal as { display?: string }).display || 'Linked record';
         }
+        const answers = r.answers as Record<string, unknown> | undefined;
+        const raw = answers?.[field.id];
+        if (raw == null || raw === '') return '-';
+        return <span className="text-gray-400 dark:text-slate-500 italic">Linked record</span>;
       }
       const answers = r.answers as Record<string, unknown> | undefined;
       const val = answers?.[field.id];

@@ -26,7 +26,9 @@ export function AppHomeScreen() {
         forms={config.forms}
         accent={config.app.theme?.primaryColor}
         onNavigate={(target) => {
-          if (config.forms.some((f) => f.formId === target)) navigate(`form/${target}`);
+          // A bare formId means "start a new record" (the home screens' quick actions/CTAs) — jump
+          // straight into the form entry, past the form's section screen (?new=1).
+          if (config.forms.some((f) => f.formId === target)) navigate(`form/${target}?new=1`);
           else if (target) navigate(target.startsWith('/') ? target : `${target}`);
         }}
         className="w-full h-full border-0 rounded-lg"

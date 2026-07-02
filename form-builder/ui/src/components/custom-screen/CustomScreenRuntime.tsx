@@ -50,6 +50,8 @@ const SDK_SHIM = `
     },
     /** Open the real form for a new record (only when the owner enabled "allow new records"). */
     openForm: function(){ return call('openForm'); },
+    /** Open this form's records view (app runtime only — rejects on public links). */
+    openRecords: function(){ return call('openRecords'); },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
@@ -68,6 +70,7 @@ export function CustomScreenRuntime({
   appSlug,
   accentColor,
   onOpenForm,
+  onOpenRecords,
 }: {
   screen: CustomScreen;
   formId: string;
@@ -82,6 +85,8 @@ export function CustomScreenRuntime({
   accentColor?: string;
   /** Wired when "allow new records" is on — the SDK's openForm() reveals the real form. */
   onOpenForm?: () => void;
+  /** Wired in the app runtime — the SDK's openRecords() opens this form's records table. */
+  onOpenRecords?: () => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
@@ -181,6 +186,11 @@ export function CustomScreenRuntime({
             else throw new Error('New records are not enabled for this screen.');
             break;
           }
+          case 'openRecords': {
+            if (onOpenRecords) { onOpenRecords(); result = true; }
+            else throw new Error('Records are not available here.');
+            break;
+          }
           default:
             error = `Unknown action: ${m.action}`;
         }
@@ -191,7 +201,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm, onOpenRecords]);
 
   return (
     <iframe

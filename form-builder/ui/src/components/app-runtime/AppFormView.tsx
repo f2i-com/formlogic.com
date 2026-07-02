@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Plus } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
@@ -693,10 +693,13 @@ export function AppFormView() {
   const [viewMode, setViewMode] = useState<'focused' | 'classic'>('focused');
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
   // When this form's custom screen has "allow new records" on, flips between the section
-  // dashboard (screen) and the real form.
-  const [showFormView, setShowFormView] = useState(false);
-  // The component instance is reused across /form/:formId navigations — always land on the screen.
-  useEffect(() => { setShowFormView(false); }, [formId]);
+  // dashboard (screen) and the real form. ?new=1 (home-screen quick actions, dashboard Submit
+  // buttons) deep-links straight into the form entry, past the section screen.
+  const [searchParams] = useSearchParams();
+  const wantNew = searchParams.get('new') === '1';
+  const [showFormView, setShowFormView] = useState(wantNew);
+  // The component instance is reused across /form/:formId navigations — honor ?new=1 per visit.
+  useEffect(() => { setShowFormView(wantNew); }, [formId, wantNew]);
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -987,6 +990,7 @@ export function AppFormView() {
             appSlug={appSlug}
             accentColor={config.app.theme?.primaryColor}
             onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
+            onOpenRecords={(canViewOwn(formId) || canViewAll(formId)) ? () => navigate(`/app/${appSlug}/form/${formId}/responses`) : undefined}
             className="w-full h-full border-0 rounded-lg"
           />
           {allowNew && !hasOwnOpen && (
