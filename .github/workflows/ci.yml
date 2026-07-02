@@ -85,6 +85,12 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
+      # Hard gate: every marketplace pack app ships a home dashboard and EVERY pack/sample form
+      # ships a section screen (enabled + allowNewResponses + New-record affordance + design rules:
+      # tokens only, no emoji, form-scoped SDK). A pack edit can't silently drop a screen.
+      - name: Pack screen coverage
+        run: node scripts/check-pack-screens.mjs
+
       # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
       # the committed backend copy was stale (someone forgot `npm run sync:prelude`).
       - name: FormLogic prelude in sync (frontend ↔ backend)
