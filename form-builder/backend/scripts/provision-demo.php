@@ -239,6 +239,7 @@ foreach ($sources as $s) {
         try { $packs->publishApp($app['id'], $demoId); } catch (\Throwable $e) { out("  publish failed for app {$app['id']}: " . $e->getMessage()); }
     }
     $n = seedResponses($forms, $responses, $res['forms'] ?? []);
+    $GLOBALS['demoDataChanged'] = true;
     out("  demo: installed " . count($res['forms'] ?? []) . " forms / " . count($res['apps'] ?? []) . " apps, seeded $n responses");
 }
 
@@ -268,6 +269,7 @@ if ($_ENV['RESEED_DEMO'] ?? getenv('RESEED_DEMO')) {
         $packsReseeded++;
     }
     out("RESEED: regenerated $reseeded responses across $packsReseeded demo pack(s)");
+    if ($reseeded > 0) { $GLOBALS['demoDataChanged'] = true; }
 }
 
 // ── Screenshot manifest + linking ───────────────────────────────────────────
@@ -363,6 +365,26 @@ foreach ($sources as $s) {
     }
 }
 out("seeded reports: $seededReports across demo apps");
+
+// Bump the demo seed epoch whenever response data was (re)generated — clients purge their
+// browser-local overlay on mismatch so stale records never dangle against a replaced dataset.
+if (!empty($GLOBALS['demoDataChanged'])) {
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS system_meta (
+                meta_key VARCHAR(64) NOT NULL PRIMARY KEY,
+                meta_value TEXT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $pdo->prepare("INSERT INTO system_meta (meta_key, meta_value, updated_at) VALUES ('demo_seed_epoch', ?, NOW())
+                       ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value), updated_at = NOW()")
+            ->execute([(string) time()]);
+        out('demo seed epoch bumped');
+    } catch (\Throwable $e) {
+        out('WARN: could not bump demo seed epoch: ' . $e->getMessage());
+    }
+}
 
 out("\nDone. Demo apps: " . count($apps->getAllApps($demoId)));
 

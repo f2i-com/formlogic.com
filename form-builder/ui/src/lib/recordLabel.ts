@@ -43,16 +43,23 @@ export function resolveLinkedDisplays(
       if (v == null || v === '') continue;
       const map = f.properties?.targetFormId ? labelByTarget.get(f.properties.targetFormId) : undefined;
       if (!map) continue;
+      // The target form WAS fetched (map exists): an id absent from it is a dangling reference —
+      // e.g. a browser-local demo record pointing at data from a previous reseed. Surface it as
+      // "Record not found" (the detail view renders that as its broken-link chip) rather than the
+      // noncommittal "Linked record". (Targets are fetched up to the 500-row lookup cap; demo data
+      // sits far below it.)
       const toEntry = (id: unknown) => {
-        const display = typeof id === 'string' ? map.get(id) : undefined;
-        return display ? { id, display } : null;
+        if (typeof id === 'string' && map.has(id)) {
+          return { id, display: map.get(id) || 'Linked record' };
+        }
+        return { id, display: 'Record not found' };
       };
       if (Array.isArray(v)) {
-        const entries = v.map(toEntry);
-        if (entries.some(Boolean)) { resolved[f.id] = entries.map((e, i) => e ?? { id: v[i], display: '' }); changed = true; }
+        resolved[f.id] = v.map(toEntry);
+        changed = true;
       } else {
-        const e = toEntry(v);
-        if (e) { resolved[f.id] = e; changed = true; }
+        resolved[f.id] = toEntry(v);
+        changed = true;
       }
     }
     return changed ? { ...r, _resolved: resolved } : r;

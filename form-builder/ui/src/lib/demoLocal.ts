@@ -69,6 +69,22 @@ export function isDemoLocalId(id: unknown): boolean {
   return typeof id === 'string' && id.startsWith('demolocal_');
 }
 
+/** Wipe every locally-stored demo record (all forms). Used when the shared demo dataset is
+ *  regenerated — local records referencing the replaced data would dangle forever. */
+export async function clearDemoRecords(): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Store a new demo submission locally and return the synthetic record. */
 export async function addDemoRecord(formId: string, answers: Record<string, unknown>): Promise<DemoRecord> {
   const rec: DemoRecord = {

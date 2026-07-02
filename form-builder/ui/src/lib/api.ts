@@ -4,7 +4,7 @@
 
 import type { Form } from '../types/form';
 import { logger } from './logger';
-import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId } from './demoLocal';
+import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -225,9 +225,23 @@ class ApiClient {
 
   /** Start (or resume) the public no-signup demo — mints a session for the shared "Demo" account. */
   async startDemo(): Promise<ApiResponse<{ user: User }>> {
-    const result = await this.request<{ user: User }>('/demo/start', { method: 'POST' });
+    const result = await this.request<{ user: User; seedEpoch?: string | null }>('/demo/start', { method: 'POST' });
     if (result.data?.user) {
       this.setAuthenticated(true);
+      // The seed epoch bumps whenever the shared demo data is regenerated. Purge this browser's
+      // local overlay on mismatch — records referencing the replaced dataset would dangle forever
+      // ("Record not found" on every linked field).
+      const epoch = result.data.seedEpoch;
+      if (epoch) {
+        const KEY = 'formlogic-demo-seed-epoch';
+        try {
+          const prev = localStorage.getItem(KEY);
+          if (prev !== null && prev !== epoch) {
+            await clearDemoRecords();
+          }
+          localStorage.setItem(KEY, epoch);
+        } catch { /* storage unavailable — skip */ }
+      }
     }
     return result;
   }

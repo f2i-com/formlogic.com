@@ -32,9 +32,11 @@ class AuthController
     private ?FormService $formService;
     private ?AppService $appService;
     private ?ApiKeyService $apiKeyService;
+    private ?\FormLogic\Database\MySQLConnection $db;
 
-    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null)
+    public function __construct(AuthService $authService, array $cookieConfig = [], int $jwtExpiry = 86400, ?LoggerInterface $logger = null, ?AuditService $auditService = null, string $csrfSecret = '', ?FormService $formService = null, ?AppService $appService = null, ?ApiKeyService $apiKeyService = null, ?\FormLogic\Database\MySQLConnection $db = null)
     {
+        $this->db = $db;
         $this->authService = $authService;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->logger = $logger ?? new NullLogger();
@@ -242,7 +244,20 @@ class AuthController
             }
         }
 
-        return $this->jsonResponse($response, ['user' => $this->decorateUser($user)]);
+        // The seed epoch bumps whenever provisioning (re)generates the demo data. Clients compare
+        // it to their stored value and purge their IndexedDB overlay on mismatch — browser-local
+        // records referencing a replaced dataset would otherwise dangle forever.
+        $seedEpoch = null;
+        if ($this->db !== null) {
+            try {
+                $stmt = $this->db->getConnection()->query("SELECT meta_value FROM system_meta WHERE meta_key = 'demo_seed_epoch'");
+                $seedEpoch = $stmt ? ($stmt->fetchColumn() ?: null) : null;
+            } catch (\Throwable $e) {
+                // table may not exist yet — epoch purging is best-effort
+            }
+        }
+
+        return $this->jsonResponse($response, ['user' => $this->decorateUser($user), 'seedEpoch' => $seedEpoch]);
     }
 
     /**
