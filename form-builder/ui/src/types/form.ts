@@ -129,6 +129,9 @@ export interface CustomScreen {
   publicRecords?: boolean;
   /** Whitelist of field ids exposed publicly via records() — ONLY these answer keys are returned. */
   publicRecordFields?: string[];
+  /** When true, viewers can still open the real form while the screen is shown — the runtime
+   *  overlays a "New record" button and the screen may call FormLogic.openForm(). */
+  allowNewResponses?: boolean;
 }
 
 export interface Form {

@@ -59,7 +59,7 @@ export default function CustomScreenStudio() {
       setFields((form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
       const cs = form.customScreen;
       if (cs && (cs.html || cs.js || cs.ts || cs.files?.length)) {
-        setMeta({ enabled: true, publicRecords: cs.publicRecords, publicRecordFields: cs.publicRecordFields });
+        setMeta({ enabled: true, publicRecords: cs.publicRecords, publicRecordFields: cs.publicRecordFields, allowNewResponses: cs.allowNewResponses });
         setFiles(toFiles(cs));
         setPreview({ ...cs, enabled: true });
       }
@@ -164,6 +164,18 @@ export default function CustomScreenStudio() {
               </button>
             ) : null}
             <div className="pt-1 space-y-2">
+              <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!meta.allowNewResponses}
+                  onChange={(e) => { setMeta({ ...meta, allowNewResponses: e.target.checked }); setDirty(true); }}
+                  className="mt-0.5 rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500/30"
+                />
+                <span>
+                  Allow new records while the screen is shown — viewers get a &ldquo;New record&rdquo; button that opens
+                  the real form (your screen can also call <code className="text-[10px]">FormLogic.openForm()</code>).
+                </span>
+              </label>
               <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                 <input
                   type="checkbox"

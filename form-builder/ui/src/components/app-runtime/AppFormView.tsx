@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck } from 'lucide-react';
+import { ArrowLeft, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Plus } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
@@ -692,6 +692,11 @@ export function AppFormView() {
   const [showNigo, setShowNigo] = useState(false);
   const [viewMode, setViewMode] = useState<'focused' | 'classic'>('focused');
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+  // When this form's custom screen has "allow new records" on, flips between the section
+  // dashboard (screen) and the real form.
+  const [showFormView, setShowFormView] = useState(false);
+  // The component instance is reused across /form/:formId navigations — always land on the screen.
+  useEffect(() => { setShowFormView(false); }, [formId]);
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -963,20 +968,35 @@ export function AppFormView() {
     );
   }
 
-  // A form's custom screen takes over its view in the app runtime too (SDK routed through the app API).
+  // A form's custom screen takes over its view in the app runtime too (SDK routed through the app
+  // API) — unless "allow new records" is on and the viewer stepped through to the real form.
   {
     const cs = form?.customScreen as (CustomScreen | undefined);
-    if (cs?.enabled && (cs.html || cs.js || cs.ts || cs.files?.length)) {
+    if (cs?.enabled && (cs.html || cs.js || cs.ts || cs.files?.length) && !showFormView) {
+      const allowNew = !!cs.allowNewResponses && canSubmit(formId);
       return (
-        <div className="h-full min-h-[60vh]">
+        <div className="relative h-full min-h-[60vh]">
           <CustomScreenRuntime
             screen={cs}
             formId={formId}
             formTitle={runtimeForm?.displayName || (form?.title as string) || ''}
-            fields={((form?.fields ?? []) as Array<{ id: string; label: string; type: string }>).map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+            fields={((form?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: { options?: Array<{ label: string; value: string }> } }>).map((f) => ({ id: f.id, label: f.label, type: f.type, options: f.properties?.options }))}
             appSlug={appSlug}
+            accentColor={config.app.theme?.primaryColor}
+            onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
             className="w-full h-full border-0 rounded-lg"
           />
+          {allowNew && (
+            <button
+              type="button"
+              onClick={() => setShowFormView(true)}
+              className="app-btn-primary fixed bottom-5 right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2"
+              style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+            >
+              <Plus className="h-4 w-4" />
+              New {(runtimeForm?.displayName || 'record').toLowerCase().replace(/s$/, '')}
+            </button>
+          )}
         </div>
       );
     }
@@ -1017,17 +1037,25 @@ export function AppFormView() {
           })()}
           <h1 className="text-3xl font-bold mb-3 text-gray-900 dark:text-white tracking-tight">{thankYouField?.label?.trim() || 'Thank you!'}</h1>
           <p className="text-lg text-gray-500 dark:text-slate-400 mb-8 leading-relaxed whitespace-pre-line">{thankYouField?.description?.trim() || 'Your response has been submitted successfully.'}</p>
-          <div className="flex gap-3 justify-center">
+          <div className="flex flex-wrap gap-3 justify-center">
+            {showFormView && (
+              <button
+                onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); setShowFormView(false); }}
+                className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary cursor-pointer"
+              >
+                Back to dashboard
+              </button>
+            )}
             <button
               onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); }}
-              className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors"
+              className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
               Submit Another
             </button>
             {(canViewOwn(formId) || canViewAll(formId)) && (
               <button
                 onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
-                className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary"
+                className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${showFormView ? 'border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800' : 'app-btn-primary'}`}
               >
                 View Responses
               </button>
@@ -1053,6 +1081,19 @@ export function AppFormView() {
 
   return (
     <div className="relative flex-1 flex flex-col min-h-[60vh]" onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}>
+      {/* Back to the section dashboard (only when the custom screen stepped aside for a new record) */}
+      {showFormView && (
+        <div className="px-4 pt-3">
+          <button
+            type="button"
+            onClick={() => setShowFormView(false)}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-gray-200 dark:border-slate-700 px-3.5 py-1.5 text-sm font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 app-ring-primary motion-safe:transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to dashboard
+          </button>
+        </div>
+      )}
       {/* Hidden fields with a calculation expression compute off-screen so their value is
           captured in the submission without ever being shown. */}
       {hiddenFields

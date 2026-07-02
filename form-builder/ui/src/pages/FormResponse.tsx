@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck } from 'lucide-react';
+import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
 import { useFormStore } from '../stores/formStore';
@@ -808,6 +808,11 @@ export default function FormResponse() {
   const [formLoadError, setFormLoadError] = useState(false);
   const [responseMode, setResponseMode] = useState<'focused' | 'classic'>('focused');
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
+  // When a custom screen owns this form's view but "allow new records" is on, this flips the
+  // viewer between the screen (dashboard) and the real form.
+  const [showFormView, setShowFormView] = useState(false);
+  // The component instance is reused across /form/:formId navigations — always land on the screen.
+  useEffect(() => { setShowFormView(false); }, [formId]);
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -1032,18 +1037,35 @@ export default function FormResponse() {
     );
   }
 
-  // A custom screen takes over the whole form experience (public link + embed).
-  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
+  // A custom screen takes over the whole form experience (public link + embed) — unless the owner
+  // enabled "allow new records" and the viewer stepped through to the real form.
+  const screenTakeover = !!(form.customScreen?.enabled
+    && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length));
+  if (screenTakeover && !showFormView) {
+    const allowNew = !!form.customScreen?.allowNewResponses;
     return (
-      <div className="h-dvh w-full bg-white dark:bg-slate-950">
+      <div className="relative h-dvh w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime
-          screen={form.customScreen}
+          screen={form.customScreen!}
           formId={form.id}
           formTitle={form.title}
-          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: (f.properties?.options as Array<{ label: string; value: string }> | undefined) }))}
           publicMode={!api.isAuthenticated()}
+          accentColor={form.theme.primaryColor}
+          onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
           className="w-full h-full border-0"
         />
+        {allowNew && (
+          <button
+            type="button"
+            onClick={() => setShowFormView(true)}
+            className="fixed bottom-5 right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+            style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor), paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom) * 0.5)' }}
+          >
+            <Plus className="h-4 w-4" />
+            New response
+          </button>
+        )}
       </div>
     );
   }
@@ -1357,6 +1379,17 @@ export default function FormResponse() {
         className="min-h-screen flex items-center justify-center p-4"
         style={{ backgroundColor: form.theme.backgroundColor }}
       >
+        {screenTakeover && (
+          <button
+            type="button"
+            onClick={() => { setIsSubmitted(false); setShowFormView(false); }}
+            className="fixed top-4 left-4 z-20 inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+            style={{ backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to dashboard
+          </button>
+        )}
         <SuccessScreen form={form} isRedirecting={isRedirecting} thankYou={form.fields.find((f) => f.type === 'thank_you')} />
       </div>
     );
@@ -1384,6 +1417,19 @@ export default function FormResponse() {
       }}
       onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
     >
+      {/* Back to the custom-screen dashboard (only when the screen stepped aside for a new record) */}
+      {screenTakeover && showFormView && (
+        <button
+          type="button"
+          onClick={() => setShowFormView(false)}
+          className="fixed top-3 left-4 z-20 inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2"
+          style={{ backgroundColor: `${form.theme.textColor}15`, color: form.theme.textColor }}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to dashboard
+        </button>
+      )}
+
       {/* Brand logo */}
       {form.theme.logo && (
         <div className="pt-6 pb-1 flex justify-center shrink-0">

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useUIStore } from '../../stores/uiStore';
 import { SCREEN_CSP, createSdkRateLimiter } from './sdkRuntime';
+import { screenPaletteCss, SCREEN_THEME_SHIM } from './screenTheme';
+import { readableForegroundColor } from '../../lib/color';
 import { resolveScreenAssets } from '../../lib/screenCompile';
 
 /**
@@ -39,19 +42,21 @@ const SDK_SHIM = `
     records: function(opts){ return call('records', { opts: opts }); },
     /** The signed-in user, or null. */
     currentUser: function(){ return call('currentUser'); },
-    /** This screen's context: { formId, title, fields }. */
+    /** This screen's context: { formId, title, fields } — choice fields include options [{label, value}]. */
     context: function(){ return call('context'); },
     toast: {
       success: function(msg){ return call('toast', { type: 'success', msg: String(msg) }); },
       error: function(msg){ return call('toast', { type: 'error', msg: String(msg) }); },
     },
+    /** Open the real form for a new record (only when the owner enabled "allow new records"). */
+    openForm: function(){ return call('openForm'); },
     /** Escape a value for safe interpolation into innerHTML (prevents stored-XSS from record data). */
     escapeHtml: function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); },
   };
 })();
 `;
 
-export interface CustomScreen { html?: string; css?: string; js?: string; ts?: string; files?: Array<{ path: string; content: string }>; entry?: string }
+export interface CustomScreen { html?: string; css?: string; js?: string; ts?: string; files?: Array<{ path: string; content: string }>; entry?: string; allowNewResponses?: boolean }
 
 export function CustomScreenRuntime({
   screen,
@@ -61,20 +66,30 @@ export function CustomScreenRuntime({
   className,
   publicMode = false,
   appSlug,
+  accentColor,
+  onOpenForm,
 }: {
   screen: CustomScreen;
   formId: string;
   formTitle?: string;
-  fields?: Array<{ id: string; label: string; type: string }>;
+  fields?: Array<{ id: string; label: string; type: string; options?: Array<{ label: string; value: string }> }>;
   className?: string;
   /** Public link/embed context (anonymous): records() uses the gated public endpoint, not the owner API. */
   publicMode?: boolean;
   /** App-runtime context: route submit/records through the app API (membership + permission checks). */
   appSlug?: string;
+  /** Accent for the injected --fl-* palette: the app accent in-app, else the form theme's primary. */
+  accentColor?: string;
+  /** Wired when "allow new records" is on — the SDK's openForm() reveals the real form. */
+  onOpenForm?: () => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const rateRef = useRef(createSdkRateLimiter());
   const user = useAuthStore((s) => s.user);
+  // Drive the screen's light/dark from the viewer's theme (same contract as the app-home runtime).
+  const colorScheme = useUIStore((s) => s.theme);
+  const schemeRef = useRef(colorScheme);
+  schemeRef.current = colorScheme;
 
   // Resolve the screen to { html, css, js }: a single precompiled `js` (fast, public pages), or compile
   // `ts` / bundle a multi-file `files` project on the fly (lazy esbuild — never weighs on `js` screens).
@@ -91,14 +106,24 @@ export function CustomScreenRuntime({
     const html = assets.html || '';
     // Neutralize an early </script> in user code so it can't break out of its <script> block.
     const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
+    // Initial mode from a ref so theme toggles update via postMessage without rebuilding the iframe.
+    const dark = schemeRef.current === 'dark';
+    const accent = accentColor || '#6366f1';
+    const palette = screenPaletteCss(accent, readableForegroundColor(accent));
     // SDK shim goes in <head> so window.FormLogic exists before any user script (inline or block) runs.
-    return `<!doctype html><html><head><meta charset="utf-8">`
+    return `<!doctype html><html class="${dark ? 'fl-dark' : ''}"><head><meta charset="utf-8">`
       + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
       + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-      + `<script>${SDK_SHIM}</script>`
-      + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${css}</style></head>`
+      + `<meta name="color-scheme" content="light dark">`
+      + `<script>${SDK_SHIM}${SCREEN_THEME_SHIM}</script>`
+      + `<style>html,body{margin:0;font-family:system-ui,sans-serif}${palette}${css}</style></head>`
       + `<body>${html}<script>${js}</script></body></html>`;
-  }, [assets]);
+  }, [assets, accentColor]);
+
+  // Push theme changes into the already-loaded iframe (instant, no reload).
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ __flTheme: colorScheme }, '*');
+  }, [colorScheme]);
 
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
@@ -151,6 +176,11 @@ export function CustomScreenRuntime({
             result = true;
             break;
           }
+          case 'openForm': {
+            if (onOpenForm) { onOpenForm(); result = true; }
+            else throw new Error('New records are not enabled for this screen.');
+            break;
+          }
           default:
             error = `Unknown action: ${m.action}`;
         }
@@ -161,7 +191,7 @@ export function CustomScreenRuntime({
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [formId, formTitle, fields, user, publicMode, appSlug]);
+  }, [formId, formTitle, fields, user, publicMode, appSlug, onOpenForm]);
 
   return (
     <iframe

@@ -224,7 +224,8 @@ foreach ($sources as $s) {
         // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
         // re-authoring dashboards) without wiping the seeded response data.
         $updated = refreshDemoScreens($pdo, $demoId, $s['pack']);
-        out("  demo: already installed (refreshed $updated screen(s))");
+        $updatedForms = refreshDemoFormScreens($pdo, $demoId, $catalogId, $s['pack']);
+        out("  demo: already installed (refreshed $updated app screen(s), $updatedForms form screen(s))");
         continue;
     }
 
@@ -395,6 +396,45 @@ function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
                     ->execute([json_encode($settings), $row['id']]);
             }
         }
+    }
+    return $n;
+}
+
+/**
+ * Update the demo FORMS' custom screens (section dashboards) to match the pack, without touching
+ * data. Scoped to THIS pack's installation form_ids and matched by title WITHIN that set — form
+ * titles repeat across packs ("Document Vault" ships in both Finance OS packs), so a global
+ * title match would cross-contaminate.
+ */
+function refreshDemoFormScreens(PDO $pdo, string $demoId, string $catalogId, array $pack): int
+{
+    $byTitle = [];
+    foreach ($pack['forms'] ?? [] as $pf) {
+        if (!empty($pf['customScreen']) && !empty($pf['title'])) {
+            $byTitle[(string) $pf['title']] = $pf['customScreen'];
+        }
+    }
+    if (!$byTitle) {
+        return 0;
+    }
+    $inst = $pdo->prepare("SELECT form_ids FROM pack_installations WHERE user_id = ? AND catalog_id = ? ORDER BY installed_at DESC LIMIT 1");
+    $inst->execute([$demoId, $catalogId]);
+    $formIds = json_decode((string) ($inst->fetchColumn() ?: '[]'), true) ?: [];
+    if (!$formIds) {
+        return 0;
+    }
+    $in = implode(',', array_fill(0, count($formIds), '?'));
+    $sel = $pdo->prepare("SELECT id, title FROM forms WHERE user_id = ? AND id IN ($in)");
+    $sel->execute(array_merge([$demoId], $formIds));
+    $n = 0;
+    foreach ($sel->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $cs = $byTitle[(string) $row['title']] ?? null;
+        if ($cs === null) {
+            continue;
+        }
+        $upd = $pdo->prepare("UPDATE forms SET custom_screen = ? WHERE id = ?");
+        $upd->execute([json_encode($cs), $row['id']]);
+        $n += $upd->rowCount();
     }
     return $n;
 }
