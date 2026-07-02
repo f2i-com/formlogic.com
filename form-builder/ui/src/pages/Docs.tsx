@@ -74,11 +74,11 @@ function C({ children }: { children: React.ReactNode }) {
 
 function CodeBlock({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl overflow-hidden border border-slate-700/50 bg-[#0D1017] my-5 shadow-lg shadow-black/20">
+    <div className="rounded-xl overflow-hidden border border-slate-800 dark:border-slate-700/60 bg-slate-950 dark:bg-slate-900/60 my-5 shadow-lg shadow-black/20">
       {title && (
-        <div className="h-9 bg-[#161B22] flex items-center gap-2 px-4 border-b border-slate-700/40">
-          <Terminal className="h-3.5 w-3.5 text-slate-500" />
-          <span className="fl-mono text-xs text-slate-500">{title}</span>
+        <div className="h-9 bg-slate-900 dark:bg-slate-800/60 flex items-center gap-2 px-4 border-b border-slate-800 dark:border-slate-700/50 min-w-0">
+          <Terminal className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+          <span className="fl-mono text-xs text-slate-400 truncate">{title}</span>
         </div>
       )}
       <pre className="fl-mono text-[12.5px] leading-[1.7] text-slate-200 p-4 sm:p-5 overflow-x-auto"><code>{children}</code></pre>
@@ -151,6 +151,24 @@ const FIELD_TYPES: Array<[string, string]> = [
 export function Docs() {
   useDocsChrome();
   const [mobileNav, setMobileNav] = useState(false);
+  const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
+
+  // Highlight the TOC entry for the section currently in view (presentation only).
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) setActiveId(entry.target.id);
+        }
+      },
+      { rootMargin: '-15% 0px -75% 0px' },
+    );
+    for (const s of SECTIONS) {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-950 text-gray-900 dark:text-slate-50 selection:bg-primary-500/20">
@@ -158,14 +176,14 @@ export function Docs() {
       <nav className="fixed top-0 inset-x-0 h-16 bg-white/85 dark:bg-slate-950/80 backdrop-blur-xl border-b border-gray-100 dark:border-primary-500/10 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" className="lg:hidden p-2 -ml-2 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer">
+            <button onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" aria-expanded={mobileNav} className="lg:hidden p-2 -ml-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
               {mobileNav ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
             <Logo size="md" />
             <span className="fl-mono hidden sm:inline text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 border border-primary-200/70 dark:border-primary-500/25 rounded-full px-2.5 py-0.5">Docs</span>
           </div>
           <div className="flex items-center gap-3">
-            <Link to="/" className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <Link to="/" className="hidden sm:flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">
               <ArrowLeft className="h-4 w-4" /> Home
             </Link>
             <Link to="/signup"><Button className="bg-primary-600 hover:bg-primary-500 text-primary-foreground border-0">Get started</Button></Link>
@@ -175,17 +193,25 @@ export function Docs() {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-16">
         <div className="lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-10">
-          {/* Sidebar TOC */}
-          <aside className={`${mobileNav ? 'block' : 'hidden'} lg:block lg:sticky lg:top-16 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto py-6 lg:py-8`}>
+          {/* Sidebar TOC — inline column on desktop, full-height overlay panel under the nav on mobile */}
+          <aside className={`${mobileNav ? 'fixed inset-x-0 top-16 bottom-0 z-40 block overflow-y-auto bg-white dark:bg-slate-950 px-4 sm:px-6' : 'hidden'} py-6 lg:py-8 lg:block lg:sticky lg:top-16 lg:bottom-auto lg:inset-x-auto lg:z-auto lg:bg-transparent lg:px-0 lg:h-[calc(100vh-4rem)] lg:overflow-y-auto`}>
             <p className="fl-mono text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500 mb-3 px-3">On this page</p>
-            <nav className="space-y-0.5">
-              {SECTIONS.map((s) => (
-                <a key={s.id} href={`#${s.id}`} onClick={() => setMobileNav(false)}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-slate-400 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-primary-50/70 dark:hover:bg-primary-500/[0.08] transition-colors">
-                  <s.icon className="h-4 w-4 shrink-0 opacity-70" />
-                  {s.title}
-                </a>
-              ))}
+            <nav className="space-y-0.5" aria-label="Docs sections">
+              {SECTIONS.map((s) => {
+                const isActive = activeId === s.id;
+                return (
+                  <a key={s.id} href={`#${s.id}`} onClick={() => { setActiveId(s.id); setMobileNav(false); }}
+                    aria-current={isActive ? 'true' : undefined}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors ${
+                      isActive
+                        ? 'bg-primary-50/80 dark:bg-primary-500/[0.12] text-primary-700 dark:text-primary-300 font-medium'
+                        : 'text-gray-600 dark:text-slate-400 hover:text-primary-700 dark:hover:text-primary-300 hover:bg-primary-50/70 dark:hover:bg-primary-500/[0.08]'
+                    }`}>
+                    <s.icon className={`h-4 w-4 shrink-0 ${isActive ? 'opacity-100' : 'opacity-70'}`} />
+                    <span className="min-w-0 truncate">{s.title}</span>
+                  </a>
+                );
+              })}
             </nav>
           </aside>
 
@@ -491,9 +517,9 @@ cd ../ui && npm install && npm run build`}</CodeBlock>
             <div className="border-t border-gray-200/80 dark:border-slate-900 pt-8 flex items-center justify-between fl-mono text-xs text-gray-400 dark:text-slate-500">
               <span>&copy; {new Date().getFullYear()} FormLogic</span>
               <div className="flex gap-5">
-                <Link to="/" className="hover:text-gray-700 dark:hover:text-slate-300">Home</Link>
-                <Link to="/privacy" className="hover:text-gray-700 dark:hover:text-slate-300">Privacy</Link>
-                <Link to="/terms" className="hover:text-gray-700 dark:hover:text-slate-300">Terms</Link>
+                <Link to="/" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Home</Link>
+                <Link to="/privacy" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Privacy</Link>
+                <Link to="/terms" className="hover:text-gray-700 dark:hover:text-slate-300 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors">Terms</Link>
               </div>
             </div>
           </main>

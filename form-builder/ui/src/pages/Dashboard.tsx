@@ -34,6 +34,7 @@ import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
 import { StatCard } from '../components/ui/StatCard';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
+import { EmptyState } from '../components/ui/EmptyState';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { useFormStore } from '../stores/formStore';
@@ -68,12 +69,12 @@ function QuickActionButton({
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2.5 p-4 rounded-xl border transition-all duration-200 hover:-translate-y-0.5 cursor-pointer group ${primary
+      className={`flex flex-col items-center justify-center gap-2.5 p-4 min-h-[5.5rem] rounded-xl border motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:-translate-y-0.5 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${primary
         ? 'bg-primary-600 border-primary-500 text-primary-foreground hover:bg-primary-500 shadow-md shadow-primary-600/15'
-        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-gray-300 dark:hover:border-white/10 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
+        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-500/40 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
         }`}
     >
-      <Icon className={`h-5 w-5 ${primary ? 'text-primary-foreground' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} transition-colors`} />
+      <Icon className={`h-5 w-5 ${primary ? 'text-primary-foreground' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} motion-safe:transition-colors`} />
       <span className={`text-[13px] font-medium ${primary ? 'text-primary-foreground' : 'text-gray-600 dark:text-slate-300'}`}>
         {label}
       </span>
@@ -136,7 +137,7 @@ function FormActionsDropdown({
       await api.downloadSqlite(formId, formTitle);
     } catch (error) {
       logger.error('Failed to export SQLite:', error);
-      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
+      toast.error('Export failed', error instanceof Error ? error.message : 'Failed to export SQLite database');
     } finally {
       setIsExporting(false);
       setIsOpen(false);
@@ -149,7 +150,7 @@ function FormActionsDropdown({
       await api.downloadJson(formId, formTitle);
     } catch (error) {
       logger.error('Failed to export JSON:', error);
-      toast.error('Export Failed', error instanceof Error ? error.message : 'Failed to export JSON');
+      toast.error('Export failed', error instanceof Error ? error.message : 'Failed to export JSON');
     } finally {
       setIsExporting(false);
       setIsOpen(false);
@@ -171,7 +172,7 @@ function FormActionsDropdown({
       window.URL.revokeObjectURL(url);
     } catch (error) {
       logger.error('Failed to export CSV:', error);
-      toast.error('Export Failed', 'Failed to export CSV');
+      toast.error('Export failed', 'Failed to export CSV');
     } finally {
       setIsExporting(false);
       setIsOpen(false);
@@ -186,6 +187,7 @@ function FormActionsDropdown({
         size="sm"
         onClick={toggleMenu}
         disabled={isExporting}
+        title="More actions"
         aria-label={`Actions for ${formTitle}`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
@@ -242,7 +244,7 @@ function FormActionsDropdown({
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
                 <Table className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                View Data
+                View data
               </button>
               <button
                 onClick={() => { onShare(); setIsOpen(false); }}
@@ -250,7 +252,7 @@ function FormActionsDropdown({
                 className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300 flex items-center gap-2 cursor-pointer"
               >
                 <Share2 className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                Share & Embed
+                Share & embed
               </button>
               <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
             </div>
@@ -288,7 +290,7 @@ function FormActionsDropdown({
               className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer"
             >
               <Trash2 className="h-4 w-4" />
-              Delete Form
+              Delete form
             </button>
           </div>
         </div>,
@@ -333,7 +335,7 @@ export function Dashboard() {
       });
       setActiveForm(form.id);
       navigate(`/builder/${form.id}`);
-      toast.success('Form Created', `Started with "${template.name}" template`);
+      toast.success('Form created', `Started with "${template.name}" template`);
     } else {
       const form = await createForm('Untitled Form');
       if (!form) return;
@@ -368,6 +370,7 @@ export function Dashboard() {
   // Calculate various stats
   const totalForms = forms.length;
   const publishedForms = forms.filter(f => f.status === 'published').length;
+  const draftForms = totalForms - publishedForms;
 
   // Calculate stats from local responses
   const localStats = useMemo(() => {
@@ -461,7 +464,7 @@ export function Dashboard() {
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
-          toast.warning('Connection Issue', 'Using local data. Some stats may not be up to date.');
+          toast.warning('Connection issue', 'Using local data. Some stats may not be up to date.');
           setStats(localStats);
         }
       } else {
@@ -548,8 +551,8 @@ export function Dashboard() {
             iconBg="bg-primary-50 dark:bg-primary-500/10"
             iconColor="text-primary-600 dark:text-primary-400"
             value={formsLoading ? '—' : totalForms}
-            label="Total Forms"
-            subtext={formsLoading ? 'Loading…' : totalForms === 1 ? '1 form created' : `${totalForms} forms created`}
+            label="Total forms"
+            subtext={formsLoading ? 'Loading…' : totalForms === 0 ? 'Create your first form' : draftForms > 0 ? `${draftForms} draft${draftForms === 1 ? '' : 's'}` : 'All published'}
           />
           <StatCard
             className="fade-in-up stagger-2"
@@ -566,7 +569,7 @@ export function Dashboard() {
             iconBg="bg-blue-50 dark:bg-blue-500/10"
             iconColor="text-blue-600 dark:text-blue-400"
             value={formsLoading ? '—' : totalResponses}
-            label="Total Responses"
+            label="Total responses"
             subtext="Across all forms"
           />
           <StatCard
@@ -575,7 +578,7 @@ export function Dashboard() {
             iconBg="bg-amber-50 dark:bg-amber-500/10"
             iconColor="text-amber-600 dark:text-amber-400"
             value={formsLoading ? '—' : totalForms > 0 ? `${avgCompletionRate}%` : '—'}
-            label="Completion Rate"
+            label="Completion rate"
             subtext={formsLoading ? 'Loading…' : totalForms > 0 ? 'Average across forms' : 'No forms yet'}
           />
         </div>
@@ -583,18 +586,18 @@ export function Dashboard() {
         {/* Quick Actions */}
         <div className="mb-8">
           <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">
-            Quick Actions
+            Quick actions
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
             <QuickActionButton
               icon={Plus}
-              label="New Form"
+              label="New form"
               onClick={handleCreateForm}
               primary
             />
             <QuickActionButton
               icon={FileText}
-              label="All Forms"
+              label="All forms"
               onClick={() => navigate('/forms')}
             />
             <QuickActionButton
@@ -604,7 +607,7 @@ export function Dashboard() {
             />
             <QuickActionButton
               icon={Package}
-              label="Manage Packs"
+              label="Manage packs"
               onClick={() => setShowPackImport(true)}
             />
             <QuickActionButton
@@ -622,13 +625,13 @@ export function Dashboard() {
               <CardContent className="p-6 sm:p-8">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
                   <div className="p-4 bg-white/20 rounded-2xl">
-                    <Sparkles className="h-8 w-8 text-white" />
+                    <Sparkles className="h-8 w-8 text-primary-foreground" />
                   </div>
                   <div className="flex-1">
-                    <h3 className="text-xl font-bold text-white mb-2">
+                    <h3 className="text-xl font-bold text-primary-foreground mb-2">
                       Get started with FormLogic
                     </h3>
-                    <p className="text-white/80 mb-4">
+                    <p className="text-primary-foreground/80 mb-4">
                       Create your first form in seconds. Choose from templates or start from scratch.
                     </p>
                     <div className="flex flex-wrap gap-3">
@@ -637,15 +640,15 @@ export function Dashboard() {
                         className="bg-white text-primary-600 hover:bg-white/90"
                       >
                         <Plus className="h-4 w-4 mr-2" />
-                        Create Your First Form
+                        Create your first form
                       </Button>
                       <Button
                         variant="ghost"
-                        className="text-white hover:bg-white/10"
+                        className="text-primary-foreground hover:bg-white/10"
                         onClick={() => setShowTemplateSelector(true)}
                       >
                         <BookOpen className="h-4 w-4 mr-2" />
-                        Browse Templates
+                        Browse templates
                       </Button>
                     </div>
                   </div>
@@ -660,7 +663,7 @@ export function Dashboard() {
           {/* Recent Forms - Takes 2/3 on desktop */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Forms</h2>
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Recent forms</h2>
               {forms.length > 5 && (
                 <Button
                   variant="ghost"
@@ -668,7 +671,7 @@ export function Dashboard() {
                   onClick={() => navigate('/forms')}
                   className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
                 >
-                  View All
+                  View all
                   <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               )}
@@ -680,19 +683,17 @@ export function Dashboard() {
               </div>
             ) : recentForms.length === 0 ? (
               <Card>
-                <CardContent className="py-12 text-center">
-                  <div className="w-16 h-16 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <FileText className="h-8 w-8 text-gray-400 dark:text-slate-500" />
-                  </div>
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-                    No forms yet
-                  </h3>
-                  <p className="text-gray-500 dark:text-slate-400 mb-6 max-w-sm mx-auto">
-                    Create your first form to start collecting responses and insights.
-                  </p>
-                  <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-                    Create Form
-                  </Button>
+                <CardContent className="p-0">
+                  <EmptyState
+                    icon={FileText}
+                    title="No forms yet"
+                    description="Create your first form to start collecting responses and insights."
+                    action={
+                      <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+                        Create form
+                      </Button>
+                    }
+                  />
                 </CardContent>
               </Card>
             ) : (
@@ -705,8 +706,8 @@ export function Dashboard() {
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-4 min-w-0 flex-1">
-                            <div className="p-2.5 bg-indigo-50 dark:bg-slate-800 rounded-xl flex-shrink-0 hidden sm:flex">
-                              <DynamicIcon name={form.icon} className="h-5 w-5 text-indigo-500 dark:text-slate-400" />
+                            <div className="p-2.5 bg-primary-50 dark:bg-slate-800 rounded-xl flex-shrink-0 hidden sm:flex">
+                              <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-500 dark:text-slate-400" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -721,12 +722,13 @@ export function Dashboard() {
                                   {form.status}
                                 </Badge>
                                 {appOfForm[form.id] && (
-                                  <Badge variant="info" size="sm" className="inline-flex items-center gap-1" title={`In the ${appOfForm[form.id]} app`}>
-                                    <Boxes className="h-3 w-3" />{appOfForm[form.id]}
+                                  <Badge variant="info" size="sm" className="inline-flex items-center gap-1 max-w-[10rem]" title={`In the ${appOfForm[form.id]} app`}>
+                                    <Boxes className="h-3 w-3 flex-shrink-0" />
+                                    <span className="truncate">{appOfForm[form.id]}</span>
                                   </Badge>
                                 )}
                               </div>
-                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400">
+                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
                                 <span className="flex items-center gap-1">
                                   <Clock className="h-3.5 w-3.5" />
                                   {formatRelativeTime(form.updatedAt)}
@@ -803,28 +805,32 @@ export function Dashboard() {
           {/* Recent Activity - Takes 1/3 on desktop */}
           <div className="lg:col-span-1">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Recent Activity</h2>
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Recent activity</h2>
             </div>
 
             <Card>
               <CardContent className="p-0">
                 {recentResponses.length === 0 ? (
-                  <div className="py-12 text-center px-4">
-                    <div className="w-12 h-12 bg-gray-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <Inbox className="h-6 w-6 text-gray-400 dark:text-slate-400" />
-                    </div>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">No submissions yet</p>
-                    <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
-                      Responses will appear here
-                    </p>
-                  </div>
+                  <EmptyState
+                    icon={Inbox}
+                    title="No submissions yet"
+                    description="Responses will appear here as they come in."
+                    action={
+                      forms.length > 0 ? (
+                        <Button variant="outline" size="sm" onClick={() => navigate('/forms')}>
+                          View all forms
+                        </Button>
+                      ) : undefined
+                    }
+                  />
                 ) : (
                   <div className="divide-y divide-gray-100 dark:divide-slate-800">
                     {recentResponses.map((response, index) => (
                       <button
                         key={`${response.formId}-${index}`}
-                        onClick={() => navigate(`/responses/${response.formId}`)}
-                        className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                        onClick={() => navigate(response.id ? `/responses/${response.formId}?open=${response.id}` : `/responses/${response.formId}`)}
+                        title={`Open this submission in ${response.formTitle}`}
+                        className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 motion-safe:transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
                       >
                         <div className="flex items-start gap-3">
                           <div className="p-2 bg-green-500/10 rounded-lg flex-shrink-0">
@@ -838,6 +844,7 @@ export function Dashboard() {
                               New submission • {formatRelativeTime(response.submittedAt)}
                             </p>
                           </div>
+                          <ArrowRight className="h-4 w-4 flex-shrink-0 self-center text-gray-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 motion-safe:transition-opacity" aria-hidden="true" />
                         </div>
                       </button>
                     ))}
@@ -910,7 +917,7 @@ export function Dashboard() {
             setDeleteTarget(null);
           }
         }}
-        title="Delete Form"
+        title="Delete form"
         message={`Are you sure you want to delete "${deleteTarget?.title || 'this form'}"? This action cannot be undone and all responses will be lost.`}
         confirmLabel="Delete"
         variant="danger"

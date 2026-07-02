@@ -133,7 +133,7 @@ function closeFormPopup() {
         document.body.removeChild(textarea);
       }
       setCopied(type);
-      toast.success('Copied!', 'Copied to clipboard');
+      toast.success('Copied', 'Copied to clipboard');
       setTimeout(() => setCopied(null), 2000);
     } catch {
       toast.error('Copy failed', 'Could not copy to clipboard');
@@ -213,7 +213,7 @@ function closeFormPopup() {
     },
     {
       id: 'fullpage',
-      label: 'Full Page',
+      label: 'Full page',
       description: 'Fills entire page',
       icon: <Maximize2 className="h-5 w-5" />,
     },
@@ -226,10 +226,10 @@ function closeFormPopup() {
   ];
 
   const tabs = [
-    { id: 'link' as const, label: 'Share Link', icon: <ExternalLink className="h-4 w-4" /> },
+    { id: 'link' as const, label: 'Share link', icon: <ExternalLink className="h-4 w-4" /> },
     { id: 'embed' as const, label: 'Embed', icon: <Code className="h-4 w-4" /> },
     { id: 'export' as const, label: 'Export', icon: <Download className="h-4 w-4" /> },
-    { id: 'qr' as const, label: 'QR Code', icon: <QrCode className="h-4 w-4" /> },
+    { id: 'qr' as const, label: 'QR code', icon: <QrCode className="h-4 w-4" /> },
   ];
 
   return (
@@ -238,19 +238,19 @@ function closeFormPopup() {
       <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="embed-modal-title" className="relative bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-800 focus:outline-none">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-800 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-slate-900 dark:to-slate-800/50">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="w-10 h-10 shrink-0 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center shadow-sm">
               <ExternalLink className="h-5 w-5 text-primary-foreground" />
             </div>
-            <div>
-              <h2 id="embed-modal-title" className="text-lg font-semibold text-gray-900 dark:text-white">Share Form</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400">Share, embed, or export your form</p>
+            <div className="min-w-0">
+              <h2 id="embed-modal-title" className="text-lg font-semibold text-gray-900 dark:text-white truncate">Share form</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400 truncate">Share, embed, or export your form</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            className="p-2 min-h-11 min-w-11 shrink-0 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer"
             aria-label="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
@@ -264,8 +264,9 @@ function closeFormPopup() {
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
+              aria-current={activeTab === tab.id ? 'true' : undefined}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px cursor-pointer',
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500/50',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
@@ -284,7 +285,7 @@ function closeFormPopup() {
             <div className="space-y-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">
-                  Direct Link
+                  Direct link
                 </label>
                 <p className="text-sm text-gray-500 dark:text-slate-400 mb-3">
                   Share this link with anyone to let them fill out your form
@@ -294,25 +295,28 @@ function closeFormPopup() {
                     type="text"
                     readOnly
                     value={formUrl}
-                    className="flex-1 min-w-0 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
+                    aria-label="Form link"
+                    className="flex-1 min-w-0 px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-600 dark:text-slate-300 truncate focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400"
                   />
                   <Button
                     variant="outline"
                     onClick={() => handleCopy(formUrl, 'link')}
+                    aria-label={copied === 'link' ? 'Copied' : 'Copy link'}
                   >
-                    {copied === 'link' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copied === 'link' ? <Check className="h-4 w-4 text-primary-600 dark:text-primary-400" /> : <Copy className="h-4 w-4" />}
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => window.open(formUrl, '_blank', 'noopener,noreferrer')}
+                    aria-label="Open form in new tab"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
 
-              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Quick Preview</h4>
+              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-xl p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Quick preview</h4>
                 <div className="bg-white dark:bg-slate-900 rounded border border-gray-200 dark:border-slate-700 p-4 flex items-center justify-center">
                   <div ref={qrRef} className="inline-block">
                     <QRCodeSVG
@@ -336,15 +340,17 @@ function closeFormPopup() {
               {/* Embed Type Selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-3">
-                  Embed Type
+                  Embed type
                 </label>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                   {embedTypes.map((type) => (
                     <button
                       key={type.id}
+                      type="button"
                       onClick={() => setEmbedType(type.id)}
+                      aria-pressed={embedType === type.id}
                       className={cn(
-                        'p-3 rounded-lg border-2 text-left transition-all cursor-pointer',
+                        'min-w-0 p-3 rounded-xl border-2 text-left motion-safe:transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50',
                         embedType === type.id
                           ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                           : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -356,8 +362,8 @@ function closeFormPopup() {
                       )}>
                         {type.icon}
                       </div>
-                      <p className="font-medium text-gray-900 dark:text-white text-sm">{type.label}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400">{type.description}</p>
+                      <p className="font-medium text-gray-900 dark:text-white text-sm truncate">{type.label}</p>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{type.description}</p>
                     </button>
                   ))}
                 </div>
@@ -401,10 +407,10 @@ function closeFormPopup() {
               )}
 
               {/* Embed Code */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
+              <div className="min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-2">
                   <label className="block text-sm font-medium text-gray-700 dark:text-slate-300">
-                    Embed Code
+                    Embed code
                   </label>
                   <Button
                     variant="outline"
@@ -413,18 +419,18 @@ function closeFormPopup() {
                   >
                     {copied === 'embed' ? (
                       <>
-                        <Check className="h-4 w-4 mr-2" />
-                        Copied!
+                        <Check className="h-4 w-4 mr-2 text-primary-600 dark:text-primary-400" />
+                        Copied
                       </>
                     ) : (
                       <>
                         <Copy className="h-4 w-4 mr-2" />
-                        Copy Code
+                        Copy code
                       </>
                     )}
                   </Button>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto max-h-48 overflow-y-auto font-mono border border-gray-800">
+                <pre className="bg-slate-950 dark:bg-slate-900/60 text-slate-200 p-4 rounded-xl text-xs sm:text-sm leading-relaxed overflow-x-auto max-h-48 overflow-y-auto font-mono border border-slate-800 dark:border-slate-700/60">
                   <code>{getEmbedCode()}</code>
                 </pre>
               </div>
@@ -438,41 +444,43 @@ function closeFormPopup() {
                 Download your form schema or response data in various formats
               </p>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid sm:grid-cols-2 gap-3 sm:gap-4">
                 <button
+                  type="button"
                   onClick={handleExportJson}
                   disabled={exporting === 'json'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group cursor-pointer"
+                  className="flex flex-col items-center justify-center min-w-0 p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-60 disabled:cursor-default motion-safe:transition-all group cursor-pointer"
                 >
-                  <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/40 transition-colors">
-                    <FileJson className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                  <div className="w-12 h-12 bg-primary-100 dark:bg-primary-500/15 rounded-xl flex items-center justify-center mb-3 group-hover:bg-primary-200 dark:group-hover:bg-primary-500/25 motion-safe:transition-colors">
+                    <FileJson className="h-6 w-6 text-primary-600 dark:text-primary-400" />
                   </div>
-                  <span className="font-medium text-gray-900 dark:text-white">JSON Schema</span>
+                  <span className="font-medium text-gray-900 dark:text-white">JSON schema</span>
                   <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Form structure + responses</span>
                   {exporting === 'json' && (
-                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading...</span>
+                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading…</span>
                   )}
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleExportCsv}
                   disabled={exporting === 'csv'}
-                  className="flex flex-col items-center justify-center p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all group cursor-pointer"
+                  className="flex flex-col items-center justify-center min-w-0 p-6 bg-gray-50 dark:bg-slate-800/50 rounded-xl border-2 border-gray-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-500/50 hover:bg-primary-50 dark:hover:bg-primary-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-60 disabled:cursor-default motion-safe:transition-all group cursor-pointer"
                 >
-                  <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center mb-3 group-hover:bg-green-200 dark:group-hover:bg-green-800/40 transition-colors">
-                    <FileSpreadsheet className="h-6 w-6 text-green-600 dark:text-green-400" />
+                  <div className="w-12 h-12 bg-primary-100 dark:bg-primary-500/15 rounded-xl flex items-center justify-center mb-3 group-hover:bg-primary-200 dark:group-hover:bg-primary-500/25 motion-safe:transition-colors">
+                    <FileSpreadsheet className="h-6 w-6 text-primary-600 dark:text-primary-400" />
                   </div>
-                  <span className="font-medium text-gray-900 dark:text-white">CSV Data</span>
+                  <span className="font-medium text-gray-900 dark:text-white">CSV data</span>
                   <span className="text-xs text-gray-500 dark:text-slate-400 mt-1">Responses spreadsheet</span>
                   {exporting === 'csv' && (
-                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading...</span>
+                    <span className="text-xs text-primary-600 dark:text-primary-400 mt-2">Downloading…</span>
                   )}
                 </button>
               </div>
 
-              <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-blue-900 dark:text-blue-300 mb-1">Need more export options?</h4>
-                <p className="text-sm text-blue-700 dark:text-blue-400">
+              <div className="bg-primary-50/60 dark:bg-primary-500/[0.07] border border-primary-200/70 dark:border-primary-500/25 rounded-xl p-4">
+                <h4 className="text-sm font-medium text-gray-900 dark:text-primary-300 mb-1">Need more export options?</h4>
+                <p className="text-sm text-gray-600 dark:text-slate-300">
                   Visit the Analytics page for SQLite database exports and detailed response data.
                 </p>
               </div>
@@ -505,13 +513,13 @@ function closeFormPopup() {
               <div className="flex justify-center">
                 <Button onClick={handleDownloadQR} variant="outline">
                   <Download className="h-4 w-4 mr-2" />
-                  Download QR Code
+                  Download QR code
                 </Button>
               </div>
 
-              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-lg p-4">
-                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Uses for QR codes</h4>
-                <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1">
+              <div className="bg-gray-50 dark:bg-slate-800/50 rounded-xl p-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400 mb-2">Uses for QR codes</h4>
+                <ul className="text-sm text-gray-600 dark:text-slate-400 space-y-1 list-disc pl-5">
                   <li>Print on flyers, posters, or business cards</li>
                   <li>Add to presentations or documents</li>
                   <li>Display at events or conferences</li>

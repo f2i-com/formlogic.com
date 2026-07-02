@@ -51,8 +51,10 @@ export const SortableFieldCard = memo(function SortableFieldCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'group relative bg-white dark:bg-slate-900 rounded-lg border-2 transition-all',
-        isSelected ? 'border-primary-500 shadow-xl' : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700',
+        'group relative bg-white dark:bg-slate-900 rounded-lg border-2 motion-safe:transition-all',
+        isSelected
+          ? 'border-primary-500 bg-primary-50/40 dark:bg-primary-500/5 ring-2 ring-primary-500/20 shadow-lg'
+          : 'border-gray-200 dark:border-slate-800 hover:border-gray-300 dark:hover:border-slate-700',
         isDragging && 'opacity-50 shadow-lg'
       )}
     >
@@ -61,8 +63,9 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}
-          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          className="-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing touch-none motion-safe:transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
           aria-label="Drag to reorder"
+          title="Drag to reorder"
         >
           <GripVertical className="h-4 w-4" />
         </button>
@@ -77,14 +80,14 @@ export const SortableFieldCard = memo(function SortableFieldCard({
           aria-label={`Edit field: ${field.label || fieldInfo.label}`}
           className="flex-1 min-w-0 text-left cursor-pointer rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
         >
-          <div className="flex items-center gap-2 mb-1">
-            <IconComponent className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-            <span className="text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
+          <div className="flex min-w-0 items-center gap-2 mb-1">
+            <IconComponent className="h-4 w-4 shrink-0 text-gray-400 dark:text-slate-500" />
+            <span className="min-w-0 truncate text-xs text-gray-500 dark:text-slate-500">{fieldInfo.label}</span>
             {field.required && (
-              <span className="text-xs text-red-500">*</span>
+              <span className="shrink-0 text-xs font-semibold leading-none text-red-500 dark:text-red-400" title="Required field">*</span>
             )}
             {field.type === 'hidden' && (
-              <span className="text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-slate-700 text-gray-500 dark:text-slate-400">
+              <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-200/70 dark:bg-slate-700 text-gray-500 dark:text-slate-400">
                 Not shown
               </span>
             )}
@@ -98,8 +101,9 @@ export const SortableFieldCard = memo(function SortableFieldCard({
         <button
           onClick={handleDuplicate}
           aria-label={`Duplicate ${field.label || 'field'}`}
+          title="Duplicate field"
           className={cn(
-            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-primary-600 dark:hover:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
             isSelected
               ? 'text-gray-400 dark:text-slate-500 opacity-100'
               : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'
@@ -111,8 +115,9 @@ export const SortableFieldCard = memo(function SortableFieldCard({
         <button
           onClick={handleDelete}
           aria-label={`Delete ${field.label || 'field'}`}
+          title="Delete field"
           className={cn(
-            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
+            '-mt-1 inline-flex items-center justify-center min-h-10 min-w-10 rounded-md hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
             isSelected
               ? 'text-gray-400 dark:text-slate-500 opacity-100'
               : 'text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 sm:opacity-0 max-sm:opacity-60'

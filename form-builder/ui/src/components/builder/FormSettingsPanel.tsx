@@ -77,15 +77,16 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
               <Settings className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h2 id="form-settings-title" className="text-lg font-semibold text-gray-900 dark:text-white">Form Settings</h2>
+              <h2 id="form-settings-title" className="text-lg font-semibold text-gray-900 dark:text-white">Form settings</h2>
               <p className="text-sm text-gray-500 dark:text-slate-400">Configure how your form behaves</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+            className="p-2 min-h-11 min-w-11 inline-flex items-center justify-center hover:bg-gray-200/70 dark:hover:bg-slate-800 rounded-lg motion-safe:transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
             aria-label="Close"
+            title="Close"
           >
             <X className="h-5 w-5 text-gray-500 dark:text-slate-400" />
           </button>
@@ -99,7 +100,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
               type="button"
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px cursor-pointer',
+                'flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 motion-safe:transition-colors -mb-px cursor-pointer rounded-t-md focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500',
                 activeTab === tab.id
                   ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                   : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'
@@ -119,10 +120,10 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
           {activeTab === 'presentation' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Form Layout</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Form layout</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Presentation Mode</label>
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Presentation mode</label>
                     <div className="grid grid-cols-3 gap-3">
                       {[
                         { value: 'focused', label: 'Focused', desc: 'One question at a time' },
@@ -134,7 +135,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
                           type="button"
                           onClick={() => updateSettings({ presentationMode: mode.value as FormSettings['presentationMode'] })}
                           className={cn(
-                            'p-3 rounded-lg border-2 text-left transition-all cursor-pointer',
+                            'p-3 rounded-lg border-2 text-left motion-safe:transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
                             editedSettings.presentationMode === mode.value
                               ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
                               : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
@@ -149,14 +150,14 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
 
                   {editedSettings.presentationMode === 'both' && (
                     <div>
-                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Default Mode</label>
+                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Default mode</label>
                       <select
                         value={editedSettings.defaultPresentationMode}
                         onChange={(e) => updateSettings({ defaultPresentationMode: e.target.value as 'focused' | 'classic' })}
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 text-gray-900 dark:text-white text-sm transition-all duration-150 ease-in-out appearance-none cursor-pointer"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 text-gray-900 dark:text-white text-sm motion-safe:transition-all duration-150 ease-in-out appearance-none cursor-pointer"
                       >
-                        <option value="focused">Focused (One at a time)</option>
-                        <option value="classic">Classic (Scrollable)</option>
+                        <option value="focused">Focused (one at a time)</option>
+                        <option value="classic">Classic (scrollable)</option>
                       </select>
                     </div>
                   )}
@@ -164,27 +165,27 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Navigation</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Navigation</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.showProgressBar}
                     onChange={(checked) => updateSettings({ showProgressBar: checked })}
-                    label="Show Progress Bar"
+                    label="Show progress bar"
                     description="Display completion progress to respondents"
                   />
                   <Switch
                     checked={editedSettings.allowBackNavigation}
                     onChange={(checked) => updateSettings({ allowBackNavigation: checked })}
-                    label="Allow Back Navigation"
+                    label="Allow back navigation"
                     description="Let users go back to previous questions"
                   />
                 </div>
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Submit Button</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Submit button</h3>
                 <Input
-                  label="Button Text"
+                  label="Button text"
                   value={editedSettings.submitButtonText}
                   onChange={(e) => updateSettings({ submitButtonText: e.target.value })}
                   placeholder="Submit"
@@ -192,11 +193,11 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Review Dashboard</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Review dashboard</h3>
                 <Switch
                   checked={editedSettings.showNigoDashboard === true}
                   onChange={(checked) => updateSettings({ showNigoDashboard: checked })}
-                  label="Show NIGO Dashboard"
+                  label="Show NIGO dashboard"
                   description="Display a Not-In-Good-Order checklist summarizing missing required fields"
                 />
               </div>
@@ -207,7 +208,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
           {activeTab === 'behavior' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">After Submission</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">After submission</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">
@@ -229,10 +230,10 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
               </div>
 
               <div className="border-t border-gray-200 dark:border-slate-800 pt-6">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Response Limits</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Response limits</h3>
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Response Quota (optional)</label>
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Response quota (optional)</label>
                     <Input
                       type="number"
                       min={1}
@@ -257,20 +258,20 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
           {activeTab === 'notifications' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Email Notifications</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Email notifications</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.notifications.emailNotifications}
                     onChange={(checked) => updateSettings({
                       notifications: { ...editedSettings.notifications, emailNotifications: checked }
                     })}
-                    label="Send Email on New Response"
+                    label="Send email on new response"
                     description="Receive an email whenever someone submits the form"
                   />
 
                   {editedSettings.notifications.emailNotifications && (
                     <Input
-                      label="Notification Email"
+                      label="Notification email"
                       type="email"
                       value={editedSettings.notifications.notificationEmail || ''}
                       onChange={(e) => updateSettings({
@@ -294,23 +295,23 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
           {activeTab === 'access' && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Form Availability</h3>
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">Form availability</h3>
                 <div className="space-y-4">
                   <Switch
                     checked={editedSettings.isClosed}
                     onChange={(checked) => updateSettings({ isClosed: checked })}
-                    label="Close Form"
+                    label="Close form"
                     description="Stop accepting new responses"
                   />
 
                   {editedSettings.isClosed && (
                     <div>
-                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Closed Message</label>
+                      <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Closed message</label>
                       <textarea
                         value={editedSettings.closedMessage || ''}
                         onChange={(e) => updateSettings({ closedMessage: e.target.value })}
                         placeholder="This form is no longer accepting responses."
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-150 ease-in-out min-h-[80px]"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-900/50 text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder:text-slate-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 motion-safe:transition-all duration-150 ease-in-out min-h-[80px]"
                       />
                     </div>
                   )}
@@ -339,7 +340,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId }:
             Cancel
           </Button>
           <Button onClick={handleSave}>
-            Save Settings
+            Save settings
           </Button>
         </div>
       </div>
