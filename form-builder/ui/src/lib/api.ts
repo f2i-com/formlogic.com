@@ -231,17 +231,7 @@ class ApiClient {
       // The seed epoch bumps whenever the shared demo data is regenerated. Purge this browser's
       // local overlay on mismatch — records referencing the replaced dataset would dangle forever
       // ("Record not found" on every linked field).
-      const epoch = result.data.seedEpoch;
-      if (epoch) {
-        const KEY = 'formlogic-demo-seed-epoch';
-        try {
-          const prev = localStorage.getItem(KEY);
-          if (prev !== null && prev !== epoch) {
-            await clearDemoRecords();
-          }
-          localStorage.setItem(KEY, epoch);
-        } catch { /* storage unavailable — skip */ }
-      }
+      await this.syncDemoSeedEpoch(result.data.seedEpoch);
     }
     return result;
   }
@@ -317,10 +307,29 @@ class ApiClient {
     return result;
   }
 
+  /** Compare the server's demo seed epoch to the one this browser last saw; on mismatch, purge
+   *  the local demo overlay (its records reference a dataset that no longer exists). */
+  private async syncDemoSeedEpoch(epoch: string | null | undefined): Promise<void> {
+    if (!epoch) return;
+    const KEY = 'formlogic-demo-seed-epoch';
+    try {
+      const prev = localStorage.getItem(KEY);
+      if (prev !== null && prev !== epoch) {
+        await clearDemoRecords();
+      }
+      localStorage.setItem(KEY, epoch);
+    } catch { /* storage unavailable — skip */ }
+  }
+
   async getMe(): Promise<ApiResponse<{ user: User }>> {
-    const result = await this.request<{ user: User }>('/auth/me');
+    const result = await this.request<{ user: User; seedEpoch?: string | null }>('/auth/me');
     // Update auth state based on response
     this.setAuthenticated(!!result.data?.user);
+    // Returning demo sessions restore here without ever hitting /demo/start — sync the seed
+    // epoch so a reopened tab also drops overlay records from a replaced dataset.
+    if (result.data?.user?.isDemo) {
+      await this.syncDemoSeedEpoch(result.data.seedEpoch);
+    }
     return result;
   }
 

@@ -194,6 +194,16 @@ class AuthController
             ], 401);
         }
 
+        // Returning demo sessions restore via /auth/me (never hitting /demo/start), so the seed
+        // epoch rides along here too — otherwise a reopened demo tab keeps a stale local overlay.
+        $decorated = $this->decorateUser($user);
+        if (!empty($decorated['isDemo'])) {
+            return $this->jsonResponse($response, [
+                'user' => $decorated,
+                'seedEpoch' => $this->readDemoSeedEpoch(),
+            ]);
+        }
+
         return $this->jsonResponse($response, [
             'user' => $this->decorateUser($user),
         ]);
@@ -218,6 +228,22 @@ class AuthController
         $arr = $user->toArray();
         $arr['isDemo'] = ($user->email === $this->demoEmail());
         return $arr;
+    }
+
+    /** Current demo seed epoch (bumped by provisioning whenever the shared demo data is
+     *  regenerated) — clients purge their browser-local overlay on mismatch. */
+    private function readDemoSeedEpoch(): ?string
+    {
+        if ($this->db === null) {
+            return null;
+        }
+        try {
+            $stmt = $this->db->getConnection()->query("SELECT meta_value FROM system_meta WHERE meta_key = 'demo_seed_epoch'");
+            $val = $stmt ? $stmt->fetchColumn() : false;
+            return ($val !== false && $val !== null && $val !== '') ? (string) $val : null;
+        } catch (\Throwable $e) {
+            return null; // table may not exist yet — epoch purging is best-effort
+        }
     }
 
     /**
@@ -247,17 +273,7 @@ class AuthController
         // The seed epoch bumps whenever provisioning (re)generates the demo data. Clients compare
         // it to their stored value and purge their IndexedDB overlay on mismatch — browser-local
         // records referencing a replaced dataset would otherwise dangle forever.
-        $seedEpoch = null;
-        if ($this->db !== null) {
-            try {
-                $stmt = $this->db->getConnection()->query("SELECT meta_value FROM system_meta WHERE meta_key = 'demo_seed_epoch'");
-                $seedEpoch = $stmt ? ($stmt->fetchColumn() ?: null) : null;
-            } catch (\Throwable $e) {
-                // table may not exist yet — epoch purging is best-effort
-            }
-        }
-
-        return $this->jsonResponse($response, ['user' => $this->decorateUser($user), 'seedEpoch' => $seedEpoch]);
+        return $this->jsonResponse($response, ['user' => $this->decorateUser($user), 'seedEpoch' => $this->readDemoSeedEpoch()]);
     }
 
     /**
