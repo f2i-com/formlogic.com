@@ -12,7 +12,7 @@ import { toast } from '../../stores/toastStore';
 
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
-const SERVER_PAGE = 25; // rows per fetch in server mode — small so queries stay fast
+const SERVER_PAGE = 10; // rows per page in server mode — small pages keep queries fast and pagination visible
 
 /** Flatten answers + resolved linked-record display onto each row so columns can render/sort by key. */
 function flattenResponses(data: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -421,7 +421,7 @@ export function AppDataTable() {
           columns={columns}
           searchable
           searchPlaceholder="Search records…"
-          pageSize={serverMode ? SERVER_PAGE : 15}
+          pageSize={SERVER_PAGE}
           totalCount={total}
           isLoading={loading}
           emptyMessage="No records match your search"
