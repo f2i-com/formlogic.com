@@ -530,7 +530,7 @@ export const passMasterPack: PackData = {
           "  var tHtml='';",
           "  for(var p=0;p<Math.min(9,sorted.length);p++){var t=sorted[p].answers||{};var st2=t.status;",
           "    var right=pill(labelFor(stMap,st2),STK[st2]||'neutral')+(num(t.capacity)>0?'<span class=\"chip\">seats '+fmtInt(num(t.capacity))+'</span>':'');",
-          "    tHtml+=qRow(STC[st2]||'var(--fl-border)','Table'+(t.table_number?' '+h(t.table_number):''),t.section?h(labelFor(secMap,t.section)):'',right);}",
+          "    tHtml+=qRow(STC[st2]||'var(--fl-border)',h(t.table_number||'Table'),t.section?h(labelFor(secMap,t.section)):'',right);}",
           "  if(!tHtml)tHtml=emptyBlock(GL,'Add your tables to lay out the floor and track service.','+ Add table');",
           "  var bHtml=breakdown(rows,'section',secMap)||emptyBlock(I.chart,'Section coverage appears once tables are on the floor.','+ Add table');",
           "  html+=sec('The floor')+'<div class=\"grid g21\">'+panel('Tables in play',tHtml)+panel('By section',bHtml)+'</div>';",

@@ -1049,7 +1049,7 @@ export const cleanShiftPack: PackData = {
           "    +(weekN===0&&book.length>0?kpi('On the run sheet',book.length,'<b>'+fmtInt(todayN)+'</b> today \\u00b7 '+(nextClause||'upcoming'),{hero:true,spark:spark(weekly(jobs))}):kpi('This week',weekN,jobs.length?'<b>'+fmtInt(todayN)+'</b> today \\u00b7 '+(nextClause||'nothing left today'):'No jobs scheduled yet',{hero:true,spark:spark(weekly(jobs))}))",
           "    +kpi('Revenue 30d',mnyC(rev30),'completed jobs, last 30 days')",
           "    +kpi('Avg rating',rN?avg.toFixed(1):'\\u2014',rN?'out of 5 \\u00b7 <b>'+fmtInt(rN)+'</b> checks':'no checks yet')",
-          "    +kpi('Open issues',openIss,openIss>0?'<span style=\"color:var(--fl-bad);font-weight:650\">'+fmtInt(highIss)+' high severity</span>':'all resolved')",
+          "    +kpi('Open issues',openIss,openIss>0?(highIss>0?'<span style=\"color:var(--fl-bad);font-weight:650\">'+fmtInt(highIss)+' high severity</span>':'<b>'+fmtInt(highIss)+'</b> high severity'):'all resolved')",
           "    +'</div>';",
           "  var runHtml='';",
           "  if(!jobs.length){runHtml=emptyBlock(I.cal,'Jobs you schedule appear here as a run sheet, grouped by day.',fJ?fJ.formId:'','+ New job');}",

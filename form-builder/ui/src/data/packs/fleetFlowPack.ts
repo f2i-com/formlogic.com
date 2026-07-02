@@ -637,7 +637,7 @@ export const fleetFlowPack: PackData = {
         js: SECTION_KIT_JS + '\n' + [
           "var GL=icoSvg('<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\"/>');",
           "var MPK={due:'warn',booked:'accent','in-workshop':'accent',completed:'good'};",
-          "function dueChip(dd,dt,done){if(done||dd==null)return '';if(dd<0)return pill((-dd)+'d overdue','bad');if(dd===0)return pill('due today','warn');if(dd<=7)return pill('due in '+dd+'d','warn');return '<span class=\"chip\">'+h('due '+fmtDate(dt))+'</span>';}",
+          "function dueChip(dd,dt,done,inShop){if(done||inShop||dd==null)return '';if(dd<0)return pill((-dd)+'d overdue','bad');if(dd===0)return pill('due today','warn');if(dd<=7)return pill('due in '+dd+'d','warn');return '<span class=\"chip\">'+h('due '+fmtDate(dt))+'</span>';}",
           "async function main(){",
           "  var root=document.getElementById('app');",
           "  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}",
@@ -661,7 +661,7 @@ export const fleetFlowPack: PackData = {
           "  var rHtml='';",
           "  for(var p=0;p<Math.min(7,list.length);p++){var m=list[p],a2=m.a;",
           "    var sub=[];if(a2.supplier)sub.push(h(a2.supplier));if(m.done&&a2.completed_date)sub.push('done '+h(fmtDate(a2.completed_date)));",
-          "    rHtml+=rowItem(h(labelFor(tMap,a2.maintenance_type)),sub.join(' \\u00b7 '),pill(labelFor(sMap,a2.status),MPK[a2.status]||'neutral')+dueChip(m.dd,a2.due_date,m.done));}",
+          "    rHtml+=rowItem(h(labelFor(tMap,a2.maintenance_type)),sub.join(' \\u00b7 '),pill(labelFor(sMap,a2.status),MPK[a2.status]||'neutral')+dueChip(m.dd,a2.due_date,m.done,a2.status==='in-workshop'));}",
           "  if(!rHtml)rHtml=emptyBlock(GL,'Services, repairs and inspections you book appear here, soonest first.','+ Book maintenance');",
           "  else rHtml='<div class=\"rows\">'+rHtml+'</div>';",
           "  var bHtml=breakdown(rows,'maintenance_type',tMap)||emptyBlock(I.chart,'The job-type mix appears once maintenance is booked.','+ Book maintenance');",

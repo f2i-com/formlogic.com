@@ -880,7 +880,7 @@ export const repairBenchPack: PackData = {
           "    +'</div>';",
           "  var rHtml='';",
           "  for(var p=0;p<Math.min(6,rows.length);p++){var c=rows[p].answers||{};var n2=Array.isArray(c.checklist)?c.checklist.length:(c.checklist?1:0);",
-          "    var qn=c.notes?String(c.notes):'';rHtml+=rowItem('Bench test',fmtInt(n2)+' of 7 points tested \\u00b7 '+h(fmtDate(rows[p].submittedAt))+(qn?' \\u00b7 '+h(qn):''),(c.result==='pass'?pill('Pass','good'):(c.result==='fail'?pill('Fail','bad'):''))+(c.notified==='yes'?'<span class=\"chip\">customer told</span>':(c.notified==='not-yet'?pill('To notify','warn'):'')));}",
+          "    var qn=c.notes?String(c.notes):'';var ttl=(n2>=7?'Full bench test':(n2>0?fmtInt(n2)+'-point bench test':'Bench test'));rHtml+=rowItem(h(ttl),'tested '+h(fmtDate(rows[p].submittedAt))+(qn?' \\u00b7 '+h(qn):''),(c.result==='pass'?pill('Pass','good'):(c.result==='fail'?pill('Fail','bad'):''))+(c.notified==='yes'?'<span class=\"chip\">customer told</span>':(c.notified==='not-yet'?pill('To notify','warn'):'')));}",
           "  if(!rHtml)rHtml=emptyBlock(GL,'Quality checks you run appear here with pass or fail and who has been told.','+ New quality check');",
           "  else rHtml='<div class=\"rows\">'+rHtml+'</div>';",
           "  var rc=countBy(rows,'result');var mx=Math.max(rc.pass||0,rc.fail||0);",

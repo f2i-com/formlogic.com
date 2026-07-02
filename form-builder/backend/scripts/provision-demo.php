@@ -953,7 +953,15 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     // ── 21b. Trip odometer end >= start; stay check-out >= check-in; withholding after application ─
     $soId = $findByLabel(['start odometer', 'odometer start']);
     $eoId = $findByLabel(['end odometer', 'odometer end']);
-    if ($soId && $eoId && isset($answers[$soId])) { $answers[$eoId] = (int) $answers[$soId] + random_int(5, 600); }
+    if ($soId && $eoId && isset($answers[$soId])) {
+        $answers[$eoId] = (int) $answers[$soId] + random_int(5, 600);
+        // Fuel cost scales with the distance driven (~$0.12-0.22/km), not a random amount.
+        $fcId = $findByLabel(['fuel cost', 'fuel']);
+        if ($fcId) {
+            $dist = (int) $answers[$eoId] - (int) $answers[$soId];
+            $answers[$fcId] = max(3, (int) round($dist * (random_int(12, 22) / 100)));
+        }
+    }
     $ciId = $findByLabel(['check-in', 'check in', 'checkin']);
     $coId = $findByLabel(['check-out', 'check out', 'checkout']);
     if ($ciId && $coId && isset($answers[$ciId]) && is_string($answers[$ciId])
@@ -1019,42 +1027,162 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $tot = max(0, min($tot, 23 * 60 + 45));
         return str_pad((string) intdiv($tot, 60), 2, '0', STR_PAD_LEFT) . ':' . str_pad((string) ($tot % 60), 2, '0', STR_PAD_LEFT);
     };
-    $catId = $findByLabel(['category']);
-    $catVal = ($catId && isset($answers[$catId]) && is_string($answers[$catId])) ? $answers[$catId] : '';
-    $setDom = static function (string $nameId, array $byCat, array $flat) use (&$answers, $catVal, $i, $formName): void {
-        $pool = ($catVal !== '' && !empty($byCat[$catVal])) ? $byCat[$catVal] : $flat;
-        if ($pool) { $answers[$nameId] = $pool[($i + seedHash($formName . '|' . $catVal . '|' . $nameId)) % count($pool)]; }
+    // Pick a record's name WITHOUT replacement from the domain pool, then set THIS record's own
+    // category (and unit) FROM that name — name↔category↔unit always agree and no two visible rows
+    // share a title (fixes "Sourdough loaves twice", an item that's both Out and OK). Returns the cat.
+    $setNameCatUnit = function (string $nameId, array $byCat, string $salt, ?array $unitByCat = null) use (&$answers, $findByLabel, $optVals, $formName, $i): string {
+        $flat = []; $catOf = [];
+        foreach ($byCat as $cat => $items) { foreach ($items as $it) { $flat[] = $it; $catOf[$it] = (string) $cat; } }
+        if (!$flat) { return ''; }
+        $name = (string) pickSeq($flat, $formName, $salt, $i);
+        $answers[$nameId] = $name;
+        $cat = $catOf[$name] ?? '';
+        $cId = $findByLabel(['category']);
+        if ($cId && $cat !== '' && in_array($cat, $optVals($cId), true)) { $answers[$cId] = $cat; }
+        if ($unitByCat !== null && isset($unitByCat[$cat])) {
+            $uId = $findByLabel(['unit']);
+            if ($uId) {
+                $uv = array_map('strtolower', $optVals($uId));
+                $k = array_search($unitByCat[$cat], $uv, true);
+                if ($k !== false) { $answers[$uId] = $optVals($uId)[$k]; }
+            }
+        }
+        return $cat;
     };
+    $stockCafeUnit = ['beans' => 'kg', 'milk' => 'litres', 'syrup' => 'litres', 'cups' => 'units', 'food-prep' => 'units', 'packaging' => 'units'];
+    $prepGrillUnit = ['bun' => 'units', 'patty' => 'kg', 'sauce' => 'litres', 'salad' => 'kg', 'packaging' => 'boxes', 'drink' => 'litres'];
+    $cleaningUnit  = ['chemicals' => 'bottles', 'cloths-and-pads' => 'packs', 'equipment' => 'units', 'consumables' => 'boxes'];
 
-    // N1. Item / product / ingredient / supply names coherent with the record's category.
+    // N1. Menu item: name↔category unique, price by category band (money before count), station by category.
     if (isset($byId['item_name']) && $fnHas(['menu'])) {
-        if (in_array($catVal, ['burger', 'side', 'drink', 'dessert', 'combo'], true)) { $setDom('item_name', $P['menuGrillByCat'], $P['menuGrillFlat']); }
-        else { $setDom('item_name', $P['menuCafeByCat'], $P['menuCafeFlat']); }
-    }
-    if (isset($byId['ingredient'])) { $setDom('ingredient', $P['prepGrillByCat'], $P['prepGrillFlat']); }
-    if (isset($byId['item']) && $fnHas(['stock item'])) { $setDom('item', $P['stockCafeByCat'], $P['stockCafeFlat']); }
-    if (isset($byId['product_name']) && in_array($catVal, ['apparel', 'homewares', 'gifts', 'stationery', 'jewellery', 'seasonal'], true)) { $setDom('product_name', $P['retailByCat'], $P['retailFlat']); }
-    if (isset($byId['supply_item'])) {
-        if ($fnHas(['clean']) || in_array($catVal, ['chemicals', 'cloths-and-pads', 'equipment', 'consumables'], true)) { $setDom('supply_item', $P['cleaningSupByCat'], $P['cleaningSupFlat']); }
-        else { $answers['supply_item'] = $P['stayReadySup'][($i + seedHash($formName . 'sup')) % count($P['stayReadySup'])]; }
-    }
-    if (isset($byId['prep_item']) && $fnHas(['prep'])) { $answers['prep_item'] = $P['prepItems'][($i + seedHash($formName . 'prepitem')) % count($P['prepItems'])]; }
-    // Stock unit follows the category (beans -> kg, milk/syrup -> litres, cups/packaging -> units).
-    $unitId2 = $findByLabel(['unit']);
-    if ($unitId2 && $catVal !== '') {
-        $catUnit = ['beans' => 'kg', 'milk' => 'litres', 'syrup' => 'litres', 'cups' => 'units', 'food-prep' => 'units', 'packaging' => 'units', 'bun' => 'units', 'patty' => 'units', 'salad' => 'units', 'sauce' => 'litres', 'drink' => 'units'];
-        if (isset($catUnit[$catVal])) {
-            $luv = array_map('strtolower', $optVals($unitId2));
-            $k = array_search($catUnit[$catVal], $luv, true);
-            if ($k !== false) { $answers[$unitId2] = $optVals($unitId2)[$k]; }
+        $catOpts = $optVals($findByLabel(['category']));
+        if (array_intersect($catOpts, ['burger', 'side', 'drink', 'dessert', 'combo'])) {
+            $cat = $setNameCatUnit('item_name', $P['menuGrillByCat'], 'menuname');
+            $band = ['burger' => [8, 14], 'side' => [3, 6], 'drink' => [2, 4], 'dessert' => [5, 8], 'combo' => [10, 16]][$cat] ?? null;
+            $stationMap = ['burger' => 'grill', 'side' => 'fryer', 'drink' => 'drinks', 'dessert' => 'cold-station', 'combo' => 'grill'];
+        } else {
+            $cat = $setNameCatUnit('item_name', $P['menuCafeByCat'], 'menuname');
+            $band = ['coffee' => [4, 6], 'tea' => [4, 6], 'cold-drink' => [5, 7], 'food' => [6, 14], 'retail-beans' => [12, 24]][$cat] ?? null;
+            $stationMap = ['coffee' => 'espresso', 'tea' => 'espresso', 'cold-drink' => 'cold-bar', 'food' => 'kitchen', 'retail-beans' => 'retail'];
+        }
+        $priceFieldId = $findByLabel(['base price', 'price']);
+        if ($priceFieldId && $band) { $answers[$priceFieldId] = random_int($band[0], $band[1]); }
+        $stnId = $findByLabel(['prep station', 'station']);
+        if ($stnId) {
+            if (isset($stationMap[$cat]) && in_array($stationMap[$cat], $optVals($stnId), true)) { $answers[$stnId] = $stationMap[$cat]; }
+            $nmL = strtolower((string) ($answers['item_name'] ?? ''));
+            if (hasKw($nmL, ['coleslaw', 'salad']) && in_array('cold-station', $optVals($stnId), true)) { $answers[$stnId] = 'cold-station'; }
+        }
+        // Dietary tags conditioned on the item (never Vegan/Dairy-free on animal products; never Gluten-free on bread).
+        if (isset($byId['dietary_tags'])) {
+            $nmL = strtolower((string) ($answers['item_name'] ?? ''));
+            $dv = $optVals($findByLabel(['dietary']));
+            $animal = hasKw($nmL, ['ham', 'bacon', 'cheese', 'egg', 'chicken', 'beef', 'milk', 'latte', 'cappuccino', 'mocha', 'flat white', 'piccolo', 'chai', 'chocolate', 'shake', 'cream']);
+            $bread  = hasKw($nmL, ['roll', 'croissant', 'bread', 'toast', 'muffin', 'bun', 'bagel', 'pie', 'cookie']);
+            $allowed = [];
+            foreach ($dv as $t) {
+                $lt = strtolower((string) $t);
+                if (hasKw($lt, ['vegan', 'dairy']) && $animal) { continue; }
+                if (hasKw($lt, ['gluten']) && $bread) { continue; }
+                $allowed[] = $t;
+            }
+            if ($allowed) {
+                $take = min(count($allowed), seedHash($formName . 'diet' . $i) % 3); // 0,1,2 tags
+                $start = seedHash($formName . 'diet2' . $i) % count($allowed);
+                $pick = [];
+                for ($z = 0; $z < $take; $z++) { $pick[] = $allowed[($start + $z) % count($allowed)]; }
+                $answers['dietary_tags'] = array_values(array_unique($pick));
+            } else {
+                $answers['dietary_tags'] = [];
+            }
         }
     }
-    // Menu prep station follows the category (burger -> grill, drink -> drinks, coffee -> espresso, ...).
-    if ($fnHas(['menu']) && $catVal !== '') {
-        $stationByCat = ['coffee' => 'espresso', 'tea' => 'espresso', 'cold-drink' => 'cold-bar', 'food' => 'kitchen', 'retail-beans' => 'retail', 'burger' => 'grill', 'side' => 'fryer', 'drink' => 'drinks', 'dessert' => 'cold-station', 'combo' => 'grill'];
-        $stnFieldId = $findByLabel(['prep station', 'station']);
-        if ($stnFieldId && isset($stationByCat[$catVal]) && in_array($stationByCat[$catVal], $optVals($stnFieldId), true)) {
-            $answers[$stnFieldId] = $stationByCat[$catVal];
+    // Cafe stock / grill prep / retail product / cleaning supply: unique name ↔ category (↔ unit).
+    if (isset($byId['item']) && $fnHas(['stock item'])) { $setNameCatUnit('item', $P['stockCafeByCat'], 'stockname', $stockCafeUnit); }
+    if (isset($byId['ingredient'])) { $setNameCatUnit('ingredient', $P['prepGrillByCat'], 'ingredientname', $prepGrillUnit); }
+    if (isset($byId['product_name']) && $findByLabel(['category'])) { $setNameCatUnit('product_name', $P['retailByCat'], 'prodname'); }
+    if (isset($byId['supply_item']) && $findByLabel(['category']) && ($fnHas(['clean']) || (bool) array_intersect($optVals($findByLabel(['category'])), ['chemicals', 'cloths-and-pads', 'equipment', 'consumables']))) {
+        $setNameCatUnit('supply_item', $P['cleaningSupByCat'], 'supplyname', $cleaningUnit);
+    } elseif (isset($byId['supply_item'])) { // StayReady supply — no category; unit follows the item.
+        $nm = (string) pickSeq($P['stayReadySup'], $formName, 'supplyname', $i);
+        $answers['supply_item'] = $nm;
+        $uId = $findByLabel(['unit']);
+        if ($uId && isset($P['stayReadySupUnit'][$nm])) {
+            $uv = array_map('strtolower', $optVals($uId));
+            $k = array_search($P['stayReadySupUnit'][$nm], $uv, true);
+            if ($k !== false) { $answers[$uId] = $optVals($uId)[$k]; }
+        }
+    }
+    // PassMaster prep item ↔ station ↔ unit.
+    if (isset($byId['prep_item']) && $fnHas(['prep'])) {
+        $name = (string) pickSeq(array_keys($P['passPrepMeta']), $formName, 'prepitem', $i);
+        $answers['prep_item'] = $name;
+        [$pStn, $pUnit] = $P['passPrepMeta'][$name];
+        $stId = $findByLabel(['station']);
+        if ($stId && in_array($pStn, $optVals($stId), true)) { $answers[$stId] = $pStn; }
+        $uId = $findByLabel(['unit']);
+        if ($uId) {
+            $uv = array_map('strtolower', $optVals($uId));
+            $k = array_search($pUnit, $uv, true);
+            if ($k !== false) { $answers[$uId] = $optVals($uId)[$k]; }
+        }
+    }
+    // CounterFlow store task: unique title across the form, area set FROM the title (no dup rows).
+    if (isset($byId['task_title'], $byId['area'])) {
+        $flat = []; $areaOf = [];
+        foreach ($P['retailTasksByArea'] as $ar => $ts) { foreach ($ts as $t) { if (!isset($areaOf[$t])) { $flat[] = $t; $areaOf[$t] = (string) $ar; } } }
+        $name = (string) pickSeq($flat, $formName, 'rtask', $i);
+        $answers['task_title'] = $name;
+        if (isset($areaOf[$name]) && in_array($areaOf[$name], $optVals($findByLabel(['area'])), true)) { $answers['area'] = $areaOf[$name]; }
+    }
+    // CaterCraft menu package name ↔ category.
+    if (isset($byId['package_name'])) {
+        $name = (string) pickSeq(array_keys($P['caterPackageMeta']), $formName, 'pkg', $i);
+        $answers['package_name'] = $name;
+        $cId = $findByLabel(['category']);
+        $cat = $P['caterPackageMeta'][$name];
+        if ($cId && in_array($cat, $optVals($cId), true)) { $answers[$cId] = $cat; }
+    }
+    // CaterCraft production task ↔ station.
+    if (isset($byId['task']) && $fnHas(['production'])) {
+        $name = (string) pickSeq(array_keys($P['caterTaskMeta']), $formName, 'task', $i);
+        $answers['task'] = $name;
+        $stn = $P['caterTaskMeta'][$name];
+        $stId = $findByLabel(['station']);
+        if ($stId && in_array($stn, $optVals($stId), true)) { $answers[$stId] = $stn; }
+    }
+    // VenueOps space name ↔ type ↔ capacity.
+    if (isset($byId['space_name'], $byId['space_type'], $byId['capacity'])) {
+        $name = (string) pickSeq(array_keys($P['venueSpaceMeta']), $formName, 'space', $i);
+        $answers['space_name'] = $name;
+        [$stype, $capR] = $P['venueSpaceMeta'][$name];
+        if (in_array($stype, $optVals($findByLabel(['space type'])), true)) { $answers['space_type'] = $stype; }
+        $answers['capacity'] = random_int($capR[0], $capR[1]);
+    }
+    // SitePulse subcontractor business name ↔ trade.
+    if (isset($byId['business_name'], $byId['trade'])) {
+        $name = (string) pickSeq(array_keys($P['tradeCompanyMeta']), $formName, 'trade', $i);
+        $answers['business_name'] = $name;
+        $tr = $P['tradeCompanyMeta'][$name];
+        if (in_array($tr, $optVals($findByLabel(['trade'])), true)) { $answers['trade'] = $tr; }
+    }
+    // AgriLog machine name ↔ type; engine hours realistic; retired = no future service.
+    if (isset($byId['machine_name'], $byId['machine_type'])) {
+        $flat = []; $typeOf = [];
+        foreach ($P['machineByType'] as $t => $ms) { foreach ($ms as $m) { $flat[] = $m; $typeOf[$m] = (string) $t; } }
+        $name = (string) pickSeq($flat, $formName, 'machine', $i);
+        $answers['machine_name'] = $name;
+        $tId = $findByLabel(['type']);
+        if ($tId && isset($typeOf[$name]) && in_array($typeOf[$name], $optVals($tId), true)) { $answers[$tId] = $typeOf[$name]; }
+        if (isset($byId['hours'])) { $answers['hours'] = random_int(800, 14000); }
+        $mStId = $findByLabel(['status']);
+        $mSt = strtolower((string) ($mStId ? ($answers[$mStId] ?? '') : ''));
+        $sdId = $findByLabel(['service due']);
+        if ($sdId) {
+            if ($mSt === 'retired') { unset($answers[$sdId]); }
+            elseif ($mSt === 'due-for-service') { $answers[$sdId] = $mk(random_int(-10, 5), $today); }
+            elseif ($mSt === 'in-workshop') { $answers[$sdId] = $mk(random_int(-3, 7), $today); }
+            else { $answers[$sdId] = $mk(random_int(20, 180), $today); }
         }
     }
 
@@ -1069,8 +1197,9 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if ($trigger) {
             $par = random_int(8, 50);
             $r = $i % 6;
-            if ($r === 0) { $on = random_int(0, 1); $state = 'out'; }
-            elseif ($r <= 2) { $on = random_int(1, max(1, $par - 1)); $state = 'low'; }
+            // 'out' means genuinely 0 on hand (never 1); 'low' sits meaningfully below par (<= half).
+            if ($r === 0) { $on = 0; $state = 'out'; }
+            elseif ($r <= 2) { $on = random_int(1, max(1, intdiv($par, 2))); $state = 'low'; }
             else { $on = random_int($par, (int) round($par * 1.4)); $state = 'ok'; }
             $answers[$parId] = $par;
             $answers[$onId] = $on;
@@ -1120,7 +1249,9 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $id = (string) ($f['id'] ?? '');
         $ll = $labelOf[$id] ?? '';
         if (hasKw($ll, ['created', 'started'])) {
-            $mins = $qActive ? random_int(2, 180) : random_int(150, 2880);
+            // Live-queue moments are MINUTES ago (a live board never shows "waiting 11h"): a
+            // few-to-~45 min for active tickets, up to ~1.5h for the just-finished tail.
+            $mins = $qActive ? random_int(2, 45) : random_int(15, 90);
             $answers[$id] = date('Y-m-d\TH:i', strtotime("-{$mins} minutes"));
         } elseif (hasKw($ll, ['checked', 'last checked'])) {
             // A stock check happened recently, in the PAST (never "in 5 days").
@@ -1147,14 +1278,31 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if (isset($byId['milk']) && in_array($dt, ['long-black', 'espresso'], true)) { unset($answers['milk']); }
     }
 
-    // N6. Daily close: realistic beans (kg) with roughly proportional milk (litres).
+    // N6. Daily close (cafe): beans↔milk proportional; register total tracks usage ($800-$5k); one per day.
     if (isset($byId['beans_used'], $byId['milk_used'])) {
         $b = random_int(5, 15);
+        $m = $b * random_int(4, 7) + random_int(0, 10);
         $answers['beans_used'] = $b;
-        $answers['milk_used'] = $b * random_int(4, 7) + random_int(0, 10);
+        $answers['milk_used'] = $m;
+        $rtId = $findByLabel(['register total', 'sales total']);
+        if ($rtId) { $answers[$rtId] = max(800, min(5000, (int) round($b * 200 + $m * 15))); }
+        if (isset($byId['tips'])) { $answers['tips'] = random_int(20, 180); }
+        $cdId = $findByLabel(['date']);
+        if ($cdId) { $answers[$cdId] = $mk(-$i, $today); }
+    }
+    // N6b. Daily close (grill): card/eftpos/delivery split of a realistic single-site total; one per day.
+    if (isset($byId['cash_total'], $byId['eftpos_total'], $byId['delivery_total'])) {
+        $total = random_int(3000, 8000);
+        $cash = (int) round($total * random_int(15, 30) / 100);
+        $delivery = (int) round($total * random_int(10, 25) / 100);
+        $answers['cash_total'] = $cash;
+        $answers['delivery_total'] = $delivery;
+        $answers['eftpos_total'] = max(0, $total - $cash - $delivery);
+        $cdId = $findByLabel(['date']);
+        if ($cdId) { $answers[$cdId] = $mk(-$i, $today); }
     }
 
-    // N7. Roster: weight toward front-of-house/production, few managers; shifts land this week.
+    // N7. Roster: weight toward front-line, few managers; a front-line worker rostered TODAY; clean shifts.
     $roleId = $findByLabel(['role']);
     $shiftDId = $findByLabel(['shift date']);
     if ($roleId && $shiftDId) {
@@ -1166,15 +1314,34 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
             for ($k = 0; $k < $n; $k++) { $weighted[] = $v; }
         }
         if ($weighted) { $answers[$roleId] = $weighted[seedHash($formName . 'role' . $i) % count($weighted)]; }
-        $answers[$shiftDId] = $mk(random_int(-1, 6), $today);
+        // Guarantee at least one front-line worker on TODAY so "baristas today"/"on today" KPIs never read 0.
+        if ($i === 0) {
+            $front = array_values(array_filter($rv, static fn ($v) => in_array(strtolower($v), ['barista', 'grill', 'front-counter', 'server', 'runner'], true)));
+            if ($front) { $answers[$roleId] = $front[0]; }
+            $answers[$shiftDId] = $today;
+        } else {
+            $answers[$shiftDId] = $mk(random_int(-1, 6), $today);
+        }
+        // Clean start on the hour + a round duration (4/5/6/8h) → tidy round end times (no :07/:22 tails).
+        $stId = $findByLabel(['start time']);
+        $etId = $findByLabel(['end time']);
+        if ($stId && $etId) {
+            $starts = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00'];
+            $s = $starts[seedHash($formName . 'st' . $i) % count($starts)];
+            $dur = [4, 5, 6, 8][seedHash($formName . 'dur' . $i) % 4];
+            $answers[$stId] = $s;
+            $answers[$etId] = $addMin($s, $dur * 60);
+        }
     }
 
-    // N8. Shift close: revenue proportional to covers.
+    // N8. Shift close: revenue proportional to covers; one close per calendar day.
     if (isset($byId['covers_served'], $byId['sales_total'])) {
         $cv = (int) ($answers['covers_served'] ?? 0);
         if ($cv <= 0) { $cv = random_int(45, 110); $answers['covers_served'] = $cv; }
         $answers['sales_total'] = $cv * random_int(55, 95);
         if (isset($byId['voids_comps'])) { $answers['voids_comps'] = random_int(0, (int) round($cv * 1.5)); }
+        $cdId = $findByLabel(['date']);
+        if ($cdId) { $answers[$cdId] = $mk(-$i, $today); }
     }
 
     // N9. Kitchen ticket: allergy notes a minority (so the pill carries signal).
@@ -1183,13 +1350,26 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         else { $answers['allergy_notes'] = $P['allergyNotes'][$i % count($P['allergyNotes'])]; }
     }
 
-    // N10. Property: realistic bedrooms / bathrooms (studio = 0 bd; ba <= bd + 1).
+    // N10. Property: type aligns with the name; bedrooms/bathrooms realistic per type (studio = 0 bd; baths proportional).
     if (isset($byId['bedrooms'], $byId['bathrooms'])) {
         $ptId = $findByLabel(['property type']);
         $pt = strtolower((string) ($ptId ? ($answers[$ptId] ?? '') : ''));
-        $bd = $pt === 'studio' ? 0 : random_int(1, 6);
+        $pnId = $findByLabel(['property name']);
+        $pn = strtolower((string) ($pnId ? ($answers[$pnId] ?? '') : ''));
+        if ($ptId) {
+            $ptv = $optVals($ptId);
+            $nameType = null;
+            if (str_contains($pn, 'studio')) { $nameType = 'studio'; }
+            elseif (hasKw($pn, ['apartment', 'suite', 'loft'])) { $nameType = 'apartment'; }
+            elseif (str_contains($pn, 'townhouse')) { $nameType = 'townhouse'; }
+            elseif (hasKw($pn, ['cabin', 'boathouse'])) { $nameType = 'cabin'; }
+            elseif (hasKw($pn, ['cottage', 'house', 'bungalow', 'retreat'])) { $nameType = 'house'; }
+            if ($nameType !== null && in_array($nameType, $ptv, true)) { $answers[$ptId] = $nameType; $pt = $nameType; }
+        }
+        $range = ['studio' => [0, 0], 'apartment' => [1, 3], 'townhouse' => [2, 4], 'house' => [3, 5], 'cabin' => [1, 3]][$pt] ?? [1, 4];
+        $bd = random_int($range[0], $range[1]);
         $answers['bedrooms'] = $bd;
-        $answers['bathrooms'] = $bd === 0 ? 1 : max(1, min($bd + 1, random_int(1, $bd + 1)));
+        $answers['bathrooms'] = $bd === 0 ? 1 : random_int((int) max(1, (int) ceil($bd / 2)), $bd);
     }
 
     // N11. Bookings: dates + status coherent (future = enquiry/confirmed; past = completed/checked-out).
@@ -1211,13 +1391,19 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         foreach ($cand as $c) { if (in_array($c, $bsv2, true)) { $answers['status'] = $c; break; } }
     }
 
-    // N11b. Reservations spread across tonight & upcoming so "covers tonight" and upcoming populate.
+    // N11b. Reservations spread across tonight & upcoming so "covers tonight" and upcoming populate;
+    // times cluster in evening dinner service (not scattered across breakfast/afternoon).
     if (isset($byId['party_size'], $byId['date']) && $findByLabel(['status'])) {
         $rd = $mk(random_int(-6, 14), $today);
         $answers['date'] = $rd;
         $rsv = $optVals($findByLabel(['status']));
         $s = $rd > $today ? 'booked' : ($rd === $today ? 'seated' : ((seedHash($formName . 'rz' . $i) % 5 === 0) ? 'no-show' : 'seated'));
         if (in_array($s, $rsv, true)) { $answers['status'] = $s; }
+        $tId = $findByLabel(['time']);
+        if ($tId) {
+            $slots = ['17:30', '18:00', '18:15', '18:30', '18:45', '19:00', '19:15', '19:30', '19:45', '20:00', '20:15', '20:30', '21:00', '21:30'];
+            $answers[$tId] = $slots[seedHash($formName . 'restime' . $i) % count($slots)];
+        }
     }
 
     // N12. Catering job event dates lean future for open jobs so "upcoming" panels populate.
@@ -1229,12 +1415,13 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         else { $answers['event_date'] = $mk(random_int(-8, 20), $today); }
     }
 
-    // N13. Time pairs: end after start / drop after departure.
-    foreach ([['start_time', 'end_time'], ['pickup_time', 'delivery_time']] as $tp) {
-        [$ta, $tb] = $tp;
-        if (isset($answers[$ta], $answers[$tb]) && is_string($answers[$ta]) && is_string($answers[$tb]) && $answers[$tb] <= $answers[$ta]) {
-            $answers[$tb] = $addMin((string) $answers[$ta], random_int(30, 180));
-        }
+    // N13. Time pairs. Shift end after start (safety); delivery drop = pickup + a rounded 30-90 min run
+    // (never a random 3-hour, odd-minute window).
+    if (isset($answers['start_time'], $answers['end_time']) && is_string($answers['start_time']) && is_string($answers['end_time']) && $answers['end_time'] <= $answers['start_time']) {
+        $answers['end_time'] = $addMin((string) $answers['start_time'], random_int(4, 12) * 30);
+    }
+    if (isset($byId['pickup_time'], $byId['delivery_time']) && isset($answers['pickup_time']) && is_string($answers['pickup_time'])) {
+        $answers['delivery_time'] = $addMin((string) $answers['pickup_time'], random_int(2, 6) * 15);
     }
 
     // N14. Delivery date lands in the recent past (a "received" delivery can't be future-dated).
@@ -1242,15 +1429,24 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $answers['delivery_date'] = $mk(-random_int(0, 18), $today);
     }
 
-    // N15. Harvest load magnitude realistic per unit.
+    // N15. Harvest: unit follows the crop (grain→tonnes, cotton/hay→bales); quantity realistic per unit.
     if (isset($byId['harvest_date'])) {
         $uId = $findByLabel(['unit']);
         $qId = $findByLabel(['quantity']);
+        $cId = $findByLabel(['crop']);
+        $crop = strtolower((string) ($cId ? ($answers[$cId] ?? '') : ''));
+        if ($uId) {
+            $want = hasKw($crop, ['cotton', 'lucerne', 'hay']) ? 'bales' : 'tonnes';
+            $uv = array_map('strtolower', $optVals($uId));
+            $k = array_search($want, $uv, true);
+            if ($k !== false) { $answers[$uId] = $optVals($uId)[$k]; }
+        }
         $u = strtolower((string) ($uId ? ($answers[$uId] ?? '') : ''));
         if ($qId) {
-            if ($u === 'kg') { $answers[$qId] = random_int(500, 6000); }
-            elseif ($u === 'tonnes') { $answers[$qId] = random_int(5, 45); }
-            elseif (in_array($u, ['bins', 'bales'], true)) { $answers[$qId] = random_int(8, 40); }
+            if ($u === 'kg') { $answers[$qId] = random_int(500, 8000); }
+            elseif ($u === 'tonnes') { $answers[$qId] = random_int(8, 60); }
+            elseif ($u === 'bales') { $answers[$qId] = random_int(20, 180); }
+            elseif ($u === 'bins') { $answers[$qId] = random_int(10, 60); }
         }
     }
 
@@ -1341,8 +1537,10 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $dp = $P['careDescByType'][$it2] ?? null;
         $ap = $P['careActionByType'][$it2] ?? null;
         $dId = $findByLabel(['description']);
-        if ($dId && $dp) { $answers[$dId] = $dp[$i % count($dp)]; }
-        if ($ap) { $answers['action_taken'] = $ap[$i % count($ap)]; }
+        // Index by a per-(form,type,row) hash (not i % n) so evenly-spaced same-type rows don't all
+        // land on the same string — two Aggression notes rarely read verbatim-identical.
+        if ($dId && $dp) { $answers[$dId] = $dp[seedHash($formName . 'cd' . $it2 . '#' . $i) % count($dp)]; }
+        if ($ap) { $answers['action_taken'] = $ap[seedHash($formName . 'ca' . $it2 . '#' . $i) % count($ap)]; }
     }
 
     // N21. Cleaning: price by job type; issue description/resolution track status; follow-up on low scores.
@@ -1350,8 +1548,14 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     if ($jtId && isset($byId['duration_hours'], $answers[$jtId])) {
         $prId = $findByLabel(['price']);
         $jt = strtolower((string) $answers[$jtId]);
-        $jmap = ['regular-clean' => [120, 200], 'deep-clean' => [250, 400], 'end-of-lease' => [280, 480], 'office' => [150, 300], 'airbnb-turnover' => [90, 180]];
-        if ($prId && isset($jmap[$jt])) { $answers[$prId] = random_int($jmap[$jt][0], $jmap[$jt][1]); }
+        // Price is a function of duration (hourly rate x hours) so $/hr always reads sensibly.
+        $dmap = ['regular-clean' => [2, 3], 'deep-clean' => [3, 5], 'end-of-lease' => [4, 6], 'office' => [2, 4], 'airbnb-turnover' => [2, 4]];
+        $rmap = ['regular-clean' => [45, 60], 'deep-clean' => [55, 75], 'end-of-lease' => [55, 75], 'office' => [45, 65], 'airbnb-turnover' => [45, 65]];
+        if (isset($dmap[$jt])) {
+            $hrs = random_int($dmap[$jt][0], $dmap[$jt][1]);
+            $answers['duration_hours'] = $hrs;
+            if ($prId) { $answers[$prId] = $hrs * random_int($rmap[$jt][0], $rmap[$jt][1]); }
+        }
         // Bias to completed-recent so the "revenue 30d" KPI reflects a working operation; keep a
         // near-future tail for the run sheet's upcoming jobs.
         $sdId = $findByLabel(['scheduled date']);
@@ -1367,9 +1571,19 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     if (isset($byId['description'], $byId['resolution'], $byId['issue_type'])) {
         $iStId = $findByLabel(['status']);
         $ist = strtolower((string) ($iStId ? ($answers[$iStId] ?? '') : ''));
-        $answers['description'] = $P['issueDesc'][$i % count($P['issueDesc'])];
-        if ($ist === 'resolved') { $answers['resolution'] = $P['issueResolution'][$i % count($P['issueResolution'])]; }
-        else { unset($answers['resolution']); }
+        // Spread issue types evenly across the seeded set so no single type dominates the board.
+        $itId = $findByLabel(['issue type']);
+        if ($itId) { $itv = $optVals($itId); if ($itv) { $answers[$itId] = $itv[$i % count($itv)]; } }
+        // Description matches the issue TYPE (a Payment issue never reads as a cleaning-quality complaint);
+        // indexed by a per-(type,row) hash so same-type rows rarely repeat verbatim.
+        $it = strtolower((string) ($answers['issue_type'] ?? ''));
+        $dpool = $P['issueDescByType'][$it] ?? $P['issueDesc'];
+        $answers['description'] = $dpool[seedHash($formName . 'idt' . $it . '#' . $i) % count($dpool)];
+        if ($ist === 'resolved') {
+            $rpool = $it === 'payment-issue' ? ['Corrected the invoice and reissued', 'Adjusted the charge and confirmed', 'Refunded the disputed amount']
+                : $P['issueResolution'];
+            $answers['resolution'] = $rpool[seedHash($formName . 'ires' . $it . '#' . $i) % count($rpool)];
+        } else { unset($answers['resolution']); }
     }
     if (isset($byId['rating'], $byId['follow_up'])) {
         $rt = (int) ($answers['rating'] ?? 5);
@@ -1384,6 +1598,8 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if ($mins > 0) { $answers['fee'] = (int) round($mins / 60 * random_int(45, 80)); }
         $ldId = $findByLabel(['lesson date']);
         $lStId = $findByLabel(['status']);
+        // Bias lessons into this week + the coming week so "lessons this week" reads non-zero.
+        if ($ldId) { $answers[$ldId] = $mk(random_int(-12, 7), $today); }
         if ($ldId && $lStId && isset($answers[$ldId]) && is_string($answers[$ldId])) {
             $lsv = $optVals($lStId);
             $s = $answers[$ldId] > $today ? 'scheduled' : ((seedHash($formName . 'ls' . $i) % 6 === 0) ? 'no-show' : 'completed');
@@ -1410,6 +1626,164 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if ($snId) { $answers[$snId] = $P['retailSuppliers'][($i + seedHash($formName . 'rsup')) % count($P['retailSuppliers'])]; }
         // The "Supplier" form context otherwise strips this to empty ("No contact on file").
         $answers['contact_person'] = pickSeq($P['namesPrimary'], $formName, 'contactp', $i);
+    }
+
+    // N24. Student roster: keep the large majority Active so "active students" isn't a dead 1-of-13.
+    if (isset($byId['student_name']) && $findByLabel(['status'])) {
+        $sId = $findByLabel(['status']);
+        $sv = $optVals($sId);
+        $seq = ['active', 'active', 'active', 'active', 'active', 'active', 'active', 'active', 'active', 'waitlist', 'active', 'paused', 'active', 'finished'];
+        $w = $seq[$i % count($seq)];
+        if (in_array($w, $sv, true)) { $answers[$sId] = $w; }
+    }
+    // N24b. Tutor directory: keep most Active (an inactive tutor can't carry a live workload).
+    if (isset($byId['tutor_name'])) {
+        $aId = $findByLabel(['active']);
+        if ($aId && in_array('active', $optVals($aId), true)) { $answers[$aId] = ($i % 6 === 0 && in_array('inactive', $optVals($aId), true)) ? 'inactive' : 'active'; }
+    }
+    // N25. FitStudio session: dates into this week + upcoming; status mostly Completed (few no-show/cancel).
+    if (isset($byId['session_type']) && $findByLabel(['status'])) {
+        $sId = $findByLabel(['status']);
+        $dId = $findByLabel(['session date', 'date']);
+        if ($dId) { $answers[$dId] = $mk(random_int(-12, 7), $today); }
+        $sd = (string) ($dId ? ($answers[$dId] ?? $today) : $today);
+        $sv = $optVals($sId);
+        if ($sd > $today) { $w = 'scheduled'; }
+        else { $tok = seedHash($formName . 'ses' . $i) % 8; $w = $tok === 0 ? 'no-show' : ($tok === 1 ? 'cancelled' : 'completed'); }
+        if (in_array($w, $sv, true)) { $answers[$sId] = $w; }
+    }
+    // N26. FitStudio program: realistic multi-week block; status agrees with the date range.
+    if (isset($byId['program_name'], $byId['start_date'], $byId['end_date']) && $findByLabel(['status'])) {
+        $startOff = random_int(-70, 21);
+        $weeks = random_int(4, 12);
+        $sd = $mk($startOff, $today);
+        $ed = $mk($startOff + $weeks * 7, $today);
+        $answers['start_date'] = $sd;
+        $answers['end_date'] = $ed;
+        $sId = $findByLabel(['status']);
+        $sv = $optVals($sId);
+        if ($sd > $today) { $w = 'draft'; }
+        elseif ($ed < $today) { $w = (seedHash($formName . 'pg' . $i) % 7 === 0) ? 'abandoned' : 'completed'; }
+        else { $w = 'active'; }
+        if (in_array($w, $sv, true)) { $answers[$sId] = $w; }
+    }
+    // N27. FitStudio trainer: specialties vary per trainer and match the role.
+    if (isset($byId['specialties']) && $findByLabel(['role'])) {
+        $rl = strtolower((string) ($answers[$findByLabel(['role'])] ?? ''));
+        $map = ['personal-trainer' => ['strength', 'hiit', 'boxing'], 'group-instructor' => ['hiit', 'pilates', 'yoga', 'boxing'], 'physio' => ['rehab', 'strength'], 'nutrition-coach' => ['nutrition']];
+        if (isset($map[$rl])) {
+            $cand = array_values(array_intersect($map[$rl], $optVals($findByLabel(['specialties']))));
+            if ($cand) {
+                $n = min(count($cand), 1 + (seedHash($formName . 'spec' . $i) % 2));
+                $start = seedHash($formName . 'spec2' . $i) % count($cand);
+                $pick = [];
+                for ($z = 0; $z < $n; $z++) { $pick[] = $cand[($start + $z) % count($cand)]; }
+                $answers['specialties'] = array_values(array_unique($pick));
+            }
+        }
+    }
+    // N28. RepairBench repair job: due date + notes track the status (no "on track" on an overdue job).
+    if (isset($byId['quote_amount'], $byId['issue_type'], $byId['status'], $byId['due_date'])) {
+        $st = strtolower((string) ($answers['status'] ?? ''));
+        $done = in_array($st, ['ready', 'collected'], true);
+        $dueId = $findByLabel(['due date']);
+        if ($dueId) { $answers[$dueId] = $done ? $mk(-random_int(0, 10), $today) : $mk(random_int(0, 12), $today); }
+        if (isset($byId['notes'])) {
+            $pool = $done ? ['Repair complete, tested and ready.', 'Collected, customer happy.', 'Signed off and invoiced.']
+                : ($st === 'awaiting-parts' ? ['Waiting on parts to arrive.', 'Part on order, ETA this week.']
+                : ($st === 'quoted' ? ['Quote sent, awaiting approval.', 'Customer reviewing the quote.']
+                : ['Diagnosis underway.', 'On the bench, in progress.', 'Booked in, assessment next.']));
+            $answers['notes'] = $pool[$i % count($pool)];
+        }
+    }
+    // N29. RepairBench quality check: result + note agree (mostly pass; fails carry a defect note).
+    $qcResId = $findByLabel(['pass or fail']);
+    if ($qcResId && isset($byId['notes'])) {
+        $rv = array_map('strtolower', $optVals($qcResId));
+        if (in_array('pass', $rv, true) && in_array('fail', $rv, true)) {
+            $res = (seedHash($formName . 'qc' . $i) % 5 === 0) ? 'fail' : 'pass';
+            $answers[$qcResId] = $res;
+            $pool = $res === 'fail' ? $P['qcFailNotes'] : $P['qcPassNotes'];
+            $answers['notes'] = $pool[$i % count($pool)];
+        }
+    }
+    // N30. Fleet incident: severity weighted low/medium and type-aware (near-miss/fine never High).
+    $fiTypeId = $findByLabel(['incident type']);
+    $fiSevId = $findByLabel(['severity']);
+    if ($fiTypeId && $fiSevId && array_intersect($optVals($fiTypeId), ['collision', 'near-miss', 'breakdown', 'fine'])) {
+        $it = strtolower((string) ($answers[$fiTypeId] ?? ''));
+        $sv = $optVals($fiSevId);
+        $h = seedHash($formName . 'sev' . $i);
+        if ($it === 'collision') { $w = ($h % 2 === 0) ? 'high' : 'medium'; }
+        elseif ($it === 'breakdown') { $w = ($h % 3 === 0) ? 'high' : 'medium'; }
+        elseif (in_array($it, ['near-miss', 'fine'], true)) { $w = ($h % 2 === 0) ? 'low' : 'medium'; }
+        else { $w = ['low', 'medium', 'medium', 'low', 'high'][$h % 5]; }
+        if (in_array($w, $sv, true)) { $answers[$fiSevId] = $w; }
+    }
+    // N31. SitePulse variation: construction-scale cost (thousands+); note matches the status.
+    if (isset($byId['variation_title'], $byId['estimated_cost']) && $findByLabel(['status'])) {
+        $answers['estimated_cost'] = random_int(3, 45) * 1000;
+        $st = strtolower((string) ($answers[$findByLabel(['status'])] ?? ''));
+        $dId = $findByLabel(['description']);
+        if ($dId) {
+            $pool = $st === 'approved' ? ['Approved by client, added to the contract sum.', 'Signed off, proceed to works.', 'Client approved via email.']
+                : ($st === 'rejected' ? ['Client declined the additional cost.', 'Rejected, outside budget.', 'Not proceeding at this stage.']
+                : ($st === 'sent' ? ['Issued to client for approval.', 'Awaiting client sign-off.', 'Quote sent, pending response.']
+                : ['Drafting scope and pricing.', 'Preliminary estimate only.', 'Scoping the change with the site team.']));
+            $answers[$dId] = $pool[$i % count($pool)];
+        }
+    }
+    // N32. VenueOps booking: duration by purpose (rounded), fee scales with hours (no 30-min $13k party).
+    if (isset($byId['booking_date'], $byId['start_time'], $byId['end_time'], $byId['purpose'])) {
+        $purp = strtolower((string) ($answers['purpose'] ?? ''));
+        $dur = ['party-celebration' => [3, 5], 'meeting' => [1, 3], 'class-workshop' => [2, 4], 'sport' => [1, 2], 'performance' => [2, 4], 'community-event' => [2, 5]][$purp] ?? [1, 3];
+        $h = random_int($dur[0], $dur[1]);
+        $s = str_pad((string) random_int(8, 19), 2, '0', STR_PAD_LEFT) . ':' . (random_int(0, 1) ? '30' : '00');
+        $answers['start_time'] = $s;
+        $answers['end_time'] = $addMin($s, $h * 60);
+        $amtId = $findByLabel(['amount']);
+        if ($amtId) { $answers[$amtId] = $h * random_int(80, 220); }
+    }
+    // N33. AgriLog farm job: In-progress only once started; future jobs stay Planned; completed date only when done.
+    if (isset($byId['job_type'], $byId['scheduled_date']) && $fnHas(['farm job']) && $findByLabel(['status'])) {
+        $sdId = $findByLabel(['scheduled date']);
+        $sId = $findByLabel(['status']);
+        $sd = $mk(random_int(-25, 20), $today);
+        $answers[$sdId] = $sd;
+        $sv = $optVals($sId);
+        if ($sd > $today) { $w = 'planned'; }
+        elseif ($sd === $today) { $w = 'in-progress'; }
+        else { $tok = seedHash($formName . 'fj' . $i) % 6; $w = $tok === 0 ? 'rained-off' : ($tok <= 1 ? 'in-progress' : 'done'); }
+        if (in_array($w, $sv, true)) { $answers[$sId] = $w; }
+        $cId = $findByLabel(['completed date']);
+        if ($cId) { if ($w === 'done') { $answers[$cId] = $mk(-random_int(0, 5), $today); } else { unset($answers[$cId]); } }
+    }
+    // N35. PassMaster staff: section/station constrained to the role (FOH vs kitchen, never Bartender·Hot line).
+    if (isset($byId['name'], $byId['role']) && $findByLabel(['section', 'station'])) {
+        $stId = $findByLabel(['section', 'station']);
+        $stv = $optVals($stId);
+        if (array_intersect($stv, ['hot-line', 'cold-larder', 'pastry', 'front-section'])) {
+            $rl = strtolower((string) ($answers[$findByLabel(['role'])] ?? ''));
+            $map = [
+                'server' => ['front-section', 'back-section'], 'bartender' => ['bar'],
+                'chef' => ['hot-line', 'cold-larder', 'pastry'], 'kitchen-hand' => ['cold-larder', 'pastry', 'hot-line'],
+                'manager' => ['front-section', 'back-section'],
+            ];
+            if (isset($map[$rl])) {
+                $cand = array_values(array_intersect($map[$rl], $stv));
+                if ($cand) { $answers[$stId] = $cand[seedHash($formName . 'stn' . $i) % count($cand)]; }
+            }
+        }
+    }
+    // N36. PassMaster kitchen ticket: items match the course (no mains filed under Dessert).
+    if (isset($byId['course'], $byId['items'], $byId['allergy_notes'])) {
+        $courseSeq = ['main', 'main', 'entree', 'main', 'dessert', 'main', 'entree', 'main', 'drinks', 'main', 'dessert', 'main', 'entree', 'main'];
+        $cv = $courseSeq[$i % count($courseSeq)];
+        if (in_array($cv, $optVals($findByLabel(['course'])), true)) { $answers['course'] = $cv; }
+        $cv = (string) ($answers['course'] ?? 'main');
+        $poolMap = ['entree' => $P['passEntree'], 'main' => $P['passMain'], 'dessert' => $P['passDessert'], 'drinks' => $P['passDrinks']];
+        $pool = $poolMap[$cv] ?? $P['passMain'];
+        $answers['items'] = 'T' . random_int(1, 24) . ' - ' . $pool[($i + seedHash($formName . 'crs')) % count($pool)];
     }
 }
 
@@ -1478,7 +1852,11 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             if ($has($label, ['quote number', 'quote no', 'quote #'])) { return $code('QT'); }
             if ($has($label, ['order']) && $has($label, ['number', ' no', '#'])) { return $code('ORD'); }
             if ($has($label, ['reference', 'ref no', 'ref number', 'ticket number', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
-            if ($has($label, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate']) && !$has($label, ['template'])) { return strtoupper($rand(['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK'])) . '-' . random_int(100, 999); }
+            if ($has($label, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate']) && !$has($label, ['template'])) {
+                // Distinct prefix per vehicle (drawn without replacement) so no prefix repeats down a fleet list.
+                $platePfx = ['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK', 'BDG', 'CFH', 'LMR', 'PWS', 'GVT', 'NKD', 'RJB', 'SYH'];
+                return (string) pickSeq($platePfx, $formName, 'plate', $i) . '-' . str_pad((string) (100 + (seedHash($formName . 'platenum' . $i) % 900)), 3, '0', STR_PAD_LEFT);
+            }
             if ($has($label, ['vin', 'chassis'])) { return strtoupper(substr(bin2hex(random_bytes(9)), 0, 17)); }
             if ($has($label, ['member number'])) { return 'M' . random_int(1000000, 9999999); }
             if ($has($label, ['policy number'])) { return 'POL-' . random_int(100000, 999999); }
@@ -1582,6 +1960,11 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             return null; // leave unknown short_text empty — never a placeholder string
         case 'long_text':
             if ($has($label, ['address'])) { return $addr(); }
+            // Site-diary/delivery exception fields are mostly EMPTY (a "no issues" delivery must not
+            // show an Issue pill; most days have no delay or visitor) — only a minority carry text.
+            if ($has($label, ['delays'])) { return random_int(1, 100) <= 30 ? pickSeq($P['siteDelays'], $formName, 'delay', $i) : null; }
+            if ($has($label, ['visitors'])) { return random_int(1, 100) <= 40 ? pickSeq($P['siteVisitors'], $formName, 'vis', $i) : null; }
+            if ($has($label, ['issues']) && $has($formName, ['delivery'])) { return random_int(1, 100) <= 25 ? pickSeq($P['deliveryIssues'], $formName, 'issue', $i) : null; }
             if ($has($label, ['complaint', 'fault', 'symptom', 'work requested'])) { return pickSeq($P['complaints'], $formName, 'complaint', $i); }
             if ($has($label, ['work done', 'work performed', 'resolution', 'action taken']) && !$has($formName, ['incident', 'care', 'pet', 'walk'])) { return pickSeq($P['workDone'], $formName, 'workdone', $i); }
             if ($has($label, ['reason for visit'])) { return pickSeq($P['clinicReasons'], $formName, 'reason', $i); }
@@ -1616,6 +1999,7 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             if ($has($label, ['party size'])) { return random_int(2, 8); }
             if ($has($label, ['guest count', 'number of guests'])) { return $has($formName, ['catering', 'event']) ? random_int(20, 180) : random_int(1, 8); }
             if ($has($label, ['covers'])) { return random_int(45, 110); }
+            if ($has($label, ['workers'])) { return random_int(8, 34); }
             if ($has($label, ['capacity', 'seats'])) {
                 if ($has($formName, ['table'])) { return random_int(2, 10); }
                 if ($has($formName, ['space', 'venue', 'room', 'hall', 'court', 'studio'])) { return random_int(30, 300); }
@@ -1947,20 +2331,72 @@ function seedPools(): array
         'Kettlebell Strength' => 'strength',
     ];
     $careDescByType = [
-        'injury' => ['Small graze on the left front paw noticed mid-walk', 'Limping slightly on the back leg', 'Minor cut to the paw pad from the footpath', 'Scraped nose on a fence'],
-        'escape-risk' => ['Slipped the collar near the park gate', 'Bolted after a passing dog', 'Dug under the side fence', 'Tried to jump the back gate'],
-        'aggression' => ['Growled at another dog at the park', 'Snapped when approached by a stranger', 'Lunged at a passing cyclist', 'Resource-guarded a found ball'],
-        'illness' => ['Vomited once early in the walk', 'Seemed lethargic and off food', 'Loose stools during the visit', 'Excessive panting in the heat'],
-        'no-access' => ['Key not in the lockbox as arranged', 'Gate was bolted from the inside', 'Alarm was armed, could not enter', 'Nobody home and no key left'],
-        'owner-note' => ['Owner requested extra playtime', 'Please use the harness, not the collar', 'Feed half a scoop after the walk', 'Drop the mail on the bench inside'],
+        'injury' => ['Small graze on the left front paw noticed mid-walk', 'Limping slightly on the back leg', 'Minor cut to the paw pad from the footpath', 'Scraped nose on a fence', 'Torn nail on the front paw', 'Sore hip after a slip on wet grass'],
+        'escape-risk' => ['Slipped the collar near the park gate', 'Bolted after a passing dog', 'Dug under the side fence', 'Tried to jump the back gate', 'Squeezed through a gap in the hedge', 'Pulled hard toward an open driveway'],
+        'aggression' => ['Growled at another dog at the park', 'Snapped when approached by a stranger', 'Lunged at a passing cyclist', 'Resource-guarded a found ball', 'Guarded the food bowl from another dog', 'Stiffened and growled near the gate', 'Barked and pulled hard toward a jogger', 'Reacted to a passing skateboard'],
+        'illness' => ['Vomited once early in the walk', 'Seemed lethargic and off food', 'Loose stools during the visit', 'Excessive panting in the heat', 'Coughing on and off during the walk', 'Refused water and seemed unsettled'],
+        'no-access' => ['Key not in the lockbox as arranged', 'Gate was bolted from the inside', 'Alarm was armed, could not enter', 'Nobody home and no key left', 'Lockbox code had changed', 'Side gate was padlocked'],
+        'owner-note' => ['Owner requested extra playtime', 'Please use the harness, not the collar', 'Feed half a scoop after the walk', 'Drop the mail on the bench inside', 'Wipe muddy paws before going inside', 'Refill the water bowl before leaving'],
     ];
     $careActionByType = [
-        'injury' => ['Cleaned the wound and monitored', 'Cut the walk short and rested', 'Advised the owner to check with the vet', 'Applied first aid and noted for follow-up'],
-        'escape-risk' => ['Secured with a backup lead and harness', 'Returned to the yard and checked fencing', 'Noted to use a martingale collar next time', 'Advised the owner to reinforce the gate'],
-        'aggression' => ['Kept distance from other dogs', 'Muzzled for the rest of the walk', 'Walked a quieter route', 'Advised the owner on a trainer referral'],
-        'illness' => ['Offered water and rested in the shade', 'Cut the visit short', 'Advised the owner to monitor overnight', 'Recommended a vet check'],
-        'no-access' => ['Called the owner, no answer', 'Left a note and rescheduled', 'Waited 10 minutes then moved on', 'Logged the missed visit'],
-        'owner-note' => ['Noted on the pet profile', 'Confirmed with the owner by text', 'Updated the care instructions', 'Acknowledged and actioned'],
+        'injury' => ['Cleaned the wound and monitored', 'Cut the walk short and rested', 'Advised the owner to check with the vet', 'Applied first aid and noted for follow-up', 'Bandaged the paw and rested in the shade', 'Iced the area and sent the owner a photo'],
+        'escape-risk' => ['Secured with a backup lead and harness', 'Returned to the yard and checked fencing', 'Noted to use a martingale collar next time', 'Advised the owner to reinforce the gate', 'Double-clipped the lead for the return leg', 'Kept to fenced areas for the rest of the walk'],
+        'aggression' => ['Kept distance from other dogs', 'Muzzled for the rest of the walk', 'Walked a quieter route', 'Advised the owner on a trainer referral', 'Created space and used treats to refocus', 'Ended the group walk early to settle'],
+        'illness' => ['Offered water and rested in the shade', 'Cut the visit short', 'Advised the owner to monitor overnight', 'Recommended a vet check', 'Kept the pace gentle and watched closely', 'Logged symptoms and messaged the owner'],
+        'no-access' => ['Called the owner, no answer', 'Left a note and rescheduled', 'Waited 10 minutes then moved on', 'Logged the missed visit', 'Texted the owner for a new code', 'Tried the neighbour, then rescheduled'],
+        'owner-note' => ['Noted on the pet profile', 'Confirmed with the owner by text', 'Updated the care instructions', 'Acknowledged and actioned', 'Added to the standing instructions', 'Flagged for the next visit'],
+    ];
+
+    // ── Round-2 coherence maps: name → (category / station / unit / type) so the field a screen groups
+    // by always agrees with the field it labels. Keys are the domain names; drawn WITHOUT replacement. ──
+    $passPrepMeta = [
+        'Diced onions' => ['cold', 'kg'], 'Chopped herbs' => ['cold', 'kg'], 'House stock' => ['hot', 'litres'],
+        'Bread rolls' => ['pastry', 'trays'], 'Salad mix' => ['cold', 'kg'], 'Dessert plating' => ['pastry', 'portions'],
+        'Sauce base' => ['hot', 'litres'], 'Marinated chicken' => ['hot', 'kg'], 'Prepped vegetables' => ['cold', 'kg'],
+        'Portioned proteins' => ['cold', 'portions'],
+    ];
+    $caterPackageMeta = [
+        'Breakfast Grazing' => 'breakfast', 'Morning Tea Package' => 'breakfast', 'Corporate Lunch Buffet' => 'lunch',
+        'Working Lunch' => 'lunch', 'High Tea' => 'grazing', 'Plated Three-Course Dinner' => 'dinner',
+        'BBQ Feast' => 'dinner', 'Canape Selection' => 'grazing', 'Grazing Table' => 'grazing', 'Cocktail Reception' => 'drinks',
+    ];
+    $caterTaskMeta = [
+        'Bake bread' => 'bakery', 'Prep canapes' => 'cold', 'Assemble grazing boxes' => 'cold', 'Cook mains' => 'hot',
+        'Pack delivery crates' => 'packing', 'Plate desserts' => 'bakery', 'Portion salads' => 'cold',
+        'Load the van' => 'delivery', 'Prep marinades' => 'prep', 'Garnish platters' => 'cold',
+    ];
+    $venueSpaceMeta = [
+        'Main Hall' => ['hall', [150, 300]], 'Function Room' => ['hall', [80, 180]], 'The Atrium' => ['hall', [100, 220]],
+        'Meeting Room A' => ['meeting-room', [8, 16]], 'Meeting Room B' => ['meeting-room', [8, 16]], 'Meeting Room C' => ['meeting-room', [8, 16]],
+        'The Boardroom' => ['meeting-room', [10, 20]], 'Conference Room' => ['meeting-room', [20, 50]],
+        'Studio 1' => ['studio', [15, 40]], 'Dance Studio' => ['studio', [15, 45]], 'Community Room' => ['studio', [20, 60]],
+        'Sports Court' => ['sports-court', [30, 120]], 'Rooftop Terrace' => ['outdoor-area', [40, 120]], 'Outdoor Pavilion' => ['outdoor-area', [50, 150]],
+    ];
+    $tradeCompanyMeta = [
+        'Apex Electrical' => 'electrical', 'Coastline Plumbing' => 'plumbing', 'Solidset Concreting' => 'concreting',
+        'TrueLine Carpentry' => 'carpentry', 'Summit Roofing' => 'roofing', 'ProFinish Painting' => 'painting',
+        'Groundworks Earthmoving' => 'earthworks', 'Voltage Solutions' => 'electrical', 'ClearFlow Plumbing' => 'plumbing',
+        'Redgum Carpentry' => 'carpentry',
+    ];
+    $machineByType = [
+        'tractor' => ['New Holland T7 Tractor', 'John Deere 8R Tractor', 'Case IH Magnum 340', 'Fendt 720 Vario', 'Massey Ferguson 8S', 'Kubota M7', 'Deutz-Fahr 6215'],
+        'harvester' => ['John Deere S680 Harvester', 'Case IH Axial-Flow 250', 'Claas Lexion 8900', 'New Holland CR10.90'],
+        'sprayer' => ['Hardi Commander Sprayer', 'Goldacres Crop Cruiser', 'John Deere R4030 Sprayer'],
+        'ute' => ['Toyota HiLux Ute', 'Ford Ranger Ute', 'Isuzu D-Max Ute'],
+        'implement' => ['Horwood Bagshaw Airseeder', 'Grizzly Offset Disc', 'Kelly Diamond Harrows'],
+        'pump' => ['Southern Cross Pump', 'Davey Irrigation Pump', 'Grundfos Bore Pump'],
+    ];
+    $retailTasksByArea = [
+        'floor' => ['Face-up shelves', 'Weekly stock count', 'Tidy fitting rooms', 'Restock display shelf'],
+        'stockroom' => ['Receive & check delivery', 'Restock backroom overflow', 'Reprice markdowns', 'Book in new stock'],
+        'display' => ['Refresh window merchandising', 'Restock display shelf', 'Update price tags', 'Set up new-season display'],
+        'admin' => ['Count register drawer', 'Reconcile daily takings', 'Approve staff timesheets', 'Order stationery supplies'],
+        'online' => ['Process online order backlog', 'Pack click-and-collect orders', 'Update online listings', 'Reply to online enquiries'],
+    ];
+    $stayReadySupUnit = [
+        'Bath towels' => 'sets', 'Hand towels' => 'sets', 'Bed linen sets' => 'sets', 'Toilet paper' => 'packs',
+        'Coffee pods' => 'packs', 'Tea bags' => 'packs', 'Shampoo bottles' => 'bottles', 'Soap bars' => 'packs',
+        'Dishwashing liquid' => 'bottles', 'Bin liners' => 'packs', 'Welcome snacks' => 'packs', 'Bottled water' => 'packs',
     ];
 
     $P = [
@@ -1980,10 +2416,11 @@ function seedPools(): array
             'Sienna Park', 'Blake Turner', 'Yara Aziz', 'Hugo Larsen', 'Melissa Cho', 'Karl Jensen',
         ],
         'companies' => [
-            'Acme Corp', 'Globex', 'Initech', 'Umbrella Co', 'Soylent Foods', 'Hooli', 'Stark Industries',
-            'Wayne Enterprises', 'Wonka Inc', 'Cyberdyne Systems', 'Northwind Traders', 'Contoso Ltd',
-            'Vandelay Industries', 'Massive Dynamic', 'Prestige Worldwide', 'Bluth Company', 'Pied Piper',
-            'Sterling Cooper', 'Fabrikam', 'Aperture Labs', 'Tyrell Corp', 'Gringotts Bank',
+            'Northwind Traders', 'Contoso Group', 'Fabrikam Industries', 'Harbourline Logistics', 'Meridian Consulting',
+            'Blue Ridge Partners', 'Summit Advisory', 'Cedar & Co', 'Lakeside Holdings', 'Ironbark Group',
+            'Crescent Media', 'Willowbrook Health', 'Greenfield Foods', 'Anchor Point Legal', 'Brightpath Solutions',
+            'Delacroix & Associates', 'Kingsley Manufacturing', 'Riverstone Capital', 'Oakwood Property', 'Vertex Systems',
+            'Clearwater Marketing', 'Sandhurst Retail',
         ],
         'partsAuto' => ['Brake Pads', 'Oil Filter', 'Spark Plug Set', 'Air Filter', 'Timing Belt', 'Alternator', 'Radiator Hose', 'Clutch Kit', 'Wiper Blades', 'Battery', 'Brake Disc', 'Fuel Pump'],
         'plumbItems' => ['15mm Copper Elbow', 'Tap Cartridge', 'PVC Coupling 40mm', 'Hot Water Tempering Valve', 'Flexible Hose 900mm', 'Toilet Cistern Kit', 'Basin Mixer Tap', 'Push-Fit Tee 20mm', 'Ball Float Valve', 'Compression Union 15mm', 'Pipe Lagging 2m', 'Isolating Valve', 'Waste Trap 40mm', 'Silicone Sealant'],
@@ -2076,11 +2513,12 @@ function seedPools(): array
         'caterPackages' => ['Breakfast Grazing', 'Corporate Lunch Buffet', 'Plated Three-Course Dinner', 'Canape Selection', 'Grazing Table', 'Morning Tea Package', 'BBQ Feast', 'High Tea', 'Cocktail Reception', 'Working Lunch'],
         'caterTasks' => ['Bake bread', 'Prep canapes', 'Assemble grazing boxes', 'Cook mains', 'Pack delivery crates', 'Plate desserts', 'Portion salads', 'Load the van', 'Prep marinades', 'Garnish platters'],
         'eventNames' => ['Harbour View Wedding', 'Q3 Board Lunch', 'Anderson 50th Birthday', 'Tech Summit Catering', 'Charity Gala Dinner', 'Corporate Awards Night', 'Riverside Engagement', 'Product Launch Canapes', 'Annual Staff Party', 'School Fundraiser Lunch'],
-        'projectNames' => ['Riverside Apartments Stage 2', 'Parkview Office Fitout', 'Harbour Lane Townhouses', 'Sunset Ridge Duplex', 'Central Plaza Retail', 'Northgate Warehouse', 'The Grove Residences', 'Bayside Medical Centre', 'Kingston Road Upgrade', 'Westfield Cafe Refit'],
+        'projectNames' => ['Riverside Apartments Stage 2', 'Parkview Office Fitout', 'Harbour Lane Townhouses', 'Sunset Ridge Duplex', 'Central Plaza Retail', 'Northgate Warehouse', 'The Grove Residences', 'Bayside Medical Centre', 'Kingston Road Upgrade', 'Westfield Cafe Refit', 'Eastwood Childcare Centre', 'Marina Boardwalk Stage 1', 'Ridgeway School Hall', 'Lakeside Apartments Stage 3', 'Old Mill Conversion', 'Verdant Park Clubhouse'],
         'defectTitles' => ['Cracked render to north wall', 'Leaking shower recess', 'Uneven floor tiles', 'Paint runs in stairwell', 'Loose balustrade', 'Gap in weatherboard', 'Chipped floor tile', 'Door not closing', 'Grout cracking in ensuite', 'Skirting board gap', 'Window seal failing', 'Scratched benchtop'],
         'variationTitles' => ['Add rear deck', 'Upgrade kitchen benchtops', 'Extra powerpoints', 'Change to tiled roof', 'Additional bathroom', 'Upgrade to stone flooring', 'Extend the driveway', 'Add solar provisions', 'Relocate laundry', 'Upgrade insulation'],
         'siteActivities' => ['Poured ground floor slab', 'Framing to first floor', 'Roof trusses installed', 'Bricklaying to east elevation', 'Rough-in plumbing started', 'Electrical rough-in', 'Plastering ground floor', 'Waterproofing to wet areas', 'Window installation', 'Site clean and prep'],
-        'tradeCompanies' => ['Apex Electrical', 'Coastline Plumbing', 'Solidset Concreting', 'TrueLine Carpentry', 'Summit Roofing', 'ProFinish Painting', 'Groundworks Earthmoving', 'Metro Waterproofing', 'Precision Tiling', 'Reliable Steelfix'],
+        'tradeCompanies' => array_keys($tradeCompanyMeta),
+        'tradeCompanyMeta' => $tradeCompanyMeta,
         'buildingSuppliers' => ['BuildRight Supplies', 'Metro Building Materials', 'Hanson Concrete', 'Boral Timber', 'Reece Plumbing', 'Steelforce', 'National Tiles', 'CSR Plasterboard', 'Bristile Roofing', 'Trade Depot'],
         'buildMaterials' => ['Reinforcing steel', 'Concrete mix', 'Timber framing', 'Plasterboard', 'Roof trusses', 'Insulation batts', 'Face bricks', 'Sand', 'Gravel', 'Window units'],
         'fitPrograms' => ['12-Week Fat Loss', 'Strength Foundations', 'Marathon Prep', 'Mobility Reset', 'Powerlifting Block', 'Beginner Bootcamp', 'Post-Rehab Return', 'Hypertrophy Builder', 'Core & Conditioning', 'Kettlebell Strength'],
@@ -2103,6 +2541,31 @@ function seedPools(): array
         'issueResolution' => ['Re-cleaned the area the same day', 'Sent the team back to finish', 'Refunded the affected portion', 'Apologised and rescheduled a touch-up', 'Spoke with the crew lead and corrected', 'Follow-up clean booked at no charge'],
         'homeworkNotes' => ['Practise times tables 6-9', 'Read chapter 4 and summarise', 'Complete the worksheet on fractions', 'Revise irregular verbs', 'Learn the C major scale', 'Past-paper section B', 'Vocabulary list weeks 3-4', 'Practise sight-reading', 'Complete algebra set 2', 'Essay plan for Friday'],
         'tutorProgress' => ['Strong grasp of the new topic today', 'Needs more practice with word problems', 'Confidence improving steadily', 'Great progress on exam technique', 'Struggled with the harder questions', 'Excellent focus this session', 'Revised prior material well', 'Ready to move to the next unit'],
+        // ── Round-2 pools ──
+        'passPrepMeta' => $passPrepMeta,
+        'caterPackageMeta' => $caterPackageMeta,
+        'caterTaskMeta' => $caterTaskMeta,
+        'venueSpaceMeta' => $venueSpaceMeta,
+        'machineByType' => $machineByType,
+        'retailTasksByArea' => $retailTasksByArea,
+        'retailTasksFlat' => array_values(array_unique(array_merge(...array_values($retailTasksByArea)))),
+        'stayReadySupUnit' => $stayReadySupUnit,
+        'passEntree' => ['2x Scallops, 1x Calamari', '1x Burrata, 1x Arancini', '2x Oysters Natural', '1x Bruschetta, 1x Soup', '2x Prawn Cocktail'],
+        'passMain' => ['2x Ribeye, 1x Sea Bass', '1x Pork Belly, 1x Gnocchi', '2x Barramundi', '1x Lamb Rack, 1x Risotto', '2x Eye Fillet, 1x Duck Breast', '1x Steak Frites, 1x Market Fish'],
+        'passDessert' => ['2x Creme Brulee', '1x Sticky Date, 1x Gelato', '2x Baked Cheesecake', '1x Chocolate Fondant', '2x Panna Cotta'],
+        'passDrinks' => ['2x House Red, 1x Sparkling', '1x Negroni, 1x Aperol Spritz', '2x Craft Beer', '1x Espresso Martini, 1x G&T', '3x Soft Drinks'],
+        'qcPassNotes' => ['All tests passed, device ready for collection.', 'Full function test passed.', 'No issues noted, signed off.', 'Passed QC, cleaned and ready.', 'Everything checks out, good to go.'],
+        'qcFailNotes' => ['Touch unresponsive at the top edge, back to bench.', 'Battery health below spec, needs replacement.', 'Rear camera still blurry, re-opened the job.', 'Speaker crackles on a test call.', 'Charging intermittent, reseating the connector.'],
+        'siteDelays' => ['Rain stopped work after lunch', 'Late material delivery held up the pour', 'Waiting on inspection sign-off', 'Crane down for two hours', 'Short-staffed, one crew off sick'],
+        'siteVisitors' => ['Client walk-through', 'Building surveyor on site', 'Safety auditor', 'Architect site visit', 'Council inspector'],
+        'deliveryIssues' => ['Short delivery, two items missing', 'Damaged packaging on arrival', 'Wrong product code supplied', 'Delivered to the wrong gate', 'Pallet split, some breakage'],
+        'issueDescByType' => [
+            'complaint' => ['Skirting boards still dusty', 'Vacuum missed under the beds', 'Bathroom mirror was left smeared', 'Team seemed rushed and missed spots', 'Kitchen splashback still greasy', 'Balcony was not swept'],
+            'damage' => ['Scratch on the hallway floorboards', 'Chipped paint near the doorframe', 'Cracked a vase while dusting', 'Mark left on the benchtop', 'Scuffed the skirting with the vacuum', 'Chipped a tile in the ensuite'],
+            'access-issue' => ['Key was not in the lockbox', 'Alarm code did not work', 'Could not get through the side gate', 'Building intercom was not answered', 'Lockbox code had changed', 'Parking permit was not left out'],
+            'missed-item' => ['Front windows were not cleaned', 'Kitchen bins were not emptied', 'Ensuite was skipped entirely', 'Cabinets were not wiped down', 'Oven interior was not done', 'Fridge shelves were missed'],
+            'payment-issue' => ['Invoice disputed by the client', 'Payment overdue by two weeks', 'Charged for an extra hour in error', 'Client requested a corrected invoice', 'Card payment was declined', 'Awaiting purchase-order number'],
+        ],
     ];
     return $P;
 }
