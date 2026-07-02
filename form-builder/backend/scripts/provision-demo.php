@@ -1126,6 +1126,18 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
             $k = array_search($pUnit, $uv, true);
             if ($k !== false) { $answers[$uId] = $optVals($uId)[$k]; }
         }
+        // Quantity scaled to the item/unit (herbs in small kg, stock in litres, proteins in portions)
+        // instead of one shared 30-something range (which read "33 kg of chopped herbs").
+        $pqId = $findByLabel(['quantity']);
+        if ($pqId) {
+            $nmL = strtolower($name);
+            if (hasKw($nmL, ['herb', 'onion', 'garnish'])) { $answers[$pqId] = random_int(1, 5); }
+            elseif ($pUnit === 'kg') { $answers[$pqId] = random_int(3, 18); }
+            elseif ($pUnit === 'litres') { $answers[$pqId] = random_int(4, 25); }
+            elseif ($pUnit === 'portions') { $answers[$pqId] = random_int(20, 80); }
+            elseif ($pUnit === 'trays') { $answers[$pqId] = random_int(2, 10); }
+            else { $answers[$pqId] = random_int(2, 20); }
+        }
     }
     // CounterFlow store task: unique title across the form, area set FROM the title (no dup rows).
     if (isset($byId['task_title'], $byId['area'])) {
@@ -1135,13 +1147,19 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $answers['task_title'] = $name;
         if (isset($areaOf[$name]) && in_array($areaOf[$name], $optVals($findByLabel(['area'])), true)) { $answers['area'] = $areaOf[$name]; }
     }
-    // CaterCraft menu package name ↔ category.
+    // CaterCraft menu package name ↔ category; package names are unique (pool > row count) and the
+    // minimum-guests figure is a rounded catering minimum, not a raw random integer.
     if (isset($byId['package_name'])) {
         $name = (string) pickSeq(array_keys($P['caterPackageMeta']), $formName, 'pkg', $i);
         $answers['package_name'] = $name;
         $cId = $findByLabel(['category']);
         $cat = $P['caterPackageMeta'][$name];
         if ($cId && in_array($cat, $optVals($cId), true)) { $answers[$cId] = $cat; }
+        $mgId = $findByLabel(['minimum guests', 'min guests']);
+        if ($mgId) {
+            $mins = [10, 15, 20, 20, 25, 25, 30, 40, 50];
+            $answers[$mgId] = $mins[seedHash($formName . 'mg' . $i) % count($mins)];
+        }
     }
     // CaterCraft production task ↔ station.
     if (isset($byId['task']) && $fnHas(['production'])) {
@@ -1159,12 +1177,28 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if (in_array($stype, $optVals($findByLabel(['space type'])), true)) { $answers['space_type'] = $stype; }
         $answers['capacity'] = random_int($capR[0], $capR[1]);
     }
-    // SitePulse subcontractor business name ↔ trade.
+    // SitePulse subcontractor business name ↔ trade; insurance-expiry MIX + coherent status so the
+    // "Insurance expiring" compliance KPI/register (derived from insured-to vs today) has real content:
+    // ~2 already lapsed, ~2 within 60 days, the rest current (2-12 months out).
     if (isset($byId['business_name'], $byId['trade'])) {
         $name = (string) pickSeq(array_keys($P['tradeCompanyMeta']), $formName, 'trade', $i);
         $answers['business_name'] = $name;
         $tr = $P['tradeCompanyMeta'][$name];
         if (in_array($tr, $optVals($findByLabel(['trade'])), true)) { $answers['trade'] = $tr; }
+        $ieId = $findByLabel(['insurance expiry']);
+        if ($ieId) {
+            $rr = $i % 6;
+            if ($rr === 0) { $exp = -random_int(10, 120); }       // lapsed
+            elseif ($rr === 1) { $exp = random_int(5, 55); }       // expiring within 60 days
+            else { $exp = random_int(70, 360); }                   // current, 2-12 months out
+            $answers[$ieId] = $mk($exp, $today);
+            $suStId = $findByLabel(['status']);
+            if ($suStId) {
+                $sv = $optVals($suStId);
+                $want = $exp < 0 ? 'expired-insurance' : (($i % 5 === 0) ? 'pending-review' : 'approved');
+                if (in_array($want, $sv, true)) { $answers[$suStId] = $want; }
+            }
+        }
     }
     // AgriLog machine name ↔ type; engine hours realistic; retired = no future service.
     if (isset($byId['machine_name'], $byId['machine_type'])) {
@@ -1196,9 +1230,13 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $trigger = (bool) array_intersect($lcv, ['out', 'low-stock', 'discontinued']) || (in_array('ok', $lcv, true) && in_array('low', $lcv, true));
         if ($trigger) {
             $par = random_int(8, 50);
+            $hasOut = in_array('out', $lcv, true);
             $r = $i % 6;
             // 'out' means genuinely 0 on hand (never 1); 'low' sits meaningfully below par (<= half).
-            if ($r === 0) { $on = 0; $state = 'out'; }
+            // When the vocab has no explicit 'out' (e.g. active/low-stock/discontinued) the most-depleted
+            // item stays LOW with a small non-zero count, so the screen never derives "Out of stock 0"
+            // (which would contradict a recent inbound movement seeded against that product).
+            if ($r === 0 && $hasOut) { $on = 0; $state = 'out'; }
             elseif ($r <= 2) { $on = random_int(1, max(1, intdiv($par, 2))); $state = 'low'; }
             else { $on = random_int($par, (int) round($par * 1.4)); $state = 'ok'; }
             $answers[$parId] = $par;
@@ -1394,10 +1432,14 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     // N11b. Reservations spread across tonight & upcoming so "covers tonight" and upcoming populate;
     // times cluster in evening dinner service (not scattered across breakfast/afternoon).
     if (isset($byId['party_size'], $byId['date']) && $findByLabel(['status'])) {
-        $rd = $mk(random_int(-6, 14), $today);
+        // Guarantee a cluster of reservations TONIGHT (with party sizes) so "covers tonight" is non-zero
+        // mid-service and agrees with the seated floor — the rest spread across the coming fortnight.
+        $rd = $i < 4 ? $today : $mk(random_int(-6, 14), $today);
         $answers['date'] = $rd;
         $rsv = $optVals($findByLabel(['status']));
-        $s = $rd > $today ? 'booked' : ($rd === $today ? 'seated' : ((seedHash($formName . 'rz' . $i) % 5 === 0) ? 'no-show' : 'seated'));
+        $s = $rd > $today
+            ? 'booked'
+            : ($rd === $today ? ((seedHash($formName . 'rz' . $i) % 3 === 0) ? 'booked' : 'seated') : ((seedHash($formName . 'rz' . $i) % 5 === 0) ? 'no-show' : 'seated'));
         if (in_array($s, $rsv, true)) { $answers['status'] = $s; }
         $tId = $findByLabel(['time']);
         if ($tId) {
@@ -1424,9 +1466,13 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $answers['delivery_time'] = $addMin((string) $answers['pickup_time'], random_int(2, 6) * 15);
     }
 
-    // N14. Delivery date lands in the recent past (a "received" delivery can't be future-dated).
+    // N14. Delivery date lands in the recent past (a "received" delivery can't be future-dated); the
+    // supplier is one whose trade actually stocks the delivered material (no steel from a timber yard).
     if (isset($byId['delivery_date'], $byId['material'])) {
         $answers['delivery_date'] = $mk(-random_int(0, 18), $today);
+        $mat = (string) ($answers['material'] ?? '');
+        $dSupId = $findByLabel(['supplier']);
+        if ($dSupId && isset($P['buildMaterialSupplier'][$mat])) { $answers[$dSupId] = $P['buildMaterialSupplier'][$mat]; }
     }
 
     // N15. Harvest: unit follows the crop (grain→tonnes, cotton/hay→bales); quantity realistic per unit.
@@ -1500,14 +1546,18 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $answers['body_fat_pct'] = max(8, min(38, $base + random_int(-4, 6)));
     }
 
-    // N19. Venue payments: refunds are a small minority, well below collections.
+    // N19. Venue payments: refunds are a small minority, well below collections; amounts sit in a tight
+    // venue-hire range so the summed PENDING KPI stays proportional to collected (no lone $13k outliers).
     $payStId = $findByLabel(['status']);
     if ($payStId && isset($byId['method'], $byId['amount'])) { // VenueOps payment (has 'method')
         $psv = $optVals($payStId);
+        $payAmtId = $findByLabel(['amount']);
         if (in_array('refunded', $psv, true)) {
             $want = (seedHash($formName . 'pay' . $i) % 8 === 3) ? 'refunded' : ((seedHash($formName . 'pay2' . $i) % 3 === 0) ? 'pending' : 'paid');
             if (in_array($want, $psv, true)) { $answers[$payStId] = $want; }
-            if (($answers[$payStId] ?? '') === 'refunded') { $answers[$findByLabel(['amount'])] = random_int(60, 400); }
+        }
+        if ($payAmtId) {
+            $answers[$payAmtId] = (($answers[$payStId] ?? '') === 'refunded') ? random_int(60, 400) : random_int(150, 3500);
         }
     }
 
@@ -1571,9 +1621,17 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     if (isset($byId['description'], $byId['resolution'], $byId['issue_type'])) {
         $iStId = $findByLabel(['status']);
         $ist = strtolower((string) ($iStId ? ($answers[$iStId] ?? '') : ''));
-        // Spread issue types evenly across the seeded set so no single type dominates the board.
+        // Spread issue types with an ORGANIC weighting (complaints/missed-items common, payment rare)
+        // so the "by issue type" bars vary rather than all reading an identical, synthetic length.
         $itId = $findByLabel(['issue type']);
-        if ($itId) { $itv = $optVals($itId); if ($itv) { $answers[$itId] = $itv[$i % count($itv)]; } }
+        if ($itId) {
+            $itv = $optVals($itId);
+            if ($itv) {
+                $wseq = ['complaint', 'missed-item', 'complaint', 'access-issue', 'damage', 'complaint', 'missed-item', 'payment-issue', 'damage', 'complaint', 'access-issue', 'missed-item', 'complaint', 'damage'];
+                $w = $wseq[$i % count($wseq)];
+                $answers[$itId] = in_array($w, $itv, true) ? $w : $itv[$i % count($itv)];
+            }
+        }
         // Description matches the issue TYPE (a Payment issue never reads as a cleaning-quality complaint);
         // indexed by a per-(type,row) hash so same-type rows rarely repeat verbatim.
         $it = strtolower((string) ($answers['issue_type'] ?? ''));
@@ -1612,20 +1670,28 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         if ($amI) { $answers[$amI] = random_int(80, 420); }
     }
 
-    // N23. Counterflow: damage/sale movements reduce stock (negative); supplier names realistic.
+    // N23. Counterflow: damage/sale movements reduce stock (negative); inbound movements sit in the
+    // recent PAST with item-sized magnitudes (so a return can't be dated today against a now-out
+    // product) and the reason line tracks the movement type instead of a generic note.
     if (isset($byId['movement_type'], $byId['quantity_change'])) {
         $mt = strtolower((string) ($answers['movement_type'] ?? ''));
-        $q = abs((int) ($answers['quantity_change'] ?? 0));
-        if ($q === 0) { $q = random_int(1, 30); }
-        if (in_array($mt, ['sale-adjustment', 'damage'], true)) { $answers['quantity_change'] = -$q; }
+        if ($mt === 'return') { $answers['quantity_change'] = random_int(1, 8); }
+        elseif ($mt === 'delivery') { $answers['quantity_change'] = random_int(10, 48); }
         elseif ($mt === 'stock-count') { $answers['quantity_change'] = random_int(-5, 5); }
-        else { $answers['quantity_change'] = $q; }
+        else { $answers['quantity_change'] = -random_int(1, 20); } // sale-adjustment / damage
+        $mvDId = $findByLabel(['date']);
+        if ($mvDId) {
+            $answers[$mvDId] = in_array($mt, ['delivery', 'return'], true) ? $mk(-random_int(3, 30), $today) : $mk(-random_int(0, 20), $today);
+        }
+        $mvRId = $findByLabel(['reason']);
+        if ($mvRId && isset($P['movementReasonByType'][$mt])) { $answers[$mvRId] = $P['movementReasonByType'][$mt]; }
     }
     if (isset($byId['contact_person'])) { // Counterflow supplier
         $snId = $findByLabel(['supplier name']);
         if ($snId) { $answers[$snId] = $P['retailSuppliers'][($i + seedHash($formName . 'rsup')) % count($P['retailSuppliers'])]; }
-        // The "Supplier" form context otherwise strips this to empty ("No contact on file").
-        $answers['contact_person'] = pickSeq($P['namesPrimary'], $formName, 'contactp', $i);
+        // Supplier contacts come from the STAFF pool so a supplier contact is never also one of the
+        // store's own employees (the staff roster draws from the PRIMARY pool).
+        $answers['contact_person'] = pickSeq($P['namesStaff'], $formName, 'contactp', $i);
     }
 
     // N24. Student roster: keep the large majority Active so "active students" isn't a dead 1-of-13.
@@ -1686,6 +1752,15 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
     if (isset($byId['quote_amount'], $byId['issue_type'], $byId['status'], $byId['due_date'])) {
         $st = strtolower((string) ($answers['status'] ?? ''));
         $done = in_array($st, ['ready', 'collected'], true);
+        // Express is a "jump the queue" minority (~20%), not nearly every job — a fixed pattern keeps
+        // the share stable (a hash could, by luck, land at 0% or too high across a small seeded set).
+        $prId = $findByLabel(['priority']);
+        if ($prId) {
+            $pv = $optVals($prId);
+            $expSeq = [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]; // 3 of 14 ≈ 21%
+            $want = $expSeq[$i % count($expSeq)] ? 'express' : 'standard';
+            if (in_array($want, $pv, true)) { $answers[$prId] = $want; }
+        }
         $dueId = $findByLabel(['due date']);
         if ($dueId) { $answers[$dueId] = $done ? $mk(-random_int(0, 10), $today) : $mk(random_int(0, 12), $today); }
         if (isset($byId['notes'])) {
@@ -1784,6 +1859,174 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $poolMap = ['entree' => $P['passEntree'], 'main' => $P['passMain'], 'dessert' => $P['passDessert'], 'drinks' => $P['passDrinks']];
         $pool = $poolMap[$cv] ?? $P['passMain'];
         $answers['items'] = 'T' . random_int(1, 24) . ' - ' . $pool[($i + seedHash($formName . 'crs')) % count($pool)];
+        // Guarantee the "on the pass" fired/created moment reads MINUTES ago for a live ticket (not a
+        // stale morning wall-clock that a later view renders as a 10h+ dwell). Applies to PassMaster's
+        // datetime field explicitly, alongside the generic live-queue rule (N4).
+        if (isset($byId['created_at'])) {
+            $answers['created_at'] = date('Y-m-d\TH:i', strtotime('-' . random_int(2, 45) . ' minutes'));
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  Round-3 coherence — dead-KPI backfills, status/vocabulary alignment, magnitudes.
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // R1. PawRoute walks: seed a PAST-completed backlog (last ~30 days, priced) plus a near-future
+    // scheduled tail, so "Completed 30d" and "Revenue this week" are non-zero and consistent with the
+    // incident/care-note history — instead of only future 'Scheduled' walks.
+    if (isset($byId['service_type'], $byId['status']) && $fnHas(['walk', 'visit'])) {
+        $wDId = $findByLabel(['scheduled date', 'date']);
+        $wStId = $findByLabel(['status']);
+        if ($wDId && $wStId) {
+            $offs = [-2, -4, -6, -9, -13, -17, -22, -27, -30, 1, 2, 4, 6, 3]; // ~9 past, ~5 upcoming
+            $wd = $mk($offs[$i % count($offs)], $today);
+            $answers[$wDId] = $wd;
+            $wsv = $optVals($wStId);
+            if ($wd > $today) { $w = 'scheduled'; }
+            else { $tok = seedHash($formName . 'wlk' . $i) % 9; $w = $tok === 0 ? 'no-access' : ($tok === 1 ? 'cancelled' : 'completed'); }
+            if (in_array($w, $wsv, true)) { $answers[$wStId] = $w; }
+            // A completed/booked walk always carries its charge; a cancellation may be a no-charge.
+            $wChId = $findByLabel(['charge']);
+            if ($wChId && $w === 'cancelled' && seedHash($formName . 'ch' . $i) % 2 === 0) { $answers[$wChId] = 0; }
+        }
+    }
+
+    // R2. PawRoute pets: keep the roster mostly Active (a paused/archived minority) so the "active pets"
+    // KPI reads healthy and pets appearing in upcoming schedules are (very likely) Active. The status
+    // field only ever holds a lifecycle value — temperament lives in its own field.
+    if (isset($byId['species'], $byId['size'])) {
+        $paId = $findByLabel(['active']);
+        if ($paId) {
+            $pav = $optVals($paId);
+            $seq = ['active', 'active', 'active', 'active', 'active', 'active', 'active', 'active', 'active', 'paused', 'active', 'archived', 'active', 'active'];
+            $w = $seq[$i % count($seq)];
+            if (in_array($w, $pav, true)) { $answers[$paId] = $w; }
+        }
+    }
+
+    // R3. PawRoute team members: skew roles to field staff (walkers/sitters) and keep the crew active
+    // so nobody dispatched an upcoming walk reads as inactive; few/no admins sit idle.
+    if (isset($byId['role']) && $fnHas(['team member'])) {
+        $tmRId = $findByLabel(['role']);
+        $tmAId = $findByLabel(['active']);
+        if ($tmRId) {
+            $rv = $optVals($tmRId);
+            $rSeq = ['walker', 'sitter', 'walker', 'walker', 'sitter', 'walker', 'sitter', 'walker', 'admin', 'sitter', 'walker', 'walker'];
+            $w = $rSeq[$i % count($rSeq)];
+            if (in_array($w, $rv, true)) { $answers[$tmRId] = $w; }
+        }
+        if ($tmAId && in_array('active', $optVals($tmAId), true)) { $answers[$tmAId] = 'active'; }
+    }
+
+    // R4. CleanShift clients: commercial/office clients are sites/businesses, not people; residential
+    // and airbnb clients stay personal names. Keep the email coherent with a business name.
+    if (isset($byId['client_name'], $byId['client_type'])) {
+        $ct = strtolower((string) ($answers['client_type'] ?? ''));
+        if (in_array($ct, ['commercial', 'office'], true)) {
+            $biz = (string) pickSeq($P['cleanCommercialClients'], $formName, 'ccli', $i);
+            $answers['client_name'] = $biz;
+            $slug = strtolower(trim(preg_replace('/[^A-Za-z0-9]+/', '.', $biz) ?? '', '.'));
+            foreach ($fields as $ff) {
+                if (($ff['type'] ?? '') === 'email' && $slug !== '') { $answers[(string) $ff['id']] = $slug . '@example.com'; }
+            }
+        }
+    }
+
+    // R5. CleanShift teams: a distinct lead per crew (no one leading three teams) and mostly active.
+    if (isset($byId['team_name'], $byId['lead_cleaner'])) {
+        $answers['lead_cleaner'] = pickSeq($P['namesStaff'], $formName, 'lead', $i);
+        $tAId = $findByLabel(['active']);
+        if ($tAId) { $answers[$tAId] = ($i % 5 === 0 && in_array('inactive', $optVals($tAId), true)) ? 'inactive' : 'active'; }
+    }
+
+    // R6. RepairBench parts orders: several arrive in the last 30 days ('received') and ETAs stay in a
+    // believable window (a few days to ~2 weeks), never weeks overdue with nothing ever received.
+    if (isset($byId['part_name'], $byId['eta']) && $fnHas(['parts order'])) {
+        $poStId = $findByLabel(['status']);
+        if ($poStId) {
+            $pov = $optVals($poStId);
+            $sSeq = ['received', 'ordered', 'received', 'needed', 'ordered', 'received', 'backordered', 'ordered', 'needed', 'received', 'cancelled', 'ordered', 'received', 'needed'];
+            $w = $sSeq[$i % count($sSeq)];
+            if (in_array($w, $pov, true)) { $answers[$poStId] = $w; }
+        }
+        $pst = strtolower((string) ($poStId ? ($answers[$poStId] ?? '') : ''));
+        if ($pst === 'received') { $answers['eta'] = $mk(-random_int(1, 22), $today); }
+        elseif ($pst === 'ordered') { $answers['eta'] = $mk(random_int(-4, 12), $today); }
+        elseif ($pst === 'backordered') { $answers['eta'] = $mk(random_int(7, 21), $today); }
+        elseif ($pst === 'needed') { $answers['eta'] = $mk(random_int(2, 14), $today); }
+        else { unset($answers['eta']); } // cancelled
+    }
+
+    // R7. FleetFlow drivers: a realistic active majority (only lapsed-licence drivers are inactive) so
+    // active drivers >= vehicles in use; active drivers hold valid future-dated licences.
+    if (isset($byId['driver_name'], $byId['active'])) {
+        $dAId = $findByLabel(['active']);
+        $dLeId = $findByLabel(['licence expiry', 'license expiry']);
+        $inactive = (seedHash($formName . 'drv' . $i) % 8 === 0); // ~1 in 8 inactive
+        if ($dAId) { $answers[$dAId] = $inactive ? 'inactive' : 'active'; }
+        if ($dLeId) { $answers[$dLeId] = $inactive ? $mk(-random_int(20, 300), $today) : $mk(random_int(60, 900), $today); }
+    }
+
+    // R8. FleetFlow trips: delivery/site-visit dominate, maintenance runs are a short-hop minority
+    // (a fleet doesn't drive hundreds of km to the mechanic); fuel cost tracks the shortened distance.
+    if (isset($byId['purpose'], $byId['start_odometer'], $byId['end_odometer']) && $fnHas(['trip'])) {
+        $tPId = $findByLabel(['purpose']);
+        if ($tPId) {
+            $pv = $optVals($tPId);
+            $pSeq = ['delivery', 'site-visit', 'delivery', 'delivery', 'site-visit', 'client-transport', 'delivery', 'site-visit', 'delivery', 'maintenance-run', 'client-transport', 'site-visit', 'delivery', 'site-visit'];
+            $w = $pSeq[$i % count($pSeq)];
+            if (in_array($w, $pv, true)) { $answers[$tPId] = $w; }
+        }
+        if (strtolower((string) ($answers[$tPId] ?? '')) === 'maintenance-run') {
+            $so = (int) ($answers['start_odometer'] ?? 0);
+            $answers['end_odometer'] = $so + random_int(5, 40); // short local hop
+            $tFId = $findByLabel(['fuel cost', 'fuel']);
+            if ($tFId) { $answers[$tFId] = max(3, (int) round(((int) $answers['end_odometer'] - $so) * (random_int(12, 22) / 100))); }
+        }
+    }
+
+    // R9. StayReady turnovers: notes read as a cleaning-turnover context (not appointment/legal filler);
+    // issue turnovers carry an issue note, others a short turnover note or none.
+    if (isset($byId['turnover_date'], $byId['status'], $byId['notes'])) {
+        $tSt = strtolower((string) ($answers['status'] ?? ''));
+        if ($tSt === 'issue') { $answers['notes'] = $P['turnoverIssueNotes'][seedHash($formName . 'tni' . $i) % count($P['turnoverIssueNotes'])]; }
+        elseif (seedHash($formName . 'tn' . $i) % 2 === 0) { $answers['notes'] = $P['turnoverNotes'][seedHash($formName . 'tn2' . $i) % count($P['turnoverNotes'])]; }
+        else { unset($answers['notes']); }
+    }
+
+    // R10. VenueOps incidents: description matches the incident type and never contradicts an open,
+    // non-zero-cost incident (no "No issues noted." on a reported Safety incident).
+    if (isset($byId['incident_type'], $byId['cost_estimate']) && $findByLabel(['description'])) {
+        $vit = strtolower((string) ($answers['incident_type'] ?? ''));
+        $vDId = $findByLabel(['description']);
+        $pool = $P['venueIncidentDescByType'][$vit] ?? $P['venueIncidentDescByType']['damage'];
+        $answers[$vDId] = $pool[seedHash($formName . 'vinc' . $vit . '#' . $i) % count($pool)];
+    }
+
+    // R11. VenueOps setup: an 'Empty' layout needs no setup items and no catering.
+    if (isset($byId['layout'], $byId['equipment'])) {
+        if (strtolower((string) ($answers['layout'] ?? '')) === 'empty') {
+            $answers['equipment'] = [];
+            $vcId = $findByLabel(['catering']);
+            if ($vcId && in_array('no', $optVals($vcId), true)) { $answers[$vcId] = 'no'; }
+        }
+    }
+
+    // R12. SitePulse projects: in-progress/planning projects have FUTURE target-completion dates (so
+    // the "due in 60d / approaching" KPI has something to point at), with start dates in the past.
+    if (isset($byId['target_completion'], $byId['start_date'])) {
+        $pStId = $findByLabel(['status']);
+        $pst2 = strtolower((string) ($pStId ? ($answers[$pStId] ?? '') : ''));
+        if (in_array($pst2, ['closed', 'practical-completion'], true)) {
+            $answers['start_date'] = $mk(-random_int(120, 500), $today);
+            $answers['target_completion'] = $mk(-random_int(5, 90), $today);
+        } elseif ($pst2 === 'planning') {
+            $answers['start_date'] = $mk(random_int(-15, 20), $today);
+            $answers['target_completion'] = $mk(random_int(90, 400), $today);
+        } else { // active / on-hold
+            $answers['start_date'] = $mk(-random_int(30, 260), $today);
+            $answers['target_completion'] = $mk(random_int(20, 220), $today);
+        }
     }
 }
 
@@ -1983,8 +2226,15 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             return pickSeq($P['genericNotes'], $formName, $fid, $i);
         case 'email':
             return strtolower(str_replace(' ', '.', (string) pickSeq($P['namesPrimary'], $formName, 'email', $i))) . '@example.com';
-        case 'phone':
-            return '(555) 555-' . str_pad((string) ((seedHash($formName . 'phone') % 8500) + 1000 + $i), 4, '0', STR_PAD_LEFT);
+        case 'phone': {
+            // AU mobile (04xx xxx xxx) with per-(form,row) hashed digits — no fake 555 placeholders and
+            // no incrementing last-4 (which exposes the seeder); fits the app's AU context (rego, etc.).
+            $d = seedHash($formName . '|phone|' . $i);
+            $a = str_pad((string) ($d % 90 + 10), 2, '0', STR_PAD_LEFT);
+            $b = str_pad((string) (intdiv($d, 97) % 1000), 3, '0', STR_PAD_LEFT);
+            $c = str_pad((string) (intdiv($d, 100003) % 1000), 3, '0', STR_PAD_LEFT);
+            return '04' . $a . ' ' . $b . ' ' . $c;
+        }
         case 'url':
             return 'https://example.com/' . random_int(100, 999);
         case 'number': {
@@ -1999,7 +2249,7 @@ function genValue(array $field, int $i, array $seeded, string $formName = '', in
             if ($has($label, ['party size'])) { return random_int(2, 8); }
             if ($has($label, ['guest count', 'number of guests'])) { return $has($formName, ['catering', 'event']) ? random_int(20, 180) : random_int(1, 8); }
             if ($has($label, ['covers'])) { return random_int(45, 110); }
-            if ($has($label, ['workers'])) { return random_int(8, 34); }
+            if ($has($label, ['workers'])) { $r = random_int(0, 9); return $r < 6 ? random_int(4, 12) : ($r < 9 ? random_int(12, 20) : random_int(20, 30)); }
             if ($has($label, ['capacity', 'seats'])) {
                 if ($has($formName, ['table'])) { return random_int(2, 10); }
                 if ($has($formName, ['space', 'venue', 'room', 'hall', 'court', 'studio'])) { return random_int(30, 300); }
@@ -2359,6 +2609,10 @@ function seedPools(): array
         'Breakfast Grazing' => 'breakfast', 'Morning Tea Package' => 'breakfast', 'Corporate Lunch Buffet' => 'lunch',
         'Working Lunch' => 'lunch', 'High Tea' => 'grazing', 'Plated Three-Course Dinner' => 'dinner',
         'BBQ Feast' => 'dinner', 'Canape Selection' => 'grazing', 'Grazing Table' => 'grazing', 'Cocktail Reception' => 'drinks',
+        // Extra unique packages so a library of up to ~14 rows never lists the same package twice.
+        'Continental Breakfast' => 'breakfast', 'Seafood Banquet' => 'dinner', 'Buffet Lunch' => 'lunch',
+        'Antipasto Grazing' => 'grazing', 'Dessert Table' => 'grazing', 'Barista Coffee Cart' => 'drinks',
+        'Finger Food Reception' => 'grazing',
     ];
     $caterTaskMeta = [
         'Bake bread' => 'bakery', 'Prep canapes' => 'cold', 'Assemble grazing boxes' => 'cold', 'Cook mains' => 'hot',
@@ -2377,6 +2631,10 @@ function seedPools(): array
         'TrueLine Carpentry' => 'carpentry', 'Summit Roofing' => 'roofing', 'ProFinish Painting' => 'painting',
         'Groundworks Earthmoving' => 'earthworks', 'Voltage Solutions' => 'electrical', 'ClearFlow Plumbing' => 'plumbing',
         'Redgum Carpentry' => 'carpentry',
+        // Extra entries so a subbie register of up to ~14 rows never repeats a business name.
+        'Sterling Electrical' => 'electrical', 'AquaFlow Plumbing' => 'plumbing', 'Precision Concreting' => 'concreting',
+        'BuildTrue Carpentry' => 'carpentry', 'Peak Roofing' => 'roofing', 'ColourCoat Painting' => 'painting',
+        'Terra Earthworks' => 'earthworks',
     ];
     $machineByType = [
         'tractor' => ['New Holland T7 Tractor', 'John Deere 8R Tractor', 'Case IH Magnum 340', 'Fendt 720 Vario', 'Massey Ferguson 8S', 'Kubota M7', 'Deutz-Fahr 6215'],
@@ -2565,6 +2823,34 @@ function seedPools(): array
             'access-issue' => ['Key was not in the lockbox', 'Alarm code did not work', 'Could not get through the side gate', 'Building intercom was not answered', 'Lockbox code had changed', 'Parking permit was not left out'],
             'missed-item' => ['Front windows were not cleaned', 'Kitchen bins were not emptied', 'Ensuite was skipped entirely', 'Cabinets were not wiped down', 'Oven interior was not done', 'Fridge shelves were missed'],
             'payment-issue' => ['Invoice disputed by the client', 'Payment overdue by two weeks', 'Charged for an extra hour in error', 'Client requested a corrected invoice', 'Card payment was declined', 'Awaiting purchase-order number'],
+        ],
+        // ── Round-3 pools ──
+        // Construction delivery: each material comes from a supplier whose trade actually stocks it
+        // (no reinforcing steel from a timber yard). Every value in buildMaterials must be a key here.
+        'buildMaterialSupplier' => [
+            'Reinforcing steel' => 'Steelforce', 'Concrete mix' => 'Hanson Concrete', 'Timber framing' => 'Boral Timber',
+            'Plasterboard' => 'CSR Plasterboard', 'Roof trusses' => 'Boral Timber', 'Insulation batts' => 'BuildRight Supplies',
+            'Face bricks' => 'Metro Building Materials', 'Sand' => 'Hanson Concrete', 'Gravel' => 'Hanson Concrete',
+            'Window units' => 'Trade Depot',
+        ],
+        // Stock-movement reason line reads from the movement type instead of a generic note.
+        'movementReasonByType' => [
+            'delivery' => 'Supplier delivery received', 'return' => 'Customer return processed',
+            'damage' => 'Damaged stock written off', 'sale-adjustment' => 'Point-of-sale adjustment',
+            'stock-count' => 'Cycle count correction',
+        ],
+        // Cleaning: commercial/office clients are sites/businesses, not people.
+        'cleanCommercialClients' => ['Riverside Dental', 'Northgate Offices', 'Bluestone Cafe', 'Harbourview Medical', 'Gateway Legal', 'Parkside Childcare', 'Meridian Realty', 'Coastline Physio', 'Kingsway Chambers', 'Elmtree Accounting', 'Summit Fitness', 'Cedar Veterinary', 'Lakeside Pharmacy', 'Ironbark Logistics'],
+        // Short-stay turnover notes (a cleaning turnover context, not appointment/legal filler).
+        'turnoverNotes' => ['Linens restocked', 'Late checkout, started at noon', 'Guest left early', 'Deep clean scheduled', 'Extra towels left out', 'Welcome pack replenished', 'Restocked coffee and tea pods', 'Checked for lost property', 'Fresh linen on all beds', 'Dishwasher run and emptied'],
+        'turnoverIssueNotes' => ['Stain on the carpet, flagged for owner', 'Broken glass found in the kitchen', 'Remote control missing', 'Bathroom needs a maintenance visit', 'Guest reported a blocked drain', 'Bedspread damaged, replacement needed'],
+        // Venue incident descriptions keyed by type + a status-agnostic factual line (never "no issues").
+        'venueIncidentDescByType' => [
+            'damage' => ['Chairs scuffed the timber floor', 'Wall scratched moving equipment', 'Broken glass in the main hall', 'Table leg snapped during pack-down', 'Projector screen torn'],
+            'noise-complaint' => ['Neighbour complained about after-hours music', 'Sound exceeded the agreed limit after 10pm', 'Amplified music ran without approval', 'Repeated noise warnings during the event'],
+            'overstay' => ['Guests stayed past the booked end time', 'Pack-down ran 90 minutes over', 'Late vacate delayed the next hire', 'Extra hour used without booking'],
+            'cleaning-issue' => ['Kitchen left dirty after the event', 'Rubbish not removed from the hall', 'Spills left across the floor', 'Bins overflowing after the function'],
+            'safety' => ['Fire exit was blocked during the event', 'Trip hazard from trailing cables', 'Crowd exceeded the capacity limit', 'First-aid incident reported on site'],
         ],
     ];
     return $P;

@@ -1138,7 +1138,7 @@ export const caterCraftPack: PackData = {
           "  html+=headerBlock(UC,ctx.appName||'CaterCraft',brief(['<b>'+fmtInt(next14)+'</b> event'+(next14===1?'':'s')+' in 14 days','<b>'+mnyC(pipeVal)+'</b> in the pipeline',pendDiet>0?'<b>'+fmtInt(pendDiet)+'</b> dietar'+(pendDiet===1?'y':'ies')+' to confirm':'diets all confirmed']),[{nav:fJ?fJ.formId:'',label:'New enquiry',icon:I.plus},{nav:fC?fC.formId:'',label:'New client',icon:I.user,ghost:true}]);",
           "  var heroLabel,heroVal,heroSub;",
           "  if(weekN===0&&up.length){heroLabel='Upcoming events';heroVal=up.length;heroSub=up[0].dd===0?'<b>next today</b>':'next '+h(ago(up[0].a.event_date));}",
-          "  else{heroLabel='Events this week';heroVal=weekN;heroSub='<b>'+fmtInt(todayN)+'</b> today \\u00b7 <b>'+fmtInt(next14)+'</b> in 14 days';}",
+          "  else{heroLabel='Events (next 14 days)';heroVal=next14;heroSub='<b>'+fmtInt(todayN)+'</b> today \\u00b7 <b>'+fmtInt(weekN)+'</b> this week';}",
           "  html+='<div class=\"kpis\">'",
           "    +kpi(heroLabel,heroVal,heroSub,{hero:true,spark:spark(weekly(jobs))})",
           "    +kpi('Pipeline value',mnyC(pipeVal),'<b>'+fmtInt(openN)+'</b> open job'+(openN===1?'':'s')+' \\u00b7 not yet closed')",

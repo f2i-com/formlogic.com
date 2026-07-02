@@ -872,7 +872,7 @@ export const agriLogPack: PackData = {
           "  html+='<div class=\"kpis\">'",
           "    +kpi('Spend 90d',mnyC(spend90),'<b>'+fmtInt(rows.length)+'</b> job'+(rows.length===1?'':'s')+' logged',{hero:true,spark:spark(weekly(rows))})",
           "    +kpi('Logs 30d',logs30,'in the last month')",
-          "    +kpi('Repairs',typed?repPct+'%':'\\u2014','of all maintenance')",
+          "    +kpi('Unplanned',typed?repPct+'%':'\\u2014','reactive, not scheduled service')",
           "    +'</div>';",
           "  var sorted=rows.slice().sort(function(x,y){var xd=pd((x.answers||{}).date),yd=pd((y.answers||{}).date);return (yd?yd.getTime():0)-(xd?xd.getTime():0);});",
           "  var rHtml='';",
