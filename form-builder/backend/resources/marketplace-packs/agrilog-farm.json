@@ -1,0 +1,1284 @@
+{
+  "id": "agrilog-farm",
+  "name": "AgriLog — Farm Jobs & Harvest Tracker",
+  "description": "A farm operations tracker for small farms: manage paddocks and crop jobs, log harvests, keep a chemical application register with withholding periods, and track machinery and maintenance. Includes 6 forms and 1 app.",
+  "tags": [
+    "farm",
+    "agriculture",
+    "harvest",
+    "paddocks",
+    "compliance"
+  ],
+  "icon": "Tractor",
+  "pack": {
+    "formatVersion": 1,
+    "packMeta": {
+      "id": "agrilog-farm",
+      "name": "AgriLog — Farm Jobs & Harvest Tracker",
+      "description": "A whole-farm operations log for small farms: map your paddocks and their crops, schedule and track field jobs, tally every harvest load, keep a compliant chemical register with live withholding periods, and stay on top of machinery and its maintenance — all linked together.",
+      "version": "1.0.0",
+      "author": "FormLogic",
+      "tags": [
+        "farm",
+        "agriculture",
+        "harvest",
+        "paddocks",
+        "compliance"
+      ]
+    },
+    "forms": [
+      {
+        "packFormId": "paddock",
+        "title": "Paddock",
+        "icon": "Sprout",
+        "description": "Map a block or paddock with its crop, area, irrigation and current working status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Paddock",
+            "description": "Add a block so you can plan jobs, log harvests and keep chemical records against it.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "block_name",
+            "type": "short_text",
+            "label": "Block name",
+            "required": true,
+            "properties": {
+              "placeholder": "e.g. North Paddock, River Block 3"
+            }
+          },
+          {
+            "id": "crop",
+            "type": "short_text",
+            "label": "Crop",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Wheat, Barley, Lucerne"
+            }
+          },
+          {
+            "id": "area_ha",
+            "type": "number",
+            "label": "Area (hectares)",
+            "required": false,
+            "properties": {
+              "placeholder": "0",
+              "min": 0
+            }
+          },
+          {
+            "id": "soil_notes",
+            "type": "long_text",
+            "label": "Soil notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Soil type, pH, drainage, recent amendments…"
+            }
+          },
+          {
+            "id": "irrigation",
+            "type": "dropdown",
+            "label": "Irrigation type",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "drip",
+                  "label": "Drip",
+                  "value": "drip"
+                },
+                {
+                  "id": "sprinkler",
+                  "label": "Sprinkler",
+                  "value": "sprinkler"
+                },
+                {
+                  "id": "flood",
+                  "label": "Flood",
+                  "value": "flood"
+                },
+                {
+                  "id": "dryland",
+                  "label": "Dryland",
+                  "value": "dryland"
+                }
+              ]
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "in-crop",
+                  "label": "In crop",
+                  "value": "in-crop"
+                },
+                {
+                  "id": "fallow",
+                  "label": "Fallow",
+                  "value": "fallow"
+                },
+                {
+                  "id": "being-prepared",
+                  "label": "Being prepared",
+                  "value": "being-prepared"
+                },
+                {
+                  "id": "grazing",
+                  "label": "Grazing",
+                  "value": "grazing"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<path d=\"M12 21V12\"/><path d=\"M12 12C12 8.5 9.3 5.8 5.5 5.8c0 3.5 2.7 6.2 6.5 6.2z\"/><path d=\"M12 10.5c0-3 2.3-5.3 5.8-5.3 0 3.2-2.4 5.5-5.8 5.5z\"/>');\nvar PC={'in-crop':'good',fallow:'neutral','being-prepared':'warn',grazing:'accent'};\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var stMap=optionMap(ctx.fields,'status'),irMap=optionMap(ctx.fields,'irrigation');\n  var inCrop=0,fallow=0,areaT=0;\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};if(a.status==='in-crop')inCrop++;if(a.status==='fallow')fallow++;areaT+=num(a.area_ha);}\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Paddocks',brief(['<b>'+fmtInt(rows.length)+'</b> block'+(rows.length===1?'':'s'),'<b>'+fmtInt(inCrop)+'</b> in crop',areaT>0?'<b>'+fmtInt(Math.round(areaT))+'</b> ha total':'']),'New paddock');\n  html+='<div class=\"kpis\">'\n    +kpi('Blocks in crop',inCrop,'of <b>'+fmtInt(rows.length)+'</b> block'+(rows.length===1?'':'s'),{hero:true,spark:spark(weekly(rows))})\n    +kpi('Total area',areaT>0?fmtInt(Math.round(areaT))+' ha':'\\u2014','under management')\n    +kpi('Fallow',fallow,fallow>0?'resting between crops':'every block working')\n    +'</div>';\n  var rHtml='';\n  for(var p=0;p<Math.min(7,rows.length);p++){var b=rows[p].answers||{};\n    var sub=(b.crop?h(b.crop):'')+(b.crop&&b.irrigation?' \\u00b7 ':'')+(b.irrigation?h(labelFor(irMap,b.irrigation)):'');\n    var right=(num(b.area_ha)>0?'<span class=\"chip\">'+h(fmtInt(num(b.area_ha)))+' ha</span>':'')+pill(labelFor(stMap,b.status),PC[b.status]||'neutral');\n    rHtml+=rowItem(h(b.block_name||'Block'),sub,right);}\n  if(!rHtml)rHtml=emptyBlock(GL,'Paddocks you add appear here with their crop, area and status.','+ New paddock');\n  else rHtml='<div class=\"rows\">'+rHtml+'</div>';\n  var bHtml=breakdown(rows,'status',stMap)||emptyBlock(I.chart,'The status mix appears once you map some blocks.','+ New paddock');\n  html+=sec('Block map')+'<div class=\"grid g21\">'+panel('Blocks',rHtml)+panel('By status',bHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      },
+      {
+        "packFormId": "farm-job",
+        "title": "Farm Job",
+        "icon": "ClipboardList",
+        "description": "Schedule a field job against a block — planting, spraying, harvest or maintenance — and track it to done.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Farm Job",
+            "description": "Plan a job on a paddock, assign it and keep the work board moving.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "block",
+            "type": "linked_record",
+            "label": "Block",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:paddock"
+            }
+          },
+          {
+            "id": "job_type",
+            "type": "dropdown",
+            "label": "Job type",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "planting",
+                  "label": "Planting",
+                  "value": "planting"
+                },
+                {
+                  "id": "spraying",
+                  "label": "Spraying",
+                  "value": "spraying"
+                },
+                {
+                  "id": "irrigation",
+                  "label": "Irrigation",
+                  "value": "irrigation"
+                },
+                {
+                  "id": "fertiliser",
+                  "label": "Fertiliser",
+                  "value": "fertiliser"
+                },
+                {
+                  "id": "harvest",
+                  "label": "Harvest",
+                  "value": "harvest"
+                },
+                {
+                  "id": "maintenance",
+                  "label": "Maintenance",
+                  "value": "maintenance"
+                }
+              ]
+            }
+          },
+          {
+            "id": "scheduled_date",
+            "type": "date",
+            "label": "Scheduled date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "completed_date",
+            "type": "date",
+            "label": "Completed date",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "assigned_to",
+            "type": "short_text",
+            "label": "Assigned to",
+            "required": false,
+            "properties": {
+              "placeholder": "Who is doing the work"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "planned",
+                  "label": "Planned",
+                  "value": "planned"
+                },
+                {
+                  "id": "in-progress",
+                  "label": "In progress",
+                  "value": "in-progress"
+                },
+                {
+                  "id": "done",
+                  "label": "Done",
+                  "value": "done"
+                },
+                {
+                  "id": "rained-off",
+                  "label": "Rained off",
+                  "value": "rained-off"
+                }
+              ]
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Rates, gear, paddock conditions, anything to hand over…"
+            }
+          },
+          {
+            "id": "photos",
+            "type": "file_upload",
+            "label": "Photos",
+            "required": false,
+            "properties": {
+              "acceptedFileTypes": [
+                ".jpg",
+                ".png"
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<rect x=\"5\" y=\"5\" width=\"14\" height=\"16\" rx=\"2\"/><path d=\"M9 5V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1\"/><path d=\"M8.5 11l1.4 1.4 3-3M8.5 16l1.4 1.4 3-3\"/>');\nvar JC={planned:'var(--ax)','in-progress':'var(--fl-warn)',done:'var(--fl-good)','rained-off':'var(--fl-faint)'};\nvar JP={planned:'accent','in-progress':'warn',done:'good','rained-off':'neutral'};\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var jtMap=optionMap(ctx.fields,'job_type'),stMap=optionMap(ctx.fields,'status');\n  var weekN=0,overdue=0,rained30=0,board=[];\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};var st=a.status;var dd=dayDiff(a.scheduled_date);\n    if(dd!=null&&dd>=0&&dd<=6&&st!=='done'&&st!=='rained-off')weekN++;\n    if(dd!=null&&dd<0&&(st==='planned'||st==='in-progress'))overdue++;\n    if(st==='rained-off'&&dd!=null&&dd>=-30&&dd<=0)rained30++;\n    if(dd!=null&&st!=='done'&&st!=='rained-off')board.push({a:a,dd:dd});}\n  board.sort(function(x,y){return x.dd-y.dd;});\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Farm Jobs',brief(['<b>'+fmtInt(weekN)+'</b> this week',overdue>0?'<b>'+fmtInt(overdue)+'</b> overdue':'','<b>'+fmtInt(rows.length)+'</b> logged']),'New job');\n  html+='<div class=\"kpis\">'\n    +kpi('This week',weekN,board.length?'<b>'+fmtInt(board.length)+'</b> on the board':'nothing scheduled',{hero:true,spark:spark(weekly(rows))})\n    +kpi('Overdue',overdue,overdue>0?'<span style=\"color:var(--fl-warn);font-weight:650\">need rescheduling</span>':'all on track')\n    +kpi('Rained off 30d',rained30,rained30>0?'weather delays':'no washouts')\n    +'</div>';\n  var boardHtml='';\n  for(var b=0;b<Math.min(8,board.length);b++){var e=board[b];var a2=e.a;\n    var when=e.dd<0?'<span style=\"color:var(--fl-warn);font-weight:650\">'+h(ago(a2.scheduled_date))+'</span>':'scheduled '+h(fmtDate(a2.scheduled_date));\n    var sub=(a2.assigned_to?h(a2.assigned_to)+' \\u00b7 ':'')+when;\n    boardHtml+=qRow(JC[a2.status]||'var(--fl-accent)',h(labelFor(jtMap,a2.job_type)),sub,pill(labelFor(stMap,a2.status),JP[a2.status]||'neutral'));}\n  if(!boardHtml&&rows.length){for(var p=0;p<Math.min(6,rows.length);p++){var rj=rows[p].answers||{};\n    boardHtml+=qRow(JC[rj.status]||'var(--fl-accent)',h(labelFor(jtMap,rj.job_type)),'scheduled '+h(fmtDate(rj.scheduled_date)),pill(labelFor(stMap,rj.status),JP[rj.status]||'neutral'));}}\n  if(!boardHtml)boardHtml=emptyBlock(I.cal,'Jobs you schedule appear here, soonest first.','+ New job');\n  var bHtml=breakdown(rows,'job_type',jtMap)||emptyBlock(I.chart,'Job types chart here as you log work.','+ New job');\n  html+=sec('Work board')+'<div class=\"grid g21\">'+panel(board.length?'This week & upcoming':'Recent jobs',boardHtml)+panel('By type',bHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      },
+      {
+        "packFormId": "harvest-log",
+        "title": "Harvest Log",
+        "icon": "Wheat",
+        "description": "Record a harvested load off a block with its crop, quantity, grade and where it went.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Harvest Log",
+            "description": "Log a load as it comes off the paddock so the season tally stays current.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "block",
+            "type": "linked_record",
+            "label": "Block",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:paddock"
+            }
+          },
+          {
+            "id": "harvest_date",
+            "type": "date",
+            "label": "Harvest date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "crop",
+            "type": "short_text",
+            "label": "Crop",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Wheat, Apples, Hay"
+            }
+          },
+          {
+            "id": "quantity",
+            "type": "number",
+            "label": "Quantity",
+            "required": false,
+            "properties": {
+              "placeholder": "0",
+              "min": 0
+            }
+          },
+          {
+            "id": "unit",
+            "type": "dropdown",
+            "label": "Unit",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "tonnes",
+                  "label": "Tonnes",
+                  "value": "tonnes"
+                },
+                {
+                  "id": "kg",
+                  "label": "kg",
+                  "value": "kg"
+                },
+                {
+                  "id": "bins",
+                  "label": "Bins",
+                  "value": "bins"
+                },
+                {
+                  "id": "bales",
+                  "label": "Bales",
+                  "value": "bales"
+                }
+              ]
+            }
+          },
+          {
+            "id": "grade",
+            "type": "dropdown",
+            "label": "Grade",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "premium",
+                  "label": "Premium",
+                  "value": "premium"
+                },
+                {
+                  "id": "grade-1",
+                  "label": "Grade 1",
+                  "value": "grade-1"
+                },
+                {
+                  "id": "grade-2",
+                  "label": "Grade 2",
+                  "value": "grade-2"
+                },
+                {
+                  "id": "juice-feed",
+                  "label": "Juice or feed",
+                  "value": "juice-feed"
+                }
+              ]
+            }
+          },
+          {
+            "id": "buyer",
+            "type": "short_text",
+            "label": "Buyer or destination",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Co-op silo, Packing shed, On-farm store"
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Moisture, quality notes, docket numbers…"
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<path d=\"M12 21V10\"/><path d=\"M12 10c0-2.2 1.6-4 4-4-.4 2.6-2 4-4 4z\"/><path d=\"M12 10c0-2.2-1.6-4-4-4 .4 2.6 2 4 4 4z\"/><path d=\"M12 15c0-2.2 1.6-4 4-4-.4 2.6-2 4-4 4z\"/><path d=\"M12 15c0-2.2-1.6-4-4-4 .4 2.6 2 4 4 4z\"/>');\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var grMap=optionMap(ctx.fields,'grade'),unMap=optionMap(ctx.fields,'unit');\n  var loads30=0,premium=0,blocks={};\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};var dd=dayDiff(a.harvest_date);\n    if(dd!=null&&dd>=-30&&dd<=0)loads30++;\n    if(a.grade==='premium')premium++;\n    if(a.block!=null&&a.block!==''){var bk=Array.isArray(a.block)?a.block[0]:a.block;blocks[bk]=1;}}\n  var blockN=Object.keys(blocks).length;\n  var premPct=rows.length?Math.round(premium/rows.length*100):0;\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Harvest Logs',brief(['<b>'+fmtInt(loads30)+'</b> load'+(loads30===1?'':'s')+' in 30d','<b>'+fmtInt(rows.length)+'</b> logged','<b>'+fmtInt(blockN)+'</b> block'+(blockN===1?'':'s')+' harvested']),'Log harvest');\n  html+='<div class=\"kpis\">'\n    +kpi('Loads 30d',loads30,'<b>'+fmtInt(rows.length)+'</b> logged all up',{hero:true,spark:spark(weekly(rows))})\n    +kpi('Premium share',rows.length?premPct+'%':'\\u2014','of loads graded premium')\n    +kpi('Blocks harvested',blockN,'across the season')\n    +'</div>';\n  var sorted=rows.slice().sort(function(x,y){var xd=pd((x.answers||{}).harvest_date),yd=pd((y.answers||{}).harvest_date);return (yd?yd.getTime():0)-(xd?xd.getTime():0);});\n  var rHtml='';\n  for(var p=0;p<Math.min(7,sorted.length);p++){var s=sorted[p].answers||{};\n    var qty=num(s.quantity)>0?'<span class=\"chip\">'+h(fmtInt(num(s.quantity)))+(s.unit?' '+h(labelFor(unMap,s.unit)):'')+'</span>':'';\n    var sub=(s.buyer?h(s.buyer)+' \\u00b7 ':'')+h(fmtDate(s.harvest_date));\n    rHtml+=rowItem(h(s.crop||'Harvest'),sub,qty+pill(labelFor(grMap,s.grade),s.grade==='premium'?'good':'neutral'));}\n  if(!rHtml)rHtml=emptyBlock(GL,'Loads you log appear here with grade and quantity.','+ Log harvest');\n  else rHtml='<div class=\"rows\">'+rHtml+'</div>';\n  var bHtml=breakdown(rows,'grade',grMap)||emptyBlock(I.chart,'The grade mix appears once you log harvests.','+ Log harvest');\n  html+=sec('Harvest tally')+'<div class=\"grid g21\">'+panel('Recent loads',rHtml)+panel('By grade',bHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      },
+      {
+        "packFormId": "chemical-application",
+        "title": "Chemical Application",
+        "icon": "SprayCan",
+        "description": "Record a spray or chemical application against a block, with rate, operator and withholding period — your compliance register.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Chemical Application",
+            "description": "Log every application as you go — this register and its withholding periods are your audit trail.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "block",
+            "type": "linked_record",
+            "label": "Block",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:paddock"
+            }
+          },
+          {
+            "id": "product_used",
+            "type": "short_text",
+            "label": "Product used",
+            "required": true,
+            "properties": {
+              "placeholder": "Product / active ingredient"
+            }
+          },
+          {
+            "id": "rate",
+            "type": "short_text",
+            "label": "Rate",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. 2 L/ha"
+            }
+          },
+          {
+            "id": "application_date",
+            "type": "date",
+            "label": "Application date",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "operator",
+            "type": "short_text",
+            "label": "Operator",
+            "required": false,
+            "properties": {
+              "placeholder": "Who applied it"
+            }
+          },
+          {
+            "id": "weather",
+            "type": "long_text",
+            "label": "Weather conditions",
+            "required": false,
+            "properties": {
+              "placeholder": "Wind speed and direction, temperature, delta-T…"
+            }
+          },
+          {
+            "id": "whp_end",
+            "type": "date",
+            "label": "Withholding period end",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Batch numbers, target pest or weed, tank mix…"
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<rect x=\"7\" y=\"8\" width=\"8\" height=\"13\" rx=\"2\"/><path d=\"M9 8V5h4v3\"/><path d=\"M17 5h.01M19 7h.01M17 9h.01\"/>');\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var active=0,apps30=0,ops={};\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};var wd=dayDiff(a.whp_end);var ad=dayDiff(a.application_date);\n    if(wd!=null&&wd>=0)active++;\n    if(ad!=null&&ad>=-30&&ad<=0)apps30++;\n    if(a.operator)ops[String(a.operator).toLowerCase()]=1;}\n  var opN=Object.keys(ops).length;\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Chemical Applications',brief([active>0?'<b>'+fmtInt(active)+'</b> withholding period'+(active===1?'':'s')+' active':'no active withholding','<b>'+fmtInt(apps30)+'</b> applied in 30d','<b>'+fmtInt(rows.length)+'</b> on the register']),'Record application');\n  html+='<div class=\"kpis\">'\n    +kpi('Active withholding',active,active>0?'<span style=\"color:var(--fl-warn);font-weight:650\">produce still held</span>':'all paddocks clear',{hero:true,spark:spark(weekly(rows))})\n    +kpi('Applied 30d',apps30,'in the last month')\n    +kpi('Operators',opN,'named on the register')\n    +'</div>';\n  var sorted=rows.slice().sort(function(x,y){var xd=pd((x.answers||{}).application_date),yd=pd((y.answers||{}).application_date);return (yd?yd.getTime():0)-(xd?xd.getTime():0);});\n  var rHtml='';\n  for(var p=0;p<Math.min(7,sorted.length);p++){var c=sorted[p].answers||{};var wd2=dayDiff(c.whp_end);\n    var whp=(wd2!=null&&wd2>=0)?pill('WHP active','warn'):(c.whp_end?pill('Cleared','good'):'');\n    var clears=(wd2!=null&&wd2>=0)?'<span class=\"chip\">clears '+h(fmtDate(c.whp_end))+'</span>':'';\n    var sub=(c.operator?h(c.operator)+' \\u00b7 ':'')+(c.rate?h(c.rate)+' \\u00b7 ':'')+h(fmtDate(c.application_date));\n    rHtml+=rowItem(h(c.product_used||'Product'),sub,clears+whp);}\n  if(!rHtml)rHtml=emptyBlock(GL,'Applications you record appear here with their withholding period.','+ Record application');\n  else rHtml='<div class=\"rows\">'+rHtml+'</div>';\n  var now=new Date(),mNames=[],mKeys=[],mCounts=[];\n  for(var m3=4;m3>=0;m3--){var ms=new Date(now.getFullYear(),now.getMonth()-m3,1);mKeys.push(ms.getTime());mNames.push(ms.toLocaleDateString(undefined,{month:'short'}));mCounts.push(0);}\n  for(var r2=0;r2<rows.length;r2++){var d2=pd((rows[r2].answers||{}).application_date);if(!d2)continue;var t2=new Date(d2.getFullYear(),d2.getMonth(),1).getTime();for(var q=0;q<mKeys.length;q++){if(t2===mKeys[q])mCounts[q]++;}}\n  var gMax=0,g2;for(g2=0;g2<mCounts.length;g2++){if(mCounts[g2]>gMax)gMax=mCounts[g2];}\n  var gHtml='';\n  if(gMax>0){for(g2=0;g2<mCounts.length;g2++){gHtml+=barRow(mNames[g2],mCounts[g2],gMax);}}\n  else gHtml=emptyBlock(I.chart,'Applications by month chart here through the season.','+ Record application');\n  html+=sec('Chemical register')+'<div class=\"grid g21\">'+panel('Recent applications',rHtml)+panel('By month',gHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      },
+      {
+        "packFormId": "machinery",
+        "title": "Machine",
+        "icon": "Tractor",
+        "description": "Add a machine to the shed with its type, hours, service-due date and running status.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Machine",
+            "description": "Add a tractor, harvester or implement so you can track hours, service and maintenance against it.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "machine_name",
+            "type": "short_text",
+            "label": "Machine name",
+            "required": true,
+            "properties": {
+              "placeholder": "e.g. John Deere 6120, Boom Sprayer"
+            }
+          },
+          {
+            "id": "machine_type",
+            "type": "dropdown",
+            "label": "Type",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "tractor",
+                  "label": "Tractor",
+                  "value": "tractor"
+                },
+                {
+                  "id": "harvester",
+                  "label": "Harvester",
+                  "value": "harvester"
+                },
+                {
+                  "id": "sprayer",
+                  "label": "Sprayer",
+                  "value": "sprayer"
+                },
+                {
+                  "id": "ute",
+                  "label": "Ute",
+                  "value": "ute"
+                },
+                {
+                  "id": "implement",
+                  "label": "Implement",
+                  "value": "implement"
+                },
+                {
+                  "id": "pump",
+                  "label": "Pump",
+                  "value": "pump"
+                }
+              ]
+            }
+          },
+          {
+            "id": "service_due",
+            "type": "date",
+            "label": "Service due date",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "hours",
+            "type": "number",
+            "label": "Hours",
+            "required": false,
+            "properties": {
+              "placeholder": "0",
+              "min": 0
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "running",
+                  "label": "Running",
+                  "value": "running"
+                },
+                {
+                  "id": "due-for-service",
+                  "label": "Due for service",
+                  "value": "due-for-service"
+                },
+                {
+                  "id": "in-workshop",
+                  "label": "In workshop",
+                  "value": "in-workshop"
+                },
+                {
+                  "id": "retired",
+                  "label": "Retired",
+                  "value": "retired"
+                }
+              ]
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Attachments, quirks, registration, insurance…"
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<circle cx=\"7\" cy=\"16\" r=\"3.5\"/><circle cx=\"18\" cy=\"17\" r=\"2.5\"/><path d=\"M10.5 16l-1-6H6\"/><path d=\"M10 10V7h4l2.2 5H18\"/>');\nvar MP={running:'good','due-for-service':'warn','in-workshop':'accent',retired:'neutral'};\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var tyMap=optionMap(ctx.fields,'machine_type'),stMap=optionMap(ctx.fields,'status');\n  var running=0,dueSoon=0,workshop=0;\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};if(a.status==='running')running++;if(a.status==='in-workshop')workshop++;var sd=dayDiff(a.service_due);if(sd!=null&&sd<14&&a.status!=='retired')dueSoon++;}\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Machinery',brief(['<b>'+fmtInt(running)+'</b> running','<b>'+fmtInt(dueSoon)+'</b> due for service','<b>'+fmtInt(rows.length)+'</b> in the shed']),'Add machine');\n  html+='<div class=\"kpis\">'\n    +kpi('Running',running,'ready to work',{hero:true,spark:spark(weekly(rows))})\n    +kpi('Service due',dueSoon,dueSoon>0?'<span style=\"color:var(--fl-warn);font-weight:650\">within 2 weeks</span>':'nothing due soon')\n    +kpi('In workshop',workshop,workshop>0?'off the run':'all out working')\n    +'</div>';\n  var rHtml='';\n  for(var p=0;p<Math.min(7,rows.length);p++){var m=rows[p].answers||{};var sd2=dayDiff(m.service_due);\n    var svc=(sd2!=null&&sd2<0)?pill('Service overdue','bad'):(sd2!=null&&sd2<14)?pill('Service soon','warn'):pill(labelFor(stMap,m.status),MP[m.status]||'neutral');\n    var hrs=num(m.hours)>0?'<span class=\"chip\">'+h(fmtInt(num(m.hours)))+' hrs</span>':'';\n    var sub=h(labelFor(tyMap,m.machine_type))+(m.service_due?' \\u00b7 service '+h(fmtDate(m.service_due)):'');\n    rHtml+=rowItem(h(m.machine_name||'Machine'),sub,hrs+svc);}\n  if(!rHtml)rHtml=emptyBlock(GL,'Machines you add appear here with hours and service status.','+ Add machine');\n  else rHtml='<div class=\"rows\">'+rHtml+'</div>';\n  var bHtml=breakdown(rows,'machine_type',tyMap)||emptyBlock(I.chart,'The fleet mix appears once machines are added.','+ Add machine');\n  html+=sec('Machine shed')+'<div class=\"grid g21\">'+panel('The shed',rHtml)+panel('By type',bHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      },
+      {
+        "packFormId": "maintenance-log",
+        "title": "Maintenance Log",
+        "icon": "Wrench",
+        "description": "Log a service or repair on a machine with its type, cost and a photo or receipt.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "welcome",
+            "type": "welcome_screen",
+            "label": "New Maintenance Log",
+            "description": "Record every service and repair so upkeep costs and machine history stay on record.",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "machine",
+            "type": "linked_record",
+            "label": "Machine",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:machinery"
+            }
+          },
+          {
+            "id": "date",
+            "type": "date",
+            "label": "Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "maintenance_type",
+            "type": "dropdown",
+            "label": "Maintenance type",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "scheduled-service",
+                  "label": "Scheduled service",
+                  "value": "scheduled-service"
+                },
+                {
+                  "id": "repair",
+                  "label": "Repair",
+                  "value": "repair"
+                },
+                {
+                  "id": "tyres-tracks",
+                  "label": "Tyres or tracks",
+                  "value": "tyres-tracks"
+                },
+                {
+                  "id": "electrical",
+                  "label": "Electrical",
+                  "value": "electrical"
+                },
+                {
+                  "id": "hydraulics",
+                  "label": "Hydraulics",
+                  "value": "hydraulics"
+                }
+              ]
+            }
+          },
+          {
+            "id": "cost",
+            "type": "number",
+            "label": "Cost ($)",
+            "required": false,
+            "properties": {
+              "placeholder": "0.00",
+              "min": 0
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "What was done, parts fitted, workshop or contractor…"
+            }
+          },
+          {
+            "id": "photo",
+            "type": "file_upload",
+            "label": "Photo or receipt",
+            "required": false,
+            "properties": {
+              "acceptedFileTypes": [
+                ".jpg",
+                ".png",
+                ".pdf"
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction optionMap(fields,fieldId){var m={};for(var i=0;i<(fields||[]).length;i++){var f=fields[i];if(f.id===fieldId&&f.options){for(var j=0;j<f.options.length;j++){m[f.options[j].value]=f.options[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(limit){try{return await FL.records({limit:limit||500});}catch(e){return [];}}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><button class=\"panel-t\" data-records=\"1\" style=\"background:none;border:0;padding:0;cursor:pointer;text-align:left;font:inherit;color:inherit\">'+h(title)+'</button><button class=\"panel-link\" data-records=\"1\">View all</button></div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(cta?'<div><button class=\"link-btn\" data-open=\"1\">'+h(cta)+'</button></div>':'')+'</div>';}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,newLabel){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(newLabel){out+='<div class=\"hdr-r\"><button class=\"btn btn-primary\" data-open=\"1\">'+I.plus+'<span>'+h(newLabel)+'</span></button></div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var opens=root.querySelectorAll('[data-open]');for(var i=0;i<opens.length;i++){(function(el){el.addEventListener('click',function(){FL.openForm().catch(function(){});});})(opens[i]);}var rls=root.querySelectorAll('[data-records]');for(var r0=0;r0<rls.length;r0++){(function(el){el.addEventListener('click',function(){FL.openRecords().catch(function(){});});})(rls[r0]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar GL=icoSvg('<path d=\"M14.6 6.4a3.5 3.5 0 0 0-4.6 4.5l-5.8 5.8 2.9 2.9 5.8-5.8a3.5 3.5 0 0 0 4.5-4.6l-2.2 2.2-2-2 2.2-2.2z\"/>');\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this section.');}\n  var rows=await recs(500);\n  var mtMap=optionMap(ctx.fields,'maintenance_type');\n  var spend90=0,logs30=0,repairs=0;\n  for(var i=0;i<rows.length;i++){var a=rows[i].answers||{};var dd=dayDiff(a.date);\n    if(dd!=null&&dd>=-90&&dd<=0)spend90+=num(a.cost);\n    if(dd!=null&&dd>=-30&&dd<=0)logs30++;\n    if(a.maintenance_type==='repair')repairs++;}\n  var repPct=rows.length?Math.round(repairs/rows.length*100):0;\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(GL,ctx.title||'Maintenance Logs',brief(['<b>'+mnyC(spend90)+'</b> spent in 90d','<b>'+fmtInt(logs30)+'</b> log'+(logs30===1?'':'s')+' in 30d','<b>'+fmtInt(rows.length)+'</b> on record']),'New maintenance');\n  html+='<div class=\"kpis\">'\n    +kpi('Spend 90d',mnyC(spend90),'<b>'+fmtInt(rows.length)+'</b> job'+(rows.length===1?'':'s')+' logged',{hero:true,spark:spark(weekly(rows))})\n    +kpi('Logs 30d',logs30,'in the last month')\n    +kpi('Repairs',rows.length?repPct+'%':'\\u2014','of all maintenance')\n    +'</div>';\n  var sorted=rows.slice().sort(function(x,y){var xd=pd((x.answers||{}).date),yd=pd((y.answers||{}).date);return (yd?yd.getTime():0)-(xd?xd.getTime():0);});\n  var rHtml='';\n  for(var p=0;p<Math.min(7,sorted.length);p++){var m=sorted[p].answers||{};\n    rHtml+=rowItem(h(labelFor(mtMap,m.maintenance_type)),h(fmtDate(m.date)),num(m.cost)>0?'<span class=\"amt\">'+h(mny(m.cost))+'</span>':'');}\n  if(!rHtml)rHtml=emptyBlock(GL,'Maintenance you record appears here with its cost.','+ New maintenance');\n  else rHtml='<div class=\"rows\">'+rHtml+'</div>';\n  var bHtml=breakdown(rows,'maintenance_type',mtMap)||emptyBlock(I.chart,'The type mix appears once maintenance is logged.','+ New maintenance');\n  html+=sec('Workshop log')+'<div class=\"grid g21\">'+panel('Recent maintenance',rHtml)+panel('By type',bHtml)+'</div>';\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        }
+      }
+    ],
+    "apps": [
+      {
+        "packAppId": "agrilog",
+        "name": "AgriLog",
+        "description": "A farm operations hub: plan the week's jobs across your paddocks, tally harvest loads, keep the chemical register with live withholding periods, and stay on top of machinery service and maintenance — all from one dashboard.",
+        "settings": {
+          "icon": "Tractor"
+        },
+        "theme": {
+          "primaryColor": "#4d7c0f",
+          "backgroundColor": "#0f172a",
+          "textColor": "#f8fafc",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "forms": [
+          {
+            "packFormId": "paddock",
+            "displayName": "Paddocks",
+            "sortOrder": 1,
+            "isVisible": true
+          },
+          {
+            "packFormId": "farm-job",
+            "displayName": "Farm Jobs",
+            "sortOrder": 2,
+            "isVisible": true
+          },
+          {
+            "packFormId": "harvest-log",
+            "displayName": "Harvest Logs",
+            "sortOrder": 3,
+            "isVisible": true
+          },
+          {
+            "packFormId": "chemical-application",
+            "displayName": "Chemical Applications",
+            "sortOrder": 4,
+            "isVisible": true
+          },
+          {
+            "packFormId": "machinery",
+            "displayName": "Machinery",
+            "sortOrder": 5,
+            "isVisible": true
+          },
+          {
+            "packFormId": "maintenance-log",
+            "displayName": "Maintenance Logs",
+            "sortOrder": 6,
+            "isVisible": true
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "html": "<div id=\"app\"><div class=\"wrap\"><div class=\"load\">Loading dashboard…</div></div></div>",
+          "css": "@font-face{font-family:\"Plus Jakarta Sans\";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format(\"woff2\");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}\n:root{--ax:var(--fl-accent);}\nhtml.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}\n*{box-sizing:border-box;}html,body{margin:0;padding:0;}\nbody{font-family:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,\"Segoe UI\",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}\n.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}\n.num{font-variant-numeric:tabular-nums lining-nums;}\n:focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}\n.load{padding:90px 20px;text-align:center;color:var(--fl-muted);font-size:13.5px;}\n.hdr{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px;}\n.hdr-l{display:flex;gap:14px;min-width:0;align-items:flex-start;flex:1;}\n.glyph{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:12px;color:var(--ax);background:color-mix(in srgb,var(--fl-accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--fl-accent) 22%,transparent);}\n.glyph svg{width:22px;height:22px;}\n.title{margin:1px 0 0;font-size:24px;line-height:1.12;font-weight:750;letter-spacing:-0.02em;color:var(--fl-text);}\n.brief{margin-top:7px;font-size:13px;line-height:1.55;color:var(--fl-muted);}\n.brief b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}\n.brief .dot{margin:0 7px;color:var(--fl-faint);}\n.hdr-r{display:flex;gap:10px;flex:none;align-items:center;padding-top:2px;}\n.btn{appearance:none;cursor:pointer;border-radius:11px;padding:10px 16px;font-weight:650;font-size:13.5px;font-family:inherit;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:filter .15s ease,transform .06s ease,border-color .15s ease;}\n.btn:active{transform:translateY(1px);}.btn svg{width:16px;height:16px;}\n.btn-primary{border:0;background:var(--fl-accent);color:var(--fl-accent-contrast);box-shadow:0 8px 20px -10px color-mix(in srgb,var(--fl-accent) 70%,transparent);}.btn-primary:hover{filter:brightness(1.07);}\n.btn-ghost{background:transparent;border:1px solid var(--fl-border);color:var(--fl-text);}.btn-ghost:hover{border-color:color-mix(in srgb,var(--fl-accent) 45%,transparent);}\n.kpis{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:14px;}\n.kpi{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;padding:16px 18px;box-shadow:var(--fl-shadow);min-width:0;display:flex;flex-direction:column;}.kpi:not(.kpi-hero){justify-content:center;}\n.kpi-label{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-muted);}\n.kpi-val{margin-top:7px;font-size:25px;font-weight:800;letter-spacing:-0.02em;line-height:1.05;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.kpi-hero .kpi-val{font-size:33px;}\n.kpi-sub{margin-top:5px;font-size:12px;color:var(--fl-faint);}.kpi-sub b{color:var(--fl-muted);font-weight:650;}\n.kpi-spark{margin-top:auto;padding-top:10px;}.kpi-spark svg{display:block;width:100%;height:42px;}\n.sec{display:flex;align-items:center;gap:10px;margin:24px 0 12px;font-size:11px;font-weight:650;letter-spacing:.08em;text-transform:uppercase;color:var(--fl-muted);}\n.sec::after{content:\"\";flex:1;height:1px;background:var(--fl-border);}\n.grid{display:grid;gap:14px;align-items:start;}.g21{grid-template-columns:2fr 1fr;}.g12{grid-template-columns:1fr 2fr;}.g11{grid-template-columns:1fr 1fr;}.g111{grid-template-columns:1fr 1fr 1fr;}\n.panel{background:var(--fl-surface);border:1px solid var(--fl-border);border-radius:16px;box-shadow:var(--fl-shadow);padding:16px 18px;min-width:0;}\n.panel-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;}\n.panel-t{font-size:13.5px;font-weight:700;color:var(--fl-text);}\n.panel-link{background:none;border:0;padding:0;cursor:pointer;font-family:inherit;font-size:12px;font-weight:650;color:var(--ax);}.panel-link:hover{text-decoration:underline;}\n.rows{display:flex;flex-direction:column;}\n.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--fl-border);}.row:first-child{border-top:0;padding-top:2px;}.rows .row:last-child{padding-bottom:2px;}\n.row-main{min-width:0;flex:1;}\n.row-title{font-size:13.5px;font-weight:600;color:var(--fl-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-sub{margin-top:2px;font-size:12px;color:var(--fl-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}\n.row-r{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:4px;}\n.amt{font-size:13.5px;font-weight:700;color:var(--fl-text);font-variant-numeric:tabular-nums;}\n.pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap;}\n.chip{font-size:11.5px;font-weight:650;color:var(--fl-faint);white-space:nowrap;font-variant-numeric:tabular-nums;}\n.bar-row{display:grid;grid-template-columns:minmax(90px,150px) 1fr 46px;align-items:center;gap:10px;padding:5px 0;}\n.bar-name{font-size:12.5px;color:var(--fl-muted);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}\n.bar-track{height:8px;border-radius:5px;background:var(--fl-track);overflow:hidden;}\n.bar-fill{height:100%;width:0;border-radius:5px;background:var(--fl-accent);transition:width .9s cubic-bezier(.22,1,.36,1);}\n.bar-val{font-size:12.5px;font-weight:700;color:var(--fl-text);text-align:right;font-variant-numeric:tabular-nums;}\n.q-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid var(--fl-border);background:var(--fl-surface-2);margin-top:8px;position:relative;overflow:hidden;}\n.q-row::before{content:\"\";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--q,var(--fl-accent));}\n.day{margin-top:14px;}.day:first-child{margin-top:0;}\n.day-h{font-size:11px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--fl-faint);padding-bottom:4px;}\n.sch{display:flex;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--fl-border);}\n.sch-t{flex:none;width:58px;font-size:12.5px;font-weight:700;color:var(--ax);font-variant-numeric:tabular-nums;}\n.acts{display:flex;flex-wrap:wrap;gap:10px;}\n.act{display:inline-flex;align-items:center;gap:9px;background:var(--fl-surface);border:1px solid var(--fl-border);color:var(--fl-text);border-radius:12px;padding:10px 14px;cursor:pointer;font-family:inherit;font-weight:600;font-size:13px;transition:border-color .15s ease,transform .06s ease,box-shadow .15s ease;}\n.act:hover{border-color:color-mix(in srgb,var(--fl-accent) 50%,transparent);box-shadow:var(--fl-shadow);}.act:active{transform:translateY(1px);}\n.act svg{width:16px;height:16px;color:var(--ax);}\n.empty{padding:22px 12px;text-align:center;color:var(--fl-muted);font-size:13px;line-height:1.5;}\n.empty svg{width:22px;height:22px;color:var(--fl-faint);display:block;margin:0 auto 8px;}\n.link-btn{background:none;border:0;padding:4px 0;color:var(--ax);cursor:pointer;font-family:inherit;font-weight:650;font-size:13px;}.link-btn:hover{text-decoration:underline;}\n.reveal{opacity:0;transform:translateY(10px);animation:flin .55s cubic-bezier(.22,1,.36,1) forwards;}\n@keyframes flin{to{opacity:1;transform:none;}}\n@media (prefers-reduced-motion:reduce){.reveal{animation:none;opacity:1;transform:none;}.bar-fill{transition:none;}}\n@media(max-width:960px){.kpis{grid-template-columns:1fr 1fr;}.g21,.g12,.g11,.g111{grid-template-columns:1fr;}}\n@media(max-width:600px){.wrap{padding:20px 14px 48px;}.kpi-hero{grid-column:1/-1;}.kpis .kpi:last-child:nth-child(even){grid-column:1/-1;}.hdr-r{width:100%;flex-wrap:wrap;}.hdr-r .btn{flex:1;justify-content:center;}.bar-row{grid-template-columns:minmax(76px,110px) 1fr 40px;}.title{font-size:21px;}}\n.tot{display:flex;justify-content:space-between;margin-top:10px;padding-top:10px;border-top:1px solid var(--fl-border);font-size:12px;color:var(--fl-muted);}\n.tot b{color:var(--fl-text);font-weight:650;font-variant-numeric:tabular-nums;}",
+          "js": "var FL=window.FormLogic;\nvar RM=false;try{RM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;}catch(e){}\nfunction h(v){return FL.escapeHtml(v==null?'':String(v));}\nfunction num(v){var x=parseFloat(v);return isNaN(x)?0:x;}\nfunction fmtInt(v){return num(v).toLocaleString();}\nfunction mny(v,c){return (c||'$')+num(v).toLocaleString(undefined,{maximumFractionDigits:0});}\nfunction mnyC(v,c){var x=num(v);if(Math.abs(x)>=1000000)return (c||'$')+(x/1000000).toFixed(1).replace(/\\.0$/,'')+'M';if(Math.abs(x)>=10000)return (c||'$')+Math.round(x/1000)+'k';return mny(x,c);}\nfunction pd(s){if(!s)return null;var d=new Date(s);return isNaN(d.getTime())?null:d;}\nfunction fmtDate(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric'}):'\\u2014';}\nfunction fmtDateY(s){var d=pd(s);return d?d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'\\u2014';}\nfunction sot(){var d=new Date();d.setHours(0,0,0,0);return d.getTime();}\nfunction dayDiff(s){var d=pd(s);if(!d)return null;var x=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();return Math.round((x-sot())/86400000);}\nfunction ago(s){var dd=dayDiff(s);if(dd==null)return '';if(dd===0)return 'today';if(dd<0)return (-dd)+'d ago';return 'in '+dd+'d';}\nfunction fmtTime(s){if(!s)return '';var m=String(s).match(/^(\\d{1,2}):(\\d{2})/);if(!m)return String(s);var hh=parseInt(m[1],10);var ap=hh>=12?'pm':'am';hh=hh%12;if(hh===0)hh=12;return hh+':'+m[2]+ap;}\nfunction findForm(ctx,name){var t=String(name).toLowerCase();for(var i=0;i<ctx.forms.length;i++){if(String(ctx.forms[i].displayName||'').toLowerCase()===t)return ctx.forms[i];}return null;}\nfunction optionMap(form,fieldId){var m={};if(!form||!form.fields)return m;for(var i=0;i<form.fields.length;i++){var f=form.fields[i];if(f.id===fieldId&&f.properties&&f.properties.options){var o=f.properties.options;for(var j=0;j<o.length;j++){m[o[j].value]=o[j].label;}}}return m;}\nfunction labelFor(map,v){if(v==null||v==='')return '\\u2014';return map[v]||String(v);}\nasync function recs(form,limit){if(!form)return [];try{return await FL.records(form.formId,{limit:limit||500});}catch(e){return [];}}\nfunction nameMap(records,fn){var m={};for(var i=0;i<records.length;i++){var r=records[i];m[r.id]=fn(r.answers||{},r)||'';}return m;}\nfunction refName(map,v){if(v==null||v==='')return '';if(Array.isArray(v))v=v[0];return map[v]||'';}\nfunction countBy(records,fieldId){var c={};for(var i=0;i<records.length;i++){var v=(records[i].answers||{})[fieldId];if(Array.isArray(v)){for(var k=0;k<v.length;k++){if(v[k]!=null&&v[k]!=='')c[v[k]]=(c[v[k]]||0)+1;}}else if(v!=null&&v!==''){c[v]=(c[v]||0)+1;}}return c;}\nfunction sumBy(records,fieldId){var t=0;for(var i=0;i<records.length;i++){t+=num((records[i].answers||{})[fieldId]);}return t;}\nfunction weekly(records,weeks){weeks=weeks||8;var out=[];for(var i=0;i<weeks;i++)out.push(0);var now=Date.now();for(var r=0;r<records.length;r++){var d=pd(records[r].submittedAt);if(!d)continue;var wk=Math.floor((now-d.getTime())/604800000);if(wk>=0&&wk<weeks)out[weeks-1-wk]++;}return out;}\nfunction icoSvg(d){return '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">'+d+'</svg>';}\nvar I={};\nI.plus=icoSvg('<path d=\"M12 5v14M5 12h14\"/>');\nI.user=icoSvg('<circle cx=\"12\" cy=\"8\" r=\"3.5\"/><path d=\"M4.5 20.5c.7-3.4 3.7-5 7.5-5s6.8 1.6 7.5 5\"/>');\nI.users=icoSvg('<circle cx=\"9\" cy=\"8.5\" r=\"3.25\"/><path d=\"M2.5 20c.6-3 3.2-4.5 6.5-4.5s5.9 1.5 6.5 4.5\"/><path d=\"M15.5 5.6a3.25 3.25 0 0 1 0 5.8M17.6 15.9c2 .6 3.5 1.9 3.9 4.1\"/>');\nI.doc=icoSvg('<path d=\"M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z\"/><path d=\"M14 3v5h5M9 13h6M9 17h4\"/>');\nI.cal=icoSvg('<rect x=\"4\" y=\"5\" width=\"16\" height=\"15.5\" rx=\"2.5\"/><path d=\"M8 3v4M16 3v4M4 10.5h16\"/>');\nI.clock=icoSvg('<circle cx=\"12\" cy=\"12\" r=\"8.5\"/><path d=\"M12 7.5V12l3 2\"/>');\nI.chart=icoSvg('<path d=\"M5 20v-7M11 20V6M17 20v-4\"/><path d=\"M3 20h18\"/>');\nI.check=icoSvg('<path d=\"M4.5 12.5l4.7 4.7L19.5 6.9\"/>');\nI.alert=icoSvg('<path d=\"M12 4 2.8 19.5h18.4z\"/><path d=\"M12 10v4M12 16.8h.01\"/>');\nI.arrow=icoSvg('<path d=\"M5 12h14M13 6l6 6-6 6\"/>');\nI.money=icoSvg('<path d=\"M12 2.5v19\"/><path d=\"M16.5 6H9.75a3.25 3.25 0 0 0 0 6.5h4.5a3.25 3.25 0 0 1 0 6.5H7\"/>');\nI.box=icoSvg('<path d=\"M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2z\"/><path d=\"M3.3 8.3 12 13.3l8.7-5M12 13.3V21\"/>');\nI.wrench=icoSvg('<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\"/>');\nI.shield=icoSvg('<path d=\"M12 3l7.5 2.8v5.4c0 4.3-3 7.7-7.5 9-4.5-1.3-7.5-4.7-7.5-9V5.8z\"/>');\nI.home=icoSvg('<path d=\"M4 11.5 12 4l8 7.5\"/><path d=\"M6 10v10h12V10\"/>');\nI.tag=icoSvg('<path d=\"M3.5 11.3V4.5a1 1 0 0 1 1-1h6.8a1 1 0 0 1 .7.3l8.2 8.2a1.5 1.5 0 0 1 0 2.1l-6.1 6.1a1.5 1.5 0 0 1-2.1 0L3.8 12a1 1 0 0 1-.3-.7z\"/><circle cx=\"8\" cy=\"8\" r=\"1.25\"/>');\nfunction spark(vals,w,hh){w=w||220;hh=hh||42;if(!vals||vals.length<2)return '';var mx=0,mn=Infinity;for(var i=0;i<vals.length;i++){if(vals[i]>mx)mx=vals[i];if(vals[i]<mn)mn=vals[i];}if(mx===0)return '';if(mn===mx)mn=0;var rng=mx-mn||1;var pts=[];for(var j=0;j<vals.length;j++){var x=2+(j/(vals.length-1))*(w-4);var y=(hh-5)-((vals[j]-mn)/rng)*(hh-12);pts.push(x.toFixed(1)+','+y.toFixed(1));}var line=pts.join(' ');return '<svg viewBox=\"0 0 '+w+' '+hh+'\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><polygon points=\"2,'+(hh-2)+' '+line+' '+(w-2)+','+(hh-2)+'\" fill=\"color-mix(in srgb, var(--fl-accent) 12%, transparent)\" stroke=\"none\"/><polyline points=\"'+line+'\" fill=\"none\" stroke=\"var(--fl-accent)\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>';}\nfunction pill(text,kind){var c=kind==='good'?'var(--fl-good)':kind==='warn'?'var(--fl-warn)':kind==='bad'?'var(--fl-bad)':kind==='accent'?'var(--ax)':'var(--fl-muted)';var bg=(kind==='neutral'||!kind)?'var(--fl-track)':'color-mix(in srgb, '+c+' 15%, transparent)';return '<span class=\"pill\" style=\"color:'+c+';background:'+bg+'\">'+h(text)+'</span>';}\nfunction kpi(label,val,sub,opts){opts=opts||{};var v=(typeof val==='number')?'<span data-count=\"'+val+'\">'+fmtInt(val)+'</span>':val;return '<div class=\"kpi'+(opts.hero?' kpi-hero':'')+'\"><div class=\"kpi-label\">'+h(label)+'</div><div class=\"kpi-val\">'+v+'</div>'+(sub?'<div class=\"kpi-sub\">'+sub+'</div>':'')+(opts.spark?'<div class=\"kpi-spark\">'+opts.spark+'</div>':'')+'</div>';}\nfunction sec(label){return '<div class=\"sec\">'+h(label)+'</div>';}\nfunction panel(title,body,nav,navLabel){return '<div class=\"panel\">'+(title?'<div class=\"panel-h\"><div class=\"panel-t\">'+h(title)+'</div>'+(nav?'<button class=\"panel-link\" data-nav=\"'+h(nav)+'\">'+h(navLabel||'View all')+'</button>':'')+'</div>':'')+body+'</div>';}\nfunction barRow(label,count,max,color){var pct=(max>0&&count>0)?Math.max(3,Math.round(count/max*100)):0;return '<div class=\"bar-row\"><span class=\"bar-name\" title=\"'+h(label)+'\">'+h(label)+'</span><div class=\"bar-track\"><div class=\"bar-fill\" data-pct=\"'+pct+'\" style=\"background:'+(color||'var(--fl-accent)')+'\"></div></div><span class=\"bar-val\">'+fmtInt(count)+'</span></div>';}\nfunction breakdown(records,fieldId,map,opts){opts=opts||{};var counts=countBy(records,fieldId);var keys=Object.keys(map);for(var k in counts){if(keys.indexOf(k)===-1)keys.push(k);}var max=0,total=0;for(var i=0;i<keys.length;i++){var c=counts[keys[i]]||0;if(c>max)max=c;total+=c;}if(total===0)return '';keys.sort(function(a,b){return (counts[b]||0)-(counts[a]||0);});var out='';for(var j=0;j<keys.length;j++){var n2=counts[keys[j]]||0;if(n2===0)continue;out+=barRow(labelFor(map,keys[j]),n2,max,opts.color);}return out;}\nfunction rowItem(title,sub,right){return '<div class=\"row\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction qRow(color,title,sub,right){return '<div class=\"q-row\" style=\"--q:'+color+'\"><div class=\"row-main\"><div class=\"row-title\">'+title+'</div>'+(sub?'<div class=\"row-sub\">'+sub+'</div>':'')+'</div>'+(right?'<div class=\"row-r\">'+right+'</div>':'')+'</div>';}\nfunction emptyBlock(ic,msg,nav,cta){return '<div class=\"empty\">'+(ic||'')+h(msg)+(nav?'<div><button class=\"link-btn\" data-nav=\"'+h(nav)+'\">'+h(cta||'+ Add one')+'</button></div>':'')+'</div>';}\nfunction acts(items){var out='<div class=\"acts\">';for(var i=0;i<items.length;i++){var it=items[i];if(!it||!it.nav)continue;out+='<button class=\"act\" data-nav=\"'+h(it.nav)+'\">'+(it.icon||I.plus)+'<span>'+h(it.label)+'</span></button>';}out+='</div>';return out;}\nfunction brief(clauses){var cs=[];for(var i=0;i<clauses.length;i++){if(clauses[i])cs.push(clauses[i]);}return cs.join('<span class=\"dot\">\\u00b7</span>');}\nfunction headerBlock(glyph,titleText,briefHtml,ctas){var out='<div class=\"hdr\"><div class=\"hdr-l\"><div class=\"glyph\">'+glyph+'</div><div style=\"min-width:0\"><h1 class=\"title\">'+h(titleText)+'</h1>'+(briefHtml?'<div class=\"brief\">'+briefHtml+'</div>':'')+'</div></div>';if(ctas&&ctas.length){out+='<div class=\"hdr-r\">';for(var i=0;i<ctas.length;i++){var c2=ctas[i];if(!c2||!c2.nav)continue;out+='<button class=\"btn '+(c2.ghost?'btn-ghost':'btn-primary')+'\" data-nav=\"'+h(c2.nav)+'\">'+(c2.icon||'')+'<span>'+h(c2.label)+'</span></button>';}out+='</div>';}out+='</div>';return out;}\nfunction countUp(el){var target=parseFloat(el.getAttribute('data-count'));if(isNaN(target)||target<=0)return;var t0=null,dur=700;function step(ts){if(t0===null)t0=ts;var p=Math.min(1,(ts-t0)/dur);var e=1-Math.pow(1-p,3);el.textContent=Math.round(target*e).toLocaleString();if(p<1)requestAnimationFrame(step);}requestAnimationFrame(step);}\nfunction wire(root){var nav=root.querySelectorAll('[data-nav]');for(var i=0;i<nav.length;i++){(function(el){el.addEventListener('click',function(){var t=el.getAttribute('data-nav');if(t)FL.navigate(t);});})(nav[i]);}var kids=root.querySelectorAll('.wrap > *');for(var k2=0;k2<kids.length;k2++){kids[k2].classList.add('reveal');kids[k2].style.animationDelay=(Math.min(k2,8)*60)+'ms';}requestAnimationFrame(function(){requestAnimationFrame(function(){var f=root.querySelectorAll('.bar-fill');for(var j2=0;j2<f.length;j2++){f[j2].style.width=(f[j2].getAttribute('data-pct')||0)+'%';}});});if(!RM){var cs2=root.querySelectorAll('[data-count]');for(var m2=0;m2<cs2.length;m2++){countUp(cs2[m2]);}}}\nfunction fatal(root,msg){root.innerHTML='<div class=\"wrap\"><div class=\"load\">'+h(msg)+'</div></div>';}\nvar TR=icoSvg('<circle cx=\"7\" cy=\"16\" r=\"3.5\"/><circle cx=\"18\" cy=\"17\" r=\"2.5\"/><path d=\"M10.5 16l-1-6H6\"/><path d=\"M10 10V7h4l2.2 5H18\"/>');\nvar LEAF=icoSvg('<path d=\"M12 21V12\"/><path d=\"M12 12C12 8.5 9.3 5.8 5.5 5.8c0 3.5 2.7 6.2 6.5 6.2z\"/><path d=\"M12 10.5c0-3 2.3-5.3 5.8-5.3 0 3.2-2.4 5.5-5.8 5.5z\"/>');\nvar WHEAT=icoSvg('<path d=\"M12 21V10\"/><path d=\"M12 10c0-2.2 1.6-4 4-4-.4 2.6-2 4-4 4z\"/><path d=\"M12 10c0-2.2-1.6-4-4-4 .4 2.6 2 4 4 4z\"/><path d=\"M12 15c0-2.2 1.6-4 4-4-.4 2.6-2 4-4 4z\"/><path d=\"M12 15c0-2.2-1.6-4-4-4 .4 2.6 2 4 4 4z\"/>');\nvar SPRAY=icoSvg('<rect x=\"7\" y=\"8\" width=\"8\" height=\"13\" rx=\"2\"/><path d=\"M9 8V5h4v3\"/><path d=\"M17 5h.01M19 7h.01M17 9h.01\"/>');\nvar JC={planned:'var(--ax)','in-progress':'var(--fl-warn)',done:'var(--fl-good)','rained-off':'var(--fl-faint)'};\nvar JP={planned:'accent','in-progress':'warn',done:'good','rained-off':'neutral'};\nasync function main(){\n  var root=document.getElementById('app');\n  var ctx;try{ctx=await FL.context();}catch(e){return fatal(root,'Could not load this dashboard.');}\n  var fP=findForm(ctx,'Paddocks'),fJ=findForm(ctx,'Farm Jobs'),fH=findForm(ctx,'Harvest Logs'),fC=findForm(ctx,'Chemical Applications'),fM=findForm(ctx,'Machinery'),fL=findForm(ctx,'Maintenance Logs');\n  var r=await Promise.all([recs(fJ),recs(fP),recs(fH),recs(fC),recs(fM),recs(fL)]);\n  var jobs=r[0],paddocks=r[1],harvest=r[2],chem=r[3],machines=r[4],maint=r[5];\n  var pn=nameMap(paddocks,function(a){return a.block_name;});\n  var machNames=nameMap(machines,function(a){return a.machine_name;});\n  var jtMap=optionMap(fJ,'job_type'),jsMap=optionMap(fJ,'status'),tyMap=optionMap(fM,'machine_type'),mtMap=optionMap(fL,'maintenance_type');\n  var weekN=0,overdue=0,board=[];\n  for(var i=0;i<jobs.length;i++){var a=jobs[i].answers||{};var st=a.status;var dd=dayDiff(a.scheduled_date);\n    if(dd!=null&&dd>=0&&dd<=6&&st!=='done'&&st!=='rained-off')weekN++;\n    if(dd!=null&&dd<0&&(st==='planned'||st==='in-progress'))overdue++;\n    if(dd!=null&&st!=='done'&&st!=='rained-off')board.push({a:a,dd:dd});}\n  board.sort(function(x,y){return x.dd-y.dd;});\n  var active=0,whpList=[];\n  for(var c=0;c<chem.length;c++){var ca=chem[c].answers||{};var wd=dayDiff(ca.whp_end);if(wd!=null&&wd>=0){active++;whpList.push({a:ca,dd:wd});}}\n  whpList.sort(function(x,y){return x.dd-y.dd;});\n  var spend90=0;for(var mi=0;mi<maint.length;mi++){var md=dayDiff((maint[mi].answers||{}).date);if(md!=null&&md>=-90&&md<=0)spend90+=num((maint[mi].answers||{}).cost);}\n  var dueList=[];for(var mm=0;mm<machines.length;mm++){var ma=machines[mm].answers||{};var sd=dayDiff(ma.service_due);if(sd!=null&&sd<14&&ma.status!=='retired')dueList.push({a:ma,dd:sd});}\n  dueList.sort(function(x,y){return x.dd-y.dd;});\n  var html='<div class=\"wrap\">';\n  html+=headerBlock(TR,ctx.appName||'AgriLog',brief(['<b>'+fmtInt(weekN)+'</b> job'+(weekN===1?'':'s')+' this week',overdue>0?'<b>'+fmtInt(overdue)+'</b> overdue':'',active>0?'<b>'+fmtInt(active)+'</b> withholding active':'','<b>'+mnyC(spend90)+'</b> upkeep in 90d']),[{nav:fJ?fJ.formId:'',label:'New job',icon:I.plus},{nav:fH?fH.formId:'',label:'Log harvest',icon:WHEAT,ghost:true}]);\n  html+='<div class=\"kpis\">'\n    +kpi('This week',weekN,board.length?'<b>'+fmtInt(board.length)+'</b> on the work board':'nothing scheduled',{hero:true,spark:spark(weekly(jobs))})\n    +kpi('Overdue jobs',overdue,overdue>0?'<span style=\"color:var(--fl-warn);font-weight:650\">need rescheduling</span>':'all on track')\n    +kpi('Withholding active',active,active>0?'<span style=\"color:var(--fl-warn);font-weight:650\">produce held</span>':'paddocks clear')\n    +kpi('Upkeep 90d',mnyC(spend90),'machinery maintenance')\n    +'</div>';\n  var boardHtml='';\n  for(var b=0;b<Math.min(7,board.length);b++){var e=board[b];var ba=e.a;var bn=refName(pn,ba.block);var jt=labelFor(jtMap,ba.job_type);\n    var when=e.dd<0?'<span style=\"color:var(--fl-warn);font-weight:650\">'+h(ago(ba.scheduled_date))+'</span>':'scheduled '+h(fmtDate(ba.scheduled_date));\n    var title=bn?h(bn):h(jt);var sub=(bn?h(jt)+' \\u00b7 ':'')+(ba.assigned_to?h(ba.assigned_to)+' \\u00b7 ':'')+when;\n    boardHtml+=qRow(JC[ba.status]||'var(--fl-accent)',title,sub,pill(labelFor(jsMap,ba.status),JP[ba.status]||'neutral'));}\n  if(!boardHtml&&jobs.length){for(var jp=0;jp<Math.min(6,jobs.length);jp++){var rj=jobs[jp].answers||{};var rbn=refName(pn,rj.block);\n    boardHtml+=qRow(JC[rj.status]||'var(--fl-accent)',rbn?h(rbn):h(labelFor(jtMap,rj.job_type)),(rbn?h(labelFor(jtMap,rj.job_type))+' \\u00b7 ':'')+'scheduled '+h(fmtDate(rj.scheduled_date)),pill(labelFor(jsMap,rj.status),JP[rj.status]||'neutral'));}}\n  if(!boardHtml)boardHtml=emptyBlock(I.cal,'Jobs you schedule will appear here, soonest first.',fJ?fJ.formId:'','+ New job');\n  var jtHtml=breakdown(jobs,'job_type',jtMap)||emptyBlock(I.chart,'Job types will chart here as you log work.',fJ?fJ.formId:'','+ New job');\n  html+=sec('Work board')+'<div class=\"grid g21\">'+panel(board.length?'This week & upcoming':'Recent jobs',boardHtml,fJ?'form/'+fJ.formId+'/responses':'')+panel('Jobs by type',jtHtml,fJ?'form/'+fJ.formId+'/responses':'')+'</div>';\n  var now=new Date(),hNames=[],hKeys=[],hCounts=[];\n  for(var m3=5;m3>=0;m3--){var ms=new Date(now.getFullYear(),now.getMonth()-m3,1);hKeys.push(ms.getTime());hNames.push(ms.toLocaleDateString(undefined,{month:'short'}));hCounts.push(0);}\n  for(var hr=0;hr<harvest.length;hr++){var hd=pd((harvest[hr].answers||{}).harvest_date);if(!hd)continue;var ht=new Date(hd.getFullYear(),hd.getMonth(),1).getTime();for(var q=0;q<hKeys.length;q++){if(ht===hKeys[q])hCounts[q]++;}}\n  var hMax=0,hi;for(hi=0;hi<hCounts.length;hi++){if(hCounts[hi]>hMax)hMax=hCounts[hi];}\n  var hHtml='';if(hMax>0){for(hi=0;hi<hCounts.length;hi++){hHtml+=barRow(hNames[hi],hCounts[hi],hMax);}}else hHtml=emptyBlock(WHEAT,'Loads logged each month will chart here through the season.',fH?fH.formId:'','+ Log harvest');\n  var whpHtml='';\n  for(var w=0;w<Math.min(6,whpList.length);w++){var we=whpList[w];var wa=we.a;var wbn=refName(pn,wa.block);\n    whpHtml+=qRow('var(--fl-warn)',h(wa.product_used||'Product'),(wbn?h(wbn)+' \\u00b7 ':'')+'clears '+h(fmtDate(wa.whp_end)),pill(we.dd===0?'clears today':'in '+we.dd+'d','warn'));}\n  if(!whpHtml)whpHtml=emptyBlock(SPRAY,'No active withholding periods \\u2014 every paddock is clear to harvest.',fC?fC.formId:'','+ Record application');\n  html+=sec('Harvest & compliance')+'<div class=\"grid g11\">'+panel('Harvest momentum',hHtml,fH?'form/'+fH.formId+'/responses':'')+panel('Active withholding',whpHtml,fC?'form/'+fC.formId+'/responses':'')+'</div>';\n  var dueHtml='';\n  for(var d=0;d<Math.min(6,dueList.length);d++){var de=dueList[d];var da=de.a;\n    var chip=de.dd<0?pill('Overdue','bad'):pill(de.dd===0?'due today':'in '+de.dd+'d','warn');\n    dueHtml+=rowItem(h(da.machine_name||'Machine'),h(labelFor(tyMap,da.machine_type))+(da.service_due?' \\u00b7 '+h(fmtDate(da.service_due)):''),chip);}\n  if(!dueHtml)dueHtml=emptyBlock(I.check,'Nothing due for service \\u2014 the fleet is up to date.',fM?fM.formId:'','+ Add machine');\n  var mSorted=maint.slice().sort(function(x,y){var xd=pd((x.answers||{}).date),yd=pd((y.answers||{}).date);return (yd?yd.getTime():0)-(xd?xd.getTime():0);});\n  var maintHtml='';\n  for(var ml=0;ml<Math.min(6,mSorted.length);ml++){var mla=mSorted[ml].answers||{};var mmn=refName(machNames,mla.machine);\n    maintHtml+=rowItem(h(labelFor(mtMap,mla.maintenance_type)),(mmn?h(mmn)+' \\u00b7 ':'')+h(fmtDate(mla.date)),num(mla.cost)>0?'<span class=\"amt\">'+h(mny(mla.cost))+'</span>':'');}\n  if(!maintHtml)maintHtml=emptyBlock(I.wrench,'Maintenance you log will appear here with its cost.',fL?fL.formId:'','+ New maintenance');\n  html+=sec('Machine shed')+'<div class=\"grid g11\">'+panel('Service due',dueHtml,fM?'form/'+fM.formId+'/responses':'')+panel('Recent maintenance',maintHtml,fL?'form/'+fL.formId+'/responses':'')+'</div>';\n  html+=sec('Quick actions')+acts([{nav:fJ?fJ.formId:'',label:'New job',icon:I.plus},{nav:fH?fH.formId:'',label:'Log harvest',icon:WHEAT},{nav:fC?fC.formId:'',label:'Chemical record',icon:SPRAY},{nav:fL?fL.formId:'',label:'Log maintenance',icon:I.wrench},{nav:fP?fP.formId:'',label:'Add paddock',icon:LEAF},{nav:fM?fM.formId:'',label:'Add machine',icon:TR}]);\n  html+='</div>';root.innerHTML=html;wire(root);\n}\nmain();"
+        },
+        "roles": [
+          {
+            "name": "Farm Manager",
+            "description": "Full access to every AgriLog form.",
+            "permissions": [
+              {
+                "packFormId": "paddock",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "paddock",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "paddock",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "paddock",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "paddock",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "export_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "delete_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "export_responses"
+              }
+            ]
+          },
+          {
+            "name": "Farm Hand",
+            "description": "Field workers who log jobs, harvests and maintenance and read the paddock and machinery lists.",
+            "permissions": [
+              {
+                "packFormId": "paddock",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "machinery",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "maintenance-log",
+                "permission": "view_all_responses"
+              }
+            ]
+          },
+          {
+            "name": "Agronomist",
+            "description": "Advisers who keep the chemical register and review harvest quality, with read access across the farm.",
+            "permissions": [
+              {
+                "packFormId": "paddock",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "farm-job",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "harvest-log",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "chemical-application",
+                "permission": "export_responses"
+              }
+            ]
+          }
+        ],
+        "reports": [
+          {
+            "reportId": "farm-jobs-count",
+            "kind": "chart",
+            "name": "Farm jobs",
+            "description": "Total number of field jobs logged across the farm.",
+            "spec": {
+              "formId": "@pack:farm-job",
+              "viz": "kpi",
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "jobs-by-type",
+            "kind": "chart",
+            "name": "Jobs by type",
+            "description": "Count of field jobs broken down by job type.",
+            "spec": {
+              "formId": "@pack:farm-job",
+              "viz": "bar",
+              "groupBy": {
+                "field": "job_type"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "harvest-over-time",
+            "kind": "chart",
+            "name": "Harvest logs over time",
+            "description": "Monthly trend of harvest loads logged.",
+            "spec": {
+              "formId": "@pack:harvest-log",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "month"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "harvest-by-grade",
+            "kind": "chart",
+            "name": "Harvest by grade",
+            "description": "Count of harvest loads grouped by their quality grade.",
+            "spec": {
+              "formId": "@pack:harvest-log",
+              "viz": "bar",
+              "groupBy": {
+                "field": "grade"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "maintenance-spend",
+            "kind": "chart",
+            "name": "Maintenance spend",
+            "description": "Total maintenance cost summed across all machines.",
+            "spec": {
+              "formId": "@pack:maintenance-log",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "cost"
+              }
+            }
+          },
+          {
+            "reportId": "jobs-by-block",
+            "kind": "chart",
+            "name": "Jobs by block",
+            "description": "Field jobs counted by the paddock they were logged against.",
+            "spec": {
+              "formId": "@pack:farm-job",
+              "viz": "bar",
+              "joins": [
+                {
+                  "via": "block",
+                  "formId": "@pack:paddock",
+                  "type": "left"
+                }
+              ],
+              "groupBy": {
+                "field": "@pack:paddock::block_name"
+              },
+              "measure": {
+                "fn": "count"
+              },
+              "seriesSort": "value",
+              "sort": "desc"
+            }
+          },
+          {
+            "reportId": "agrilog-overview",
+            "kind": "document",
+            "name": "Farm operations register",
+            "description": "A season-at-a-glance summary of jobs, harvest, machinery and the chemical register.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Farm operations register",
+                "body": "This register summarises field work, harvest and machinery upkeep across the farm. The chemical applications section is the compliance artifact: it records every product used, its rate and operator, and the withholding period end date that governs when produce may be harvested or grazed — keep it complete and current for audits and buyer assurance programs."
+              },
+              {
+                "kind": "report",
+                "reportId": "farm-jobs-count",
+                "caption": "Total field jobs logged."
+              },
+              {
+                "kind": "report",
+                "reportId": "jobs-by-type",
+                "caption": "Where the work goes, by job type."
+              },
+              {
+                "kind": "report",
+                "reportId": "harvest-over-time",
+                "caption": "Harvest loads logged month by month."
+              },
+              {
+                "kind": "report",
+                "reportId": "harvest-by-grade",
+                "caption": "Quality split across harvested loads."
+              },
+              {
+                "kind": "report",
+                "reportId": "jobs-by-block",
+                "caption": "Job effort by paddock."
+              },
+              {
+                "kind": "report",
+                "reportId": "maintenance-spend",
+                "caption": "Total machinery maintenance spend."
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

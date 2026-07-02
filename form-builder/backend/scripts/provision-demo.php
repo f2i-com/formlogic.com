@@ -501,17 +501,23 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
     $ids = [];
     $count = random_int(9, 14);
     for ($i = 0; $i < $count; $i++) {
+        // Decide this row's submission moment up-front so signing/acknowledgement dates can be
+        // aligned to it AND backdateResponse can apply the very same timestamp — keeping the
+        // domain date, the stored submitted_at and the "Nd ago" chip all telling one story.
+        $daysAgo = (int) floor((random_int(0, 1000) / 1000) ** 1.7 * 55);
+        $submittedTs = date('Y-m-d H:i:s', strtotime("-{$daysAgo} days") - random_int(0, 36000));
+        $submittedDate = substr($submittedTs, 0, 10);
         $answers = [];
         foreach ($fields as $f) {
-            $v = genValue($f, $i, $seeded, $formName);
+            $v = genValue($f, $i, $seeded, $formName, $count);
             if ($v !== null) { $answers[$f['id']] = $v; }
         }
-        coherencePass($fields, $answers);
+        coherencePass($fields, $answers, $submittedDate, $i, $count);
         try {
             $r = $responseService->createResponse($formId, ['answers' => $answers]);
             if (is_array($r) && isset($r['id'])) {
                 $ids[] = $r['id'];
-                backdateResponse($formId, (string) $r['id']);
+                backdateResponse($formId, (string) $r['id'], $submittedTs);
             }
         } catch (\Throwable $e) {
             // skip a bad row, keep going
@@ -521,38 +527,126 @@ function seedForm(ResponseService $responseService, string $formId, array $def, 
 }
 
 /**
- * Keep generated answers self-consistent: end dates never precede their start dates, and a record
- * whose schedule date is in the future can't carry a past-tense status (a July-20 appointment must
- * not read "completed" on July 2 — that instantly breaks the demo's believability).
+ * Keep generated answers self-consistent across fields: dates ordered, status ↔ date/amount
+ * coherence (both directions), signing dates tied to the submission, calculated fields computed
+ * from the SAME record's inputs, domain money reconciled, and category-driven descriptions. Rules
+ * are label/type-driven so they generalise across packs (the finance/trades/CRM specifics are
+ * expressed as label patterns, not per-form hacks).
  */
-function coherencePass(array $fields, array &$answers): void
+function coherencePass(array $fields, array &$answers, string $submittedDate = '', int $i = 0, int $count = 12): void
 {
+    $P = seedPools();
     $today = date('Y-m-d');
-    $schedIsFuture = false;
+    $sub = $submittedDate !== '' ? $submittedDate : $today;
+
+    $byId = [];
+    $labelOf = [];
+    $hasTime = false;
     foreach ($fields as $f) {
         $id = (string) ($f['id'] ?? '');
-        if (($f['type'] ?? '') !== 'date') { continue; }
-        if (str_contains($id, 'end')) {
-            $startId = str_replace('end', 'start', $id);
-            if (isset($answers[$startId], $answers[$id]) && is_string($answers[$id]) && is_string($answers[$startId])
-                && $answers[$id] < $answers[$startId]) {
-                $answers[$id] = date('Y-m-d', strtotime($answers[$startId] . ' +' . random_int(1, 7) . ' days'));
-            }
+        if ($id === '') { continue; }
+        $byId[$id] = $f;
+        $labelOf[$id] = strtolower((string) ($f['label'] ?? $id));
+        if (($f['type'] ?? '') === 'time') { $hasTime = true; }
+    }
+    $findByLabel = function (array $kw) use ($fields): ?string {
+        foreach ($fields as $f) {
+            $l = strtolower((string) ($f['label'] ?? '') . ' ' . ($f['id'] ?? ''));
+            if (hasKw($l, $kw)) { return (string) ($f['id'] ?? ''); }
         }
-        if (($id === 'date' || str_contains($id, 'appt') || str_contains($id, 'scheduled') || str_contains($id, 'visit'))
-            && isset($answers[$id]) && is_string($answers[$id]) && $answers[$id] > $today) {
-            $schedIsFuture = true;
+        return null;
+    };
+    $findAll = function (array $kw) use ($fields): array {
+        $r = [];
+        foreach ($fields as $f) {
+            $l = strtolower((string) ($f['label'] ?? '') . ' ' . ($f['id'] ?? ''));
+            if (hasKw($l, $kw)) { $r[] = (string) ($f['id'] ?? ''); }
+        }
+        return $r;
+    };
+    $optVals = function (?string $id) use ($byId): array {
+        $vals = [];
+        if ($id === null) { return $vals; }
+        foreach (($byId[$id]['properties']['options'] ?? []) as $o) {
+            $v = is_array($o) ? ($o['value'] ?? null) : $o;
+            if (is_string($v)) { $vals[] = $v; }
+        }
+        return $vals;
+    };
+    // A grand "Total" field — NOT "Subtotal" or a "Line Total" (both contain the substring "total").
+    $findTotal = function () use ($fields): ?string {
+        foreach ($fields as $f) {
+            $l = strtolower((string) ($f['label'] ?? '') . ' ' . ($f['id'] ?? ''));
+            if (hasKw($l, ['total']) && !hasKw($l, ['subtotal', 'line total'])) { return (string) ($f['id'] ?? ''); }
+        }
+        return null;
+    };
+    $mk = static fn (int $d, string $base): string => date('Y-m-d', strtotime($base . ' ' . ($d >= 0 ? '+' : '') . $d . ' days'));
+    $iv = static fn (string $id) => isset($answers[$id]) ? (int) $answers[$id] : 0;
+
+    // ── 1. End dates never precede their start dates ──────────────────────────
+    foreach ($fields as $f) {
+        $id = (string) ($f['id'] ?? '');
+        if (($f['type'] ?? '') !== 'date' || !str_contains($id, 'end')) { continue; }
+        $startId = str_replace('end', 'start', $id);
+        if (isset($answers[$startId], $answers[$id]) && is_string($answers[$id]) && is_string($answers[$startId])
+            && $answers[$id] < $answers[$startId]) {
+            $answers[$id] = $mk(random_int(1, 7), $answers[$startId]);
         }
     }
-    // Email follows the record's own name ("Ada Lovelace" → ada.lovelace@example.com) — names and
-    // emails drawn independently made linked-record pickers look wrong ("Linus Pauling -
-    // ada.lovelace@example.com").
-    $personName = null;
+
+    // ── 2. Signing / acknowledgement / effective dates == the submission; past-only dates clamped ─
     foreach ($fields as $f) {
+        if (($f['type'] ?? '') !== 'date') { continue; }
         $id = (string) ($f['id'] ?? '');
-        if (($f['type'] ?? '') !== 'short_text' || !preg_match('/name/i', $id . ' ' . (string) ($f['label'] ?? ''))) { continue; }
-        $v = $answers[$id] ?? null;
-        if (is_string($v) && preg_match('/^[A-Z][a-z]+ [A-Z][A-Za-z-]+$/', $v)) { $personName = $v; break; }
+        $l = $labelOf[$id] ?? '';
+        if (!isset($answers[$id]) || !is_string($answers[$id])) { continue; }
+        if (hasKw($l, ['acknowledg', 'declaration', 'nomination', 'effective']) || (hasKw($l, ['sign']) && !hasKw($l, ['assign']))) {
+            $answers[$id] = $mk(-random_int(0, 2), $sub);
+            continue;
+        }
+        // Escalation date == the submission (0-1 day earlier) so domain + submitted dates agree.
+        if (hasKw($l, ['escalation date'])) {
+            $answers[$id] = $mk(-random_int(0, 1), $sub);
+            continue;
+        }
+        if (hasKw($l, ['last reviewed', 'reviewed', 'review date', 'activity', 'sale date', 'payment date', 'issue date', 'reported', 'incident', 'order date', 'last day', 'interview date', 'audit'])
+            && !hasKw($l, ['next', 'expiry', 'expire', 'due', 'expected', 'valid'])) {
+            if ($answers[$id] > $today) { $answers[$id] = $mk(-random_int(1, 20), $sub); }
+        }
+        if (hasKw($l, ['client since', 'member since', 'lease', 'hire', 'purchase date']) && $answers[$id] > $sub) {
+            $answers[$id] = $mk(-random_int(30, 800), $sub);
+        }
+    }
+
+    // ── 3. Review period follows the review date's quarter ────────────────────
+    $pf = $findByLabel(['review period']);
+    $rd = $findByLabel(['review date']);
+    if ($pf && $rd && isset($answers[$rd]) && is_string($answers[$rd])) {
+        $m = (int) date('n', strtotime($answers[$rd]));
+        $q = $m <= 3 ? 'q1' : ($m <= 6 ? 'q2' : ($m <= 9 ? 'q3' : 'q4'));
+        $vals = $optVals($pf);
+        $ap = array_values(array_intersect(['annual', 'probation'], $vals));
+        if ($ap && random_int(0, 9) < 3) { $answers[$pf] = $ap[array_rand($ap)]; }
+        elseif (in_array($q, $vals, true)) { $answers[$pf] = $q; }
+    }
+
+    // ── 4. Email follows the record's own person name ─────────────────────────
+    $personName = null;
+    $fn = $findByLabel(['first name', 'given']);
+    $ln = $findByLabel(['last name', 'surname', 'family']);
+    if ($fn && $ln && !empty($answers[$fn]) && !empty($answers[$ln])) {
+        $personName = trim((string) $answers[$fn] . ' ' . (string) $answers[$ln]);
+    }
+    if ($personName === null) {
+        foreach ($fields as $f) {
+            if (($f['type'] ?? '') !== 'short_text') { continue; }
+            $id = (string) ($f['id'] ?? '');
+            $l = ($labelOf[$id] ?? '') . ' ' . $id;
+            if (!hasKw($l, ['name']) || hasKw($l, ['company', 'business', 'fund', 'product', 'document', 'course', 'deal', 'account', 'service'])) { continue; }
+            $v = $answers[$id] ?? null;
+            if (is_string($v) && preg_match('/^[A-Z][a-z]+ [A-Z][A-Za-z-]+$/', $v)) { $personName = $v; break; }
+        }
     }
     if ($personName !== null) {
         foreach ($fields as $f) {
@@ -562,19 +656,355 @@ function coherencePass(array $fields, array &$answers): void
         }
     }
 
-    if (!$schedIsFuture) { return; }
-    $pastTense = ['completed', 'no-show', 'no_show', 'arrived', 'invoiced', 'paid', 'part-paid', 'received', 'part-received', 'closed'];
-    $futureOk = ['scheduled', 'booked', 'confirmed', 'pending', 'new', 'requested', 'ordered', 'draft', 'sent', 'on-hold', 'lead', 'quoted', 'won'];
-    foreach ($fields as $f) {
-        $id = (string) ($f['id'] ?? '');
-        if (!str_contains($id, 'status') || empty($answers[$id]) || !is_string($answers[$id])) { continue; }
-        if (!in_array(strtolower($answers[$id]), $pastTense, true)) { continue; }
-        $vals = [];
-        foreach (($f['properties']['options'] ?? []) as $o) {
-            $v = is_array($o) ? ($o['value'] ?? null) : $o;
-            if (is_string($v) && in_array(strtolower($v), $futureOk, true)) { $vals[] = $v; }
+    // ── 5. Status ↔ schedule-date coherence (both directions) ─────────────────
+    $statusIds = $findAll(['status']);
+    $schedId = $findByLabel(['scheduled date', 'appointment date', 'appt', 'visit date', 'date in']);
+    if (!$schedId && $hasTime && isset($byId['date'])) { $schedId = 'date'; }
+    if ($schedId && isset($answers[$schedId]) && is_string($answers[$schedId])) {
+        $future = $answers[$schedId] > $today;
+        $past = $answers[$schedId] < $today;
+        $pastTense = ['completed', 'no-show', 'no_show', 'arrived', 'invoiced', 'paid', 'part-paid', 'received', 'part-received', 'closed', 'ready', 'in-progress', 'in_progress', 'awaiting-parts'];
+        $futureTense = ['scheduled', 'booked', 'confirmed', 'pending', 'new', 'requested', 'sent', 'quoted', 'lead'];
+        foreach ($statusIds as $sid) {
+            $cur = $answers[$sid] ?? null;
+            if (!is_string($cur)) { continue; }
+            $lc = strtolower($cur);
+            $vals = $optVals($sid);
+            if ($future && in_array($lc, $pastTense, true)) {
+                $cand = array_values(array_filter($vals, static fn ($v) => in_array(strtolower($v), array_merge($futureTense, ['on-hold']), true)));
+                if ($cand) { $answers[$sid] = $cand[array_rand($cand)]; }
+            } elseif ($past && in_array($lc, $futureTense, true)) {
+                $prefer = random_int(0, 9) < 7 ? ['completed', 'arrived', 'received', 'invoiced'] : ['no-show', 'no_show', 'cancelled'];
+                $cand = array_values(array_filter($vals, static fn ($v) => in_array(strtolower($v), $prefer, true)));
+                if (!$cand) { $cand = array_values(array_filter($vals, static fn ($v) => in_array(strtolower($v), $pastTense, true))); }
+                if ($cand) { $answers[$sid] = $cand[array_rand($cand)]; }
+            }
         }
-        if ($vals) { $answers[$id] = $vals[array_rand($vals)]; }
+    }
+
+    // ── 6. Invoice: status spread by index + amount_paid / dates coherence ─────
+    $stId = $findByLabel(['status']);
+    $invNoId = $findByLabel(['invoice number']);
+    $amountPaidId = $findByLabel(['amount paid']);
+    if ($stId && ($invNoId || $amountPaidId)) {
+        $vals = $optVals($stId);
+        $order = ['paid', 'sent', 'paid', 'part-paid', 'overdue', 'paid', 'sent', 'draft', 'paid', 'sent', 'overdue', 'part-paid', 'paid', 'sent'];
+        $want = $order[$i % count($order)];
+        $mapS = static function (string $w) use ($vals): ?string {
+            if (in_array($w, $vals, true)) { return $w; }
+            $fb = ['part-paid' => 'sent', 'draft' => 'sent', 'overdue' => 'sent'];
+            $c = $fb[$w] ?? null;
+            if ($c && in_array($c, $vals, true)) { return $c; }
+            return in_array('sent', $vals, true) ? 'sent' : ($vals[0] ?? null);
+        };
+        $st = $mapS($want);
+        if ($st !== null) { $answers[$stId] = $st; }
+        $stl = strtolower((string) $st);
+        $amountId = null;
+        foreach ($fields as $f) {
+            $id = (string) ($f['id'] ?? '');
+            if (($f['type'] ?? '') === 'number' && hasKw($labelOf[$id] ?? '', ['amount']) && !hasKw($labelOf[$id] ?? '', ['amount paid'])) { $amountId = $id; break; }
+        }
+        if ($amountPaidId && $amountId && isset($answers[$amountId])) {
+            $amt = (int) $answers[$amountId];
+            if ($stl === 'paid') { $answers[$amountPaidId] = $amt; }
+            elseif ($stl === 'part-paid') { $answers[$amountPaidId] = (int) round($amt * (random_int(30, 70) / 100)); }
+            else { $answers[$amountPaidId] = 0; }
+        }
+        $labId = $findByLabel(['labour', 'labor']);
+        $partsId = $findByLabel(['parts amount']);
+        $totId = $findTotal();
+        if ($totId && $labId && $partsId && isset($answers[$labId], $answers[$partsId])) {
+            $answers[$totId] = (int) $answers[$labId] + (int) $answers[$partsId];
+        }
+        $issueId = $findByLabel(['issue date']);
+        if ($issueId && isset($answers[$issueId])) {
+            if ($stl === 'overdue') { $answers[$issueId] = $mk(-random_int(35, 80), $today); }
+            elseif ($stl === 'draft') { $answers[$issueId] = $mk(-random_int(0, 10), $today); }
+        }
+        $dueId = $findByLabel(['due date']);
+        if ($dueId) {
+            if ($stl === 'overdue') { $answers[$dueId] = $mk(-random_int(3, 30), $today); }
+            elseif (in_array($stl, ['sent', 'part-paid'], true)) { $answers[$dueId] = $mk(random_int(3, 30), $today); }
+            elseif ($stl === 'paid') { $answers[$dueId] = $mk(-random_int(1, 25), $today); }
+            elseif ($stl === 'draft') { $answers[$dueId] = $mk(random_int(10, 40), $today); }
+        }
+    }
+
+    // ── 7. Quote: expired ↔ valid-until; subtotal + tax = total ───────────────
+    $vuId = $findByLabel(['valid until']);
+    $qstId = $findByLabel(['status']);
+    if ($vuId && $qstId && isset($answers[$qstId]) && !$invNoId && !$amountPaidId) {
+        $st = strtolower((string) $answers[$qstId]);
+        if ($st === 'expired') { $answers[$vuId] = $mk(-random_int(3, 40), $today); }
+        elseif (in_array($st, ['sent', 'draft'], true)) { $answers[$vuId] = $mk(random_int(5, 40), $today); }
+    }
+    $subId = $findByLabel(['subtotal']);
+    $taxId = $findByLabel(['tax']);
+    $totId2 = $findTotal();
+    if ($subId && $taxId && $totId2 && isset($answers[$subId])) {
+        $s = (int) $answers[$subId];
+        $t = (int) round($s * 0.1);
+        $answers[$taxId] = $t;
+        $answers[$totId2] = $s + $t;
+    }
+
+    // ── 8. PO line total = qty × unit; PO expected-delivery vs status ──────────
+    $qtyId = $findByLabel(['quantity']);
+    $ucId = $findByLabel(['unit cost']);
+    $ltId = $findByLabel(['line total']);
+    if ($qtyId && $ucId && $ltId && isset($answers[$qtyId], $answers[$ucId])) {
+        $answers[$ltId] = (int) $answers[$qtyId] * (int) $answers[$ucId];
+    }
+    $poNoId = $findByLabel(['po number']);
+    $poStId = $findByLabel(['status']);
+    $expId = $findByLabel(['expected delivery', 'expected date']);
+    if ($poNoId && $poStId && $expId) {
+        $st = strtolower((string) ($answers[$poStId] ?? ''));
+        if ($st === 'draft') { unset($answers[$expId]); }
+        elseif (in_array($st, ['ordered', 'part-received'], true)) { $answers[$expId] = $mk(random_int(-20, 20), $today); }
+        elseif ($st === 'received') { $answers[$expId] = $mk(-random_int(1, 25), $today); }
+    }
+
+    // ── 9. Inventory sell price >= unit cost (plausible markup) ───────────────
+    $ucP = $findByLabel(['unit cost']);
+    $spP = $findByLabel(['sell price']);
+    if ($ucP && $spP && isset($answers[$ucP]) && !$ltId) {
+        $answers[$spP] = (int) round((int) $answers[$ucP] * (120 + random_int(0, 60)) / 100);
+    }
+
+    // ── 10. Leave: total_days derived from the start/end span ─────────────────
+    $sd = $findByLabel(['start date']);
+    $ed = $findByLabel(['end date']);
+    $td = $findByLabel(['total days']);
+    if ($sd && $ed && $td && isset($answers[$sd], $answers[$ed]) && is_string($answers[$sd]) && is_string($answers[$ed])) {
+        if ($answers[$ed] < $answers[$sd]) { $answers[$ed] = $mk(random_int(0, 6), $answers[$sd]); }
+        $span = (int) floor((strtotime($answers[$ed]) - strtotime($answers[$sd])) / 86400) + 1;
+        $answers[$td] = max(1, min($span, (int) round($span * 5 / 7) ?: 1));
+    }
+
+    // ── 11. Salon service: category + price follow the service name ───────────
+    $svcName = $findByLabel(['service name']);
+    $catId = $findByLabel(['category']);
+    $priceId = $findByLabel(['price']);
+    if ($svcName && isset($answers[$svcName]) && is_string($answers[$svcName])) {
+        $nm = $answers[$svcName];
+        if ($catId && isset($P['salonServiceCat'][$nm]) && in_array($P['salonServiceCat'][$nm], $optVals($catId), true)) {
+            $answers[$catId] = $P['salonServiceCat'][$nm];
+        }
+        if ($priceId && isset($P['salonServicePrice'][$nm])) { $answers[$priceId] = $P['salonServicePrice'][$nm]; }
+    }
+
+    // ── 12. Appointment notes: scheduling note ~half the time, else empty ─────
+    $isAppt = $findByLabel(['appointment date', 'appt']) !== null || ($hasTime && $stId !== null);
+    $notesId = $findByLabel(['notes']);
+    if ($isAppt && $notesId) {
+        if (random_int(0, 9) < 5) { $answers[$notesId] = $P['schedNotes'][seedHash($sub . $i . 'note') % count($P['schedNotes'])]; }
+        else { unset($answers[$notesId]); }
+    }
+
+    // ── 12b. Availability roster: guarantee a bookable majority (~75%) so the KPI never reads 0 ─
+    foreach ($fields as $f) {
+        if (($f['type'] ?? '') !== 'checkboxes') { continue; }
+        $id = (string) ($f['id'] ?? '');
+        if (!hasKw($labelOf[$id] ?? '', ['availability'])) { continue; }
+        $ov = $optVals($id);
+        if (count($ov) !== 1) { continue; }
+        $answers[$id] = ($i % 4 !== 0) ? [$ov[0]] : [];
+    }
+
+    // ── 12c. Policy acknowledgement: ~2/3 of starters fully signed (deterministic → stable KPI) ─
+    foreach ($fields as $f) {
+        if (($f['type'] ?? '') !== 'checkboxes') { continue; }
+        $id = (string) ($f['id'] ?? '');
+        if (!hasKw($labelOf[$id] ?? '', ['policy', 'acknowledg'])) { continue; }
+        $ov = $optVals($id);
+        if (count($ov) < 4) { continue; }
+        $answers[$id] = ($i % 3 !== 0) ? $ov : array_slice($ov, 0, random_int(2, count($ov) - 1));
+    }
+
+    // ── 13. Description follows its record's category (expenses & maintenance) ─
+    $catId2 = $findByLabel(['category', 'expense category']);
+    $descId2 = $findByLabel(['description']);
+    if ($catId2 && $descId2) {
+        $cv = (string) ($answers[$catId2] ?? '');
+        $catVals = $optVals($catId2);
+        $pool = null;
+        if (array_intersect($catVals, ['plumbing', 'electrical', 'appliance', 'structural', 'garden'])) {
+            $pool = $P['maintByCat'][$cv] ?? $P['maintByCat']['other'];
+        } elseif (array_intersect($catVals, ['travel', 'meals', 'software', 'accommodation', 'supplies', 'technology'])) {
+            $pool = $P['expenseByCat'][$cv] ?? $P['expenseByCat']['other'];
+        }
+        if ($pool) { $answers[$descId2] = $pool[($i + seedHash($cv . $descId2)) % count($pool)]; }
+    }
+
+    // ── 14. Support-survey comments follow the satisfaction score ─────────────
+    $satId = $findByLabel(['overall satisfaction', 'satisfaction']);
+    $comId = $findByLabel(['comments']);
+    if ($comId && $satId && isset($answers[$satId])) {
+        $s = (int) $answers[$satId];
+        $pool = $s >= 4 ? $P['csGood'] : ($s <= 2 ? $P['csBad'] : array_merge($P['csGood'], $P['csBad']));
+        $answers[$comId] = $pool[$i % count($pool)];
+    }
+
+    // ── 15. CRM activity subject follows the touch type ───────────────────────
+    $typeId = $findByLabel(['type']);
+    $subjId = $findByLabel(['subject']);
+    if ($typeId && $subjId && isset($answers[$typeId]) && isset($P['activityByType'][(string) $answers[$typeId]])) {
+        $tp = $P['activityByType'][(string) $answers[$typeId]];
+        $answers[$subjId] = $tp[$i % count($tp)];
+    }
+
+    // ── 16. CRM deal: won/lost close in the past, open deals in the future ────
+    $stageId = $findByLabel(['stage']);
+    $closeId = $findByLabel(['expected close', 'close date']);
+    if ($stageId && $closeId && isset($answers[$stageId])) {
+        $stg = strtolower((string) $answers[$stageId]);
+        $answers[$closeId] = in_array($stg, ['won', 'lost'], true) ? $mk(-random_int(1, 30), $today) : $mk(random_int(7, 60), $today);
+    }
+
+    // ── 17. Vehicle: year 1998-2025, fuel coherent with the year ──────────────
+    $yearId = $findByLabel(['year']);
+    $fuelId = $findByLabel(['fuel']);
+    $makeId = $findByLabel(['make']);
+    if ($makeId && $yearId) {
+        $yr = random_int(1998, 2025);
+        $answers[$yearId] = $yr;
+        if ($fuelId && isset($answers[$fuelId])) {
+            $fv = strtolower((string) $answers[$fuelId]);
+            $fvals = $optVals($fuelId);
+            if (($fv === 'electric' && $yr < 2015) || ($fv === 'hybrid' && $yr < 2005)) {
+                $answers[$fuelId] = in_array('petrol', $fvals, true) ? 'petrol' : ($fvals[0] ?? $fv);
+            }
+        }
+    }
+
+    // ── 18. Job priority follows an emergency job type ────────────────────────
+    $jtId = $findByLabel(['job type']);
+    $prioId = $findByLabel(['priority']);
+    if ($jtId && $prioId && strtolower((string) ($answers[$jtId] ?? '')) === 'emergency') {
+        $cand = array_values(array_filter($optVals($prioId), static fn ($v) => in_array(strtolower($v), ['high', 'urgent'], true)));
+        if ($cand && !in_array(strtolower((string) ($answers[$prioId] ?? '')), ['high', 'urgent'], true)) {
+            $answers[$prioId] = $cand[array_rand($cand)];
+        }
+    }
+
+    // ── 19. Post-event recommendation follows the star rating ─────────────────
+    $ratId = $findByLabel(['overall rating']);
+    $recId = $findByLabel(['would you recommend', 'recommend']);
+    if ($recId && $ratId && isset($answers[$ratId])) {
+        $r = (int) $answers[$ratId];
+        $want = $r >= 4 ? 'yes' : ($r <= 2 ? 'no' : 'maybe');
+        if (in_array($want, $optVals($recId), true)) { $answers[$recId] = $want; }
+    }
+    $attId = $findByLabel(['would you attend', 'attend again']);
+    if ($attId && $ratId && isset($answers[$ratId])) {
+        $r = (int) $answers[$ratId];
+        $want = $r >= 5 ? 'definitely' : ($r === 4 ? 'probably' : ($r === 3 ? 'unsure' : 'no'));
+        if (in_array($want, $optVals($attId), true)) { $answers[$attId] = $want; }
+    }
+
+    // ── 20. Liquid assets never exceed net assets/worth ───────────────────────
+    $netId = $findByLabel(['net worth', 'net assets']);
+    $liqId = $findByLabel(['liquid net worth', 'liquid assets']);
+    if ($netId && $liqId && isset($answers[$netId], $answers[$liqId]) && (int) $answers[$liqId] > (int) $answers[$netId]) {
+        $answers[$liqId] = (int) round((int) $answers[$netId] * (random_int(30, 80) / 100));
+    }
+
+    // ── 21. Beneficiary nominations: fill 1-3 primary / 0-2 contingent, sum 100 ─
+    if (isset($byId['primary_name_1'])) {
+        $nP = random_int(1, 3);
+        for ($s = 1; $s <= 3; $s++) {
+            $nmId = "primary_name_$s"; $relId = "primary_relationship_$s"; $pctId = "primary_percentage_$s"; $dobId = "primary_dob_$s";
+            if (!isset($byId[$nmId])) { continue; }
+            if ($s <= $nP) {
+                if (isset($byId[$dobId])) { $answers[$dobId] = date('Y-m-d', strtotime('-' . random_int(6600, 25000) . ' days')); }
+            } else {
+                unset($answers[$nmId], $answers[$relId], $answers[$pctId], $answers[$dobId]);
+            }
+        }
+        if ($nP === 1) {
+            if (isset($byId['primary_percentage_1'])) { $answers['primary_percentage_1'] = 100; }
+        } elseif ($nP === 2) {
+            $a = random_int(30, 70);
+            if (isset($byId['primary_percentage_1'])) { $answers['primary_percentage_1'] = $a; }
+            if (isset($byId['primary_percentage_2'])) { $answers['primary_percentage_2'] = 100 - $a; }
+        } else {
+            $a = random_int(20, 50); $rem = 100 - $a; $b = random_int(10, $rem - 10); $c = $rem - $b;
+            if (isset($byId['primary_percentage_1'])) { $answers['primary_percentage_1'] = $a; }
+            if (isset($byId['primary_percentage_2'])) { $answers['primary_percentage_2'] = $b; }
+            if (isset($byId['primary_percentage_3'])) { $answers['primary_percentage_3'] = $c; }
+        }
+        $nC = random_int(0, 2);
+        for ($s = 1; $s <= 2; $s++) {
+            $nmId = "contingent_name_$s"; $relId = "contingent_relationship_$s"; $pctId = "contingent_percentage_$s";
+            if (!isset($byId[$nmId])) { continue; }
+            if ($s > $nC) { unset($answers[$nmId], $answers[$relId], $answers[$pctId]); }
+        }
+        if ($nC === 1 && isset($byId['contingent_percentage_1'])) { $answers['contingent_percentage_1'] = 100; }
+        elseif ($nC >= 2) {
+            $a = random_int(30, 70);
+            if (isset($byId['contingent_percentage_1'])) { $answers['contingent_percentage_1'] = $a; }
+            if (isset($byId['contingent_percentage_2'])) { $answers['contingent_percentage_2'] = 100 - $a; }
+        }
+    }
+
+    // ── 21b. Trip odometer end >= start; stay check-out >= check-in; withholding after application ─
+    $soId = $findByLabel(['start odometer', 'odometer start']);
+    $eoId = $findByLabel(['end odometer', 'odometer end']);
+    if ($soId && $eoId && isset($answers[$soId])) { $answers[$eoId] = (int) $answers[$soId] + random_int(5, 600); }
+    $ciId = $findByLabel(['check-in', 'check in', 'checkin']);
+    $coId = $findByLabel(['check-out', 'check out', 'checkout']);
+    if ($ciId && $coId && isset($answers[$ciId]) && is_string($answers[$ciId])
+        && (!isset($answers[$coId]) || !is_string($answers[$coId]) || $answers[$coId] < $answers[$ciId])) {
+        $answers[$coId] = $mk(random_int(1, 7), $answers[$ciId]);
+    }
+    $whpId = $findByLabel(['withholding']);
+    $appId = $findByLabel(['application date', 'harvest date', 'spray date']);
+    if ($whpId && $appId && isset($answers[$appId]) && is_string($answers[$appId])) {
+        $answers[$whpId] = $mk(random_int(3, 30), $answers[$appId]);
+    }
+
+    // ── 22. Superannuation partial rollover amount < balance (only when partial) ─
+    $paId = $findByLabel(['partial rollover', 'partial amount']);
+    if ($paId) {
+        $bal = $iv($findByLabel(['estimated balance']) ?? '');
+        $rt = strtolower((string) ($answers[$findByLabel(['rollover type']) ?? ''] ?? ''));
+        if ($rt === 'partial' && $bal > 0) { $answers[$paId] = (int) round($bal * (random_int(20, 80) / 100)); }
+        else { unset($answers[$paId]); }
+    }
+
+    // ── 23. Calculated fields computed from the SAME record's inputs ───────────
+    foreach ($fields as $f) {
+        if (($f['type'] ?? '') !== 'calculated') { continue; }
+        $id = (string) ($f['id'] ?? '');
+        $l = $labelOf[$id] ?? '';
+        if (hasKw($l, ['risk score', 'risk profile score'])) {
+            $lcId = $findByLabel(['loss capacity']) ?: $findByLabel(['risk tolerance']);
+            $thId = $findByLabel(['time horizon']);
+            $agId = $findByLabel(['age']);
+            $A = $lcId && isset($answers[$lcId]) ? (int) $answers[$lcId] : random_int(3, 9);
+            $B = $thId && isset($answers[$thId]) ? (int) $answers[$thId] : random_int(3, 15);
+            $AG = $agId && isset($answers[$agId]) ? (int) $answers[$agId] : random_int(30, 70);
+            $answers[$id] = max(22, min(88, (int) round($A * 5 + $B * 2 + (120 - $AG) / 2)));
+        } elseif (hasKw($l, ['annual fee'])) {
+            $pvId = $findByLabel(['portfolio value', 'current portfolio', 'current aum', 'account value', 'portfolio']);
+            $pv = $pvId ? $iv($pvId) : 0;
+            if ($pv > 0) {
+                $rate = $pv <= 500000 ? 0.011 : ($pv <= 1000000 ? 0.0088 : 0.0077);
+                $answers[$id] = (int) round($pv * $rate);
+            }
+        } elseif (hasKw($l, ['wholesale'])) {
+            $inc = $iv($findByLabel(['annual income']) ?? '');
+            $net = $iv($findByLabel(['net assets', 'net worth']) ?? '');
+            $answers[$id] = ($inc >= 250000 || $net >= 2500000) ? 'Yes' : 'No';
+        } elseif (hasKw($l, ['transfer fee'])) {
+            $answers[$id] = random_int(50, 125);
+        } elseif (hasKw($l, ['accredited'])) {
+            $inc = $iv($findByLabel(['annual income']) ?? '');
+            $net = $iv($findByLabel(['net worth', 'net assets']) ?? '');
+            $answers[$id] = ($inc > 200000 || $net > 1000000) ? 'Accredited' : 'Retail';
+        }
     }
 }
 
@@ -584,12 +1014,10 @@ function coherencePass(array $fields, array &$answers): void
  * seed. Updates the per-form SQLite row AND the MySQL response_metadata mirror. Cosmetic: failures
  * are swallowed.
  */
-function backdateResponse(string $formId, string $responseId): void
+function backdateResponse(string $formId, string $responseId, string $ts): void
 {
     global $sqlite, $pdo;
     try {
-        $daysAgo = (int) floor((random_int(0, 1000) / 1000) ** 1.7 * 55);
-        $ts = date('Y-m-d H:i:s', strtotime("-{$daysAgo} days") - random_int(0, 36000));
         $db = $sqlite->getFormDatabase($formId);
         $st = $db->prepare('UPDATE responses SET submitted_at = :ts, updated_at = :ts2 WHERE id = :id');
         $st->execute(['ts' => $ts, 'ts2' => $ts, 'id' => $responseId]);
@@ -602,135 +1030,200 @@ function backdateResponse(string $formId, string $responseId): void
 
 /**
  * Generate a plausible value for a field, or null to leave it empty. Uses the FORM name + field label
- * together (`$ctx`) so demo data is domain-relevant — a "Name" field in a Product form yields a product,
- * in a Vehicle form the make/model yields a car, in a Salon Service form yields a service, etc.
+ * together so demo data is domain-relevant — a "Name" field in a Product form yields a product, in a
+ * Vehicle form the make/model yields a car, in a Salon Service form yields a service, etc. Person and
+ * entity names are drawn WITHOUT replacement per form (deterministic per (form,row)) so visible lists
+ * never repeat, and NEVER emits placeholder strings like "Sample entry".
  */
-function genValue(array $field, int $i, array $seeded, string $formName = '')
+function genValue(array $field, int $i, array $seeded, string $formName = '', int $count = 12)
 {
+    $P = seedPools();
     $type = $field['type'] ?? 'short_text';
-    $label = strtolower((string) ($field['label'] ?? $field['id'] ?? ''));
-    $ctx = trim($formName . ' ' . $label); // form + field context drives domain-aware values
+    $fid = (string) ($field['id'] ?? '');
+    $label = strtolower((string) ($field['label'] ?? $fid));
+    $ctx = trim($formName . ' ' . $label);
     $props = $field['properties'] ?? [];
     $opts = $props['options'] ?? [];
 
-    $NAMES = ['Ada Lovelace', 'Alan Turing', 'Grace Hopper', 'Katherine Johnson', 'Linus Pauling', 'Rosalind Franklin', 'Nikola Tesla', 'Marie Curie', 'Ada Byron', 'Claude Shannon', 'Dorothy Vaughan', 'Tim Berners-Lee'];
-    $COMPANIES = ['Acme Corp', 'Globex', 'Initech', 'Umbrella Co', 'Soylent Foods', 'Hooli', 'Stark Industries', 'Wayne Enterprises', 'Wonka Inc', 'Cyberdyne Systems', 'Northwind Traders', 'Contoso Ltd'];
-    $PARTS = ['Brake Pads', 'Oil Filter', 'Spark Plug Set', 'Air Filter', 'Timing Belt', 'Alternator', 'Radiator Hose', 'Clutch Kit', 'Wiper Blades', 'Battery', 'Brake Disc', 'Fuel Pump'];
-    $PRODUCTS = ['Copper Pipe 15mm', 'PVC Elbow Joint', 'Silicone Sealant', 'Ball Valve', 'Cable Ties (100pk)', 'LED Downlight', 'Extension Lead', 'Safety Gloves', 'Paint Roller Set', 'Masking Tape', 'Cordless Drill', 'Screw Assortment'];
-    $SERVICES = ['Cut & Blow Dry', 'Full Head Colour', 'Balayage', 'Gel Manicure', 'Facial Treatment', 'Deep Tissue Massage', 'Beard Trim', 'Highlights', 'Keratin Treatment', 'Pedicure'];
-    $CAR_MAKES = ['Toyota', 'Ford', 'Mazda', 'Honda', 'Hyundai', 'Volkswagen', 'Subaru', 'Nissan', 'Kia', 'Holden'];
-    $CAR_MODELS = ['Corolla', 'Ranger', 'CX-5', 'Civic', 'i30', 'Golf', 'Outback', 'X-Trail', 'Cerato', 'Commodore'];
+    $rand = static fn (array $a) => $a[array_rand($a)];
+    $has = static fn (string $s, array $kw): bool => hasKw($s, $kw);
     $STREETS = ['Baker Street', 'Elm Avenue', 'Maple Court', 'King Road', 'Station Street', 'Harbour Lane', 'Victoria Parade', 'Rosewood Drive', 'George Street', 'Park Terrace'];
     $CITIES = ['Springfield', 'Riverton', 'Fairview', 'Lakeside', 'Newport', 'Ashford'];
-    $WORDS = ['Follow-up required', 'Reviewed and approved', 'Pending manager sign-off', 'On track for delivery', 'Escalated to the lead', 'Resolved successfully'];
-    $rand = static fn (array $a) => $a[array_rand($a)];
-    $has = static function (string $s, array $kw): bool { foreach ($kw as $k) { if (str_contains($s, $k)) { return true; } } return false; };
     $addr = static fn () => random_int(1, 199) . ' ' . $STREETS[array_rand($STREETS)] . ', ' . $CITIES[array_rand($CITIES)];
     $code = static fn (string $p) => $p . '-' . str_pad((string) (1001 + $i), 4, '0', STR_PAD_LEFT);
-
     $optValue = static function (array $opts) {
         if (empty($opts)) { return null; }
         $o = $opts[array_rand($opts)];
         return is_array($o) ? ($o['value'] ?? null) : $o;
     };
+    // Form is a roster/directory OF workers (patients-vs-providers, clients-vs-stylists must stay
+    // disjoint) — such forms draw their identity names from the STAFF pool, everyone else from PRIMARY.
+    $roster = $has($formName, ['stylist', 'provider', 'therapist', 'practitioner', 'dentist', 'walker', 'instructor', 'tutor', 'trainer', 'driver']);
+    // Finance forms give estimated/contract "values" six-to-seven-figure magnitudes; trades forms don't.
+    $finance = $has($formName, ['client onboarding', 'new client', 'risk', 'transfer', 'rollover', 'acat', '1035', 'exchange', 'fee agreement', 'fee disclosure', 'beneficiary', 'death benefit', 'annual client review', 'superannuation', 'off-market']);
 
     switch ($type) {
         case 'short_text':
-            // Codes / reference numbers
-            if ($has($ctx, ['sku', 'item code', 'product code', 'part number', 'part no'])) { return 'SKU-' . str_pad((string) (1000 + $i), 5, '0', STR_PAD_LEFT); }
-            if ($has($ctx, ['invoice']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('INV'); }
-            if ($has($ctx, ['purchase order', 'po number', 'p.o']) || ($has($ctx, ['order']) && $has($ctx, ['number', ' no', '#']))) { return $code('PO'); }
-            if ($has($ctx, ['quote']) && $has($ctx, ['number', ' no', 'ref', '#'])) { return $code('QT'); }
-            // Label-only on purpose: matching $ctx would turn EVERY short_text in a "Support Tickets"
-            // form into a REF code (subject, customer name, ...) via the form name.
+            // ── Codes / reference numbers (LABEL-driven: the form name must never turn a name/subject
+            // field into a code — e.g. the "Event Registration" form must not stamp plate codes). ──
+            if ($has($label, ['sku', 'item code', 'product code'])) { return 'SKU-' . str_pad((string) (1000 + $i), 5, '0', STR_PAD_LEFT); }
+            if ($has($label, ['part number', 'part no'])) { return strtoupper($rand(['BP', 'OF', 'SP', 'AF', 'TB', 'RH'])) . '-' . random_int(1000, 9999); }
+            if ($has($label, ['invoice number', 'invoice no', 'invoice #'])) { return $code('INV'); }
+            if ($has($label, ['po number', 'purchase order'])) { return $code('PO'); }
+            if ($has($label, ['quote number', 'quote no', 'quote #'])) { return $code('QT'); }
+            if ($has($label, ['order']) && $has($label, ['number', ' no', '#'])) { return $code('ORD'); }
             if ($has($label, ['reference', 'ref no', 'ref number', 'ticket number', 'case number', 'job number', 'work order number'])) { return $code('REF'); }
-            if ($has($ctx, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate'])) { return strtoupper($rand(['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK'])) . '-' . random_int(100, 999); }
-            if ($has($ctx, ['vin', 'chassis'])) { return strtoupper(substr(bin2hex(random_bytes(9)), 0, 17)); }
-            // Domain nouns (form context matters: a "Name" in a Product/Vehicle/Service form isn't a person)
-            if ($has($ctx, ['make']) && !$has($ctx, ['maker', 'remake'])) { return $rand($CAR_MAKES); }
-            if ($has($ctx, ['model'])) { return $rand($CAR_MODELS); }
-            if ($has($ctx, ['service']) && !$has($ctx, ['customer service'])) { return $rand($SERVICES); }
-            if ($has($ctx, ['part', 'material', 'component'])) { return $rand($PARTS); }
-            if ($has($ctx, ['product', 'item', 'stock'])) { return $rand($PRODUCTS); }
-            if ($has($ctx, ['address', 'street', 'site'])) { return $addr(); }
-            if ($has($ctx, ['supplier', 'vendor', 'company', 'business', 'organization', 'organisation', 'employer', 'agency', 'manufacturer', 'brand'])) { return $rand($COMPANIES); }
-            // People
-            if ($has($ctx, ['name', 'client', 'customer', 'patient', 'contact', 'tenant', 'stylist', 'technician', 'provider', 'staff', 'assigned', 'attendee', 'applicant', 'employee', 'owner', 'manager'])
-                && !$has($ctx, ['file', 'username', 'filename'])) {
-                $full = $rand($NAMES);
-                if ($has($ctx, ['first', 'given'])) { return explode(' ', $full)[0]; }
-                if ($has($ctx, ['last', 'surname', 'family'])) { return explode(' ', $full)[1] ?? 'Smith'; }
+            if ($has($label, ['registration', 'rego', 'number plate', 'plate', 'licence plate', 'license plate']) && !$has($label, ['template'])) { return strtoupper($rand(['ABC', 'XYZ', 'QRS', 'JKL', 'MNP', 'TRK'])) . '-' . random_int(100, 999); }
+            if ($has($label, ['vin', 'chassis'])) { return strtoupper(substr(bin2hex(random_bytes(9)), 0, 17)); }
+            if ($has($label, ['member number'])) { return 'M' . random_int(1000000, 9999999); }
+            if ($has($label, ['policy number'])) { return 'POL-' . random_int(100000, 999999); }
+            if ($has($label, ['account number', 'receiving account', 'current account'])) { return (string) random_int(10000000, 99999999); }
+            if ($has($label, ['account reference', 'hin', 'srn'])) { return 'X' . random_int(100000000, 999999999); }
+            if ($has($label, ['abn'])) { return random_int(10, 99) . ' ' . random_int(100, 999) . ' ' . random_int(100, 999) . ' ' . random_int(100, 999); }
+            if ($fid === 'account' || $label === 'account') { return $rand($P['accountLabels']) . ' ····' . random_int(1000, 9999); }
+            // ── Relationship / short descriptors ──
+            if ($has($label, ['relationship'])) { return $rand(['Spouse', 'Parent', 'Sibling', 'Partner', 'Child', 'Friend']); }
+            // ── Domain nouns (form context matters) ──
+            if ($has($label, ['make and model', 'make/model', 'make & model', 'vehicle model']) || ($has($label, ['make']) && $has($label, ['model']))) { return pickSeq($P['makeModels'], $formName, 'vehicle', $i); }
+            if ($has($label, ['make']) && !$has($label, ['maker', 'remake'])) { return explode(' ', (string) pickSeq($P['makeModels'], $formName, 'vehicle', $i), 2)[0]; }
+            if ($has($label, ['model'])) { $mm = explode(' ', (string) pickSeq($P['makeModels'], $formName, 'vehicle', $i), 2); return $mm[1] ?? 'Corolla'; }
+            if ($has($label, ['vehicle name'])) { return pickSeq($P['fleetNames'], $formName, 'vname', $i); }
+            if ($has($label, ['crop'])) { return pickSeq($P['crops'], $formName, 'crop', $i); }
+            if ($has($label, ['product used', 'chemical', 'herbicide', 'pesticide', 'fungicide'])) { return pickSeq($P['chemicals'], $formName, 'chem', $i); }
+            if ($has($label, ['fund']) && !$has($label, ['refund'])) { return pickSeq($P['superFunds'], $formName, 'fund' . $fid, $i); }
+            if ($has($label, ['custodian'])) { return pickSeq($P['custodians'], $formName, 'cust' . $fid, $i); }
+            if ($has($label, ['course', 'program']) && !$has($label, ['programme note'])) { return pickSeq($P['courses'], $formName, 'course', $i); }
+            if ($has($label, ['document name', 'file name', 'report name'])) { return pickSeq($P['docNames'], $formName, 'doc', $i); }
+            if ($has($label, ['service']) && !$has($label, ['customer service', 'service type', 'self-service', 'services statement', 'services we', 'services provide'])) { return pickSeq($P['salonServices'], $formName, 'service', $i); }
+            if ($fid === 'item' || $label === 'item' || $has($label, ['line item'])) { return $has($formName, ['budget', 'event']) ? null : pickSeq($P['plumbItems'], $formName, 'item', $i); }
+            if ($has($label, ['part name']) || ($has($label, ['part']) && !$has($label, ['participant', 'party', 'department', 'apartment']))) { return $rand($P['partsAuto']); }
+            if ($has($label, ['product'])) { return $has($formName, ['sale', 'retail', 'salon', 'boutique']) ? pickSeq($P['salonProducts'], $formName, 'product', $i) : pickSeq($P['productsHW'], $formName, 'product', $i); }
+            if ($has($label, ['stock']) && $has($label, ['name'])) { return pickSeq($P['productsHW'], $formName, 'product', $i); }
+            if ($has($label, ['supplier', 'vendor']) && !$has($label, ['supplier name'])) {
+                if ($has($formName, ['parts used', ' used', 'vehicle', 'mechanic', 'workshop', 'auto'])) { return pickRef($P['autoSuppliers'], $formName, 'supplier', $i, 5); }
+                if ($has($formName, ['parts & materials', 'material', 'request', 'plumb'])) { return pickRef($P['plumbSuppliers'], $formName, 'supplier', $i, 5); }
+                return pickRef($P['companies'], $formName, 'supplier', $i, 6);
+            }
+            if ($has($label, ['supplier name', 'company name', 'business', 'employer', 'agency', 'manufacturer', 'brand', 'organization', 'organisation']) && !$has($label, ['contact'])) {
+                if ($has($label, ['organization', 'organisation']) && random_int(0, 9) < 4) { return null; }
+                return pickSeq($P['companies'], $formName, 'company', $i);
+            }
+            if ($has($label, ['address', 'street', 'site address'])) { return $addr(); }
+            if ($has($label, ['location'])) {
+                if ($has($formName, ['incident', 'event', 'safety', 'hazard'])) { return $rand($P['venueSpots']); }
+                return pickSeq($P['warehouseLoc'], $formName, 'loc', $i);
+            }
+            if ($has($label, ['unit', 'room', 'apartment', 'apt'])) { return random_int(0, 4) === 0 ? null : pickSeq($P['unitRooms'], $formName, 'unit', $i); }
+            if ($label === 'reason' || $has($label, ['reason /', 'reason / reference'])) { return $has($formName, ['leave']) ? $rand($P['leaveReasons']) : $rand($P['movementReasons']); }
+            if ($has($label, ['escalated to', 'escalate to'])) { return pickSeq($P['escalationTargets'], $formName, 'esc', $i); }
+            // ── Title / subject registers (unique per form, domain-appropriate) ──
+            if ($has($label, ['bug title'])) { return pickSeq($P['bugTitles'], $formName, 'title', $i); }
+            if ($has($label, ['feature title'])) { return pickSeq($P['featureTitles'], $formName, 'title', $i); }
+            if ($has($label, ['article title']) || ($has($formName, ['knowledge']) && $has($label, ['title']))) { return pickSeq($P['kbTitles'], $formName, 'title', $i); }
+            if ($has($label, ['subject']) && $has($formName, ['ticket', 'support'])) { return pickSeq($P['ticketSubjects'], $formName, 'subject', $i); }
+            if ($has($label, ['topic', 'session title'])) { return pickSeq($P['sessionTitles'], $formName, 'title', $i); }
+            if ($has($label, ['job title']) && !$has($formName, ['application', 'candidate', 'interview'])) { return pickSeq($P['tradeJobs'], $formName, 'jobtitle', $i); }
+            if ($has($label, ['deal title'])) { return pickSeq($P['companies'], $formName, 'deal', $i) . ' ' . pickSeq($P['dealSuffix'], $formName, 'dealsfx', $i); }
+            if ($has($label, ['subject']) && $has($formName, ['activity'])) { return pickSeq($P['activityAll'], $formName, 'subject', $i); }
+            // ── People (drawn without replacement; staff pool for worker-rosters/references) ──
+            if ($has($ctx, ['name', 'client', 'customer', 'patient', 'contact', 'tenant', 'stylist', 'technician', 'provider', 'staff', 'assigned', 'attendee', 'applicant', 'employee', 'owner', 'manager', 'inspector', 'reporter', 'reviewer', 'interviewer', 'witness', 'author', 'submitter', 'escalated by', 'requested by', 'principal', 'agent', 'advisor', 'adviser', 'driver', 'walker', 'instructor', 'tutor', 'operator', 'groomer'])
+                && !$has($ctx, ['file', 'username', 'filename', 'fund', 'company', 'business', 'document', 'product', 'course', 'account', 'deal', 'vehicle', 'material', 'service', 'supplier', 'location', 'title', 'subject', 'topic', 'crop'])) {
+                $isRef = $has($label, ['technician', 'inspector', 'assigned', 'assignee', 'reporter', 'handled', 'escalated to', 'escalate to', 'advisor', 'adviser', 'agent', 'author', 'interviewer', 'reviewer', 'manager', 'driver', 'walker', 'instructor', 'tutor', 'requested by', 'operator', 'groomer']);
+                $slot = preg_match('/(\d+)/', $label . ' ' . $fid, $mm) ? $mm[0] : '';
+                if ($isRef && $slot === '') {
+                    $full = pickRef($P['namesStaff'], $formName, 'worker', $i, 5);
+                } elseif ($has($label, ['witness'])) {
+                    $full = pickSeq($P['namesStaff'], $formName, 'wit' . $fid, $i);
+                } else {
+                    $pool = $roster ? $P['namesStaff'] : $P['namesPrimary'];
+                    $full = $slot !== '' ? pickSeq($pool, $formName, 'bene' . $fid, $i) : pickSeq($pool, $formName, 'fullname', $i);
+                }
+                $full = (string) $full;
+                if ($has($label, ['first', 'given'])) { return explode(' ', $full)[0]; }
+                if ($has($label, ['last', 'surname', 'family'])) { return explode(' ', $full)[1] ?? 'Smith'; }
                 return $full;
             }
-            if ($has($ctx, ['title', 'subject', 'position', 'role'])) {
-                return $rand(['Q3 Review', 'Onboarding kit', 'System access', 'Budget approval', 'Site inspection', 'Client meeting', 'Policy update']);
-            }
-            return $rand(['Sample entry', $code('REF'), $rand($COMPANIES)]);
+            if ($has($label, ['title', 'subject', 'headline'])) { return pickSeq($P['genericTitles'], $formName, 'title', $i); }
+            return null; // leave unknown short_text empty — never a placeholder string
         case 'long_text':
-            if ($has($ctx, ['address'])) { return $addr(); }
-            if ($has($ctx, ['complaint', 'problem', 'issue', 'fault', 'symptom'])) {
-                return $rand(['Intermittent fault reported by the customer.', 'Not working as expected since last week.', 'Making an unusual noise under load.', 'Needs inspection and diagnosis.', 'Reported shortly after the last service.']);
-            }
-            if ($has($ctx, ['performed', 'work done', 'resolution', 'action taken'])) {
-                return $rand(['Completed the requested work and tested.', 'Replaced the faulty part and verified operation.', 'Serviced, cleaned and signed off.', 'Diagnosed the issue and scheduled a follow-up.']);
-            }
-            if ($has($ctx, ['description', 'reason', 'notes', 'detail', 'summary', 'comment', 'instruction', 'preference', 'medication', 'work'])) {
-                return $rand(['Standard request logged for review.', 'Customer prefers a morning appointment.', 'Follow-up required within the week.', 'Awaiting parts before completion.', 'Routine item, no issues noted.', 'Please call ahead before attending.']);
-            }
-            return $rand($WORDS) . '. ' . $rand($WORDS) . '.';
+            if ($has($label, ['address'])) { return $addr(); }
+            if ($has($label, ['complaint', 'fault', 'symptom', 'work requested'])) { return pickSeq($P['complaints'], $formName, 'complaint', $i); }
+            if ($has($label, ['work done', 'work performed', 'resolution', 'action taken'])) { return pickSeq($P['workDone'], $formName, 'workdone', $i); }
+            if ($has($label, ['reason for visit'])) { return pickSeq($P['clinicReasons'], $formName, 'reason', $i); }
+            if ($has($label, ['action', 'next steps']) && $has($formName, ['follow'])) { return pickSeq($P['clinicActions'], $formName, 'action', $i); }
+            if ($has($label, ['materials used'])) { return pickSeq($P['plumbItems'], $formName, 'matused', $i) . ', ' . pickSeq($P['plumbItems'], $formName, 'matused2', $i); }
+            // These are refined by coherencePass (category / status coherent) — leave empty here.
+            if ($has($label, ['description']) && $has($formName, ['maintenance', 'expense', 'claim'])) { return null; }
+            if ($has($label, ['notes']) && $has($formName, ['appointment'])) { return null; }
+            if ($has($label, ['description']) && $has($formName, ['job'])) { return pickSeq($P['jobDesc'], $formName, 'jobdesc', $i); }
+            return pickSeq($P['genericNotes'], $formName, $fid, $i);
         case 'email':
-            $n = strtolower(str_replace(' ', '.', $rand($NAMES)));
-            return $n . '@example.com';
+            return strtolower(str_replace(' ', '.', (string) pickSeq($P['namesPrimary'], $formName, 'email', $i))) . '@example.com';
         case 'phone':
-            return '555-01' . str_pad((string) random_int(0, 99), 2, '0', STR_PAD_LEFT);
+            return '(555) 555-' . str_pad((string) ((seedHash($formName . 'phone') % 8500) + 1000 + $i), 4, '0', STR_PAD_LEFT);
         case 'url':
             return 'https://example.com/' . random_int(100, 999);
         case 'number': {
-            $min = isset($props['min']) ? (int) $props['min'] : 0;
-            $max = isset($props['max']) ? (int) $props['max'] : 0;
-            if ($max > $min) { return random_int($min, $max); }
-            if ($has($ctx, ['year'])) { return random_int(2015, 2024); }
-            if ($has($ctx, ['odometer', 'mileage', 'kms', ' km'])) { return random_int(15, 190) * 1000; }
-            if ($has($ctx, ['duration', 'minute', 'mins'])) { return $rand([15, 30, 45, 60, 90, 120]); }
-            if ($has($ctx, ['hour'])) { return random_int(1, 8); }
-            if ($has($ctx, ['lead time', 'lead-time', 'days'])) { return random_int(1, 14); }
-            // Portfolio-scale money (AUM, account/transfer values) — $80k–$2.5M, not pocket change.
-            // MUST precede the stock/quantity rule: "acCOUNT value" would otherwise match 'count'.
-            if ($has($ctx, ['aum', 'account value', 'estimated value', 'estimated account', 'portfolio', 'assets under'])) {
-                return random_int(8, 250) * 10000;
+            $min = isset($props['min']) ? (int) $props['min'] : null;
+            $max = isset($props['max']) ? (int) $props['max'] : null;
+            if ($has($label, ['year']) && !$has($label, ['years of service', 'tenure', 'fiscal'])) { return random_int(2005, 2024); }
+            if ($has($label, ['odometer', 'mileage', 'kms', ' km'])) { return random_int(15, 190) * 1000; }
+            if ($has($label, ['duration', 'minute', 'mins'])) { return $rand([15, 30, 45, 60, 90, 120]); }
+            if ($has($label, ['hour'])) { return random_int(1, 8); }
+            if ($has($label, ['lead time', 'lead-time'])) { return random_int(1, 14); }
+            if ($has($label, ['tenure', 'years of service'])) { return random_int(1, 12); }
+            if ($has($label, ['percentage', 'percent'])) { return random_int(1, 100); }
+            if ($has($label, ['total days', 'number of days'])) { return random_int(1, 10); }
+            if ($has($label, ['quantity', 'qty'])) {
+                if ($has($formName, ['sale'])) { return random_int(1, 3); }
+                if ($has($formName, ['parts', 'materials', 'line item', ' used'])) { return random_int(1, 6); }
+                return random_int(1, 40);
             }
-            if ($has($ctx, ['reorder', 'on hand', 'on-hand', 'stock', 'quantity', 'qty', 'count', 'units'])) { return random_int(0, 80); }
-            if ($has($ctx, ['amount', 'cost', 'value', 'price', 'budget', 'salary', 'aum', 'total', 'subtotal', 'tax', 'fee', 'rate', 'labour', 'labor', 'parts', 'paid'])) {
-                return random_int(5, 950) * 10;
+            if ($has($label, ['reorder', 'on hand', 'on-hand', 'stock on hand', 'units', 'par level', 'current count'])) { return random_int(0, 80); }
+            if ($has($label, ['score', 'rating', 'satisfaction', 'skills', 'communication', 'culture fit', 'problem solving', 'knowledge', 'quality of work', 'productivity', 'teamwork', 'initiative', 'goal progress', 'progress'])) {
+                $mx = ($max !== null && $max > 0) ? $max : 5;
+                $mn = ($min !== null && $min > 0) ? $min : 1;
+                return random_int(max($mn, (int) ceil($mx * 0.4)), $mx);
             }
-            if ($has($ctx, ['age'])) { return random_int(18, 75); }
+            $m = seedMoney($label, $formName, $finance);
+            if ($m !== null) { return $m; }
+            if ($has($label, ['age'])) { return random_int(18, 75); }
+            if ($has($label, ['count'])) { return random_int(0, 80); }
+            if ($max !== null && $min !== null && $max > $min) { return random_int($min, $max); }
+            if ($max !== null && $max > 0) { return random_int($min ?? 0, $max); }
             return random_int(1, 100);
         }
         case 'dropdown':
         case 'multiple_choice':
+            if ($has($label, ['goals met'])) {
+                $w = ['met', 'met', 'met', 'met', 'exceeded', 'exceeded', 'partially_met', 'partially_met', 'not_met'];
+                $pick = $w[seedHash($formName . 'goals' . $i) % count($w)];
+                foreach ($opts as $o) { $ov = is_array($o) ? ($o['value'] ?? null) : $o; if ($ov === $pick) { return $pick; } }
+            }
             return $optValue($opts);
         case 'checkboxes': {
             if (empty($opts)) { return null; }
+            $val = static fn ($o) => is_array($o) ? ($o['value'] ?? null) : $o;
+            if (count($opts) === 1) {
+                // Single-option toggles (availability / follow-up / consent): leave a realistic share off.
+                $p = 70;
+                if ($has($label, ['follow'])) { $p = 30; }
+                elseif ($has($label, ['availability'])) { $p = 72; }
+                elseif ($has($label, ['consent', 'confirm', 'over 18', 'declaration'])) { $p = 90; }
+                return random_int(1, 100) <= $p ? array_values(array_filter([$val($opts[0])])) : [];
+            }
+            if ($has($label, ['policy', 'acknowledg'])) {
+                if (random_int(1, 100) <= 65) { return array_values(array_filter(array_map($val, $opts))); }
+                $shuf = $opts; shuffle($shuf); $n = random_int(2, min(4, count($shuf)));
+                return array_values(array_filter(array_map($val, array_slice($shuf, 0, $n))));
+            }
             $picked = [];
-            foreach ($opts as $o) { if (random_int(0, 1)) { $picked[] = is_array($o) ? ($o['value'] ?? null) : $o; } }
-            if (empty($picked)) { $o = $opts[0]; $picked[] = is_array($o) ? ($o['value'] ?? null) : $o; }
+            foreach ($opts as $o) { if (random_int(0, 1)) { $picked[] = $val($o); } }
+            if (empty($picked)) { $picked[] = $val($opts[0]); }
             return array_values(array_filter($picked));
         }
-        case 'date': {
-            // Semantics-aware: log-style dates (incidents, receipts, visits) stay in the past;
-            // planning dates (due, expiry, scheduled, reviews) lean future; birthdays are adult ages.
-            if ($has($ctx, ['birth'])) {
-                return date('Y-m-d', strtotime('-' . random_int(7300, 25500) . ' days'));
-            }
-            if ($has($ctx, ['due', 'next', 'expiry', 'expire', 'expected', 'scheduled', 'follow', 'valid', 'review date', 'start date', 'availability', 'effective'])) {
-                $days = random_int(-4, 45);
-            } elseif ($has($ctx, ['incident', 'received', 'raised', 'reported', 'issue', 'meeting', 'visit', 'acknowledg', 'declaration', 'nomination', 'payment', 'expense', 'sale', 'order date', 'date in', 'date_in', 'audit', 'client since', 'lease', 'hire', 'interview', 'inspection', 'registration date'])) {
-                $days = random_int(-60, -1);
-            } else {
-                $days = random_int(-30, 14);
-            }
-            return date('Y-m-d', strtotime("$days days"));
-        }
+        case 'date':
+            return seedDate($label, $formName);
         case 'datetime': {
             $days = $has($ctx, ['due', 'scheduled', 'expected', 'next', 'follow'])
                 ? random_int(-2, 14)
@@ -765,6 +1258,236 @@ function genValue(array $field, int $i, array $seeded, string $formName = '')
         case 'calculated':
             return null;
         default:
-            return $rand(['Sample', 'Example', 'Demo value']);
+            return null;
     }
+}
+
+/** Substring keyword match helper (shared by genValue + coherencePass). */
+function hasKw(string $s, array $kw): bool
+{
+    foreach ($kw as $k) {
+        if ($k !== '' && str_contains($s, $k)) { return true; }
+    }
+    return false;
+}
+
+/** Deterministic unsigned hash so per-(form,salt) sequences are stable within a seed run. */
+function seedHash(string $s): int
+{
+    return (int) sprintf('%u', crc32($s));
+}
+
+/**
+ * Draw the i-th item from a pool WITHOUT replacement within a form: a per-form offset plus the row
+ * index walks the pool, so a form's visible list never repeats (as long as rows <= pool size) and two
+ * different forms take different windows. Used for person/company/title fields.
+ */
+function pickSeq(array $pool, string $formName, string $salt, int $i)
+{
+    $n = count($pool);
+    if ($n === 0) { return null; }
+    $off = seedHash($formName . '|' . $salt) % $n;
+    return $pool[($off + $i) % $n];
+}
+
+/**
+ * Draw from a SMALL slice of a pool WITH repetition — for worker references (technician/assignee)
+ * where a handful of names should recur across rows so "by technician" counts vary (4/3/2/2), not
+ * a distinct person on every row.
+ */
+function pickRef(array $pool, string $formName, string $salt, int $i, int $k = 5)
+{
+    $small = array_slice($pool, 0, min($k, count($pool)));
+    $n = count($small);
+    if ($n === 0) { return null; }
+    return $small[seedHash($formName . '|' . $salt . '|' . $i) % $n];
+}
+
+/** Realistic money magnitude by label semantics (or null when the label isn't a money field). */
+function seedMoney(string $label, string $formName, bool $finance): ?int
+{
+    $r = static fn (int $a, int $b) => random_int($a, $b);
+    if (hasKw($label, ['net worth', 'net assets', 'liquid net worth', 'liquid assets'])) { return random_int(0, 3) === 0 ? $r(120, 800) * 10000 : $r(30, 99) * 10000; }
+    if (hasKw($label, ['annual income', 'income'])) { return random_int(0, 6) === 0 ? $r(220, 1200) * 1000 : $r(60, 190) * 1000; }
+    if (hasKw($label, ['salary'])) { return $r(55, 160) * 1000; }
+    if (hasKw($label, ['estimated balance'])) { return random_int(0, 4) === 0 ? $r(200, 500) * 1000 : $r(20, 199) * 1000; }
+    if (hasKw($label, ['contract value', 'policy value', 'estimated policy'])) { return $r(25, 500) * 1000; }
+    if (hasKw($label, ['portfolio', 'aum', 'assets under', 'account value', 'current aum'])) { return $r(10, 500) * 10000; }
+    if (hasKw($label, ['estimated value', 'estimated account'])) { return $finance ? $r(10, 500) * 10000 : $r(15, 2000) * 10; }
+    if (hasKw($label, ['partial rollover', 'partial amount'])) { return $r(10, 150) * 1000; }
+    if (hasKw($label, ['unit cost', 'unit price'])) {
+        if (hasKw($formName, ['parts', 'materials', ' used'])) { return random_int(0, 3) === 0 ? $r(120, 450) : $r(5, 120); }
+        return random_int(0, 3) === 0 ? $r(60, 200) : $r(2, 60);
+    }
+    if (hasKw($label, ['sell price', 'retail price'])) { return $r(5, 300); }
+    if (hasKw($label, ['line total'])) { return $r(50, 4000); }
+    if (hasKw($label, ['labour', 'labor'])) { return $r(100, 2500); }
+    if (hasKw($label, ['parts amount'])) { return $r(50, 2500); }
+    if (hasKw($label, ['tax'])) { return $r(50, 1500); }
+    if (hasKw($label, ['subtotal', 'total'])) { return $r(500, 20000); }
+    if (hasKw($label, ['price'])) {
+        if (hasKw($formName, ['service'])) { return $r(25, 350); }
+        if (hasKw($formName, ['appointment'])) { return $r(40, 300); }
+        return $r(10, 400);
+    }
+    if (hasKw($label, ['amount'])) {
+        if (hasKw($formName, ['sale'])) { return $r(20, 150); }
+        if (hasKw($formName, ['refund', 'return'])) { return $r(20, 400); }
+        if (hasKw($formName, ['expense', 'claim'])) { return $r(30, 2500); }
+        return $r(500, 15000);
+    }
+    if (hasKw($label, ['monthly limit', 'budget'])) { return $r(1000, 20000); }
+    if (hasKw($label, ['fuel'])) { return $r(20, 250); }
+    if (hasKw($label, ['fee'])) { return $r(200, 5000); }
+    if (hasKw($label, ['cost'])) { return hasKw($formName, ['work order', 'maintenance']) ? $r(100, 2500) : $r(50, 2000); }
+    if (hasKw($label, ['value'])) { return $finance ? $r(10, 500) * 10000 : $r(500, 15000); }
+    return null;
+}
+
+/** Semantics-aware date by label: log dates stay past, planning dates lean future, expiries spread. */
+function seedDate(string $label, string $formName): string
+{
+    $mk = static fn (int $d) => date('Y-m-d', strtotime("$d days"));
+    if (hasKw($label, ['birth', 'dob'])) { return date('Y-m-d', strtotime('-' . random_int(7300, 25500) . ' days')); }
+    if (hasKw($label, ['next review'])) { $r = random_int(0, 9); return $mk($r < 2 ? random_int(5, 60) : ($r === 2 ? random_int(-20, -1) : random_int(200, 400))); }
+    if (hasKw($label, ['expiry', 'expire', 'expiration', 'valid until', 'valid', 'renewal', 'renew'])) { $r = random_int(0, 9); return $mk($r < 2 ? random_int(-90, 55) : random_int(60, 540)); }
+    if (hasKw($label, ['expected', 'delivery'])) { return $mk(random_int(-10, 40)); }
+    if (hasKw($label, ['due'])) { return $mk(random_int(-25, 35)); }
+    if (hasKw($label, ['reported'])) { $r = random_int(0, 9); return $mk($r < 4 ? random_int(-7, 0) : ($r < 8 ? random_int(-30, -8) : random_int(-75, -31))); }
+    if (hasKw($label, ['expense date', 'claim date', 'purchase date'])) { $r = random_int(0, 9); return $mk($r < 3 ? random_int(-14, 0) : random_int(-60, -1)); }
+    if (hasKw($label, ['scheduled', 'appointment', 'appt', 'follow-up date', 'followup'])) { $r = random_int(0, 9); return $mk($r < 4 ? random_int(0, 7) : ($r < 6 ? random_int(-14, -1) : random_int(8, 21))); }
+    if (hasKw($label, ['visit'])) { return $mk(random_int(-30, 7)); }
+    if (hasKw($label, ['review date'])) { return $mk(random_int(-90, -1)); }
+    if (hasKw($label, ['acknowledg', 'declaration', 'nomination', 'effective']) || (hasKw($label, ['sign']) && !hasKw($label, ['assign']))) { return $mk(random_int(-30, 0)); }
+    if (hasKw($label, ['last reviewed', 'reviewed'])) { return $mk(random_int(-90, -1)); }
+    if (hasKw($label, ['inspection'])) { $r = random_int(0, 9); return $mk($r < 5 ? random_int(-30, 0) : random_int(-90, -31)); }
+    if (hasKw($label, ['date in', 'date_in'])) { return $mk(random_int(-25, 0)); }
+    if (hasKw($label, ['client since', 'member since', 'lease', 'hire'])) { return $mk(-random_int(30, 900)); }
+    if (hasKw($label, ['availability', 'earliest', 'start date'])) { return $mk(random_int(-20, 25)); }
+    if (hasKw($label, ['incident', 'received', 'raised', 'issue date', 'order date', 'payment date', 'sale date', 'audit', 'interview', 'escalation', 'activity', 'last day', 'declaration date'])) { return $mk(random_int(-60, -1)); }
+    if (hasKw($label, ['date'])) {
+        // A bare "Date" on a booking/appointment form leans upcoming; elsewhere (activity/movement
+        // logs) it skews to the last two weeks so "this week" KPIs read as a live business.
+        if (hasKw($formName, ['appointment', 'booking', 'appt'])) { $r = random_int(0, 9); return $mk($r < 4 ? random_int(0, 7) : ($r < 6 ? random_int(-14, -1) : random_int(8, 21))); }
+        $r = random_int(0, 9);
+        return $mk($r < 5 ? -random_int(0, 13) : -random_int(14, 45));
+    }
+    return $mk(random_int(-30, 14));
+}
+
+/**
+ * Single source of the demo vocabularies. Cached so the arrays are built once per run. All strings
+ * are ASCII (no apostrophes) to keep the seeder encoding-safe.
+ */
+function seedPools(): array
+{
+    static $P = null;
+    if ($P !== null) { return $P; }
+
+    $salonServiceMeta = [
+        'Cut & Blow Dry' => ['hair', 55], 'Ladies Cut & Finish' => ['hair', 70], 'Mens Cut' => ['hair', 40],
+        'Blow Dry & Style' => ['hair', 45], 'Beard Trim' => ['hair', 30],
+        'Full Head Colour' => ['colour', 130], 'Half Head Foils' => ['colour', 150], 'Balayage' => ['colour', 220],
+        'Highlights' => ['colour', 175], 'Toner & Gloss' => ['colour', 60], 'Keratin Treatment' => ['colour', 260],
+        'Gel Manicure' => ['nails', 45], 'Classic Pedicure' => ['nails', 55],
+        'Facial Treatment' => ['skin', 95], 'Brow Shape & Tint' => ['skin', 35],
+        'Deep Tissue Massage' => ['massage', 120], 'Relaxation Massage' => ['massage', 100],
+    ];
+    $salonCat = [];
+    $salonPrice = [];
+    foreach ($salonServiceMeta as $nm => $meta) { $salonCat[$nm] = $meta[0]; $salonPrice[$nm] = $meta[1]; }
+
+    $activityByType = [
+        'call' => ['Intro call with prospect', 'Follow-up call: pricing', 'Discovery call', 'Check-in call', 'Closing call'],
+        'email' => ['Follow-up email: proposal', 'Sent contract for signature', 'Pricing details emailed', 'Intro email and deck', 'Renewal reminder email'],
+        'meeting' => ['Demo meeting', 'Quarterly business review', 'Kickoff meeting', 'On-site discovery', 'Contract walkthrough'],
+    ];
+
+    $P = [
+        'namesPrimary' => [
+            'Olivia Bennett', 'Liam Harper', 'Emma Sinclair', 'Noah Fletcher', 'Ava Whitfield', 'Ethan Marsh',
+            'Sophia Delgado', 'Mason Reed', 'Isabella Cross', 'Lucas Hayes', 'Mia Donovan', 'Henry Nakamura',
+            'Amelia Frost', 'Jack Osei', 'Charlotte Vance', 'Leo Abbott', 'Harper Quinn', 'Daniel Mercer',
+            'Ella Rosenthal', 'Samuel Ford', 'Grace Okafor', 'Owen Bishop', 'Chloe Ramsey', 'Nathan Boyd',
+            'Zoe Calderon', 'Julian Pryce', 'Layla Hoffman', 'Adrian Wells', 'Nora Bianchi', 'Caleb Stone',
+            'Ruby Callahan', 'Elias Navarro', 'Hazel Trent', 'Marcus Webb', 'Priya Nair', 'Dana Whitlock',
+            'Ivy Lawson', 'Felix Barron', 'Aria Solomon', 'Theo Ellison',
+        ],
+        'namesStaff' => [
+            'Jake Morrison', 'Tom Wheeler', 'Sara Kim', 'Ben Castillo', 'Nina Patel', 'Cole Sanders',
+            'Maya Brooks', 'Rhys Coleman', 'Tara Lindqvist', 'Victor Ortega', 'Georgia Pike', 'Anders Holt',
+            'Kelly Doyle', 'Rafael Mendes', 'Bianca Nunez', 'Dylan Reyes', 'Fiona Walsh', 'Omar Haddad',
+            'Sienna Park', 'Blake Turner', 'Yara Aziz', 'Hugo Larsen', 'Melissa Cho', 'Karl Jensen',
+        ],
+        'companies' => [
+            'Acme Corp', 'Globex', 'Initech', 'Umbrella Co', 'Soylent Foods', 'Hooli', 'Stark Industries',
+            'Wayne Enterprises', 'Wonka Inc', 'Cyberdyne Systems', 'Northwind Traders', 'Contoso Ltd',
+            'Vandelay Industries', 'Massive Dynamic', 'Prestige Worldwide', 'Bluth Company', 'Pied Piper',
+            'Sterling Cooper', 'Fabrikam', 'Aperture Labs', 'Tyrell Corp', 'Gringotts Bank',
+        ],
+        'partsAuto' => ['Brake Pads', 'Oil Filter', 'Spark Plug Set', 'Air Filter', 'Timing Belt', 'Alternator', 'Radiator Hose', 'Clutch Kit', 'Wiper Blades', 'Battery', 'Brake Disc', 'Fuel Pump'],
+        'plumbItems' => ['15mm Copper Elbow', 'Tap Cartridge', 'PVC Coupling 40mm', 'Hot Water Tempering Valve', 'Flexible Hose 900mm', 'Toilet Cistern Kit', 'Basin Mixer Tap', 'Push-Fit Tee 20mm', 'Ball Float Valve', 'Compression Union 15mm', 'Pipe Lagging 2m', 'Isolating Valve', 'Waste Trap 40mm', 'Silicone Sealant'],
+        'productsHW' => ['Copper Pipe 15mm', 'PVC Elbow Joint', 'Silicone Sealant', 'Ball Valve', 'Cable Ties (100pk)', 'LED Downlight', 'Extension Lead', 'Safety Gloves', 'Paint Roller Set', 'Masking Tape', 'Cordless Drill', 'Screw Assortment', 'Pipe Insulation', 'Junction Box', 'Wall Anchors (50pk)', 'Teflon Tape'],
+        'salonProducts' => ['Shampoo', 'Conditioner', 'Styling Wax', 'Hair Serum', 'Heat Protection Spray', 'Dry Shampoo', 'Leave-in Treatment', 'Argan Hair Oil', 'Curl Cream', 'Gift Card', 'Hairspray', 'Colour-safe Shampoo', 'Deep Repair Mask', 'Sea Salt Spray'],
+        'salonServices' => array_keys($salonServiceMeta),
+        'salonServiceCat' => $salonCat,
+        'salonServicePrice' => $salonPrice,
+        'makeModels' => ['Toyota Corolla', 'Toyota Hilux', 'Mazda 3', 'Mazda CX-5', 'Honda Civic', 'Ford Ranger', 'Ford Focus', 'Volkswagen Golf', 'Hyundai i30', 'Nissan X-Trail', 'Subaru Outback', 'Kia Cerato', 'Mitsubishi Triton', 'Holden Commodore'],
+        'superFunds' => ['AustralianSuper', 'Hostplus', 'REST Super', 'HESTA', 'UniSuper', 'Cbus', 'Aware Super', 'Australian Retirement Trust'],
+        'custodians' => ['Fidelity', 'Charles Schwab', 'Vanguard', 'Empower', 'Principal', 'Voya', 'T. Rowe Price', 'TIAA'],
+        'courses' => ['AWS Solutions Architect - Associate', 'Advanced React Workshop', 'PMP Certification Prep', 'Leadership Essentials', 'Excel for Analysts', 'ITIL Foundation', 'Scrum Master Certification', 'Public Speaking Masterclass', 'Data Privacy & GDPR', 'First Aid at Work', 'Google Analytics Certification', 'Financial Modelling Bootcamp', 'Design Systems Intensive', 'Negotiation Skills'],
+        'docNames' => ['2023 Tax Return', 'Statement of Advice', 'Trust Deed', 'Insurance Policy Schedule', 'ID Verification', 'Annual Statement', 'Estate Plan Summary', 'Super Member Statement', 'Risk Profile Report', 'Fee Disclosure', 'Product Disclosure Statement', 'Beneficiary Form'],
+        'tradeJobs' => ['Office fit-out', 'HVAC service', 'Hot water system install', 'Bathroom renovation', 'Leaking tap repair', 'Blocked drain clearing', 'Switchboard upgrade', 'Roof gutter replacement', 'Kitchen splashback tiling', 'Deck restoration', 'Split-system aircon install', 'Emergency burst pipe', 'Solar panel install', 'Fence repair'],
+        'bugTitles' => ['Login fails on Android 14', 'API returns 500 on export', 'Dashboard chart renders blank in Safari', 'Password reset email never arrives', 'Attachment upload stalls at 99%', 'Dark mode text unreadable on invoices', 'Search returns no results for valid query', 'App crashes on startup after update', 'Timezone off by one on reports', 'Duplicate notifications on mobile', 'CSV export missing last column', 'Session expires too quickly', 'Broken image thumbnails in gallery', 'Form submit button unresponsive'],
+        'featureTitles' => ['Add CSV export', 'Dark mode support', 'Bulk-edit records', 'Slack notifications', 'Custom report scheduling', 'Two-factor authentication', 'Recurring reminders', 'Kanban board view', 'Inline commenting', 'API webhooks', 'Custom dashboard widgets', 'Offline mode', 'Role-based permissions', 'Saved filters'],
+        'kbTitles' => ['How to reset your password', 'Setting up two-factor authentication', 'Understanding your invoice', 'Troubleshooting sync errors', 'Refund policy explained', 'Getting started guide', 'Managing team members', 'Exporting your data', 'Connecting integrations', 'Billing FAQ', 'Keyboard shortcuts', 'Data retention overview', 'Changing your plan', 'Mobile app setup'],
+        'ticketSubjects' => ['Cannot log in after password change', 'Charged twice this month', 'Order arrived damaged', 'App crashes on launch', 'Feature not working as expected', 'Need help with account setup', 'Payment declined repeatedly', 'Missing order confirmation', 'How do I cancel my plan', 'Data not syncing across devices', 'Unable to upload files', 'Wrong item shipped', 'Discount code not applying', 'Requesting a refund'],
+        'sessionTitles' => ['Scaling live-event Wi-Fi', 'Designing inclusive keynotes', 'Sponsorships that actually convert', 'Crowd flow modelling 101', 'Hybrid events done right', 'Stage design on a budget', 'Accessibility for large venues', 'Data-driven event marketing', 'Sustainable event operations', 'Volunteer management at scale', 'Live captioning workflows', 'Post-event analytics', 'Ticketing that scales', 'Green room logistics'],
+        'dealSuffix' => ['renewal', 'pilot', 'expansion', 'annual plan', 'upsell', 'onboarding'],
+        'genericTitles' => ['Q3 planning', 'Weekly sync', 'Process update', 'Onboarding pack', 'Budget review', 'Vendor check-in', 'Status report', 'Kickoff notes', 'Policy update', 'Site walkthrough', 'Renewal review', 'Handover notes', 'Audit prep', 'Roadmap review'],
+        'warehouseLoc' => ['Aisle 3, Bay B', 'Rack 12, Shelf 2', 'Mezzanine, Bin 7', 'Aisle 1, Bay A', 'Cold Store, Shelf 4', 'Rack 5, Shelf 1', 'Loading Bay Overflow', 'Aisle 7, Bay C', 'Rack 9, Shelf 3', 'Bulk Store, Pallet 12', 'Aisle 2, Bay D', 'Mezzanine, Bin 3'],
+        'unitRooms' => ['Unit 1', 'Unit 2', 'Unit 3', 'Apt 4B', 'Apt 12A', 'Room 2', 'Room 5', 'Unit 7', 'Apt 3C', 'Townhouse 9', 'Unit 11', 'Studio 6'],
+        'venueSpots' => ['Main stage', 'Hall B entrance', 'Registration desk', 'Loading dock', 'Car park level 2', 'Catering marquee', 'Green room', 'Backstage left', 'Foyer', 'Exhibitor hall', 'First-aid station', 'North gate'],
+        'escalationTargets' => ['Tier 2 - Billing', 'Legal & Compliance', 'Engineering On-call', 'Priya Sharma (Senior Support)', 'Account Management', 'Product Team', 'Tier 3 - Infrastructure', 'Customer Success Lead'],
+        'movementReasons' => ['Supplier delivery', 'Customer order', 'Cycle count adjustment', 'Customer return', 'Damaged in transit', 'Stocktake correction'],
+        'accountLabels' => ['Roth IRA', 'Traditional IRA', 'Brokerage', '401(k)', 'Joint Taxable', 'SEP IRA'],
+        'leaveReasons' => ['Family holiday', 'Medical appointment', 'Personal matters', 'Rest and recovery', 'Caring responsibilities', 'Interstate relocation'],
+        'schedNotes' => ['Prefers morning slot', 'Room 2', 'Interpreter needed', 'New client paperwork emailed', 'Allergy noted on file', 'Running 10 min late', 'Requested same team member', 'Parking validated', 'Confirmed by SMS', 'First visit'],
+        'genericNotes' => ['Logged for review.', 'Confirmed with the client.', 'No issues noted.', 'Follow-up scheduled.', 'Details added to the record.', 'Reviewed and approved.', 'Pending sign-off.', 'On track for the timeline.', 'Additional context noted.', 'Handled per procedure.', 'Flagged for this week.', 'Noted on the file.', 'Awaiting next steps.', 'Completed as requested.'],
+        'complaints' => ['Grinding noise when braking at low speed', 'Coolant leak under the front of the engine', 'A/C blows warm air', 'Engine warning light on', 'Rough idle and stalling', 'Timing belt service due at 120k', 'Vibration through the steering at highway speed', 'Battery not holding charge', 'Clunking noise over bumps', 'Excessive exhaust smoke', 'Clutch slipping under load', 'Overheating in traffic'],
+        'jobDesc' => ['Full inspection and quote for the works', 'Supply and install as per site assessment', 'Repair and test to manufacturer spec', 'Scheduled maintenance and service', 'Diagnose fault and rectify', 'Fit-out works across the site', 'Replace worn components and recommission', 'Make safe and provide report'],
+        'workDone' => ['Replaced kitchen tap washer', 'HVAC quarterly filter service', 'Cleared blocked shower drain', 'Repaired leaking cistern', 'Replaced faulty power point', 'Serviced hot water unit', 'Patched and repainted ceiling', 'Refitted loose fence panel', 'Tested and reset switchboard', 'Replaced door lock and handle', 'Sealed bathroom silicone', 'Serviced split-system aircon'],
+        'clinicReasons' => ['Annual check-up', 'Persistent cough for two weeks', 'Medication review', 'Sore lower back', 'Vaccination', 'Skin rash assessment', 'Blood pressure review', 'Follow-up on test results', 'Ear pain', 'Travel health advice', 'Minor injury', 'Fatigue and low energy'],
+        'clinicActions' => ['Call patient re: lab results', 'Reschedule cleaning after cancellation', 'Confirm referral letter sent', 'Book blood test before review', 'Send prescription to pharmacy', 'Follow up on imaging report', 'Arrange specialist referral', 'Check wound healing progress', 'Confirm booster is due', 'Review medication adherence', 'Schedule annual health check', 'Discuss results by phone'],
+        'maintByCat' => [
+            'plumbing' => ['Kitchen tap leaking under sink', 'Hot water system not heating', 'Blocked shower drain', 'Running toilet cistern', 'Burst pipe in laundry'],
+            'electrical' => ['Hallway light flickering', 'Power point not working in bedroom', 'Tripping circuit breaker', 'Smoke alarm chirping', 'Outdoor sensor light stuck on'],
+            'appliance' => ['Dishwasher not draining', 'Oven not reaching temperature', 'Fridge seal split', 'Washing machine leaking', 'Rangehood fan noisy'],
+            'structural' => ['Cracked plaster in living room', 'Sticking front door', 'Loose balcony railing', 'Water stain on ceiling', 'Warped skirting board'],
+            'garden' => ['Back fence panel loose', 'Overgrown hedges need trimming', 'Broken sprinkler head', 'Blocked gutter downpipe', 'Retaining wall leaning'],
+            'other' => ['General handyman visit requested', 'Squeaky garage door', 'Lock replacement needed', 'Pest inspection follow-up', 'Gate hinge needs adjusting'],
+        ],
+        'expenseByCat' => [
+            'travel' => ['Flight MEL-SYD for Q3 client review', 'Airport taxi - client site visit', 'Train fare - regional site visit', 'Fuel reimbursement - site trips'],
+            'meals' => ['Client lunch - Acme kickoff', 'Team dinner - sprint close', 'Coffee meeting with prospect', 'Working lunch - planning day'],
+            'accommodation' => ['Hotel, 2 nights - trade show', 'Serviced apartment - regional install', 'Hotel - client onsite'],
+            'supplies' => ['Standing desk riser', 'Printer toner restock', 'Stationery order', 'Whiteboard markers and pads'],
+            'office' => ['Standing desk riser', 'Printer toner restock', 'Stationery order', 'Ergonomic chair mat'],
+            'software' => ['SaaS renewal - design tools', 'IDE licence renewal', 'Cloud hosting top-up', 'Analytics subscription'],
+            'technology' => ['Monitor for new starter', 'USB-C dock', 'Wireless keyboard and mouse', 'External SSD'],
+            'training' => ['Conference ticket - DevWorld', 'Online course enrolment', 'Certification exam fee'],
+            'client' => ['Client entertainment - dinner', 'Gift for client milestone', 'Event tickets - client hosting'],
+            'other' => ['Courier fees', 'Parking - client visit', 'Bank fees reimbursement', 'Conference travel insurance'],
+        ],
+        'csGood' => ['Agent resolved my issue quickly', 'Great follow-up, thank you', 'Very helpful and patient support', 'Sorted on the first contact', 'Friendly and knowledgeable team'],
+        'csBad' => ['Waited too long for a reply', 'Had to explain my problem three times', 'Issue still not fully resolved', 'Support was hard to reach', 'Felt passed around between agents'],
+        'activityByType' => $activityByType,
+        'activityAll' => array_merge($activityByType['call'], $activityByType['email'], $activityByType['meeting']),
+        'plumbSuppliers' => ['Reece Plumbing', 'Tradelink', 'Bunnings Trade', 'Plumbers Supplies Co-op', 'Samios Plumbing Supplies', 'Kembla Trade'],
+        'autoSuppliers' => ['Repco', 'Bapcor Trade', 'NAPA Auto Parts', 'Burson Auto Parts', 'Sprint Auto Spares', 'GPC Asia Pacific'],
+        'fleetNames' => ['Van 1', 'Van 2', 'Ute 1', 'Ute 2', 'Truck 1', 'Truck 2', 'Wagon 1', 'Hatch 1', 'Van 3', 'Ute 3', 'Truck 3', 'Pool Car 1'],
+        'crops' => ['Wheat', 'Barley', 'Canola', 'Sorghum', 'Cotton', 'Corn', 'Chickpeas', 'Oats', 'Lucerne', 'Sunflower'],
+        'chemicals' => ['Roundup', 'Glyphosate 450', 'Sprayseed', '2,4-D Amine', 'Urea', 'MAP Fertiliser', 'Copper Fungicide', 'Sulfur Dust'],
+    ];
+    return $P;
 }
