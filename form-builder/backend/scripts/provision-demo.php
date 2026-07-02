@@ -552,7 +552,7 @@ function coherencePass(array $fields, array &$answers): void
         $id = (string) ($f['id'] ?? '');
         if (($f['type'] ?? '') !== 'short_text' || !preg_match('/name/i', $id . ' ' . (string) ($f['label'] ?? ''))) { continue; }
         $v = $answers[$id] ?? null;
-        if (is_string($v) && preg_match('/^[A-Z][a-z]+ [A-Z][a-z-]+$/', $v)) { $personName = $v; break; }
+        if (is_string($v) && preg_match('/^[A-Z][a-z]+ [A-Z][A-Za-z-]+$/', $v)) { $personName = $v; break; }
     }
     if ($personName !== null) {
         foreach ($fields as $f) {

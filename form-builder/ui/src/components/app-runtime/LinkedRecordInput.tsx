@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useId } from 'react';
-import { Search, X, Loader2, ChevronDown } from 'lucide-react';
+import { Search, X, Loader2, ChevronDown, Check } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { LinkedRecord } from '../../lib/api';
 import { cn, parseServerDate } from '../../lib/utils';
@@ -136,7 +136,11 @@ export function LinkedRecordInput({
     setResolvedLabels((prev) => ({ ...prev, [record.id]: record.display }));
     if (allowMultiple) {
       const current = Array.isArray(value) ? (value as string[]) : [];
-      if (current.includes(record.id)) return;
+      // Selected options stay visible in the list — clicking one again toggles it off.
+      if (current.includes(record.id)) {
+        onChange(current.filter((id) => id !== record.id));
+        return;
+      }
       onChange([...current, record.id]);
     } else {
       onChange(record.id);
@@ -154,7 +158,11 @@ export function LinkedRecordInput({
     }
   };
 
-  const filteredResults = results.filter((r) => !selectedIds.includes(r.id));
+  // Keep selected records IN the list (marked with a check) so reopening the dropdown shows the
+  // current selection in place; sort them first so it's visible without scrolling.
+  const filteredResults = [...results].sort(
+    (a, b) => Number(selectedIds.includes(b.id)) - Number(selectedIds.includes(a.id))
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (filteredResults.length === 0) return;
@@ -273,30 +281,38 @@ export function LinkedRecordInput({
               No records found
             </div>
           ) : (
-            filteredResults.map((record, index) => (
-              <button
-                key={record.id}
-                type="button"
-                id={`${listId}-opt-${index}`}
-                role="option"
-                aria-selected={index === highlightIndex}
-                onClick={() => handleSelect(record)}
-                onMouseEnter={() => setHighlightIndex(index)}
-                className={cn(
-                  'w-full text-left px-4 py-3 text-sm transition-colors cursor-pointer',
-                  index === highlightIndex
-                    ? 'app-bg-primary-light app-text-primary'
-                    : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700/50'
-                )}
-              >
-                <span className="font-medium">{record.display}</span>
-                {record.submittedAt && (
-                  <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
-                    {parseServerDate(record.submittedAt).toLocaleDateString()}
+            filteredResults.map((record, index) => {
+              const isSelected = selectedIds.includes(record.id);
+              return (
+                <button
+                  key={record.id}
+                  type="button"
+                  id={`${listId}-opt-${index}`}
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => handleSelect(record)}
+                  onMouseEnter={() => setHighlightIndex(index)}
+                  className={cn(
+                    'flex w-full items-center gap-2 text-left px-4 py-3 text-sm transition-colors cursor-pointer',
+                    index === highlightIndex
+                      ? 'app-bg-primary-light app-text-primary'
+                      : isSelected
+                        ? 'app-text-primary'
+                        : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-700/50'
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className={cn('font-medium', isSelected && 'font-semibold')}>{record.display}</span>
+                    {record.submittedAt && (
+                      <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+                        {parseServerDate(record.submittedAt).toLocaleDateString()}
+                      </span>
+                    )}
                   </span>
-                )}
-              </button>
-            ))
+                  {isSelected && <Check className="h-4 w-4 flex-none app-text-primary" aria-hidden="true" />}
+                </button>
+              );
+            })
           )}
         </div>
       )}
