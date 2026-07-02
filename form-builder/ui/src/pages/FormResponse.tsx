@@ -1043,6 +1043,11 @@ export default function FormResponse() {
     && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length));
   if (screenTakeover && !showFormView) {
     const allowNew = !!form.customScreen?.allowNewResponses;
+    // Screens with their own New button (FormLogic.openForm / data-open) skip the runtime pill —
+    // one affordance, not two; screens without one keep the fallback.
+    const hasOwnOpen = /data-open|openForm/.test(
+      (form.customScreen?.js || '') + (form.customScreen?.ts || '') + JSON.stringify(form.customScreen?.files || [])
+    );
     return (
       <div className="relative h-dvh w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime
@@ -1055,7 +1060,7 @@ export default function FormResponse() {
           onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
           className="w-full h-full border-0"
         />
-        {allowNew && (
+        {allowNew && !hasOwnOpen && (
           <button
             type="button"
             onClick={() => setShowFormView(true)}

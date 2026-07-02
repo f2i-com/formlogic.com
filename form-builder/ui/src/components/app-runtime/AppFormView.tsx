@@ -974,6 +974,9 @@ export function AppFormView() {
     const cs = form?.customScreen as (CustomScreen | undefined);
     if (cs?.enabled && (cs.html || cs.js || cs.ts || cs.files?.length) && !showFormView) {
       const allowNew = !!cs.allowNewResponses && canSubmit(formId);
+      // Screens that author their own New button (FormLogic.openForm / data-open) don't get the
+      // runtime pill too — one affordance, not two. Screens without one keep the fallback.
+      const hasOwnOpen = /data-open|openForm/.test((cs.js || '') + (cs.ts || '') + JSON.stringify(cs.files || ''));
       return (
         <div className="relative h-full min-h-[60vh]">
           <CustomScreenRuntime
@@ -986,7 +989,7 @@ export function AppFormView() {
             onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
             className="w-full h-full border-0 rounded-lg"
           />
-          {allowNew && (
+          {allowNew && !hasOwnOpen && (
             <button
               type="button"
               onClick={() => setShowFormView(true)}
@@ -1116,12 +1119,16 @@ export function AppFormView() {
       {/* Back button + NIGO toggle (left) · Mode toggle (right) */}
       <div className="pt-2 pb-0 px-1 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <button
-            onClick={() => navigate(`/app/${appSlug}`)}
-            className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors cursor-pointer min-w-0"
-          >
-            <ArrowLeft className="h-4 w-4 flex-shrink-0" /> <span className="truncate">{runtimeForm?.displayName || 'Back'}</span>
-          </button>
+          {/* When the viewer came from this form's section screen, the "Back to dashboard" chip
+              above already handles navigation — a second back link here reads as a duplicate. */}
+          {!showFormView && (
+            <button
+              onClick={() => navigate(`/app/${appSlug}`)}
+              className="flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-600 dark:hover:text-slate-300 text-sm transition-colors cursor-pointer min-w-0"
+            >
+              <ArrowLeft className="h-4 w-4 flex-shrink-0" /> <span className="truncate">{runtimeForm?.displayName || 'Back'}</span>
+            </button>
+          )}
           {nigoEnabled && (
             <button
               type="button"
