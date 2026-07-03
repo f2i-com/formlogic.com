@@ -201,7 +201,7 @@
             "id": "block",
             "type": "linked_record",
             "label": "Block",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:paddock"
             }
@@ -365,7 +365,7 @@
             "id": "block",
             "type": "linked_record",
             "label": "Block",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:paddock"
             }
@@ -519,7 +519,7 @@
             "id": "block",
             "type": "linked_record",
             "label": "Block",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:paddock"
             }
@@ -774,7 +774,7 @@
             "id": "machine",
             "type": "linked_record",
             "label": "Machine",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:machinery"
             }

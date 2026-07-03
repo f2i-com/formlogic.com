@@ -437,7 +437,7 @@ export const stayReadyPack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {
@@ -579,21 +579,21 @@ export const stayReadyPack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {
           id: 'booking',
           type: 'linked_record',
           label: 'Booking',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:booking' },
         },
         {
           id: 'cleaner',
           type: 'linked_record',
           label: 'Cleaner',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:cleaner' },
         },
         {
@@ -727,7 +727,7 @@ export const stayReadyPack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {
@@ -844,7 +844,7 @@ export const stayReadyPack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {

@@ -377,7 +377,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Related Incident',
           description: 'Link to the incident report for this injury, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:incident-report' },
         },
         {
@@ -725,7 +725,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Incident',
           description: 'Link to the related incident report, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:incident-report' },
         },
         {
@@ -733,7 +733,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Hazard',
           description: 'Link to the related hazard identification, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:hazard-identification' },
         },
         {
@@ -741,7 +741,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Audit',
           description: 'Link to the related audit report, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:audit-report' },
         },
         {
@@ -1017,7 +1017,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Audit',
           description: 'Link to the related audit report, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:audit-report' },
         },
         {
@@ -1025,7 +1025,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Incident',
           description: 'Link to the related incident report, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:incident-report' },
         },
         {
@@ -1198,7 +1198,7 @@ export const ohsQmsPack: PackData = {
           type: 'linked_record',
           label: 'Source Audit',
           description: 'Link to the related audit report, if applicable.',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:audit-report' },
         },
         {

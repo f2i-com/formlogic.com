@@ -375,14 +375,14 @@ export const clinicIntakePack: PackData = {
           id: 'patient',
           type: 'linked_record',
           label: 'Patient',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:patient' },
         },
         {
           id: 'provider',
           type: 'linked_record',
           label: 'Provider',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:provider' },
         },
         {
@@ -493,7 +493,7 @@ export const clinicIntakePack: PackData = {
           id: 'patient',
           type: 'linked_record',
           label: 'Patient',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:patient' },
         },
         {
@@ -591,7 +591,7 @@ export const clinicIntakePack: PackData = {
           id: 'appointment',
           type: 'linked_record',
           label: 'Appointment',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:appointment' },
         },
         {

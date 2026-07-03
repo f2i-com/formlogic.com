@@ -464,7 +464,7 @@ export const brewDeskPack: PackData = {
           id: 'order',
           type: 'linked_record',
           label: 'Order',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:order' },
         },
         {
@@ -554,7 +554,7 @@ export const brewDeskPack: PackData = {
           id: 'barista',
           type: 'linked_record',
           label: 'Barista',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff-shift' },
         },
       ],

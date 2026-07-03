@@ -463,14 +463,14 @@ export const tutorTrackPack: PackData = {
           id: 'student',
           type: 'linked_record',
           label: 'Student',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:student' },
         },
         {
           id: 'tutor',
           type: 'linked_record',
           label: 'Tutor',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:tutor' },
         },
         {
@@ -627,14 +627,14 @@ export const tutorTrackPack: PackData = {
           id: 'student',
           type: 'linked_record',
           label: 'Student',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:student' },
         },
         {
           id: 'lesson',
           type: 'linked_record',
           label: 'Lesson',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:lesson' },
         },
         {
@@ -747,7 +747,7 @@ export const tutorTrackPack: PackData = {
           id: 'student',
           type: 'linked_record',
           label: 'Student',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:student' },
         },
         {

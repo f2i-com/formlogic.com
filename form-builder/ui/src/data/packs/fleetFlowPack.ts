@@ -432,14 +432,14 @@ export const fleetFlowPack: PackData = {
           id: 'vehicle',
           type: 'linked_record',
           label: 'Vehicle',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:vehicle' },
         },
         {
           id: 'driver',
           type: 'linked_record',
           label: 'Driver',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:driver' },
         },
         {
@@ -560,7 +560,7 @@ export const fleetFlowPack: PackData = {
           id: 'vehicle',
           type: 'linked_record',
           label: 'Vehicle',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:vehicle' },
         },
         {
@@ -695,14 +695,14 @@ export const fleetFlowPack: PackData = {
           id: 'vehicle',
           type: 'linked_record',
           label: 'Vehicle',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:vehicle' },
         },
         {
           id: 'driver',
           type: 'linked_record',
           label: 'Driver',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:driver' },
         },
         {

@@ -489,7 +489,7 @@ export const passMasterPack: PackData = {
           id: 'server',
           type: 'linked_record',
           label: 'Server',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff' },
         },
         {
@@ -563,7 +563,7 @@ export const passMasterPack: PackData = {
           id: 'table',
           type: 'linked_record',
           label: 'Table',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:table' },
         },
         {
@@ -625,7 +625,7 @@ export const passMasterPack: PackData = {
           id: 'server',
           type: 'linked_record',
           label: 'Server',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff' },
         },
         {
@@ -779,7 +779,7 @@ export const passMasterPack: PackData = {
           id: 'assigned_to',
           type: 'linked_record',
           label: 'Assigned To',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff' },
         },
       ],

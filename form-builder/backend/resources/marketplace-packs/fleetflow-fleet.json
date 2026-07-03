@@ -320,7 +320,7 @@
             "id": "vehicle",
             "type": "linked_record",
             "label": "Vehicle",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:vehicle"
             }
@@ -329,7 +329,7 @@
             "id": "driver",
             "type": "linked_record",
             "label": "Driver",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:driver"
             }
@@ -467,7 +467,7 @@
             "id": "vehicle",
             "type": "linked_record",
             "label": "Vehicle",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:vehicle"
             }
@@ -629,7 +629,7 @@
             "id": "vehicle",
             "type": "linked_record",
             "label": "Vehicle",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:vehicle"
             }
@@ -638,7 +638,7 @@
             "id": "driver",
             "type": "linked_record",
             "label": "Driver",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:driver"
             }

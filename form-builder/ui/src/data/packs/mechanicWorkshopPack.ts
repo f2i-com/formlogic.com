@@ -302,7 +302,7 @@ export const mechanicWorkshopPack: PackData = {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -410,14 +410,14 @@ export const mechanicWorkshopPack: PackData = {
           id: 'vehicle',
           type: 'linked_record',
           label: 'Vehicle',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:vehicle' },
         },
         {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -520,7 +520,7 @@ export const mechanicWorkshopPack: PackData = {
           id: 'job_card',
           type: 'linked_record',
           label: 'Job Card',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job-card' },
         },
         {
@@ -604,7 +604,7 @@ export const mechanicWorkshopPack: PackData = {
           id: 'job_card',
           type: 'linked_record',
           label: 'Job Card',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job-card' },
         },
         {

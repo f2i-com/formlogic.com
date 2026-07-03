@@ -335,7 +335,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -505,7 +505,7 @@
             "id": "catering_job",
             "type": "linked_record",
             "label": "Catering Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:catering-job"
             }
@@ -666,7 +666,7 @@
             "id": "catering_job",
             "type": "linked_record",
             "label": "Catering Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:catering-job"
             }
@@ -805,7 +805,7 @@
             "id": "catering_job",
             "type": "linked_record",
             "label": "Catering Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:catering-job"
             }

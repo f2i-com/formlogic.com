@@ -268,7 +268,7 @@ export const propertyMaintenancePack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {
@@ -360,14 +360,14 @@ export const propertyMaintenancePack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {
           id: 'tenant',
           type: 'linked_record',
           label: 'Tenant',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:tenant' },
         },
         {
@@ -482,7 +482,7 @@ export const propertyMaintenancePack: PackData = {
           id: 'request',
           type: 'linked_record',
           label: 'Maintenance Request',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:maintenance-request' },
         },
         {
@@ -589,7 +589,7 @@ export const propertyMaintenancePack: PackData = {
           id: 'property',
           type: 'linked_record',
           label: 'Property',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:property' },
         },
         {

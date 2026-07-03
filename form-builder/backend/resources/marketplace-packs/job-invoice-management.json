@@ -187,7 +187,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -344,7 +344,7 @@
             "id": "job",
             "type": "linked_record",
             "label": "Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:job"
             }
@@ -474,7 +474,7 @@
             "id": "job",
             "type": "linked_record",
             "label": "Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:job"
             }
@@ -483,7 +483,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -603,7 +603,7 @@
             "id": "invoice",
             "type": "linked_record",
             "label": "Invoice",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:invoice"
             }

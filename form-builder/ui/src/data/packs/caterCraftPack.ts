@@ -421,7 +421,7 @@ export const caterCraftPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -566,7 +566,7 @@ export const caterCraftPack: PackData = {
           id: 'catering_job',
           type: 'linked_record',
           label: 'Catering Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:catering-job' },
         },
         {
@@ -710,7 +710,7 @@ export const caterCraftPack: PackData = {
           id: 'catering_job',
           type: 'linked_record',
           label: 'Catering Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:catering-job' },
         },
         {
@@ -845,7 +845,7 @@ export const caterCraftPack: PackData = {
           id: 'catering_job',
           type: 'linked_record',
           label: 'Catering Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:catering-job' },
         },
         {

@@ -691,7 +691,7 @@ export const eventManagementPack: PackData = {
           id: 'attendee_record',
           type: 'linked_record',
           label: 'Attendee',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:event-registration' },
         },
         {

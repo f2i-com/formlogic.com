@@ -452,21 +452,21 @@ export const salonBeautyPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
           id: 'service',
           type: 'linked_record',
           label: 'Service',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:service' },
         },
         {
           id: 'stylist',
           type: 'linked_record',
           label: 'Stylist',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:stylist' },
         },
         {
@@ -582,7 +582,7 @@ export const salonBeautyPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {

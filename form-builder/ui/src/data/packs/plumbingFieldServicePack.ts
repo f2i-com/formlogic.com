@@ -318,7 +318,7 @@ export const plumbingFieldServicePack: PackData = {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -438,7 +438,7 @@ export const plumbingFieldServicePack: PackData = {
           id: 'job',
           type: 'linked_record',
           label: 'Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job' },
         },
         {
@@ -536,14 +536,14 @@ export const plumbingFieldServicePack: PackData = {
           id: 'job',
           type: 'linked_record',
           label: 'Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job' },
         },
         {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -641,7 +641,7 @@ export const plumbingFieldServicePack: PackData = {
           id: 'job',
           type: 'linked_record',
           label: 'Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job' },
         },
         {

@@ -285,7 +285,7 @@ export const jobInvoicePack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -394,7 +394,7 @@ export const jobInvoicePack: PackData = {
           id: 'job',
           type: 'linked_record',
           label: 'Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job' },
         },
         {
@@ -497,14 +497,14 @@ export const jobInvoicePack: PackData = {
           id: 'job',
           type: 'linked_record',
           label: 'Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:job' },
         },
         {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -605,7 +605,7 @@ export const jobInvoicePack: PackData = {
           id: 'invoice',
           type: 'linked_record',
           label: 'Invoice',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:invoice' },
         },
         {

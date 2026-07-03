@@ -137,7 +137,7 @@
           "id": "contact",
           "type": "linked_record",
           "label": "Contact",
-          "required": false,
+          "required": true,
           "properties": {
             "targetFormId": "@pack:contact-form"
           }
@@ -207,7 +207,7 @@
           "id": "contact",
           "type": "linked_record",
           "label": "Contact",
-          "required": false,
+          "required": true,
           "properties": {
             "targetFormId": "@pack:contact-form"
           }

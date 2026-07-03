@@ -196,7 +196,7 @@
             "id": "project",
             "type": "linked_record",
             "label": "Project",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:project"
             }
@@ -491,7 +491,7 @@
             "id": "project",
             "type": "linked_record",
             "label": "Project",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:project"
             }
@@ -607,7 +607,7 @@
             "id": "project",
             "type": "linked_record",
             "label": "Project",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:project"
             }
@@ -795,7 +795,7 @@
             "id": "project",
             "type": "linked_record",
             "label": "Project",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:project"
             }

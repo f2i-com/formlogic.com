@@ -351,7 +351,7 @@
             "id": "owner",
             "type": "linked_record",
             "label": "Owner",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -640,7 +640,7 @@
             "id": "pet",
             "type": "linked_record",
             "label": "Pet",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:pet"
             }
@@ -649,7 +649,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -658,7 +658,7 @@
             "id": "walker",
             "type": "linked_record",
             "label": "Walker",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:team-member"
             }
@@ -888,7 +888,7 @@
             "id": "pet",
             "type": "linked_record",
             "label": "Pet",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:pet"
             }
@@ -897,7 +897,7 @@
             "id": "walk",
             "type": "linked_record",
             "label": "Walk or Visit",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:walk"
             }
@@ -1026,7 +1026,7 @@
             "id": "reported_by",
             "type": "linked_record",
             "label": "Reported By",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:team-member"
             }

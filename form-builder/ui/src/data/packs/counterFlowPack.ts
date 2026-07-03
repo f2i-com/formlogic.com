@@ -334,7 +334,7 @@ export const counterFlowPack: PackData = {
           id: 'supplier',
           type: 'linked_record',
           label: 'Supplier',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:supplier' },
         },
         {
@@ -451,7 +451,7 @@ export const counterFlowPack: PackData = {
           id: 'product',
           type: 'linked_record',
           label: 'Product',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:product' },
         },
         {
@@ -495,7 +495,7 @@ export const counterFlowPack: PackData = {
           id: 'staff_member',
           type: 'linked_record',
           label: 'Staff Member',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff' },
         },
         {
@@ -608,7 +608,7 @@ export const counterFlowPack: PackData = {
           id: 'assigned_to',
           type: 'linked_record',
           label: 'Assigned To',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff' },
         },
         {
@@ -834,7 +834,7 @@ export const counterFlowPack: PackData = {
           id: 'product',
           type: 'linked_record',
           label: 'Product',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:product' },
         },
         {

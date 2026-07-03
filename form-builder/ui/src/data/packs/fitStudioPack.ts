@@ -427,14 +427,14 @@ export const fitStudioPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
           id: 'trainer',
           type: 'linked_record',
           label: 'Trainer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:trainer' },
         },
         {
@@ -576,7 +576,7 @@ export const fitStudioPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -699,7 +699,7 @@ export const fitStudioPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -825,7 +825,7 @@ export const fitStudioPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {

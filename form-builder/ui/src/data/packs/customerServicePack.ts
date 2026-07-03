@@ -547,7 +547,7 @@ export const customerServicePack: PackData = {
           id: 'ticket_record',
           type: 'linked_record',
           label: 'Related Support Ticket',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:support-ticket' },
         },
         {

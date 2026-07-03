@@ -411,7 +411,7 @@ export const venueOpsPack: PackData = {
           id: 'space',
           type: 'linked_record',
           label: 'Space',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:space' },
         },
         {
@@ -567,7 +567,7 @@ export const venueOpsPack: PackData = {
           id: 'booking',
           type: 'linked_record',
           label: 'Booking',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:booking' },
         },
         {
@@ -697,7 +697,7 @@ export const venueOpsPack: PackData = {
           id: 'booking',
           type: 'linked_record',
           label: 'Booking',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:booking' },
         },
         {
@@ -813,7 +813,7 @@ export const venueOpsPack: PackData = {
           id: 'booking',
           type: 'linked_record',
           label: 'Booking',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:booking' },
         },
         {

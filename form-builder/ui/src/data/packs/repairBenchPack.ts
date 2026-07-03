@@ -390,7 +390,7 @@ export const repairBenchPack: PackData = {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -506,14 +506,14 @@ export const repairBenchPack: PackData = {
           id: 'device',
           type: 'linked_record',
           label: 'Device',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:device' },
         },
         {
           id: 'customer',
           type: 'linked_record',
           label: 'Customer',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:customer' },
         },
         {
@@ -581,7 +581,7 @@ export const repairBenchPack: PackData = {
           id: 'technician',
           type: 'linked_record',
           label: 'Technician',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:technician' },
         },
         {
@@ -671,7 +671,7 @@ export const repairBenchPack: PackData = {
           id: 'repair_job',
           type: 'linked_record',
           label: 'Repair Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:repair-job' },
         },
         {
@@ -797,7 +797,7 @@ export const repairBenchPack: PackData = {
           id: 'repair_job',
           type: 'linked_record',
           label: 'Repair Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:repair-job' },
         },
         {
@@ -840,7 +840,7 @@ export const repairBenchPack: PackData = {
           id: 'checked_by',
           type: 'linked_record',
           label: 'Checked By',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:technician' },
         },
         {

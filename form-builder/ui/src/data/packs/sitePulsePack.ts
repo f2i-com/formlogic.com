@@ -314,7 +314,7 @@ export const sitePulsePack: PackData = {
           id: 'project',
           type: 'linked_record',
           label: 'Project',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:project' },
         },
         {
@@ -572,7 +572,7 @@ export const sitePulsePack: PackData = {
           id: 'project',
           type: 'linked_record',
           label: 'Project',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:project' },
         },
         {
@@ -694,7 +694,7 @@ export const sitePulsePack: PackData = {
           id: 'project',
           type: 'linked_record',
           label: 'Project',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:project' },
         },
         {
@@ -839,7 +839,7 @@ export const sitePulsePack: PackData = {
           id: 'project',
           type: 'linked_record',
           label: 'Project',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:project' },
         },
         {

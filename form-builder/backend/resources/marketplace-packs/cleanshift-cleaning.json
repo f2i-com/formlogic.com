@@ -343,7 +343,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -412,7 +412,7 @@
             "id": "assigned_team",
             "type": "linked_record",
             "label": "Assigned Team",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:team"
             }
@@ -516,7 +516,7 @@
             "id": "cleaning_job",
             "type": "linked_record",
             "label": "Cleaning Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:cleaning-job"
             }
@@ -830,7 +830,7 @@
             "id": "client",
             "type": "linked_record",
             "label": "Client",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:client"
             }
@@ -839,7 +839,7 @@
             "id": "cleaning_job",
             "type": "linked_record",
             "label": "Cleaning Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:cleaning-job"
             }

@@ -262,7 +262,7 @@
             "id": "supplier",
             "type": "linked_record",
             "label": "Supplier",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:supplier"
             }
@@ -392,7 +392,7 @@
             "id": "product",
             "type": "linked_record",
             "label": "Product",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:product"
             }
@@ -463,7 +463,7 @@
             "id": "staff_member",
             "type": "linked_record",
             "label": "Staff Member",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:staff"
             }
@@ -591,7 +591,7 @@
             "id": "assigned_to",
             "type": "linked_record",
             "label": "Assigned To",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:staff"
             }
@@ -850,7 +850,7 @@
             "id": "product",
             "type": "linked_record",
             "label": "Product",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:product"
             }

@@ -477,7 +477,7 @@ export const grillStackPack: PackData = {
           id: 'order',
           type: 'linked_record',
           label: 'Order',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:order' },
         },
         {
@@ -533,7 +533,7 @@ export const grillStackPack: PackData = {
           id: 'staff_member',
           type: 'linked_record',
           label: 'Staff Member',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:staff-shift' },
         },
         {

@@ -183,7 +183,7 @@
             "id": "customer",
             "type": "linked_record",
             "label": "Customer",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:customer"
             }
@@ -360,7 +360,7 @@
             "id": "job",
             "type": "linked_record",
             "label": "Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:job"
             }
@@ -462,7 +462,7 @@
             "id": "job",
             "type": "linked_record",
             "label": "Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:job"
             }
@@ -471,7 +471,7 @@
             "id": "customer",
             "type": "linked_record",
             "label": "Customer",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:customer"
             }
@@ -589,7 +589,7 @@
             "id": "job",
             "type": "linked_record",
             "label": "Job",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:job"
             }

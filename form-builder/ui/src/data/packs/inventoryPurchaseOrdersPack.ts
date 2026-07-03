@@ -403,7 +403,7 @@ export const inventoryPurchaseOrdersPack: PackData = {
           id: 'supplier',
           type: 'linked_record',
           label: 'Supplier',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:supplier' },
         },
         {
@@ -512,14 +512,14 @@ export const inventoryPurchaseOrdersPack: PackData = {
           id: 'purchase_order',
           type: 'linked_record',
           label: 'Purchase Order',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:purchase-order' },
         },
         {
           id: 'product',
           type: 'linked_record',
           label: 'Product',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:product' },
         },
         {
@@ -601,7 +601,7 @@ export const inventoryPurchaseOrdersPack: PackData = {
           id: 'product',
           type: 'linked_record',
           label: 'Product',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:product' },
         },
         {

@@ -420,7 +420,7 @@ export const cleanShiftPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
@@ -463,7 +463,7 @@ export const cleanShiftPack: PackData = {
           id: 'assigned_team',
           type: 'linked_record',
           label: 'Assigned Team',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:team' },
         },
         {
@@ -568,7 +568,7 @@ export const cleanShiftPack: PackData = {
           id: 'cleaning_job',
           type: 'linked_record',
           label: 'Cleaning Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:cleaning-job' },
         },
         {
@@ -822,14 +822,14 @@ export const cleanShiftPack: PackData = {
           id: 'client',
           type: 'linked_record',
           label: 'Client',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:client' },
         },
         {
           id: 'cleaning_job',
           type: 'linked_record',
           label: 'Cleaning Job',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:cleaning-job' },
         },
         {

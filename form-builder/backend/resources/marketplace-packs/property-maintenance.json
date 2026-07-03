@@ -162,7 +162,7 @@
             "id": "property",
             "type": "linked_record",
             "label": "Property",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:property"
             }
@@ -247,7 +247,7 @@
             "id": "property",
             "type": "linked_record",
             "label": "Property",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:property"
             }
@@ -256,7 +256,7 @@
             "id": "tenant",
             "type": "linked_record",
             "label": "Tenant",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:tenant"
             }
@@ -419,7 +419,7 @@
             "id": "request",
             "type": "linked_record",
             "label": "Maintenance Request",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:maintenance-request"
             }
@@ -542,7 +542,7 @@
             "id": "property",
             "type": "linked_record",
             "label": "Property",
-            "required": false,
+            "required": true,
             "properties": {
               "targetFormId": "@pack:property"
             }

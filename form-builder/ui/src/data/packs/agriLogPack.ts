@@ -295,7 +295,7 @@ export const agriLogPack: PackData = {
           id: 'block',
           type: 'linked_record',
           label: 'Block',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:paddock' },
         },
         {
@@ -431,7 +431,7 @@ export const agriLogPack: PackData = {
           id: 'block',
           type: 'linked_record',
           label: 'Block',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:paddock' },
         },
         {
@@ -563,7 +563,7 @@ export const agriLogPack: PackData = {
           id: 'block',
           type: 'linked_record',
           label: 'Block',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:paddock' },
         },
         {
@@ -802,7 +802,7 @@ export const agriLogPack: PackData = {
           id: 'machine',
           type: 'linked_record',
           label: 'Machine',
-          required: false,
+          required: true,
           properties: { targetFormId: '@pack:machinery' },
         },
         {
