@@ -1538,6 +1538,24 @@ function coherencePass(array $fields, array &$answers, string $submittedDate = '
         $map = ['casual-visit' => [15, 40], 'session-pack' => [150, 800], 'program-fee' => [300, 1500], 'membership' => [60, 200]];
         if (isset($map[$pt2])) { $answers[$amtF] = random_int($map[$pt2][0], $map[$pt2][1]); }
     }
+    // FitStudio-style payment (has 'payment type' + 'amount', no venue 'method'): skew status to a
+    // Paid majority so revenue KPIs ("collected 30d") are non-zero; date the paid ones inside the
+    // last ~28 days so they land in the rolling window.
+    if ($ptId2 && $amtF && !isset($byId['method'])) {
+        $fsPayStId = $findByLabel(['status']);
+        $fsv = $fsPayStId ? $optVals($fsPayStId) : [];
+        if ($fsPayStId && in_array('paid', $fsv, true)) {
+            $roll = seedHash($formName . 'paystat' . $i) % 10;
+            $wantS = $roll < 7 ? 'paid' : ($roll < 9 ? 'pending' : 'failed');
+            $fbS = ['failed' => 'pending', 'pending' => 'paid'];
+            while (!in_array($wantS, $fsv, true) && isset($fbS[$wantS])) { $wantS = $fbS[$wantS]; }
+            if (in_array($wantS, $fsv, true)) { $answers[$fsPayStId] = $wantS; }
+            $fsDateId = $findByLabel(['date']);
+            if ($fsDateId && ($answers[$fsPayStId] ?? '') === 'paid') {
+                $answers[$fsDateId] = date('Y-m-d', strtotime($today . ' -' . random_int(0, 28) . ' days'));
+            }
+        }
+    }
     if (isset($byId['weight_kg'], $byId['body_fat_pct'])) {
         $w = (int) ($answers['weight_kg'] ?? 0);
         if ($w < 45 || $w > 130) { $w = random_int(55, 110); }
