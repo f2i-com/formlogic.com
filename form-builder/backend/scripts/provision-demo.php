@@ -225,7 +225,8 @@ foreach ($sources as $s) {
         // re-authoring dashboards) without wiping the seeded response data.
         $updated = refreshDemoScreens($pdo, $demoId, $s['pack']);
         $updatedForms = refreshDemoFormScreens($pdo, $demoId, $catalogId, $s['pack']);
-        out("  demo: already installed (refreshed $updated app screen(s), $updatedForms form screen(s))");
+        $syncedReq = syncDemoFormFieldRequired($pdo, $sqlite, $demoId, $catalogId, $s['pack']);
+        out("  demo: already installed (refreshed $updated app screen(s), $updatedForms form screen(s), synced $syncedReq field flag(s))");
         continue;
     }
 
@@ -457,6 +458,49 @@ function refreshDemoFormScreens(PDO $pdo, string $demoId, string $catalogId, arr
         $upd = $pdo->prepare("UPDATE forms SET custom_screen = ? WHERE id = ?");
         $upd->execute([json_encode($cs), $row['id']]);
         $n += $upd->rowCount();
+    }
+    return $n;
+}
+
+/**
+ * Sync each field's `required` flag from the pack into the installed demo forms' per-form SQLite,
+ * matched by form title within THIS pack's installation and by field id. ONLY the required boolean
+ * is aligned — field type/properties (incl. resolved linked_record targetFormId) and all response
+ * data are untouched — so a pack that later marks a linked_record required takes effect on the live
+ * demo without a reinstall (the "already installed" refresh otherwise only touches custom screens).
+ * Returns the number of field rows whose required flag was changed.
+ */
+function syncDemoFormFieldRequired(PDO $pdo, SQLiteConnection $sqlite, string $demoId, string $catalogId, array $pack): int
+{
+    $byTitle = [];
+    foreach ($pack['forms'] ?? [] as $pf) {
+        $t = (string) ($pf['title'] ?? '');
+        if ($t === '') { continue; }
+        $req = [];
+        foreach ($pf['fields'] ?? [] as $fl) {
+            if (!empty($fl['id'])) { $req[(string) $fl['id']] = !empty($fl['required']); }
+        }
+        if ($req) { $byTitle[$t] = $req; }
+    }
+    if (!$byTitle) { return 0; }
+    $inst = $pdo->prepare("SELECT form_ids FROM pack_installations WHERE user_id = ? AND catalog_id = ? ORDER BY installed_at DESC LIMIT 1");
+    $inst->execute([$demoId, $catalogId]);
+    $formIds = json_decode((string) ($inst->fetchColumn() ?: '[]'), true) ?: [];
+    if (!$formIds) { return 0; }
+    $in = implode(',', array_fill(0, count($formIds), '?'));
+    $sel = $pdo->prepare("SELECT id, title FROM forms WHERE user_id = ? AND id IN ($in)");
+    $sel->execute(array_merge([$demoId], $formIds));
+    $n = 0;
+    foreach ($sel->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $req = $byTitle[(string) $row['title']] ?? null;
+        if ($req === null || !$sqlite->formDatabaseExists($row['id'])) { continue; }
+        $fdb = $sqlite->getFormDatabase($row['id']);
+        $up = $fdb->prepare("UPDATE fields SET required = ? WHERE id = ? AND required <> ?");
+        foreach ($req as $fieldId => $isReq) {
+            $v = $isReq ? 1 : 0;
+            $up->execute([$v, $fieldId, $v]);
+            $n += $up->rowCount();
+        }
     }
     return $n;
 }
