@@ -82,7 +82,7 @@ export function AppDashboard() {
   const navigate = useNavigate();
   const {
     config, permissions, fetchResponsePage, fetchResponses,
-    canSubmit, canViewOwn, canViewAll, canViewAnalytics,
+    canSubmit, canViewOwn, canViewAll, canViewAnalytics, isOwner: checkOwner,
   } = useAppRuntimeStore();
   const redirectedRef = useRef(false);
   const [pulse, setPulse] = useState<Pulse | null>(null);
@@ -205,7 +205,7 @@ export function AppDashboard() {
 
   if (!config) return null;
 
-  const isOwner = !!config.app.ownerId; // ownerId is stripped from the config for members
+  const isOwner = checkOwner();
   // settings.icon is set for marketplace apps; user-created apps may not have it.
   const settingsIcon = (config.app.settings as AppSettings & { icon?: string })?.icon;
 

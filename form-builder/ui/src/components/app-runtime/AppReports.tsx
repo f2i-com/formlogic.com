@@ -25,14 +25,13 @@ export function AppReports() {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { config, saveReports } = useAppRuntimeStore();
+  const { config, saveReports, isOwner: checkOwner } = useAppRuntimeStore();
 
   const items: AppReportItem[] = config?.app?.reports ?? [];
   const chartReports = items.filter((r): r is AppReport => !isReportDocument(r));
   const documents = items.filter(isReportDocument);
   const appName = config?.app?.name ?? 'App';
-  // ownerId is only present on the config for the app owner (stripped for members).
-  const isOwner = !!config?.app?.ownerId;
+  const isOwner = checkOwner();
 
   const [tab, setTab] = useState<'charts' | 'documents'>('charts');
   const [editingReport, setEditingReport] = useState<AppReport | 'new' | null>(null);

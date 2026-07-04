@@ -50,6 +50,8 @@ interface AppRuntimeState {
   saveFormDashboard: (formId: string, screen: DashboardScreen) => Promise<boolean>;
 
   // Permission helpers
+  /** True only for the app owner (someone who can manage/edit the app + its dashboards). */
+  isOwner: () => boolean;
   canSubmit: (formId: string) => boolean;
   canViewOwn: (formId: string) => boolean;
   canViewAll: (formId: string) => boolean;
@@ -285,6 +287,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       // (AppUserService::hasPermission) only treats the real app owner as a
       // wildcard, so enabling controls on manage_app alone would show actions the
       // server then rejects (403). Gate each control on its specific permission.
+      // Single source of truth for "is this the app owner" (gates Edit-dashboard / owner-only
+      // affordances). Prefers the explicit backend `canManage` capability; falls back to ownerId
+      // presence (only sent for the owner) for older/demo configs that predate the flag.
+      isOwner: () => {
+        const app = get().config?.app;
+        return !!(app?.canManage ?? app?.ownerId);
+      },
+
       canSubmit: (formId) => {
         const p = get().permissions;
         if (!p?.appLevel) return false;

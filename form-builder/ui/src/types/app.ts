@@ -40,7 +40,11 @@ export interface App {
   id: string;
   name: string;
   slug: string;
+  /** Stripped from the runtime config for non-owners — prefer `canManage` (below) over its presence. */
   ownerId: string;
+  /** Explicit "can manage this app" capability from the runtime config (owner-only). Use the store's
+   *  isOwner() selector rather than reading this or `ownerId` directly. */
+  canManage?: boolean;
   description?: string;
   logoUrl?: string;
   status: 'draft' | 'published' | 'archived';

@@ -20,7 +20,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const {
-    config, runReport, runReportBatch, fetchRecentRows, canViewOwn, canViewAll, saveFormDashboard,
+    config, runReport, runReportBatch, fetchRecentRows, canViewOwn, canViewAll, saveFormDashboard, isOwner: checkOwner,
   } = useAppRuntimeStore();
   const [editing, setEditing] = useState(false);
 
@@ -31,7 +31,7 @@ export function AppSectionDashboard({ formId, dashboard, allowNew, onNew }: {
   const thisForm = useMemo(() => (config?.forms ?? []).filter((f) => f.formId === formId), [config, formId]);
 
   if (!config) return null;
-  const isOwner = !!config.app.ownerId;
+  const isOwner = checkOwner();
 
   return (
     <div className="relative h-full min-h-[60vh]">

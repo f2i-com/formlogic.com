@@ -206,9 +206,13 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
 
   const handleSave = async () => {
     setSaving(true);
-    const ok = await onSave({ version: 1, cols, widgets });
-    setSaving(false);
-    if (ok === false) return;
+    // finally guarantees the button leaves the "Saving…" state even if onSave rejects — otherwise a
+    // failed save would leave the builder stuck in a disabled/spinning state.
+    try {
+      await onSave({ version: 1, cols, widgets });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const canvasHeight = useMemo(() => {
@@ -252,6 +256,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           )}
         </div>
         <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize</p>
+        <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}>
@@ -270,7 +275,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
                 <div className={`group relative h-full w-full rounded-2xl transition-shadow ${selected ? 'ring-2 app-ring-primary' : 'ring-1 ring-transparent hover:ring-gray-200 dark:hover:ring-slate-700'}`}>
                   {/* Editing chrome */}
                   <div className="absolute -top-2.5 right-2 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 [.ring-2_&]:opacity-100 transition-opacity">
-                    <button type="button" title="Move" onPointerDown={(e) => startInteraction('move', w, e)} className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-gray-800 dark:hover:text-white cursor-grab active:cursor-grabbing">
+                    <button type="button" title="Move" onPointerDown={(e) => startInteraction('move', w, e)} className="touch-none h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-gray-800 dark:hover:text-white cursor-grab active:cursor-grabbing">
                       <GripVertical className="h-3.5 w-3.5" />
                     </button>
                     {w.kind !== 'actions' && w.kind !== 'activity' && (
@@ -301,7 +306,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
                   <div
                     title="Resize"
                     onPointerDown={(e) => startInteraction('resize', w, e)}
-                    className="absolute -bottom-1 -right-1 z-10 h-4 w-4 cursor-se-resize rounded-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 shadow-sm"
+                    className="touch-none absolute -bottom-1 -right-1 z-10 h-4 w-4 cursor-se-resize rounded-sm bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-600 shadow-sm"
                     style={{ backgroundImage: 'linear-gradient(135deg, transparent 45%, currentColor 45%, currentColor 55%, transparent 55%)', color: 'var(--app-primary, #6366f1)' }}
                   />
                 </div>

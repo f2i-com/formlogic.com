@@ -27,7 +27,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const { appSlug } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { config, activeFormId, setActiveForm, sidebarCollapsed, toggleSidebar } = useAppRuntimeStore();
+  const { config, activeFormId, setActiveForm, sidebarCollapsed, toggleSidebar, isOwner } = useAppRuntimeStore();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isOnline = useOnlineStatus();
   const mainRef = useRef<HTMLElement>(null);
@@ -73,7 +73,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
     const path = location.pathname;
     const onRecordsView = path.includes('/records') || /\/form\/[^/]+\/responses/.test(path);
     const onReportsView = path.includes('/reports');
-    const hasReports = (config.app?.reports?.length ?? 0) > 0 || !!config.app?.ownerId;
+    const hasReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
     return (
       <main id="app-main-content" ref={mainRef} tabIndex={-1} className="h-screen overflow-y-auto bg-gray-50 dark:bg-slate-950 outline-none">
         {children}
@@ -116,7 +116,7 @@ export function AppRuntimeShell({ children }: AppRuntimeShellProps) {
   const onRecords = location.pathname.includes('/records');
   const onReports = location.pathname.includes('/reports');
   // Reports are optional: the section shows if any exist, or to the owner (who can create them).
-  const showReports = (config.app?.reports?.length ?? 0) > 0 || !!config.app?.ownerId;
+  const showReports = (config.app?.reports?.length ?? 0) > 0 || isOwner();
 
   const dashboardItem: NavItem = { id: 'dashboard', label: 'Dashboard', iconName: null, kind: 'dashboard', path: basePath };
   const formItems: NavItem[] = forms.map((f) => ({

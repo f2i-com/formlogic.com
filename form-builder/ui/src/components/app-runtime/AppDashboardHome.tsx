@@ -15,7 +15,7 @@ import type { WidgetDataForm } from './WidgetDashboard';
 export function AppDashboardHome({ dashboard }: { dashboard?: DashboardScreen }) {
   const {
     config, permissions, runReport, runReportBatch, fetchRecentRows,
-    canSubmit, canViewOwn, canViewAll, saveDashboard,
+    canSubmit, canViewOwn, canViewAll, saveDashboard, isOwner: checkOwner,
   } = useAppRuntimeStore();
   const [editing, setEditing] = useState(false);
 
@@ -27,7 +27,7 @@ export function AppDashboardHome({ dashboard }: { dashboard?: DashboardScreen })
   );
 
   if (!config) return null;
-  const isOwner = !!config.app.ownerId; // ownerId is stripped from config for members
+  const isOwner = checkOwner();
 
   return (
     <>

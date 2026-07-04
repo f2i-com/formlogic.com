@@ -109,8 +109,12 @@ class AppPublicController
             }
         }
 
-        // Strip internal fields from app data for non-owner users
+        // Explicit management capability so the client doesn't have to infer ownership from the
+        // presence of the (stripped-for-members) ownerId. Owner-only today, matching the server-side
+        // update/save checks (AppController gates writes on owner_id).
         $safeApp = $app;
+        $safeApp['canManage'] = ($userId === ($app['ownerId'] ?? null));
+        // Strip internal fields from app data for non-owner users
         if ($userId !== ($app['ownerId'] ?? null)) {
             unset($safeApp['ownerId']);
         }

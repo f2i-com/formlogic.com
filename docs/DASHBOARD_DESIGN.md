@@ -160,11 +160,13 @@ glyph, briefing clause selection, and section naming in the domain's vernacular 
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ─── KIT CSS — the first entries of the `css: [ ... ].join('\n')` array ───
-'@font-face{font-family:"Plus Jakarta Sans";font-style:normal;font-weight:200 800;font-display:swap;src:url(https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}',
+// NO @font-face — the kit is system-stack only (see the "No webfonts" CSP + Type-system rules
+// above). A sandboxed screen's CSP blocks external font/stylesheet fetches anyway, so a webfont
+// here would silently fail AND contradict the rules — don't add one.
 ':root{--ax:var(--fl-accent);}',
 'html.fl-dark{--ax:color-mix(in srgb,var(--fl-accent) 62%,#fff);}',
 '*{box-sizing:border-box;}html,body{margin:0;padding:0;}',
-'body{font-family:"Plus Jakarta Sans",ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}',
+'body{font-family:ui-sans-serif,-apple-system,"Segoe UI Variable Display","Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1000px 320px at 12% -100px,color-mix(in srgb,var(--fl-accent) 7%,transparent),transparent) var(--fl-bg);}',
 '.wrap{max-width:1120px;margin:0 auto;padding:28px 24px 64px;}',
 '.num{font-variant-numeric:tabular-nums lining-nums;}',
 ':focus-visible{outline:2px solid var(--fl-accent);outline-offset:2px;border-radius:4px;}',
