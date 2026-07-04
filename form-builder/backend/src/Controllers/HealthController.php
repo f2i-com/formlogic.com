@@ -127,6 +127,22 @@ class HealthController
             $checks['webhook_worker'] = ['ok' => true, 'critical' => false, 'detail' => 'heartbeat unavailable'];
         }
 
+        // Email delivery — non-critical, but launch-important: invitations + password resets depend on
+        // it. Surfaces the silent traps (no from-address; SMTP set but symfony/mailer not installed).
+        try {
+            $email = (new \FormLogic\Services\EmailService())->deliveryStatus();
+            $checks['email'] = [
+                'ok' => true,
+                'critical' => false,
+                'detail' => $email['configured'] ? ('delivery via ' . $email['path']) : 'not configured (link-only)',
+            ];
+            if ($email['warning'] !== null) {
+                $checks['email']['warning'] = $email['warning'];
+            }
+        } catch (\Throwable $e) {
+            $checks['email'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
         // Dual-store (MySQL ↔ per-form SQLite) drift — cheap file-level check only (forms rows vs
         // SQLite files vs upload dirs); the full per-form count reconcile is `bin/reconcile.php`.
         try {

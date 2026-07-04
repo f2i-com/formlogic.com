@@ -67,6 +67,34 @@ class EmailService
     }
 
     /**
+     * Describe the effective delivery path for diagnostics (Doctor) WITHOUT sending. Surfaces the
+     * silent-failure traps: no from-address (link-only), and SMTP configured but symfony/mailer not
+     * installed (invitations/password-resets would quietly fall back to mail()).
+     *
+     * @return array{path:'smtp'|'mail'|'none', configured:bool, warning:?string}
+     */
+    public function deliveryStatus(): array
+    {
+        if ($this->fromAddress === '') {
+            return ['path' => 'none', 'configured' => false,
+                'warning' => 'MAIL_FROM_ADDRESS is not set — invitations and password resets can only show a copyable link, not send email.'];
+        }
+        if ($this->smtpHost !== '') {
+            if (class_exists(\Symfony\Component\Mailer\Mailer::class)) {
+                return ['path' => 'smtp', 'configured' => true, 'warning' => null];
+            }
+            return ['path' => 'mail', 'configured' => true,
+                'warning' => 'SMTP_HOST is set but symfony/mailer is NOT installed — email silently falls back to PHP mail(). Run `composer require symfony/mailer` in form-builder/backend to actually use SMTP.'];
+        }
+        if (function_exists('mail')) {
+            return ['path' => 'mail', 'configured' => true,
+                'warning' => 'Using PHP mail() (no SMTP configured) — deliverability is unreliable. Configure SMTP_HOST + symfony/mailer for production.'];
+        }
+        return ['path' => 'none', 'configured' => false,
+            'warning' => 'No SMTP configured and PHP mail() is unavailable — email cannot be sent.'];
+    }
+
+    /**
      * Send an email. Returns true if a delivery path accepted it, false otherwise.
      * Never throws.
      */
