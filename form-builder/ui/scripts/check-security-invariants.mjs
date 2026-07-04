@@ -21,7 +21,11 @@ const fail = (m) => { console.error('✗ security-invariant: ' + m); process.exi
     fail('could not find SCREEN_CSP in sdkRuntime.ts');
   } else {
     const csp = (m[1].match(/"([^"]*)"/g) || []).map((s) => s.slice(1, -1)).join('');
-    const need = ["default-src 'none'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'"];
+    const need = [
+      "default-src 'none'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'",
+      // Close the remaining egress channels: self-navigation, nested frames, objects, workers.
+      "navigate-to 'none'", "frame-src 'none'", "object-src 'none'", "worker-src 'none'",
+    ];
     for (const d of need) {
       if (!csp.includes(d)) fail(`SCREEN_CSP missing "${d}"`);
     }

@@ -9,12 +9,22 @@
 //     https: hosts — custom screens must inline/data-URI any imagery; there are no remote webfonts.
 //   - default-src 'none'    → blocks plugins/objects/prefetch/etc.
 //   - base-uri/form-action 'none' → prevents <base> and form-submission hijacking.
+//   - object-src/worker-src/frame-src 'none' → blocks <object>/<embed>, Worker(), and nested iframes
+//     (each of which could otherwise issue an outbound request).
+//   - navigate-to 'none'    → blocks the frame self-navigating to a remote URL (`location.href='https…'`)
+//     as an exfil channel. The sandbox already blocks popups (no allow-popups) and top-navigation (no
+//     allow-top-navigation); navigate-to closes SELF-navigation. NOTE: navigate-to is not yet shipped
+//     in Chrome/Safari, so for those engines this is best-effort — which is why custom CODE screens are
+//     treated as TRUSTED content (official packs / your own code) and imported/community code screens
+//     get an explicit trust warning on install. Prefer no-code widget dashboards (host-rendered, no
+//     iframe, zero egress surface). See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md.
 // If you ever need real assets in a screen, add a controlled FormLogic asset mechanism — never widen
-// this to `https:`. See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md ("no remote images/fonts/media").
+// this to `https:`.
 export const SCREEN_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data: blob:; font-src data:; media-src data: blob:; "
-  + "connect-src 'none'; base-uri 'none'; form-action 'none'";
+  + "connect-src 'none'; base-uri 'none'; form-action 'none'; "
+  + "navigate-to 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'";
 
 /**
  * Per-runtime SDK rate limiter. The iframe can loop arbitrarily; even though it can't reach the network
