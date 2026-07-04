@@ -389,6 +389,21 @@ export function AppDataTable() {
   };
 
   const canSubmitThis = formId ? canSubmit(formId) : false;
+  // Offer "New record" only when the member can submit AND the form isn't explicitly closed to new
+  // records (allowNewResponses !== false — so forms without a section screen still allow adding).
+  // Mirrors the section-screen dashboards' New button.
+  const canAddRecord = canSubmitThis && (runtimeForm?.customScreen?.allowNewResponses !== false);
+  const newRecordButton = canAddRecord && formId ? (
+    <button
+      type="button"
+      // ?new=1 deep-links straight into the form entry, past any section screen (see AppFormView).
+      onClick={() => navigate(`/app/${appSlug}/form/${formId}?new=1`)}
+      className="app-btn-primary inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium cursor-pointer"
+    >
+      <Plus className="h-4 w-4" />
+      <span className="hidden sm:inline">New record</span>
+    </button>
+  ) : null;
 
   // No records at all (not a filtered-out search) — show a real empty state with a CTA
   // instead of an empty table. `!loading` avoids a flash while a refetch is in flight.
@@ -423,6 +438,7 @@ export function AppDataTable() {
           : 'Submitted records'}
         onBack={goBack}
         backLabel="Back to records"
+        actions={newRecordButton}
       />
 
       {error ? (
@@ -441,13 +457,13 @@ export function AppDataTable() {
           <EmptyState
             icon={Inbox}
             title="No records yet"
-            description={canSubmitThis
+            description={canAddRecord
               ? 'Submit the first record and it will show up here.'
               : 'Records submitted to this form will appear here.'}
-            action={canSubmitThis ? (
+            action={canAddRecord ? (
               <button
                 type="button"
-                onClick={() => navigate(`/app/${appSlug}/form/${formId}`)}
+                onClick={() => navigate(`/app/${appSlug}/form/${formId}?new=1`)}
                 className="app-btn-primary inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium cursor-pointer"
               >
                 <Plus className="h-4 w-4" /> Submit the first record
