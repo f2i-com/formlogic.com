@@ -411,6 +411,17 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     const s = (f as Record<string, unknown>).logicScript;
     return typeof s === 'string' && s.trim() !== '';
   });
+  // Distinguish no-code widget dashboards (kind:'dashboard') from sandboxed CUSTOM CODE screens
+  // (HTML/CSS/JS). Code screens run in the SDK sandbox but can read data the viewer may see, so
+  // imported/community packs that carry them get an explicit heads-up before install.
+  const hasCodeScreen = [
+    ...((uploadedPack?.forms ?? []) as Record<string, unknown>[]),
+    ...((uploadedPack?.apps ?? []) as Record<string, unknown>[]),
+  ].some((entity) => {
+    const cs = entity.customScreen as Record<string, unknown> | undefined;
+    if (!cs || !cs.enabled || cs.kind === 'dashboard') return false;
+    return !!(cs.html || cs.js || cs.ts || (Array.isArray(cs.files) && cs.files.length > 0));
+  });
 
   return (
     <>
@@ -893,6 +904,15 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       <div className="flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
                         <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
                         <span>This pack includes <strong>backend logic scripts</strong> that run on your server when a form is submitted and can make outbound network requests. Only import packs you trust, and review each form's Backend Logic Script before publishing.</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {hasCodeScreen && (
+                    <div className="px-4 pb-3">
+                      <div className="flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
+                        <span>This pack includes <strong>custom code screens</strong> (sandboxed HTML/CSS/JS), not just no-code dashboards. They run in a locked-down sandbox and can only use the FormLogic SDK — but they can read data the viewer is allowed to see. Only import code screens from a source you trust.</span>
                       </div>
                     </div>
                   )}
