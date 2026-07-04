@@ -85,6 +85,11 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
+      # Rough bundle budget: reports the initial (critical-path) JS payload and fails only on an
+      # egregious regression. Heavy Monaco/QuickJS chunks are lazy and excluded.
+      - name: Bundle budget (initial payload)
+        run: node scripts/check-bundle-budget.mjs
+
       # Hard gate: every marketplace pack app ships a home dashboard and EVERY pack/sample form
       # ships a section screen (enabled + allowNewResponses + New-record affordance + design rules:
       # tokens only, no emoji, form-scoped SDK). A pack edit can't silently drop a screen.
