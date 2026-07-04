@@ -47,6 +47,10 @@ if ($betaMode) {
     $cloudPlanEnforced = false;
 }
 
+// Support / contact address shown to users when transactional email isn't configured yet (e.g. a
+// fresh install with no SMTP) — the password-reset page points people here to reset or verify by hand.
+$supportEmail = trim((string) ($_ENV['SUPPORT_EMAIL'] ?? '')) ?: 'hello@formlogic.com';
+
 if ($isProduction && $cloudPlanEnforced) {
     $missingPaypal = array_values(array_filter(
         ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET'],
@@ -65,6 +69,7 @@ return [
         'displayErrorDetails' => !$isProduction && ($_ENV['APP_DEBUG'] ?? 'false') === 'true',
         'logErrors' => true,
         'logErrorDetails' => !$isProduction,
+        'supportEmail' => $supportEmail,
         'isProduction' => $isProduction,
 
         'logger' => [

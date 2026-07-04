@@ -28,6 +28,10 @@ import { useBetaMode } from '../hooks/useBetaMode';
 // Public source repo — a star is the cheapest way visitors can say "keep going".
 const GITHUB_URL = 'https://github.com/izuc/formlogic-app';
 
+// Public site domain, used for the marketing mockup URLs and the sales contact address. Configurable
+// at build time via VITE_PUBLIC_DOMAIN so a self-host or a rebrand can point these at its own domain.
+const SITE_DOMAIN = import.meta.env.VITE_PUBLIC_DOMAIN || 'formlogic.com';
+
 // Landing-only chrome: a characterful display face (Bricolage Grotesque) + a
 // monospace signature (JetBrains Mono) for the technical/data accents, plus the
 // scoped style primitives the page leans on. Injected on mount instead of in
@@ -145,7 +149,7 @@ export function Landing() {
   const showcaseApps = [
     {
       src: '/landing/app-salon-light.png',
-      url: 'formlogic.app/apps/salon',
+      url: `${SITE_DOMAIN}/apps/salon`,
       name: 'Salon',
       caption: 'live dashboard',
       packSlug: 'salon-beauty-studio',
@@ -153,7 +157,7 @@ export function Landing() {
     },
     {
       src: '/landing/app-safety-dark.png',
-      url: 'formlogic.app/apps/safety',
+      url: `${SITE_DOMAIN}/apps/safety`,
       name: 'Safety',
       caption: 'incident dashboard',
       packSlug: 'ohs-qms',
@@ -263,7 +267,7 @@ export function Landing() {
         'Custom deployment & security review',
       ],
       cta: 'Contact sales',
-      ctaHref: 'mailto:sales@formlogic.app?subject=FormLogic%20Enterprise',
+      ctaHref: `mailto:sales@${SITE_DOMAIN}?subject=FormLogic%20Enterprise`,
       ctaExternal: true,
       highlighted: false,
     },
@@ -535,7 +539,7 @@ export function Landing() {
               aria-hidden="true"
               className="absolute -inset-x-8 -top-10 h-72 bg-primary-500/15 dark:bg-primary-500/10 blur-[90px] rounded-full pointer-events-none"
             />
-            <BrowserFrame url="formlogic.app/apps/inventory" className="relative">
+            <BrowserFrame url={`${SITE_DOMAIN}/apps/inventory`} className="relative">
               <img
                 src="/landing/app-inventory-light.png"
                 width={1360}

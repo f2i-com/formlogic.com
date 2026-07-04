@@ -584,10 +584,21 @@ $app->options('/{routes:.+}', function ($request, $response) {
 // Health check. Also advertises public-beta mode so the SPA (signup/landing/billing) can show the
 // "free during beta" messaging pre-auth — this is the endpoint useBetaMode() reads.
 $app->get('/api/health', function ($request, $response) use ($container) {
+    $settings = $container->get('settings');
+    // Whether transactional email can actually be sent. When false, the SPA points users to the
+    // support address for manual password-reset / account help instead of "we emailed you a link".
+    $emailConfigured = false;
+    try {
+        $emailConfigured = $container->get(\FormLogic\Services\EmailService::class)->isConfigured();
+    } catch (\Throwable $e) {
+        // Never let a mailer misconfig break the health probe.
+    }
     $response->getBody()->write(json_encode([
         'status' => 'ok',
         'timestamp' => date('c'),
-        'betaMode' => (bool) ($container->get('settings')['cloud']['betaMode'] ?? false),
+        'betaMode' => (bool) ($settings['cloud']['betaMode'] ?? false),
+        'emailConfigured' => $emailConfigured,
+        'supportEmail' => (string) ($settings['supportEmail'] ?? 'hello@formlogic.com'),
     ]));
     return $response->withHeader('Content-Type', 'application/json');
 });

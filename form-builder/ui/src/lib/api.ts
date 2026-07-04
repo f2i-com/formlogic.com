@@ -524,7 +524,7 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean }>> {
+  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean; emailConfigured?: boolean; supportEmail?: string }>> {
     return this.request('/health');
   }
 

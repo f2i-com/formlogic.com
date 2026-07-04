@@ -5,11 +5,13 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Logo } from '../components/ui/Logo';
 import { Mail, CheckCircle2 } from 'lucide-react';
+import { usePublicConfig } from '../hooks/usePublicConfig';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const { emailConfigured, supportEmail } = usePublicConfig();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +32,30 @@ export function ForgotPassword() {
       <div className="w-full max-w-[400px] relative z-10">
         <div className="flex justify-center mb-8"><Link to="/"><Logo size="lg" /></Link></div>
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
-          {sent ? (
+          {!emailConfigured ? (
+            // Email isn't set up on this instance (e.g. a fresh self-host with no SMTP), so an
+            // automated reset link can't be sent. Point the user at the support address instead.
+            <div className="text-center">
+              <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
+                <Mail className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+              </div>
+              <h1 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Reset your password</h1>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-2">
+                Automated email isn't set up on this instance yet. To reset your password or verify your
+                account, email us and we'll help you out:
+              </p>
+              <a
+                href={`mailto:${supportEmail}?subject=${encodeURIComponent('Password reset request')}`}
+                className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-primary-foreground font-medium px-4 py-2.5 text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
+              >
+                <Mail className="h-4 w-4" />
+                {supportEmail}
+              </a>
+              <p className="mt-6">
+                <Link to="/login" className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">&larr; Back to sign in</Link>
+              </p>
+            </div>
+          ) : sent ? (
             <div className="text-center">
               <div className="w-12 h-12 mx-auto rounded-full bg-green-50 dark:bg-green-500/10 flex items-center justify-center mb-4">
                 <CheckCircle2 className="h-6 w-6 text-green-500 dark:text-green-400" />

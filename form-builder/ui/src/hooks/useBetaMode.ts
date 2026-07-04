@@ -1,26 +1,9 @@
-import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
-
-// Module-level cache so the public /health flag is fetched once per session, not per component.
-let cached: boolean | null = null;
+import { usePublicConfig } from './usePublicConfig';
 
 /**
- * Whether this instance is running in public-beta mode (BETA_MODE=true): Cloud is free and payments are
- * disabled. Read from the public /api/health endpoint, so it works pre-auth (signup/landing) too.
+ * Whether this instance is running in public-beta mode (BETA_MODE=true): Cloud is free and payments
+ * are disabled. Thin wrapper over the shared public config so beta + email flags share one fetch.
  */
 export function useBetaMode(): boolean {
-  const [beta, setBeta] = useState<boolean>(cached ?? false);
-  useEffect(() => {
-    if (cached !== null) return; // already known — the initial state is already correct
-    let active = true;
-    api.healthCheck()
-      .then((res) => {
-        if (!active) return;
-        cached = !!res.data?.betaMode;
-        setBeta(cached);
-      })
-      .catch(() => { /* health unreachable — treat as non-beta */ });
-    return () => { active = false; };
-  }, []);
-  return beta;
+  return usePublicConfig().betaMode;
 }
