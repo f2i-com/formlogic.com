@@ -16,17 +16,18 @@ export function Signup() {
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { register, isLoading, error, clearError, user } = useAuthStore();
+  const { register, isLoading, error, clearError, user, logout } = useAuthStore();
 
   // Reject protocol-relative (//host) / backslash forms to avoid open-redirects.
   const redirectParam = searchParams.get('redirect');
   const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
 
   useEffect(() => {
-    if (user) {
-      navigate(dest);
-    }
-  }, [user, navigate, dest]);
+    if (!user) return;
+    // A demo visitor signing up wants a REAL account — leave the demo first, then show the form.
+    if (user.isDemo) { logout(); return; }
+    navigate(dest);
+  }, [user, navigate, dest, logout]);
 
   useEffect(() => {
     return () => {

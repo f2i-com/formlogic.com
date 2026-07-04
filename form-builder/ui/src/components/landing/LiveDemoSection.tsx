@@ -235,7 +235,7 @@ export function LiveDemoSection() {
         <div className="mt-6 flex flex-wrap items-center gap-4">
           <button
             type="button"
-            onClick={() => launch()}
+            onClick={() => launch(apps[0]?.slug)}
             disabled={anyLaunching}
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
           >

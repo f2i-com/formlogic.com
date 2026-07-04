@@ -14,7 +14,7 @@ export function Login() {
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { login, isLoading, error, clearError, user } = useAuthStore();
+  const { login, isLoading, error, clearError, user, logout } = useAuthStore();
 
   // Honor a same-origin redirect target (e.g. accepting an app invitation).
   // Reject protocol-relative (//host) and backslash (/\host) forms, which would
@@ -23,10 +23,12 @@ export function Login() {
   const dest = redirectParam && /^\/(?![/\\])/.test(redirectParam) ? redirectParam : '/';
 
   useEffect(() => {
-    if (user) {
-      navigate(dest);
-    }
-  }, [user, navigate, dest]);
+    if (!user) return;
+    // A demo visitor who lands here wants to sign into a REAL account — leave the demo (clears the
+    // shared session) and show the form, instead of bouncing back to the demo landing.
+    if (user.isDemo) { logout(); return; }
+    navigate(dest);
+  }, [user, navigate, dest, logout]);
 
   useEffect(() => {
     return () => {
