@@ -21,8 +21,12 @@ pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-s
   field-aware upload rejection; `onSubmit` reject/computed write (`e2e/launch-golden-paths.spec.ts`).
 - ✅ App file RBAC (view-all / view-own-own / view-own-other / non-member / anonymous) — `FileAccessRbacTest`.
 - ✅ App RBAC permission matrix — `AppRbacTest`.
-- ✅ Custom-screen CSP no-egress invariant — `check-security-invariants.mjs`.
-- ⏳ Pack install → dashboard renders populated widgets; submit → dashboard updates.
+- ✅ Custom-screen CSP no-egress: static invariant (`check-security-invariants.mjs`) + a behavioural
+  E2E that fires every egress vector (fetch/XHR/beacon/WS, img/css/font/media, iframe/object/worker,
+  form, popup, self-nav) at a real server and asserts zero arrival (`e2e/custom-screen-csp.spec.ts`).
+- ✅ Member schema/report/dashboard visibility filtering — `AppMemberFilterTest`.
+- ✅ App dashboard renders populated widgets + records grid shows seeded data — `e2e/app-dashboard.spec.ts`.
+- ⏳ Interactive submit → dashboard/list/report updates (needs a real-account, non-read-only harness).
 - ⏳ Export app pack → import into fresh account → forms/reports/dashboard survive.
 - ⏳ Public live-demo isolation (read-only server-side; browser-local changes don't pollute shared demo).
 - ⏳ Billing-disabled/self-host state; MCP token create/list/revoke.
@@ -52,6 +56,28 @@ pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-s
 - [ ] **P2 #12 dedicated "starter" pack** — deferred follow-up. The 28-pack catalog covers onboarding
   (several tagged `onboarding`); a bespoke 3–4-form starter + making it *the* featured default is
   net-new content + a marketplace-curation decision (all demo packs are currently `featured=1`).
+
+## Launch hardening review — round 2 (2026-07) — actioned
+
+- [x] **P0 #1 custom-screen self-nav** — CSP adds `navigate-to`/`frame-src`/`object-src`/`worker-src`
+  `'none'`; invariant guard requires them. Empirically verified (`e2e/custom-screen-csp.spec.ts`):
+  every egress vector — incl. self-navigation — is blocked in Chromium (measured at a real server, not
+  via Playwright request events). Code screens remain trusted-content for untested engines (Safari).
+- [x] **P0 #2 member visibility** — `getForm()` gated on `memberCanSeeForm`; `getApp()` filters
+  `safeApp` (nav, landingPage, report specs + doc blocks, dashboard widgets) for non-owners.
+  `AppMemberFilterTest`.
+- [x] **P0 #3 runbook overclaim** — runbook now separates automated vs manual-smoke launch paths.
+- [x] **P1 #4 VIEW_OWN old file** — `ResponseService::userOwnsFile` unbounded lookup; `FileServeRouteTest`
+  covers a file on the oldest of 120+ responses.
+- [x] **P1 #5 marketplace install warning** — same code-trust prompt as upload (`lib/packTrust.ts`).
+- [x] **P1 #6 route-level file tests** — `FileServeRouteTest` hits `serve()` with real DB/SQLite/files
+  (status + cache headers).
+- [x] **P1 #7 stale FileController docblock** — updated to the explicit-permission model.
+- [x] **P1 #8 email-verification wording** — runbook no longer implies a nonexistent verify step.
+- [x] **P1 #9 golden paths** — dashboard-renders-populated + records-grid specs added (priority 1);
+  interactive submit→updates tracked above.
+- [x] **P2 #12 perf capture** — runbook asks the launcher to paste `perf-demo-dashboards.mjs` output.
+- [ ] **P2 #10/#11 onboarding tour + dedicated starter pack** — remain the deferred UX/content items.
 
 ---
 
