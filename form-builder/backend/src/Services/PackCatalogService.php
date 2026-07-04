@@ -69,6 +69,7 @@ class PackCatalogService
             SELECT pc.*,
                    u.name AS publisher_name,
                    u.email AS publisher_email,
+                   u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,
                    pv.app_count
@@ -188,6 +189,7 @@ class PackCatalogService
         $stmt = $this->mysql->prepare("
             SELECT pc.*,
                    u.name AS publisher_name,
+                   u.email AS publisher_email,
                    u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,
@@ -431,6 +433,7 @@ class PackCatalogService
             SELECT pc.*,
                    u.name AS publisher_name,
                    u.email AS publisher_email,
+                   u.email AS publisher_email,
                    pv.version AS latest_version,
                    pv.form_count,
                    pv.app_count
@@ -618,6 +621,9 @@ class PackCatalogService
             'featured' => (bool)($row['featured'] ?? false),
             'publisherId' => $row['publisher_id'],
             'publisherName' => $row['publisher_name'] ?? null,
+            // Trust signal for the install prompt — computed server-side from the publisher's real
+            // identity, NOT the spoofable display name. The email itself is not exposed to clients.
+            'official' => (($row['publisher_email'] ?? null) === ($_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local')),
             'latestVersion' => $row['latest_version'] ?? null,
             'formCount' => (int)($row['form_count'] ?? 0),
             'appCount' => (int)($row['app_count'] ?? 0),

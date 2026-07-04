@@ -140,7 +140,7 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         if (hasScreen) bits.push('custom code screens (sandboxed HTML/CSS/JS)');
         if (hasScript) bits.push('backend logic scripts that run on your server when a form is submitted');
         const what = bits.join(' and ');
-        const official = !pack.publisherName || pack.publisherName === 'FormLogic';
+        const official = pack.official === true; // server-computed; the display name is spoofable
         const msg = official
           ? `This pack includes ${what}. They run sandboxed with access only to data you're permitted to see. Install it?`
           : `⚠ This community pack includes ${what}. Sandboxed code can still read data you're allowed to see, and backend scripts run on your server. Only install packs from sources you trust.\n\nInstall anyway?`;

@@ -1597,6 +1597,8 @@ interface CatalogPack {
   avgRating: number;
   ratingCount: number;
   featured: boolean;
+  /** Published by the real official/platform account — server-computed, not from the display name. */
+  official?: boolean;
   publisherId: string;
   publisherName: string | null;
   latestVersion: string | null;

@@ -178,6 +178,11 @@ export default function AppHomeStudio() {
             )}
           </div>
 
+          <p className="mx-3 mb-1 mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400/90">
+            Custom code screens are <strong>trusted, app-wide frontends</strong>. The SDK only exposes data
+            the viewer is permitted to see, but the screen&apos;s own code can contain labels or form IDs you
+            author. For strict per-role structure hiding, prefer the no-code widget dashboard.
+          </p>
           <ScreenFilesEditor files={files} onChange={onFilesChange} sdk="app" />
           {compileError && (
             <div className="mx-3 mb-3 px-3 py-2 text-xs rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 font-mono">
