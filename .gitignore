@@ -2,3 +2,9 @@
 # form-builder/.gitignore. (The old engine source repos formlogic-php and
 # formlogic-rust were removed — the scripting engine is now the vendored QuickJS
 # runtime under form-builder/.)
+
+# Playwright output (any location)
+test-results/
+playwright-report/
+**/test-results/
+**/playwright-report/
