@@ -54,6 +54,8 @@ export interface BillingStatus {
   pricePerMonthCents: number;
   currency: string;
   maxMonths: number;
+  /** Public beta: Cloud is free and payments are turned off. */
+  betaMode?: boolean;
   paypalEnabled: boolean;
   paypalClientId: string | null;
   usage: PlanUsage | null;
@@ -522,7 +524,7 @@ class ApiClient {
   }
 
   // Health check
-  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string }>> {
+  async healthCheck(): Promise<ApiResponse<{ status: string; timestamp: string; betaMode?: boolean }>> {
     return this.request('/health');
   }
 

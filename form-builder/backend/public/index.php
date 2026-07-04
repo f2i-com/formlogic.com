@@ -127,7 +127,8 @@ $container->set(AuthService::class, function (Container $c) {
         $c->get(MySQLConnection::class),
         $settings['jwt'],
         $settings['rateLimit']['login'] ?? [],
-        $c->get(\FormLogic\Services\EmailService::class)
+        $c->get(\FormLogic\Services\EmailService::class),
+        (int) ($settings['cloud']['signupFreeDays'] ?? 30)
     );
 });
 
@@ -373,7 +374,8 @@ $container->set(\FormLogic\Controllers\BillingController::class, function (Conta
         $c->get(MySQLConnection::class),
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
-        $c->get(\FormLogic\Services\PlanService::class)
+        $c->get(\FormLogic\Services\PlanService::class),
+        (bool) ($c->get('settings')['cloud']['betaMode'] ?? false)
     );
 });
 

@@ -34,18 +34,20 @@ class BillingController
     private LoggerInterface $logger;
     private ?PlanService $planService;
     private IpResolver $ipResolver;
+    private bool $betaMode;
 
     private int $pricePerMonthCents;
     private string $currency = 'USD';
     private const MAX_MONTHS = 12;
 
-    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null)
+    public function __construct(PayPalService $paypal, MySQLConnection $db, ?AuditService $auditService = null, ?LoggerInterface $logger = null, ?PlanService $planService = null, bool $betaMode = false)
     {
         $this->paypal = $paypal;
         $this->db = $db;
         $this->auditService = $auditService;
         $this->logger = $logger ?? new NullLogger();
         $this->planService = $planService;
+        $this->betaMode = $betaMode;
         $this->ipResolver = IpResolver::fromEnvironment();
         $this->pricePerMonthCents = (int) ($_ENV['CLOUD_PRICE_CENTS'] ?? 500);
         if ($this->pricePerMonthCents < 1) {
@@ -60,12 +62,14 @@ class BillingController
         $cloudUntil = $this->getCloudUntil($userId);
         return $this->jsonResponse($response, [
             'cloudUntil' => $cloudUntil,
-            'active' => $cloudUntil !== null && strtotime($cloudUntil) > time(),
+            'active' => $this->betaMode || ($cloudUntil !== null && strtotime($cloudUntil) > time()),
             'pricePerMonthCents' => $this->pricePerMonthCents,
             'currency' => $this->currency,
             'maxMonths' => self::MAX_MONTHS,
-            'paypalEnabled' => $this->paypal->isConfigured(),
-            'paypalClientId' => $this->paypal->isConfigured() ? $this->paypal->getClientId() : null,
+            // During the public beta everything is free and payments are turned off.
+            'betaMode' => $this->betaMode,
+            'paypalEnabled' => !$this->betaMode && $this->paypal->isConfigured(),
+            'paypalClientId' => (!$this->betaMode && $this->paypal->isConfigured()) ? $this->paypal->getClientId() : null,
             // Plan usage (forms/storage) — only meaningful when enforcement is on.
             'usage' => $this->planService ? $this->planService->usage($userId) : null,
         ]);
@@ -75,6 +79,9 @@ class BillingController
     public function createOrder(Request $request, Response $response): Response
     {
         $userId = $request->getAttribute('userId');
+        if ($this->betaMode) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'beta_free', 'message' => 'Payments are disabled during the beta — Cloud is free right now.'], 403);
+        }
         if (!$this->paypal->isConfigured()) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Cloud billing is not configured on this instance.'], 503);
         }
@@ -111,6 +118,9 @@ class BillingController
     {
         $userId = $request->getAttribute('userId');
         $orderId = (string) ($args['orderId'] ?? '');
+        if ($this->betaMode) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'beta_free', 'message' => 'Payments are disabled during the beta — Cloud is free right now.'], 403);
+        }
         if (!$this->paypal->isConfigured()) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Cloud billing is not configured on this instance.'], 503);
         }

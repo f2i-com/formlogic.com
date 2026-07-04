@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Cloud, Check, Minus, Plus, Loader2, Info } from 'lucide-react';
+import { Cloud, Check, Minus, Plus, Loader2, Info, Sparkles } from 'lucide-react';
 import { api, type BillingStatus } from '../lib/api';
 import { parseServerDate } from '../lib/utils';
 import { toast } from '../stores/toastStore';
@@ -144,6 +144,7 @@ export function Billing() {
   // Self-hosted: no managed billing AND no enforced limits → everything is unlimited and there's
   // nothing to buy. Show that positively rather than as a "billing not set up" warning.
   const selfHosted = !status?.paypalEnabled && !status?.usage?.enforced;
+  const beta = !!status?.betaMode;
 
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -153,11 +154,19 @@ export function Billing() {
         </div>
         <h1 className="text-2xl font-semibold text-gray-900 dark:text-white tracking-tight">Cloud</h1>
       </div>
-      <p className="text-gray-500 dark:text-slate-400 mb-8">Pay only for the time you use — no subscription, no auto-renew.</p>
+      <p className="text-gray-500 dark:text-slate-400 mb-8">{status?.betaMode ? "Free while we're in public beta — no payment, no card required." : 'Pay only for the time you use — no subscription, no auto-renew.'}</p>
 
       {/* Current status */}
-      <div className={`rounded-2xl border p-5 mb-6 ${(cloudActive || selfHosted) ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
-        {selfHosted ? (
+      <div className={`rounded-2xl border p-5 mb-6 ${(cloudActive || selfHosted || beta) ? 'border-green-300/70 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/[0.07]' : 'border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900/50'}`}>
+        {beta ? (
+          <div className="flex items-start gap-3">
+            <Sparkles className="h-5 w-5 text-primary-600 dark:text-primary-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-gray-900 dark:text-white">Free during the public beta</p>
+              <p className="text-sm text-gray-600 dark:text-slate-400 mt-0.5">FormLogic is in free public beta — every Cloud feature is available with no payment.{cloudUntilLabel ? <> Your account is set up through <strong className="text-gray-900 dark:text-white">{cloudUntilLabel}</strong>.</> : null} Thanks for helping us test and improve it.</p>
+            </div>
+          </div>
+        ) : selfHosted ? (
           <div className="flex items-start gap-3">
             <Check className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
             <div>

@@ -5,7 +5,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
-import { Mail, Lock, User, AlertCircle, Check } from 'lucide-react';
+import { Mail, Lock, User, AlertCircle, Check, Sparkles } from 'lucide-react';
+import { useBetaMode } from '../hooks/useBetaMode';
 
 export function Signup() {
   const [email, setEmail] = useState('');
@@ -17,6 +18,7 @@ export function Signup() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { register, isLoading, error, clearError, user, logout } = useAuthStore();
+  const beta = useBetaMode();
 
   // Reject protocol-relative (//host) / backslash forms to avoid open-redirects.
   const redirectParam = searchParams.get('redirect');
@@ -125,6 +127,13 @@ export function Signup() {
               Sign in
             </Link>
           </p>
+
+          {beta && (
+            <div className="mb-6 flex items-start gap-2 rounded-xl border border-primary-200/70 dark:border-primary-500/25 bg-primary-50/70 dark:bg-primary-500/10 px-3.5 py-2.5 text-sm text-primary-800 dark:text-primary-200">
+              <Sparkles className="h-4 w-4 mt-0.5 shrink-0" />
+              <span><strong>Free public beta</strong> — no card required. Sign up and use every feature free while we build it out.</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {displayError && (

@@ -31,7 +31,12 @@ class HealthController
 
     public function basic(Request $request, Response $response): Response
     {
-        return $this->json($response, ['status' => 'ok', 'timestamp' => date('c')]);
+        return $this->json($response, [
+            'status' => 'ok',
+            'timestamp' => date('c'),
+            // Public flag so the SPA can show the "free while in beta" banner + signup note pre-auth.
+            'betaMode' => (bool) ($this->settings['cloud']['betaMode'] ?? false),
+        ]);
     }
 
     /** GET /api/health/deep — diagnostics. 200 if all critical checks pass, else 503. */

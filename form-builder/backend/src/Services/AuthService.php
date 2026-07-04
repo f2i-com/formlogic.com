@@ -49,11 +49,13 @@ class AuthService
     // Shared, persistent rate-limit store (works across requests/processes).
     private RateLimiter $rateLimiter;
     private ?EmailService $emailService;
+    private int $signupFreeDays = 30;
 
-    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null)
+    public function __construct(MySQLConnection $mysql, array $jwtConfig, array $rateLimitConfig = [], ?EmailService $emailService = null, int $signupFreeDays = 30)
     {
         $this->mysql = $mysql->getConnection();
         $this->jwtConfig = $jwtConfig;
+        $this->signupFreeDays = max(1, $signupFreeDays);
         $this->rateLimitConfig = array_merge([
             'maxAttempts' => 5,           // Max attempts per IP+email combo
             'maxEmailAttempts' => 10,     // Max attempts per email (across all IPs)
@@ -87,10 +89,11 @@ class AuthService
         $now = date('Y-m-d H:i:s');
 
         try {
-            // Every new account starts with 30 days of Cloud free (pay-as-you-go after).
+            // Every new account starts with a free Cloud window (30 days normally; longer in beta —
+            // see BETA_MODE). $signupFreeDays is a server-controlled int, safe to interpolate.
             $stmt = $this->mysql->prepare("
                 INSERT INTO users (id, email, password_hash, name, cloud_until, created_at, updated_at)
-                VALUES (:id, :email, :password_hash, :name, DATE_ADD(NOW(), INTERVAL 30 DAY), :created_at, :updated_at)
+                VALUES (:id, :email, :password_hash, :name, DATE_ADD(NOW(), INTERVAL {$this->signupFreeDays} DAY), :created_at, :updated_at)
             ");
 
             $stmt->execute([

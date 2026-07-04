@@ -36,6 +36,17 @@ if ($isProduction && $dbPassword === 'password') {
 // unlimited. If a hosted operator turns it on in production, PayPal must be configured
 // or users would hit limits with no way to pay to lift them.
 $cloudPlanEnforced = filter_var($_ENV['CLOUD_PLAN_ENFORCED'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+
+// Public-beta mode: free signup for a limited window, payments disabled, nothing enforced — so people
+// can test without paying while the product is still maturing. New accounts get BETA_FREE_DAYS of Cloud
+// (default 90 = ~3 months) as a runway for when the beta ends and enforcement is switched on. While
+// BETA_MODE is on we DON'T enforce the plan (no lockouts) and don't require PayPal.
+$betaMode = filter_var($_ENV['BETA_MODE'] ?? 'false', FILTER_VALIDATE_BOOLEAN);
+$signupFreeDays = $betaMode ? max(1, (int) ($_ENV['BETA_FREE_DAYS'] ?? 90)) : 30;
+if ($betaMode) {
+    $cloudPlanEnforced = false;
+}
+
 if ($isProduction && $cloudPlanEnforced) {
     $missingPaypal = array_values(array_filter(
         ['PAYPAL_CLIENT_ID', 'PAYPAL_SECRET'],
@@ -132,6 +143,8 @@ return [
         // self-hosted installs leave it false and stay unlimited.
         'cloud' => [
             'planEnforced' => $cloudPlanEnforced,
+            'betaMode' => $betaMode,
+            'signupFreeDays' => $signupFreeDays,
             'maxForms' => (int)($_ENV['CLOUD_MAX_FORMS'] ?? 100),
             'maxStorageBytes' => (int)($_ENV['CLOUD_MAX_STORAGE_BYTES'] ?? 1024 * 1024 * 1024), // 1 GB
         ],
