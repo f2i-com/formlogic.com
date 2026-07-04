@@ -236,10 +236,9 @@ function AuthRedirector() {
 function AppRoutes() {
   const user = useAuthStore((state) => state.user);
 
-  // Signed-out visitors AND the shared Demo account get the public site (landing + marketplace + the
-  // /app runtime). The demo is for viewing apps, not building — so refreshing "/" stays on the
-  // landing, and an app only opens when the visitor follows a live-demo link.
-  if (!user || user.isDemo) {
+  // Signed-out visitors get the public marketing site (landing + marketplace + docs/legal), plus the
+  // public /app runtime and shared form links.
+  if (!user) {
     return (
       <Routes>
         <Route path="/" element={<Landing />} />
@@ -261,6 +260,64 @@ function AppRoutes() {
         <Route path="/terms" element={<LegalPage type="terms" />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
+        {/* 404 catch-all */}
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    );
+  }
+
+  // The shared Demo account explores the whole FormLogic platform (read-only, "the actual app"), but
+  // the marketing landing must stay at "/" so refreshing it doesn't auto-open the app — the visitor
+  // enters the platform only via a live-demo link. So "/" = Landing (no shell), the platform
+  // Dashboard lives at "/dashboard", and login/signup render the real forms (they leave the demo
+  // first). Everything else mirrors the authenticated table below.
+  if (user.isDemo) {
+    return (
+      <Routes>
+        {/* Marketing landing stays at "/" for the demo so a refresh is landing, not the app */}
+        <Route path="/" element={<Landing />} />
+        {/* Leaving the demo for a real account (Login/Signup log the demo out, then show the form) */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+
+        {/* The FormLogic platform — Dashboard at /dashboard because "/" is the landing */}
+        <Route element={<AppShell />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/forms" element={<FormsList />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/doctor" element={<Doctor />} />
+          <Route path="/billing" element={<Billing />} />
+          <Route path="/analytics/:formId" element={<FormAnalytics />} />
+          <Route path="/responses/:formId" element={<FormResponses />} />
+          <Route path="/apps" element={<AppsDashboard />} />
+          <Route path="/apps/new" element={<AppCreateWizard />} />
+          <Route path="/apps/:appId/settings" element={<AppSettingsPage />} />
+          <Route path="/apps/:appId/forms" element={<AppFormManager />} />
+          <Route path="/apps/:appId/users" element={<AppUserManager />} />
+          <Route path="/apps/:appId/roles" element={<AppRoleEditor />} />
+          <Route path="/apps/:appId/relations" element={<AppRelationsManager />} />
+          <Route path="/apps/:appId/deploy" element={<AppDeploySettings />} />
+        </Route>
+
+        {/* Full-screen platform routes (own chrome, no sidebar) */}
+        <Route path="/builder/:formId" element={<FormBuilder />} />
+        <Route path="/preview/:formId" element={<FormPreview />} />
+        <Route path="/forms/:formId/screen" element={<CustomScreenPlay />} />
+        <Route path="/forms/:formId/screen/edit" element={<CustomScreenStudio />} />
+        <Route path="/apps/:appId/home/edit" element={<AppHomeStudio />} />
+
+        {/* Public content (same as signed-out) */}
+        <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/packs" element={<PackGalleryPage />} />
+        <Route path="/packs/:slug" element={<PackDetailPage />} />
+        <Route path="/docs" element={<Docs />} />
+        <Route path="/privacy" element={<LegalPage type="privacy" />} />
+        <Route path="/terms" element={<LegalPage type="terms" />} />
+        <Route path="/form/:formId" element={<FormResponse />} />
+        <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
+
         {/* 404 catch-all */}
         <Route path="*" element={<NotFound />} />
       </Routes>

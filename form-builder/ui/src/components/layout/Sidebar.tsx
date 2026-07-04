@@ -14,24 +14,29 @@ import {
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
 import { useFormStore } from '../../stores/formStore';
+import { useAuthStore } from '../../stores/authStore';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { Button } from '../ui/Button';
 import { Logo } from '../ui/Logo';
 
-const navItems = [
-  { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { path: '/forms', icon: FileText, label: 'My Forms' },
-  // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
-  { path: '/apps', icon: Boxes, label: 'Apps' },
-  { path: '/settings', icon: Settings, label: 'Settings' },
-  { path: '/doctor', icon: Stethoscope, label: 'Doctor' },
-];
-
 export function Sidebar({ offline = false }: { offline?: boolean }) {
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const { storageMode } = useFormStore();
+  const isDemo = useAuthStore((s) => !!s.user?.isDemo);
   // "Create Form" opens the New Form picker (template or blank), not a blank form.
   const { openNewForm, newFormPicker } = useCreateFormFlow();
+
+  // The demo account's Dashboard lives at /dashboard ("/" is the marketing landing for it); real
+  // accounts keep the Dashboard at "/".
+  const homePath = isDemo ? '/dashboard' : '/';
+  const navItems = [
+    { path: homePath, icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/forms', icon: FileText, label: 'My Forms' },
+    // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
+    { path: '/apps', icon: Boxes, label: 'Apps' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
+    { path: '/doctor', icon: Stethoscope, label: 'Doctor' },
+  ];
 
   return (
     <aside
@@ -66,7 +71,7 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
           <NavLink
             key={item.path}
             to={item.path}
-            end={item.path === '/'}
+            end={item.path === homePath}
             aria-label={item.label}
             title={sidebarCollapsed ? item.label : undefined}
             className={({ isActive }) =>

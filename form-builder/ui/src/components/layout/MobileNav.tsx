@@ -2,13 +2,17 @@ import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, FileText, Plus, Boxes, Settings } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
+import { useAuthStore } from '../../stores/authStore';
 
 export function MobileNav() {
   // Tapping "Create" opens the New Form picker (template or blank), not a blank form.
   const { openNewForm, newFormPicker } = useCreateFormFlow();
+  const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  // The demo account's Home/Dashboard lives at /dashboard ("/" is its marketing landing).
+  const homePath = isDemo ? '/dashboard' : '/';
 
   const navItems = [
-    { path: '/', icon: LayoutDashboard, label: 'Home' },
+    { path: homePath, icon: LayoutDashboard, label: 'Home' },
     { path: '/forms', icon: FileText, label: 'Forms' },
     { action: openNewForm, icon: Plus, label: 'Create', isAction: true },
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
@@ -40,7 +44,7 @@ export function MobileNav() {
             <NavLink
               key={item.path}
               to={item.path!}
-              end={item.path === '/'}
+              end={item.path === homePath}
               className={({ isActive }) =>
                 cn(
                   'flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-xl',

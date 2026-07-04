@@ -190,9 +190,11 @@ export function LiveDemoSection() {
     try {
       // Mint the Demo session cookie without switching THIS tab into the app, then open the demo
       // in a new tab (same origin → shares the cookie). The landing page stays as it was.
+      // No slug → open the whole FormLogic platform (Dashboard at /dashboard, since "/" is the
+      // marketing landing for the demo). A slug → jump straight into that business app.
       const res = await api.startDemo();
       if (res.error || !res.data) return;
-      window.open(slug ? `/app/${slug}` : '/', '_blank', 'noopener');
+      window.open(slug ? `/app/${slug}` : '/dashboard', '_blank', 'noopener');
     } finally {
       setLaunching(null);
     }
@@ -235,7 +237,7 @@ export function LiveDemoSection() {
         <div className="mt-6 flex flex-wrap items-center gap-4">
           <button
             type="button"
-            onClick={() => launch(apps[0]?.slug)}
+            onClick={() => launch()}
             disabled={anyLaunching}
             className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-sm font-semibold text-primary-foreground shadow-sm transition hover:bg-primary-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-70"
           >
