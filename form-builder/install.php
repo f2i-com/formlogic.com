@@ -12,9 +12,22 @@
 
 declare(strict_types=1);
 
+// FormLogic installs from either layout:
+//   - source checkout: this file sits beside backend/ and ui/
+//   - deployed bundle:  this file sits beside api/ (the backend); the SPA is already built at the web root
+// Resolve the backend accordingly. ui/ only exists in the source layout (the bundle ships a prebuilt SPA).
+function flBackendDir(): string
+{
+    return is_dir(__DIR__ . '/api') ? __DIR__ . '/api' : __DIR__ . '/backend';
+}
+function flUiDir(): ?string
+{
+    return is_dir(__DIR__ . '/ui') ? __DIR__ . '/ui' : null;
+}
+
 // Prevent running if already installed and .env exists with a real JWT secret
 $alreadyInstalled = false;
-$envPath = __DIR__ . '/backend/.env';
+$envPath = flBackendDir() . '/.env';
 if (file_exists($envPath)) {
     $envContent = file_get_contents($envPath);
     if (preg_match('/^JWT_SECRET=.{32,}/m', $envContent)) {
@@ -27,9 +40,15 @@ if (file_exists($envPath)) {
 // ---------------------------------------------------------------------------
 // The installer is a powerful setup tool — lock it down so it can't be abused if it's
 // accidentally left online. Allowed only from localhost, unless INSTALL_ENABLE=1 is set
-// in the server environment (a deliberate opt-in for remote installs). Once installed, the
-// web installer is hard-disabled regardless of origin.
-$installEnabled = in_array(strtolower((string) getenv('INSTALL_ENABLE')), ['1', 'true', 'yes'], true);
+// in the server environment (a deliberate opt-in for remote installs — e.g. `SetEnv
+// INSTALL_ENABLE 1` in .htaccess). Once installed, the web installer is hard-disabled
+// regardless of origin.
+$installEnableRaw = getenv('INSTALL_ENABLE');
+if ($installEnableRaw === false || $installEnableRaw === '') {
+    // Apache `SetEnv INSTALL_ENABLE 1` surfaces here (mod_php / FPM) even when getenv() misses it.
+    $installEnableRaw = $_SERVER['INSTALL_ENABLE'] ?? ($_SERVER['REDIRECT_INSTALL_ENABLE'] ?? '');
+}
+$installEnabled = in_array(strtolower((string) $installEnableRaw), ['1', 'true', 'yes'], true);
 $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
 $isLocalRequest = in_array($remoteAddr, ['127.0.0.1', '::1', 'localhost'], true);
 
@@ -156,7 +175,7 @@ function checkRequirements(): array
     }
 
     // Composer dependencies
-    $vendorExists = is_dir(__DIR__ . '/backend/vendor');
+    $vendorExists = is_dir(flBackendDir() . '/vendor');
     $checks['composer'] = [
         'label' => 'Composer Dependencies',
         'required' => 'Installed',
@@ -166,11 +185,12 @@ function checkRequirements(): array
     ];
 
     // Write permissions
+    $backendRel = basename(flBackendDir()); // 'api' (deployed) or 'backend' (source)
     $dirsToCheck = [
-        'backend/storage/forms',
-        'backend/storage/packs',
-        'backend/storage/uploads',
-        'backend/logs',
+        $backendRel . '/storage/forms',
+        $backendRel . '/storage/packs',
+        $backendRel . '/storage/uploads',
+        $backendRel . '/logs',
     ];
     foreach ($dirsToCheck as $dir) {
         $fullPath = __DIR__ . '/' . $dir;
@@ -187,8 +207,8 @@ function checkRequirements(): array
 
     // FormLogic qjs sandbox binary (server-side runtime)
     $qjsBin = stripos(PHP_OS, 'WIN') === 0
-        ? __DIR__ . '/backend/bin/qjs/qjs-windows-x86_64.exe'
-        : __DIR__ . '/backend/bin/qjs/qjs-linux-x86_64';
+        ? flBackendDir() . '/bin/qjs/qjs-windows-x86_64.exe'
+        : flBackendDir() . '/bin/qjs/qjs-linux-x86_64';
     $qjsExists = file_exists($qjsBin);
     $checks['qjs'] = [
         'label' => 'FormLogic qjs Runtime',
@@ -198,42 +218,45 @@ function checkRequirements(): array
         'help' => $qjsExists ? '' : 'Vendored under backend/bin/qjs; re-clone the repo or fetch qjs from github.com/quickjs-ng/quickjs',
     ];
 
-    // Node.js (best effort)
-    $nodeVersion = '';
-    $npmVersion = '';
-    $nodeOk = false;
-    // Initialize so the checks below are safe even when exec() is disabled (shared hosting),
-    // which would otherwise leave these unset and emit warnings that corrupt the JSON response.
-    $nodeOut = $npmOut = [];
-    $nodeRc = $npmRc = 1;
-    if (function_exists('exec')) {
-        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-            exec('node -v 2>NUL', $nodeOut, $nodeRc);
-            exec('npm -v 2>NUL', $npmOut, $npmRc);
-        } else {
-            exec('node -v 2>/dev/null', $nodeOut, $nodeRc);
-            exec('npm -v 2>/dev/null', $npmOut, $npmRc);
+    // Node.js / npm are ONLY needed to BUILD the frontend from source — the deployed bundle ships a
+    // prebuilt SPA, so skip these checks entirely there (no Node required on the server).
+    if (flUiDir() !== null) {
+        $nodeVersion = '';
+        $npmVersion = '';
+        $nodeOk = false;
+        // Initialize so the checks below are safe even when exec() is disabled (shared hosting),
+        // which would otherwise leave these unset and emit warnings that corrupt the JSON response.
+        $nodeOut = $npmOut = [];
+        $nodeRc = $npmRc = 1;
+        if (function_exists('exec')) {
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                exec('node -v 2>NUL', $nodeOut, $nodeRc);
+                exec('npm -v 2>NUL', $npmOut, $npmRc);
+            } else {
+                exec('node -v 2>/dev/null', $nodeOut, $nodeRc);
+                exec('npm -v 2>/dev/null', $npmOut, $npmRc);
+            }
         }
+        if ($nodeRc === 0 && !empty($nodeOut[0])) {
+            $nodeVersion = trim($nodeOut[0]);
+            $major = (int) ltrim($nodeVersion, 'v');
+            // Vite 7 requires Node 20.19+ or 22.12+ (major 20+ covers the common case).
+            $nodeOk = $major >= 20;
+        }
+        $checks['node'] = [
+            'label' => 'Node.js (only to build the frontend)',
+            'required' => '>= 20.19 / 22.12',
+            'current' => $nodeVersion ?: 'Not found in PATH',
+            'pass' => $nodeOk,
+            'help' => $nodeOk ? '' : 'Only needed to build the UI from source. Install Node 20.19+/22.12+ from nodejs.org, or with nvm: `nvm install 22 && nvm use 22`. (The deploy bundle ships a prebuilt UI and needs no Node.)',
+        ];
+        $checks['npm'] = [
+            'label' => 'npm',
+            'required' => 'Installed',
+            'current' => (!empty($npmOut[0])) ? trim($npmOut[0]) : 'Not found',
+            'pass' => !empty($npmOut[0]),
+        ];
     }
-    if ($nodeRc === 0 && !empty($nodeOut[0])) {
-        $nodeVersion = trim($nodeOut[0]);
-        $major = (int) ltrim($nodeVersion, 'v');
-        // Vite 7 requires Node 20.19+ or 22.12+ (major 20+ covers the common case).
-        $nodeOk = $major >= 20;
-    }
-    $checks['node'] = [
-        'label' => 'Node.js',
-        'required' => '>= 20.19 / 22.12',
-        'current' => $nodeVersion ?: 'Not found in PATH',
-        'pass' => $nodeOk,
-        'help' => $nodeOk ? '' : 'Install Node.js 20.19+ or 22.12+ from https://nodejs.org (required by Vite 7)',
-    ];
-    $checks['npm'] = [
-        'label' => 'npm',
-        'required' => 'Installed',
-        'current' => (!empty($npmOut[0])) ? trim($npmOut[0]) : 'Not found',
-        'pass' => !empty($npmOut[0]),
-    ];
 
     $allPass = true;
     // Only PHP + extensions are hard requirements for the wizard itself
@@ -309,8 +332,8 @@ function testDatabase(array $data): array
 function runInstall(array $data): array
 {
     $steps = [];
-    $backendDir = __DIR__ . '/backend';
-    $uiDir = __DIR__ . '/ui';
+    $backendDir = flBackendDir();
+    $uiDir = flUiDir(); // null in the deployed bundle (SPA is already built at the web root)
 
     // 1. Create storage directories
     $dirs = [
@@ -389,18 +412,21 @@ function runInstall(array $data): array
         $steps[] = ['label' => 'Create backend .env', 'status' => 'ok'];
     }
 
-    // 4. Create frontend .env
-    $uiEnvPath = $uiDir . '/.env';
-    if (!file_exists($uiEnvPath)) {
-        $uiEnvExample = $uiDir . '/.env.example';
-        if (file_exists($uiEnvExample)) {
-            copy($uiEnvExample, $uiEnvPath);
+    // 4. Create frontend .env (source layout only — the deployed bundle ships a prebuilt SPA that
+    //    already calls /api on the same origin, so there's nothing to configure).
+    if ($uiDir !== null) {
+        $uiEnvPath = $uiDir . '/.env';
+        if (!file_exists($uiEnvPath)) {
+            $uiEnvExample = $uiDir . '/.env.example';
+            if (file_exists($uiEnvExample)) {
+                copy($uiEnvExample, $uiEnvPath);
+            } else {
+                file_put_contents($uiEnvPath, "VITE_API_URL=http://localhost:8080/api\n");
+            }
+            $steps[] = ['label' => 'Create frontend .env', 'status' => 'ok'];
         } else {
-            file_put_contents($uiEnvPath, "VITE_API_URL=http://localhost:8080/api\n");
+            $steps[] = ['label' => 'Frontend .env', 'status' => 'skip', 'message' => 'Already exists'];
         }
-        $steps[] = ['label' => 'Create frontend .env', 'status' => 'ok'];
-    } else {
-        $steps[] = ['label' => 'Frontend .env', 'status' => 'skip', 'message' => 'Already exists'];
     }
 
     // 5. Create database and import schema
@@ -470,17 +496,19 @@ function runInstall(array $data): array
         $steps[] = ['label' => 'Composer dependencies', 'status' => 'ok'];
     }
 
-    // 7. Check npm dependencies
-    if (!is_dir($uiDir . '/node_modules')) {
-        $steps[] = ['label' => 'npm dependencies', 'status' => 'warn', 'message' => 'Not installed. Run: cd ui && npm install'];
-    } else {
-        $steps[] = ['label' => 'npm dependencies', 'status' => 'ok'];
+    // 7. Check npm dependencies (source layout only — the deployed bundle ships the built SPA).
+    if ($uiDir !== null) {
+        if (!is_dir($uiDir . '/node_modules')) {
+            $steps[] = ['label' => 'npm dependencies', 'status' => 'warn', 'message' => 'Not installed. Run: cd ui && npm install'];
+        } else {
+            $steps[] = ['label' => 'npm dependencies', 'status' => 'ok'];
+        }
     }
 
     // 8. Check FormLogic qjs runtime binary
     $qjsBin = stripos(PHP_OS, 'WIN') === 0
-        ? __DIR__ . '/backend/bin/qjs/qjs-windows-x86_64.exe'
-        : __DIR__ . '/backend/bin/qjs/qjs-linux-x86_64';
+        ? $backendDir . '/bin/qjs/qjs-windows-x86_64.exe'
+        : $backendDir . '/bin/qjs/qjs-linux-x86_64';
     if (!file_exists($qjsBin)) {
         $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'warn', 'message' => 'Binary not present at backend/bin/qjs — form logic & scripts will be disabled'];
     } else {
@@ -725,7 +753,7 @@ function runInstall(array $data): array
         </li>
         <li id="ns-demo" class="hidden">
           Set up the demo &amp; marketplace (installs the sample app packs and seeds example data):<br>
-          <code>cd backend && php scripts/provision-demo.php</code>
+          <code>cd <?php echo htmlspecialchars(basename(flBackendDir()), ENT_QUOTES); ?> && php scripts/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
           The FormLogic qjs runtime binary is missing. It is vendored in the repo
