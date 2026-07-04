@@ -8,9 +8,16 @@ Anything unchecked is a launch blocker.
 ## 0. Gate — CI must be green
 
 - [ ] `ci` workflow green on the release commit (PHPUnit + tsc + eslint + build).
-- [ ] **`release-e2e` workflow green** on the release commit/tag — the full launch golden paths
-      (pack install → dashboard, app RBAC, file RBAC, export/import, demo isolation, billing-disabled,
-      MCP, custom-screen CSP exfil). Run it manually from the Actions tab or by pushing the release tag.
+- [ ] **`E2E (Playwright) — release gate` workflow green** on the release commit/tag (run it from the
+      Actions tab or by pushing the `v*` tag). What it **automates today**: auth login/logout;
+      build → publish → submit-public → view; required validation; hidden-field authority; field-aware
+      upload rejection; `onSubmit` reject/computed write. RBAC/CSP/file-RBAC boundaries are covered by
+      unit/integration tests (`AppRbacTest`, `AppMemberFilterTest`, `FileAccessRbacTest`,
+      `check-security-invariants.mjs`) in the fast `ci` workflow.
+- [ ] **Manual smoke** the product-differentiator flows that are NOT yet automated (see §4 and the
+      "Golden-path coverage" list in LAUNCH_CHECKLIST.md): pack install → dashboard, submit → dashboard
+      updates, export/import, live-demo isolation, billing-disabled/self-host, MCP token flow. These are
+      tracked follow-up specs — until they land, they are a **manual** gate, not an automated one.
 - [ ] Dependency audits clean: `cd form-builder/backend && composer audit` and
       `cd form-builder/ui && npm audit --audit-level=high`. Triage anything flagged.
 
@@ -48,13 +55,17 @@ Anything unchecked is a launch blocker.
 
 ## 4. Smoke the launch-critical states (manually, in prod or a prod-like staging)
 
-- [ ] Sign up → verify email → log in.
+- [ ] Sign up → log in → log out. (There is no email-verification step: registration creates the
+      account and signs in immediately. Email delivery is exercised via password-reset / invite in §2.)
 - [ ] Install a marketplace pack → open the app → dashboard renders populated widgets.
 - [ ] Submit a record → dashboard/list/report updates.
 - [ ] Public **Live Demo** starts, is read-only server-side, and browser-local changes don't pollute
       the shared demo.
 - [ ] AI disabled/misconfigured state renders safely (no crash, clear "bring your own AI" path).
 - [ ] Billing disabled/self-host state renders safely.
+- [ ] **Dashboard perf**: run `node form-builder/ui/scripts/perf-demo-dashboards.mjs` against
+      staging/prod (set `APP_BASE`/`API_BASE`) and **paste the output** (first-chart paint per demo
+      app) into the release issue. Investigate anything over the threshold.
 
 ## 5. Post-launch monitoring
 
