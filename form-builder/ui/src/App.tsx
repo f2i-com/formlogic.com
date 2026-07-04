@@ -236,8 +236,10 @@ function AuthRedirector() {
 function AppRoutes() {
   const user = useAuthStore((state) => state.user);
 
-  // Show landing page when not authenticated
-  if (!user) {
+  // Signed-out visitors AND the shared Demo account get the public site (landing + marketplace + the
+  // /app runtime). The demo is for viewing apps, not building — so refreshing "/" stays on the
+  // landing, and an app only opens when the visitor follows a live-demo link.
+  if (!user || user.isDemo) {
     return (
       <Routes>
         <Route path="/" element={<Landing />} />

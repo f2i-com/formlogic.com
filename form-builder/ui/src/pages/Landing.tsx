@@ -140,6 +140,7 @@ export function Landing() {
       url: 'formlogic.app/apps/salon',
       name: 'Salon',
       caption: 'live dashboard',
+      packSlug: 'salon-beauty-studio',
       alt: 'Salon app from the FormLogic marketplace — a configurable dashboard with booking, revenue and stylist KPIs and charts',
     },
     {
@@ -147,6 +148,7 @@ export function Landing() {
       url: 'formlogic.app/apps/safety',
       name: 'Safety',
       caption: 'incident dashboard',
+      packSlug: 'ohs-qms',
       alt: 'Safety app from the FormLogic marketplace — incident KPIs, a severity breakdown and recent incidents, in dark mode',
     },
   ];
@@ -753,7 +755,7 @@ export function Landing() {
             {showcaseApps.map((app, i) => (
               <Link
                 key={app.name}
-                to="/packs"
+                to={`/packs/${app.packSlug}`}
                 data-reveal
                 className="fl-reveal group block rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-4 focus-visible:ring-offset-gray-50 dark:focus-visible:ring-offset-slate-950"
                 style={{ transitionDelay: `${i * 100}ms` }}

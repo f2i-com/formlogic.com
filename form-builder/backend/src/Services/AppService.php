@@ -67,7 +67,7 @@ class AppService
     public function getPackInfoByApp(string $userId): array
     {
         $stmt = $this->mysql->prepare(
-            "SELECT pi.app_ids, pi.pack_name, pc.tags
+            "SELECT pi.app_ids, pi.pack_name, pc.tags, pc.slug AS catalog_slug
              FROM pack_installations pi
              LEFT JOIN pack_catalog pc ON pc.id = pi.catalog_id
              WHERE pi.user_id = :uid"
@@ -81,6 +81,7 @@ class AppService
             foreach ($appIds as $aid) {
                 $out[(string) $aid] = [
                     'packName' => (string) ($row['pack_name'] ?? ''),
+                    'catalogSlug' => (string) ($row['catalog_slug'] ?? ''),
                     'tags' => is_array($tags) ? array_values(array_filter($tags, 'is_string')) : [],
                 ];
             }

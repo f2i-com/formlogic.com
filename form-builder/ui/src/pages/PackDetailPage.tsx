@@ -14,6 +14,7 @@ import {
   ChevronRight,
   Loader2,
   CheckCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -52,6 +53,13 @@ export default function PackDetailPage() {
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
 
+  // The shared Demo account has every pack pre-installed — treat it as "view the demo", never
+  // "Installed"/"Install" (installs are blocked on the demo anyway).
+  const isDemo = !!user?.isDemo;
+  // Demo app(s) for this pack (by catalog slug) so any visitor can view it live.
+  const [demoApps, setDemoApps] = useState<Array<{ slug: string; name: string }>>([]);
+  const [launchingDemo, setLaunchingDemo] = useState(false);
+
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
   const [userRating, setUserRating] = useState<{ rating: number; review: string | null } | null>(null);
@@ -79,9 +87,29 @@ export default function PackDetailPage() {
     loadPackDetail(shouldApply);
     loadRatings(shouldApply);
     checkInstalled();
+    // Find the demo app(s) installed from this pack on the shared Demo account (matched by catalog
+    // slug) so signed-out + demo visitors can view it live.
+    api.getDemoApps().then((r) => {
+      if (cancelled) return;
+      setDemoApps((r.data?.apps ?? [])
+        .filter((a) => a.catalogSlug === slug && a.slug)
+        .map((a) => ({ slug: a.slug, name: a.name })));
+    }).catch(() => { /* demo may be disabled */ });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  const launchDemo = useCallback(async (appSlug: string) => {
+    if (launchingDemo) return;
+    setLaunchingDemo(true);
+    try {
+      const res = await api.startDemo();
+      if (res.error) { toast.error('Could not start the demo'); return; }
+      window.open(`/app/${appSlug}`, '_blank', 'noopener'); // shares the demo cookie; keeps this tab
+    } finally {
+      setLaunchingDemo(false);
+    }
+  }, [launchingDemo]);
 
   const loadPackDetail = useCallback(async (shouldApply: () => boolean = () => true) => {
     if (!slug) return;
@@ -340,17 +368,28 @@ export default function PackDetailPage() {
             <span>{plural(pack.appCount, 'app')}</span>
           </div>
           <div className="flex-1" />
-          {installed ? (
-            <Button variant="outline" disabled>
-              <CheckCircle className="mr-1.5 h-4 w-4 text-green-500" />
-              Installed
-            </Button>
-          ) : (
-            <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
-              {!installing && <Package className="mr-1.5 h-4 w-4" />}
-              {installing ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* Only offer the live demo to signed-out / demo visitors — starting the demo swaps the
+                auth cookie, which would sign a real logged-in user out of their own account. */}
+            {(!user || isDemo) && demoApps.map((d) => (
+              <Button key={d.slug} variant="outline" onClick={() => launchDemo(d.slug)} isLoading={launchingDemo}>
+                {!launchingDemo && <ExternalLink className="mr-1.5 h-4 w-4" />}
+                {demoApps.length > 1 ? `View ${d.name} demo` : 'View demo'}
+              </Button>
+            ))}
+            {/* The demo account has everything pre-installed — offer only the live view, not install. */}
+            {!isDemo && (installed ? (
+              <Button variant="outline" disabled>
+                <CheckCircle className="mr-1.5 h-4 w-4 text-green-500" />
+                Installed
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
+                {!installing && <Package className="mr-1.5 h-4 w-4" />}
+                {installing ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
+              </Button>
+            ))}
+          </div>
         </div>
 
         {/* Description */}

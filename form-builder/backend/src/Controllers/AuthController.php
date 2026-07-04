@@ -296,7 +296,7 @@ class AuthController
             if (($app['status'] ?? '') !== 'published') {
                 continue;
             }
-            $info = $packInfo[$app['id'] ?? ''] ?? ['packName' => '', 'tags' => []];
+            $info = $packInfo[$app['id'] ?? ''] ?? ['packName' => '', 'catalogSlug' => '', 'tags' => []];
             $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
             $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
             $out[] = [
@@ -307,6 +307,7 @@ class AuthController
                 'icon' => is_string($settings['icon'] ?? null) ? $settings['icon'] : null,
                 'accent' => is_string($theme['primaryColor'] ?? null) ? $theme['primaryColor'] : null,
                 'packName' => $info['packName'],
+                'catalogSlug' => $info['catalogSlug'] ?? '',
                 'tags' => $info['tags'],
             ];
         }
