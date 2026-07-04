@@ -19,24 +19,43 @@ type Layout = { x: number; y: number; w: number; h: number };
 const overlaps = (a: Layout, b: Layout) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 /**
- * Resolve overlaps after a widget is moved/resized: the moving widget stays put; any widget it (or a
- * pushed widget) collides with is nudged straight down until the grid has no overlaps. This gives the
- * familiar "auto-move" behavior — drop a widget on another and the others flow out of the way.
+ * Vertical gravity compaction: float every widget up to fill gaps, treating the moving widget as a
+ * fixed obstacle (so it stays under the cursor). Keeps the grid tidy — no overlaps, no drifting gaps.
  */
-function compactAround(widgets: DashboardWidget[], movingId: string): DashboardWidget[] {
+function gravityResolve(widgets: DashboardWidget[], movingId: string): DashboardWidget[] {
   const list = widgets.map((w) => ({ ...w, layout: { ...w.layout } }));
   const moving = list.find((w) => w.id === movingId);
-  if (!moving) return list;
-  const placed: DashboardWidget[] = [moving];
+  // The moving widget is a fixed obstacle from the start, so nothing can float into its cells.
+  const placed: DashboardWidget[] = moving ? [moving] : [];
   const others = list
     .filter((w) => w.id !== movingId)
     .sort((a, b) => (a.layout.y - b.layout.y) || (a.layout.x - b.layout.x));
   for (const w of others) {
+    let y = Math.max(0, w.layout.y);
     let guard = 0;
-    while (placed.some((p) => overlaps(w.layout, p.layout)) && guard++ < 500) w.layout.y += 1;
+    while (y > 0 && !placed.some((p) => overlaps({ ...w.layout, y: y - 1 }, p.layout)) && guard++ < 500) y -= 1;
+    guard = 0;
+    while (placed.some((p) => overlaps({ ...w.layout, y }, p.layout)) && guard++ < 500) y += 1;
+    w.layout.y = y;
     placed.push(w);
   }
   return list;
+}
+
+/**
+ * Resolve a live drag/resize from a stable drag-start snapshot (so each frame is deterministic — no
+ * accumulating drift). If the moving widget lands cleanly on a SINGLE same-size widget, swap the two
+ * (the natural "swap" gesture for reordering equal cards); otherwise gravity-compact around it.
+ */
+function resolveDrag(base: DashboardWidget[], movingId: string, orig: Layout): DashboardWidget[] {
+  const moving = base.find((w) => w.id === movingId);
+  if (!moving) return base;
+  const hits = base.filter((w) => w.id !== movingId && overlaps(moving.layout, w.layout));
+  if (hits.length === 1 && hits[0].layout.w === moving.layout.w && hits[0].layout.h === moving.layout.h) {
+    // Clean swap: move the single same-size collided widget into the moving widget's original slot.
+    return base.map((w) => (w.id === hits[0].id ? { ...w, layout: { ...w.layout, x: orig.x, y: orig.y } } : w));
+  }
+  return gravityResolve(base, movingId);
 }
 
 const LAYOUT_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
@@ -87,7 +106,7 @@ export interface DashboardBuilderProps extends WidgetDataDeps {
   title?: string;
 }
 
-type Interaction = { type: 'move' | 'resize'; id: string; startX: number; startY: number; orig: DashboardWidget['layout'] };
+type Interaction = { type: 'move' | 'resize'; id: string; startX: number; startY: number; orig: DashboardWidget['layout']; base: DashboardWidget[] };
 
 export function DashboardBuilder(props: DashboardBuilderProps) {
   const { scope, builderForms, accent, onSave, onCancel } = props;
@@ -133,7 +152,9 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       const patch = it.type === 'move'
         ? { x: Math.max(0, Math.min(it.orig.x + dxCells, cols - it.orig.w)), y: Math.max(0, it.orig.y + dyCells) }
         : { w: Math.max(1, Math.min(it.orig.w + dxCells, cols - it.orig.x)), h: Math.max(1, it.orig.h + dyCells) };
-      setWidgets((ws) => compactAround(ws.map((w) => (w.id === it.id ? { ...w, layout: { ...w.layout, ...patch } } : w)), it.id));
+      // Recompute from the drag-start snapshot each frame → deterministic, no cumulative drift.
+      const next = it.base.map((w) => (w.id === it.id ? { ...w, layout: { ...w.layout, ...patch } } : w));
+      setWidgets(resolveDrag(next, it.id, it.orig));
     };
     const onUp = () => {
       if (interaction.current) { interaction.current = null; setInteracting(false); }
@@ -147,7 +168,10 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     e.preventDefault();
     e.stopPropagation();
     setSelectedId(w.id);
-    interaction.current = { type, id: w.id, startX: e.clientX, startY: e.clientY, orig: { ...w.layout } };
+    interaction.current = {
+      type, id: w.id, startX: e.clientX, startY: e.clientY, orig: { ...w.layout },
+      base: widgets.map((x) => ({ ...x, layout: { ...x.layout } })), // stable snapshot for deterministic reflow
+    };
     setInteracting(true);
   };
 
