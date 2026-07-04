@@ -404,6 +404,7 @@ function runInstall(array $data): array
     }
 
     // 5. Create database and import schema
+    $dbSchemaReady = false; // gate for the optional demo/marketplace seeding below
     if (!empty($dbPass) || $dbUser === 'root') {
         try {
             $dsn = "mysql:host=$dbHost;port=$dbPort;charset=utf8mb4";
@@ -432,6 +433,7 @@ function runInstall(array $data): array
                         // PDO::exec handles multiple statements separated by semicolons
                         $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, true);
                         $pdo->exec($sql);
+                        $dbSchemaReady = true;
                         $steps[] = ['label' => 'Import database schema', 'status' => 'ok'];
                     } else {
                         $steps[] = ['label' => 'Import schema', 'status' => 'warn', 'message' => 'schema.sql is empty — tables will be auto-created on first request'];
@@ -440,6 +442,7 @@ function runInstall(array $data): array
                     $steps[] = ['label' => 'Import schema', 'status' => 'warn', 'message' => 'schema.sql not found — tables will be auto-created on first request'];
                 }
             } else {
+                $dbSchemaReady = true;
                 $steps[] = ['label' => 'Database schema', 'status' => 'skip', 'message' => "Database already has $tableCount tables"];
             }
         } catch (\PDOException $e) {
@@ -484,6 +487,45 @@ function runInstall(array $data): array
         $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'ok'];
     }
 
+    // 9. Optionally set up the demo + marketplace catalog (installable sample app packs + example
+    //    data) by running the idempotent provisioning script. Best-effort: it needs a ready schema,
+    //    Composer deps, and exec(); when any is missing we surface the manual command in Next steps.
+    $demoManual = false;
+    if (!empty($data['seed_demo'])) {
+        $provision = $backendDir . '/scripts/provision-demo.php';
+        $disabled = array_map('trim', explode(',', (string) ini_get('disable_functions')));
+        $canExec = function_exists('exec') && !in_array('exec', $disabled, true);
+        if (!$dbSchemaReady) {
+            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'Database not initialized yet — seed it once the schema exists (see next steps)'];
+            $demoManual = true;
+        } elseif (!is_dir($backendDir . '/vendor')) {
+            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'Composer dependencies not installed yet — seed it after `composer install` (see next steps)'];
+            $demoManual = true;
+        } elseif (!file_exists($provision)) {
+            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'scripts/provision-demo.php not found — cannot seed the marketplace'];
+        } elseif (!$canExec) {
+            $steps[] = ['label' => 'Demo & marketplace', 'status' => 'skip', 'message' => 'PHP exec() is disabled here — seed it from a shell (see next steps)'];
+            $demoManual = true;
+        } else {
+            // Seeding the 30+ sample apps + example data can take a while; don't let PHP time out.
+            @set_time_limit(0);
+            $out = [];
+            $rc = 1;
+            exec('php ' . escapeshellarg($provision) . ' 2>&1', $out, $rc);
+            if ($rc === 0) {
+                // Surface the script's own summary line ("Done. Demo apps: N") when present.
+                $summary = 'Installed the sample app packs into the marketplace and seeded the demo.';
+                foreach (array_reverse($out) as $line) {
+                    if (stripos($line, 'Demo apps') !== false) { $summary = trim($line); break; }
+                }
+                $steps[] = ['label' => 'Set up demo & marketplace', 'status' => 'ok', 'message' => $summary];
+            } else {
+                $steps[] = ['label' => 'Demo & marketplace', 'status' => 'warn', 'message' => 'Could not run automatically (is the `php` CLI on PATH?) — seed it manually (see next steps)'];
+                $demoManual = true;
+            }
+        }
+    }
+
     $hasErrors = false;
     foreach ($steps as $step) {
         if ($step['status'] === 'error') {
@@ -495,6 +537,7 @@ function runInstall(array $data): array
     return [
         'success' => !$hasErrors,
         'steps' => $steps,
+        'demoManual' => $demoManual,
         'message' => $hasErrors ? 'Installation completed with errors.' : 'Installation completed successfully!',
     ];
 }
@@ -635,6 +678,11 @@ function runInstall(array $data): array
       <input type="text" id="cors_origin" value="http://localhost:5173" />
       <p class="help-text">The URL where the frontend dev server runs. Change if using a different port.</p>
     </div>
+    <div class="checkbox-group">
+      <input type="checkbox" id="seed_demo" checked />
+      <label for="seed_demo" style="font-size:13px;">Set up the demo &amp; marketplace — installs the ready-made sample app packs and seeds example data</label>
+    </div>
+    <p class="help-text" style="margin-top:6px;">Recommended. Populates the marketplace with installable apps and a no-signup live demo. Needs Composer dependencies installed first; if it can't run now, you'll get a one-line command to do it later.</p>
     <?php if ($alreadyInstalled): ?>
     <div class="checkbox-group">
       <input type="checkbox" id="overwrite_env" />
@@ -674,6 +722,10 @@ function runInstall(array $data): array
         <li id="ns-npm" class="hidden">
           Install frontend dependencies:<br>
           <code>cd ui && npm install</code>
+        </li>
+        <li id="ns-demo" class="hidden">
+          Set up the demo &amp; marketplace (installs the sample app packs and seeds example data):<br>
+          <code>cd backend && php scripts/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
           The FormLogic qjs runtime binary is missing. It is vendored in the repo
@@ -810,6 +862,7 @@ function runInstall() {
     db_pass: document.getElementById('db_pass').value,
     cors_origin: document.getElementById('cors_origin').value,
     overwrite_env: overwriteEl && overwriteEl.checked ? '1' : '',
+    seed_demo: document.getElementById('seed_demo') && document.getElementById('seed_demo').checked ? '1' : '',
   }).then(result => {
     btn.disabled = false;
     btn.innerHTML = 'Run Installation';
@@ -844,6 +897,7 @@ function runInstall() {
       nextCard.classList.remove('hidden');
       if (needComposer) document.getElementById('ns-composer').classList.remove('hidden');
       if (needNpm) document.getElementById('ns-npm').classList.remove('hidden');
+      if (result.demoManual) document.getElementById('ns-demo').classList.remove('hidden');
       if (needWasm) document.getElementById('ns-wasm').classList.remove('hidden');
       nextCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {

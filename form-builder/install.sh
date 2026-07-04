@@ -147,6 +147,17 @@ else
     else
         ok "Database already has $TABLE_COUNT tables"
     fi
+
+    # Set up the demo + marketplace catalog (installable sample app packs + example data).
+    # Idempotent — safe to re-run. Skip with SEED_DEMO=0 ./install.sh for a clean/empty instance.
+    if [[ "${SEED_DEMO:-1}" != "0" ]]; then
+        info "Setting up demo + marketplace (sample app packs + example data)..."
+        if php scripts/provision-demo.php; then
+            ok "Demo + marketplace seeded"
+        else
+            warn "Demo/marketplace seeding failed — retry later with: cd backend && php scripts/provision-demo.php"
+        fi
+    fi
 fi
 
 # -----------------------------------------------------------------------------
