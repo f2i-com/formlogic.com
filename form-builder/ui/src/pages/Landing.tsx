@@ -139,15 +139,15 @@ export function Landing() {
       src: '/landing/app-salon-light.png',
       url: 'formlogic.app/apps/salon',
       name: 'Salon',
-      caption: 'appointment book',
-      alt: "Salon app from the FormLogic marketplace — appointment book with today's bookings and client records",
+      caption: 'live dashboard',
+      alt: 'Salon app from the FormLogic marketplace — a configurable dashboard with booking, revenue and stylist KPIs and charts',
     },
     {
       src: '/landing/app-safety-dark.png',
       url: 'formlogic.app/apps/safety',
       name: 'Safety',
-      caption: 'days-without-incident',
-      alt: 'Safety app from the FormLogic marketplace — days-without-incident counter and incident log, in dark mode',
+      caption: 'incident dashboard',
+      alt: 'Safety app from the FormLogic marketplace — incident KPIs, a severity breakdown and recent incidents, in dark mode',
     },
   ];
 
@@ -484,14 +484,14 @@ export function Landing() {
                 width={1360}
                 height={900}
                 fetchPriority="high"
-                alt="FormLogic inventory app — sidebar navigation, stock dashboard, and a live records table, all built from forms"
+                alt="FormLogic inventory app — sidebar navigation and a configurable stock dashboard with KPIs, charts and recent activity"
                 className="block w-full h-auto dark:hidden"
               />
               <img
                 src="/landing/app-inventory-dark.png"
                 width={1360}
                 height={900}
-                alt="FormLogic inventory app in dark mode — sidebar navigation, stock dashboard, and a live records table"
+                alt="FormLogic inventory app in dark mode — sidebar navigation and a configurable stock dashboard with KPIs and charts"
                 className="hidden w-full h-auto dark:block"
               />
             </BrowserFrame>

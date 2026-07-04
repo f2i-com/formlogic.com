@@ -78,19 +78,22 @@ async function main() {
       await page.waitForTimeout(600);
       await page.goto(`${APP_BASE}/app/${appSlug}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     }
-    // The dashboard is a sandboxed iframe; wait for it to mount, then give the SDK time to fetch
-    // records and paint charts before snapping.
-    await page.waitForSelector('iframe', { timeout: 30000 });
-    await page.waitForTimeout(2800);
+    // The dashboard is now a host-rendered widget grid (recharts, no iframe). Wait for the charts to
+    // paint (batched report run + animation) before snapping.
+    await page.waitForSelector('svg.recharts-surface', { timeout: 30000 });
+    await page.waitForTimeout(3800);
 
-    const frame = page.locator('iframe').first();
-    const box = await frame.boundingBox();
     const outPath = resolve(OUT_DIR, file);
-    if (box && box.width > 200) {
-      // 16:10 crop from the top of the dashboard region → an even, attractive card thumbnail.
-      const width = Math.min(box.width, 1360 - box.x);
-      const height = Math.min(box.height, Math.round(width * 0.625));
-      await page.screenshot({ path: outPath, clip: { x: box.x, y: box.y, width, height } });
+    // 16:10 crop of the dashboard content region (inside <main>, excluding the sidebar), starting at
+    // the first widget card so the owner "Edit dashboard" bar isn't in the thumbnail.
+    const main = await page.locator('#app-main-content').boundingBox();
+    const card = await page.locator('#app-main-content .rounded-2xl').first().boundingBox();
+    if (main && main.width > 200) {
+      const x = Math.max(0, Math.round(main.x));
+      const y = Math.max(0, Math.round((card?.y ?? main.y) - 8));
+      const width = Math.min(Math.round(main.width), 1360 - x);
+      const height = Math.min(Math.round(width * 0.625), 850 - y);
+      await page.screenshot({ path: outPath, clip: { x, y, width, height } });
     } else {
       await page.screenshot({ path: outPath });
     }
