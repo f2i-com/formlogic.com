@@ -581,11 +581,13 @@ $app->options('/{routes:.+}', function ($request, $response) {
     return $response;
 });
 
-// Health check
-$app->get('/api/health', function ($request, $response) {
+// Health check. Also advertises public-beta mode so the SPA (signup/landing/billing) can show the
+// "free during beta" messaging pre-auth — this is the endpoint useBetaMode() reads.
+$app->get('/api/health', function ($request, $response) use ($container) {
     $response->getBody()->write(json_encode([
         'status' => 'ok',
         'timestamp' => date('c'),
+        'betaMode' => (bool) ($container->get('settings')['cloud']['betaMode'] ?? false),
     ]));
     return $response->withHeader('Content-Type', 'application/json');
 });

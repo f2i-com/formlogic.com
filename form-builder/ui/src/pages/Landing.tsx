@@ -15,11 +15,18 @@ import {
   BarChart3,
   Building2,
   Users,
+  Github,
+  Star,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
 import { ThemeToggle } from '../components/ui/ThemeToggle';
 import { LiveDemoSection } from '../components/landing/LiveDemoSection';
+import { useBetaMode } from '../hooks/useBetaMode';
+
+// Public source repo — a star is the cheapest way visitors can say "keep going".
+const GITHUB_URL = 'https://github.com/izuc/formlogic-app';
 
 // Landing-only chrome: a characterful display face (Bricolage Grotesque) + a
 // monospace signature (JetBrains Mono) for the technical/data accents, plus the
@@ -122,6 +129,7 @@ function SectionTag({ index, label }: { index: string; label: string }) {
 
 export function Landing() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const beta = useBetaMode();
   useLandingChrome();
   useReveal();
 
@@ -320,6 +328,18 @@ export function Landing() {
               </Link>
             </div>
             <div className="hidden md:flex items-center gap-4">
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Star FormLogic on GitHub"
+                title="Star us on GitHub"
+                className="group hidden lg:inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-slate-700 pl-3 pr-3.5 py-1.5 text-sm font-medium text-gray-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-500/40 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <Github className="h-4 w-4" />
+                <span>Star</span>
+                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400 transition-transform group-hover:scale-110" />
+              </a>
               <ThemeToggle />
               <Link to="/login" className="text-sm font-medium text-gray-500 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Sign in
@@ -378,6 +398,17 @@ export function Landing() {
             >
               Docs
             </Link>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center gap-2 py-2 text-gray-600 dark:text-slate-300 hover:text-primary-600 dark:hover:text-white font-medium"
+            >
+              <Github className="h-4 w-4" />
+              Star on GitHub
+              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+            </a>
             <div className="flex items-center justify-between py-2">
               <span className="text-gray-600 dark:text-slate-300 font-medium">Theme</span>
               <ThemeToggle />
@@ -418,8 +449,17 @@ export function Landing() {
             data-reveal
             className="fl-reveal inline-flex items-center gap-2.5 bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm border border-primary-200/60 dark:border-primary-500/20 text-primary-700 dark:text-primary-300 pl-3 pr-4 py-1.5 rounded-full text-xs font-medium mb-8 shadow-sm shadow-primary-500/5"
           >
-            <span className="fl-dot relative inline-flex h-2 w-2 rounded-full bg-primary-500" />
-            <span className="fl-mono uppercase tracking-[0.18em]">Forms → business apps</span>
+            {beta ? (
+              <>
+                <Sparkles className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400" aria-hidden="true" />
+                <span className="fl-mono uppercase tracking-[0.18em]">Public beta — free for a limited time</span>
+              </>
+            ) : (
+              <>
+                <span className="fl-dot relative inline-flex h-2 w-2 rounded-full bg-primary-500" />
+                <span className="fl-mono uppercase tracking-[0.18em]">Forms → business apps</span>
+              </>
+            )}
           </div>
 
           <h1
@@ -461,6 +501,15 @@ export function Landing() {
               <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
             </Link>
           </div>
+
+          {beta && (
+            // No fl-reveal here: this node is added after the async beta check resolves, so the
+            // one-shot reveal observer (which snapshots [data-reveal] at mount) would never see it.
+            <p className="-mt-10 mb-16 flex items-center justify-center gap-2 text-sm text-gray-500 dark:text-slate-400">
+              <Sparkles className="h-4 w-4 text-amber-500 dark:text-amber-400 shrink-0" aria-hidden="true" />
+              Free while we&rsquo;re in beta — no credit card, no charges. Every feature is unlocked.
+            </p>
+          )}
 
           {/* Pipeline glimpse — the product's actual shape: submit → run logic → store */}
           <div
@@ -814,6 +863,18 @@ export function Landing() {
               Start free, scale as you grow. No hidden fees, no surprises.
             </p>
           </div>
+          {beta && (
+            // No fl-reveal: added post-mount after the async beta check, which the one-shot reveal
+            // observer wouldn't pick up (it would stay stuck at opacity:0).
+            <div className="mb-12 mx-auto max-w-2xl rounded-2xl border border-amber-300/60 dark:border-amber-400/25 bg-amber-50/70 dark:bg-amber-500/10 px-5 py-4 flex items-start gap-3 text-left">
+              <Sparkles className="h-5 w-5 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+              <p className="text-sm text-amber-900 dark:text-amber-100">
+                <strong>It&rsquo;s all free right now.</strong> FormLogic is in public beta, so every plan below is
+                unlocked at no cost for a limited time — no card required. The prices shown are what will apply once we
+                leave beta.
+              </p>
+            </div>
+          )}
           <div className="grid md:grid-cols-3 gap-5 lg:gap-6 items-start">
             {pricingPlans.map((plan, i) => (
               <div
@@ -941,6 +1002,19 @@ export function Landing() {
               <p className="text-gray-400 dark:text-slate-500 mt-6 text-sm leading-relaxed">
                 Build business apps from forms. Self-hosted or cloud, with your data in portable SQLite.
               </p>
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="group mt-6 inline-flex items-center gap-2 rounded-full border border-gray-200 dark:border-slate-700 pl-3 pr-4 py-2 text-sm font-medium text-gray-700 dark:text-slate-200 hover:border-primary-300 dark:hover:border-primary-500/40 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <Github className="h-4 w-4" />
+                Star us on GitHub
+                <Star className="h-4 w-4 fill-amber-400 text-amber-400 transition-transform group-hover:scale-110" />
+              </a>
+              <p className="text-gray-400 dark:text-slate-500 mt-3 text-xs leading-relaxed">
+                FormLogic is open source &mdash; a star helps more people find it.
+              </p>
             </div>
             <div>
               <h4 className="fl-mono text-gray-900 dark:text-white font-semibold mb-6 text-xs tracking-[0.2em] uppercase">Product</h4>
@@ -990,6 +1064,17 @@ export function Landing() {
                     Sign in
                   </Link>
                 </li>
+                <li>
+                  <a
+                    href={GITHUB_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  >
+                    <Github className="h-3.5 w-3.5" />
+                    Star on GitHub
+                  </a>
+                </li>
               </ul>
             </div>
             <div>
@@ -1007,6 +1092,15 @@ export function Landing() {
           <div className="border-t border-gray-200/80 dark:border-slate-900 pt-10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <p className="fl-mono text-gray-400 dark:text-slate-500 text-xs">&copy; {new Date().getFullYear()} FormLogic. All rights reserved.</p>
             <div className="flex items-center gap-6 fl-mono text-xs">
+              <a
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-white transition-colors"
+              >
+                <Github className="h-3.5 w-3.5" />
+                GitHub
+              </a>
               <Link to="/docs" className="text-gray-400 dark:text-slate-500 hover:text-gray-700 dark:hover:text-white transition-colors">Docs</Link>
             </div>
           </div>

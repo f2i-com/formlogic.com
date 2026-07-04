@@ -7,7 +7,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Boxes,
-  Stethoscope,
   Cloud,
   HardDrive,
 } from 'lucide-react';
@@ -35,7 +34,6 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
     { path: '/settings', icon: Settings, label: 'Settings' },
-    { path: '/doctor', icon: Stethoscope, label: 'Doctor' },
   ];
 
   return (

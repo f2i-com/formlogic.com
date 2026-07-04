@@ -312,6 +312,12 @@ VITE_API_URL=/api
 
 Then rebuild the frontend: `cd ui && npm run build`
 
+> **One domain, no separate API host.** With `VITE_API_URL=/api` the SPA calls the backend on the
+> **same origin**, so you can serve the UI and API from a single domain — just route `/api` to the PHP
+> backend (e.g. an nginx `location /api { … }`) and serve the built `ui/dist` for everything else. No
+> second domain and no CORS config are needed. Only set a separate `VITE_API_URL` + `CORS_ORIGIN` if you
+> deliberately host the API on its own domain.
+
 ---
 
 ## Tech Stack

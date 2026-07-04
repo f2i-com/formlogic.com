@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowLeft, Menu, X, BookOpen, Rocket, LayoutGrid, ListChecks,
   GitBranch, Palette, Code2, Share2, Inbox, Download, BarChart3, Boxes,
-  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug,
+  Package, Server, Shield, Lightbulb, Check, Terminal, Cloud, Plug, Sparkles,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
+import { useBetaMode } from '../hooks/useBetaMode';
 
 // Shares the landing page's display/mono/gradient chrome so docs feel part of the brand.
 function useDocsChrome() {
@@ -150,6 +151,7 @@ const FIELD_TYPES: Array<[string, string]> = [
 
 export function Docs() {
   useDocsChrome();
+  const beta = useBetaMode();
   const [mobileNav, setMobileNav] = useState(false);
   const [activeId, setActiveId] = useState<string>(SECTIONS[0].id);
 
@@ -446,6 +448,16 @@ export function Docs() {
             {/* Cloud & billing */}
             <section className="mb-14">
               <H2 id="cloud" icon={Cloud}>Cloud &amp; billing</H2>
+              {beta && (
+                <div className="mb-5 flex items-start gap-3 rounded-2xl border border-amber-300/60 dark:border-amber-400/25 bg-amber-50/70 dark:bg-amber-500/10 px-5 py-4">
+                  <Sparkles className="h-5 w-5 text-amber-500 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+                  <p className="text-sm text-amber-900 dark:text-amber-100 leading-relaxed">
+                    <strong>This instance is in public beta.</strong> Cloud is free while the beta runs — new accounts get
+                    a long free window, plan limits are lifted, and checkout is paused. The pricing below is what will
+                    apply once the beta ends.
+                  </p>
+                </div>
+              )}
               <P>FormLogic is free to use — self-host it or run it locally and everything works. <strong className="text-gray-900 dark:text-white">Cloud</strong> is optional managed hosting (we run it for you, with backups) billed <strong className="text-gray-900 dark:text-white">pay-as-you-go</strong>: every new account gets the <strong className="text-gray-900 dark:text-white">first 30 days of Cloud free</strong>, then $5 buys another 30 days — that's it, <strong className="text-gray-900 dark:text-white">no subscription and nothing auto-renews</strong>.</P>
               <Steps items={[
                 <>Open <strong className="text-gray-900 dark:text-white">Cloud &amp; billing</strong> from the account menu (top-right).</>,
@@ -470,17 +482,27 @@ export function Docs() {
                 <>Invite <strong className="text-gray-900 dark:text-white">members</strong> by email and assign roles. They sign in to the app's runtime — a clean data-table interface scoped to what they're allowed to see.</>,
                 <>Use <strong className="text-gray-900 dark:text-white">linked records</strong> to relate responses across forms (e.g. an interview linked to a candidate).</>,
               ]} />
+
+              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-8 mb-3">No-code dashboards</h3>
+              <P>Every app — and every form section — opens on a <strong className="text-gray-900 dark:text-white">dashboard you can build without code</strong>. Add widgets to a drag-and-drop grid: big-number <strong className="text-gray-900 dark:text-white">KPIs</strong>, bar / line / area / pie <strong className="text-gray-900 dark:text-white">charts</strong>, tables, and recent-record lists — each backed by a live query over your forms and drawn with real charts. Click <C>Edit dashboard</C> to rearrange, resize, or change any widget's query and chart type, exactly like building a report.</P>
+              <Figure src="/screenshots/app-dashboard.png" alt="An app's no-code widget dashboard" caption="An app dashboard — KPIs, live charts, and recent activity, all configured without writing code." />
+              <P>Two more ways to shape an app:</P>
+              <Bullets items={[
+                <><strong className="text-gray-900 dark:text-white">Reports</strong> — build cross-form queries (bar, pie, KPI, table) and export them to PDF, with no SQL to write.</>,
+                <><strong className="text-gray-900 dark:text-white">Custom screens</strong> — for total control, drop in a sandboxed HTML/CSS/JS screen (hand-written or AI-generated) as an app home or a form section — the same SDK powers public form links and embeds.</>,
+              ]} />
             </section>
 
             {/* Packs */}
             <section className="mb-14">
               <H2 id="packs" icon={Package}>Packs &amp; templates</H2>
-              <P>Packs are ready-made bundles of forms (and apps) you can install in one click from the <Link to="/packs" className="text-primary-600 dark:text-primary-400 hover:underline">marketplace</Link> — covering HR, customer service, finance, and more.</P>
+              <P>Packs are complete, ready-made <strong className="text-gray-900 dark:text-white">apps</strong> — forms, workflow, and a live dashboard — you can install in one click from the <Link to="/packs" className="text-primary-600 dark:text-primary-400 hover:underline">marketplace</Link>. Dozens of them span real trades and teams: HR &amp; onboarding, customer service, property maintenance, construction site diaries, short-stay turnovers, field service, fitness studios, catering, and more.</P>
               <Bullets items={[
-                <>Browse the marketplace, open a pack to preview its forms, and install it into your account.</>,
-                <>Built something useful? In the builder, choose <C>Publish as pack</C> to share your form with the marketplace.</>,
+                <><strong className="text-gray-900 dark:text-white">Try any pack live in the demo</strong> before you commit — no sign-up needed.</>,
+                <>Open a pack to preview its forms and dashboard, then install it into your account with one click.</>,
+                <>Built something useful? In the builder, choose <C>Publish as pack</C> to share your work with the marketplace.</>,
               ]} />
-              <Figure src="/screenshots/marketplace.png" alt="The pack marketplace" caption="The pack marketplace — install ready-made bundles or publish your own." />
+              <Figure src="/screenshots/marketplace.png" alt="The pack marketplace" caption="The marketplace — every pack is a complete app with a live dashboard. Try it in the demo, or publish your own." />
             </section>
 
             {/* Self-hosting */}
@@ -501,7 +523,8 @@ cp .env.example .env        # set DB creds + a 32+ char JWT_SECRET
 
 # 3. Frontend
 cd ../ui && npm install && npm run build`}</CodeBlock>
-              <P>See the project README for full details and production hardening (set <C>APP_ENV=production</C>, strong secrets, HTTPS).</P>
+              <Tip><strong className="text-gray-900 dark:text-white">One domain is all you need.</strong> The frontend calls the API at <C>/api</C> on the <strong className="text-gray-900 dark:text-white">same origin</strong> by default, so you can serve the app and its API from a single domain with no CORS setup — point your web server's <C>/api</C> at the PHP backend and serve the built UI for everything else. Only set <C>VITE_API_URL</C> (at build time) and <C>CORS_ORIGIN</C> if you deliberately put the API on a <em>separate</em> host.</Tip>
+              <P>FormLogic is open source — the full source, README, and deployment guide live on <a href="https://github.com/izuc/formlogic-app" target="_blank" rel="noreferrer" className="text-primary-600 dark:text-primary-400 hover:underline">GitHub</a> (production hardening: set <C>APP_ENV=production</C>, strong secrets, HTTPS). If it's useful to you, a <strong className="text-gray-900 dark:text-white">star</strong> is hugely appreciated.</P>
             </section>
 
             {/* Security */}

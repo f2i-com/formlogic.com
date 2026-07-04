@@ -13,6 +13,7 @@ import {
   CloudOff,
   RefreshCw,
   Database,
+  Stethoscope,
 } from 'lucide-react';
 
 interface UserMenuProps {
@@ -268,6 +269,17 @@ export function UserMenu({ onOpenAuth }: UserMenuProps) {
             >
               <Cloud className="h-4 w-4 text-gray-400 dark:text-slate-500" />
               Cloud &amp; billing
+            </button>
+
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                navigate('/doctor');
+              }}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Stethoscope className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+              Doctor
             </button>
           </div>
 
