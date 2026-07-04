@@ -1,10 +1,14 @@
-name: E2E (Playwright)
+name: E2E (Playwright) — release gate
 
 # Full-stack launch golden paths. Runs the real PHP + MySQL + built SPA on ONE origin (so cookies are
 # same-origin over HTTP) and drives it with Playwright/Chrome. Not on every PR — it's the slow, full-stack
-# gate; run it nightly and on demand (and before a release). Trigger manually from the Actions tab.
+# gate. THIS WORKFLOW MUST BE GREEN BEFORE LAUNCH (see docs/RELEASE_RUNBOOK.md). Runs nightly, on any
+# `v*` release tag, and on demand from the Actions tab.
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
   schedule:
     - cron: '0 6 * * *' # daily 06:00 UTC
 

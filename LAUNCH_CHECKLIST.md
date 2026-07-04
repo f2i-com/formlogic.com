@@ -4,7 +4,41 @@
 `AGENT_NOTES.md` are historical planning notes and contain stale items (rate limiting is
 MySQL-backed now, webhooks have a retry worker, etc.) — do not treat their TODOs as open.
 
-Last reconciled against code: 2026-06-30.
+Last reconciled against code: 2026-07-04.
+
+---
+
+## Release gate (must be green before launch)
+
+The **`E2E (Playwright) — release gate`** workflow (`.github/workflows/e2e.yml`) is the launch gate —
+it runs the full-stack golden paths against a real PHP+MySQL+SPA. It runs nightly, on every `v*`
+release tag, and on demand. Follow **[docs/RELEASE_RUNBOOK.md](docs/RELEASE_RUNBOOK.md)** for the full
+pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-screen CSP as no-egress
+(`check-security-invariants.mjs`).
+
+**Golden-path coverage:** ✅ = spec exists; ⏳ = tracked follow-up spec.
+- ✅ auth login/logout; build→publish→submit-public→view; required validation; hidden-field authority;
+  field-aware upload rejection; `onSubmit` reject/computed write (`e2e/launch-golden-paths.spec.ts`).
+- ✅ App file RBAC (view-all / view-own-own / view-own-other / non-member / anonymous) — `FileAccessRbacTest`.
+- ✅ App RBAC permission matrix — `AppRbacTest`.
+- ✅ Custom-screen CSP no-egress invariant — `check-security-invariants.mjs`.
+- ⏳ Pack install → dashboard renders populated widgets; submit → dashboard updates.
+- ⏳ Export app pack → import into fresh account → forms/reports/dashboard survive.
+- ⏳ Public live-demo isolation (read-only server-side; browser-local changes don't pollute shared demo).
+- ⏳ Billing-disabled/self-host state; MCP token create/list/revoke.
+
+## Launch hardening review (2026-07) — actioned
+
+- [x] **P0 custom-screen exfil** — `SCREEN_CSP` hardened to no-egress (img/media `data:/blob:`, font
+  `data:`, `connect-src 'none'`); CI invariant guard added. Blocks `new Image().src='https://…'` /
+  CSS `url(https://…)` record leaks.
+- [x] **P0 app file RBAC** — files require an explicit form permission (owner/VIEW_ALL → any;
+  VIEW_OWN → own uploads only), not mere app membership. `FileAccessRbacTest`.
+- [x] **P0 release gate** — E2E workflow runs on `v*` tags; runbook + this checklist name it as the gate.
+- [x] **P1 form-schema visibility** — `getApp()` only returns schemas of forms the member can use.
+- [x] **P1 navigate() allowlist** — sandboxed app screens can only navigate to a safe app-relative set.
+- [x] **P1 docs** — nested README aligned (28 apps / 34 demo), HTTPS-first deploy examples, doc split
+  (widget vs legacy custom-screen), placeholder demo link removed, Dependabot added.
 
 ---
 

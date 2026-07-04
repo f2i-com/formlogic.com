@@ -91,6 +91,11 @@ jobs:
       - name: Pack screen coverage
         run: node scripts/check-pack-screens.mjs
 
+      # Hard gate: pins the custom-screen CSP as no-egress (data:/blob: only, connect-src 'none').
+      # A careless widening to remote https: would reopen the record-exfil path — fail fast here.
+      - name: Security invariants (custom-screen CSP)
+        run: node scripts/check-security-invariants.mjs
+
       # The build's prebuild step syncs prelude.js into the backend; if that produced a diff,
       # the committed backend copy was stale (someone forgot `npm run sync:prelude`).
       - name: FormLogic prelude in sync (frontend ↔ backend)
