@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
 import { AppDashboardHome } from './AppDashboardHome';
+import { safeAppNavTarget } from '../../lib/screenNav';
 
 /**
  * The app's landing page. A sandboxed custom code screen takes over when present; otherwise the home
@@ -30,10 +31,10 @@ export function AppHomeScreen() {
         forms={config.forms}
         accent={config.app.theme?.primaryColor}
         onNavigate={(target) => {
-          // A bare formId means "start a new record" (the home screens' quick actions/CTAs) — jump
-          // straight into the form entry, past the form's section screen (?new=1).
-          if (config.forms.some((f) => f.formId === target)) navigate(`form/${target}?new=1`);
-          else if (target) navigate(target.startsWith('/') ? target : `${target}`);
+          // Resolve against a strict allowlist — a custom screen must not be able to send the viewer
+          // to arbitrary internal (settings/billing/admin) or external routes. Unknown → ignored.
+          const path = safeAppNavTarget(target, new Set(config.forms.map((f) => f.formId)));
+          if (path) navigate(path);
         }}
         className="w-full h-full border-0 rounded-lg"
       />

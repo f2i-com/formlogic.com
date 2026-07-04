@@ -56,6 +56,28 @@ class AppPublicController
         return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,60}$/', $slug);
     }
 
+    /**
+     * Whether an app member should receive $formId's schema in the runtime config. True if they hold
+     * any per-form permission on it (submit/view/edit/delete/export/analytics), or an app-wide grant
+     * that covers all forms (manage_app / view_analytics / an app-level form permission). The owner's
+     * permission set is ALL, so owners always pass.
+     */
+    private function memberCanSeeForm(array $permissions, string $formId): bool
+    {
+        $appLevel = $permissions['appLevel'] ?? [];
+        if (in_array(AppPermissions::MANAGE_APP, $appLevel, true) || in_array(AppPermissions::VIEW_ANALYTICS, $appLevel, true)) {
+            return true;
+        }
+        $relevant = array_merge(AppPermissions::FORM_LEVEL, [AppPermissions::VIEW_ANALYTICS]);
+        $formLevel = $permissions['formLevel'][$formId] ?? [];
+        foreach ($relevant as $perm) {
+            if (in_array($perm, $appLevel, true) || in_array($perm, $formLevel, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public function getApp(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];
@@ -82,10 +104,15 @@ class AppPublicController
         $forms = $this->appService->getAppForms($app['id']);
         $permissions = $this->appUserService->getUserPermissions($app['id'], $userId);
 
-        // Build runtime forms with form field data
+        // Build runtime forms with form field data. A member only receives the schema (fields/
+        // settings/custom screen) of forms they have SOME permission on — not every visible form —
+        // so a limited role can't inspect the operational structure of forms it can't use.
         $runtimeForms = [];
         foreach ($forms as $form) {
             if (!$form['isVisible']) {
+                continue;
+            }
+            if (!$this->memberCanSeeForm($permissions, $form['formId'])) {
                 continue;
             }
             $formData = $this->formService->getForm($form['formId']);
