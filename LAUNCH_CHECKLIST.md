@@ -24,11 +24,12 @@ pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-s
 - ✅ Custom-screen CSP no-egress: static invariant (`check-security-invariants.mjs`) + a behavioural
   E2E that fires every egress vector (fetch/XHR/beacon/WS, img/css/font/media, iframe/object/worker,
   form, popup, self-nav) at a real server and asserts zero arrival (`e2e/custom-screen-csp.spec.ts`).
-- ✅ Member schema/report/dashboard visibility filtering — `AppMemberFilterTest`.
+- ✅ Member schema/report/dashboard visibility filtering — `AppMemberFilterTest` (pure) +
+  `AppVisibilityRouteTest` (real getApp/getForm route boundary).
 - ✅ App dashboard renders populated widgets + records grid shows seeded data — `e2e/app-dashboard.spec.ts`.
+- ✅ Public live-demo isolation: a demo session's server write is rejected (read-only) — `e2e/demo-isolation.spec.ts`.
 - ⏳ Interactive submit → dashboard/list/report updates (needs a real-account, non-read-only harness).
 - ⏳ Export app pack → import into fresh account → forms/reports/dashboard survive.
-- ⏳ Public live-demo isolation (read-only server-side; browser-local changes don't pollute shared demo).
 - ⏳ Billing-disabled/self-host state; MCP token create/list/revoke.
 
 ## Launch hardening review (2026-07) — actioned
@@ -78,6 +79,21 @@ pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-s
   interactive submit→updates tracked above.
 - [x] **P2 #12 perf capture** — runbook asks the launcher to paste `perf-demo-dashboards.mjs` output.
 - [ ] **P2 #10/#11 onboarding tour + dedicated starter pack** — remain the deferred UX/content items.
+
+## Launch hardening review — round 3 (2026-07) — actioned
+
+- [x] **P0 #1 release-gate wiring** — E2E workflow `E2E_API_URL` fixed (was doubling to `/api/api/...`)
+  + a `provision-demo` step so the demo specs run from a clean DB.
+- [x] **P0 #2 userOwnsFile exactness** — file ownership requires real file_upload metadata, not a
+  substring in arbitrary answers JSON; `FileServeRouteTest` adds the id-in-a-text-answer case.
+- [x] **P1 #3 route-level visibility test** — `AppVisibilityRouteTest` (getApp/getForm boundary).
+- [x] **P1 #4 official-pack flag** — server-computed `official` (real publisher email), not the
+  spoofable display name.
+- [x] **P1 #5 code-screen trust copy** — the app-home + form-section studios note that code screens
+  are trusted app-wide content; prefer no-code dashboards for per-role hiding.
+- [x] **P1 #6 (partial)** — added the demo-isolation golden path (above); interactive submit→updates,
+  export/import, and MCP flows remain tracked follow-ups (need a real-account harness).
+- [ ] **P2 #7/#8 onboarding tour + starter pack** — still the deferred UX/content items.
 
 ---
 
