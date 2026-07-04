@@ -108,6 +108,26 @@ function sanitizeEnvValue(string $value): string
     return str_replace(["\r", "\n", "\0"], '', $value);
 }
 
+/**
+ * Encode a value for a .env line that vlucas/phpdotenv (used by the backend) will parse back
+ * verbatim. Plain values stay bare for readability; anything with characters phpdotenv treats
+ * specially — spaces (parse error), '#' (inline comment), quotes, '$' (${VAR} interpolation),
+ * or trailing whitespace — is double-quoted with '\', '"' and '$' escaped. Without this, a DB
+ * password like "p@ss word" or "a#b" is silently truncated or crashes the backend on boot.
+ */
+function envEncode(string $value): string
+{
+    if ($value === '') {
+        return '';
+    }
+    // A conservative "obviously safe" charset can be written unquoted (covers hosts, ports,
+    // typical CORS origins like http://localhost:5173).
+    if (preg_match('#^[A-Za-z0-9_.:/@-]+$#', $value)) {
+        return $value;
+    }
+    return '"' . str_replace(['\\', '"', '$'], ['\\\\', '\\"', '\\$'], $value) . '"';
+}
+
 // ---------------------------------------------------------------------------
 // Requirement checks
 // ---------------------------------------------------------------------------
@@ -182,12 +202,18 @@ function checkRequirements(): array
     $nodeVersion = '';
     $npmVersion = '';
     $nodeOk = false;
-    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-        exec('node -v 2>NUL', $nodeOut, $nodeRc);
-        exec('npm -v 2>NUL', $npmOut, $npmRc);
-    } else {
-        exec('node -v 2>/dev/null', $nodeOut, $nodeRc);
-        exec('npm -v 2>/dev/null', $npmOut, $npmRc);
+    // Initialize so the checks below are safe even when exec() is disabled (shared hosting),
+    // which would otherwise leave these unset and emit warnings that corrupt the JSON response.
+    $nodeOut = $npmOut = [];
+    $nodeRc = $npmRc = 1;
+    if (function_exists('exec')) {
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            exec('node -v 2>NUL', $nodeOut, $nodeRc);
+            exec('npm -v 2>NUL', $npmOut, $npmRc);
+        } else {
+            exec('node -v 2>/dev/null', $nodeOut, $nodeRc);
+            exec('npm -v 2>/dev/null', $npmOut, $npmRc);
+        }
     }
     if ($nodeRc === 0 && !empty($nodeOut[0])) {
         $nodeVersion = trim($nodeOut[0]);
@@ -316,7 +342,7 @@ function runInstall(array $data): array
     $dbPass = sanitizeEnvValue($data['db_pass'] ?? '');
     $corsOrigin = sanitizeEnvValue($data['cors_origin'] ?? 'http://localhost:5173');
 
-    if (!ctype_digit((string) $dbPort)) {
+    if (!ctype_digit((string) $dbPort) || (int) $dbPort < 1 || (int) $dbPort > 65535) {
         $dbPort = '3306';
     }
     if (empty($dbName)) {
@@ -331,19 +357,22 @@ function runInstall(array $data): array
         return ['success' => false, 'steps' => $steps, 'message' => 'Missing .env.example file'];
     }
 
-    // Replace values
+    // Replace values. Use preg_replace_callback so the replacement is treated as a LITERAL — a
+    // plain preg_replace interprets '$1'/'\1' in the value as backreferences, which would corrupt
+    // any password containing '$' followed by a digit (e.g. "pa$1ss" -> "pass"). envEncode() then
+    // makes each value safe for phpdotenv to read back exactly.
     $replacements = [
-        '/^DB_HOST=.*/m' => "DB_HOST=$dbHost",
-        '/^DB_PORT=.*/m' => "DB_PORT=$dbPort",
-        '/^DB_DATABASE=.*/m' => "DB_DATABASE=$dbName",
-        '/^DB_USERNAME=.*/m' => "DB_USERNAME=$dbUser",
-        '/^DB_PASSWORD=.*/m' => "DB_PASSWORD=$dbPass",
-        '/^JWT_SECRET=.*/m' => "JWT_SECRET=$jwtSecret",
-        '/^CORS_ORIGIN=.*/m' => "CORS_ORIGIN=$corsOrigin",
-        '/^# AUDIT_HMAC_KEY=.*/m' => "AUDIT_HMAC_KEY=$auditKey",
+        '/^DB_HOST=.*/m' => 'DB_HOST=' . envEncode($dbHost),
+        '/^DB_PORT=.*/m' => 'DB_PORT=' . $dbPort,             // digit-validated above
+        '/^DB_DATABASE=.*/m' => 'DB_DATABASE=' . envEncode($dbName),
+        '/^DB_USERNAME=.*/m' => 'DB_USERNAME=' . envEncode($dbUser),
+        '/^DB_PASSWORD=.*/m' => 'DB_PASSWORD=' . envEncode($dbPass),
+        '/^JWT_SECRET=.*/m' => 'JWT_SECRET=' . $jwtSecret,    // generated hex
+        '/^CORS_ORIGIN=.*/m' => 'CORS_ORIGIN=' . envEncode($corsOrigin),
+        '/^# AUDIT_HMAC_KEY=.*/m' => 'AUDIT_HMAC_KEY=' . $auditKey, // generated hex
     ];
     foreach ($replacements as $pattern => $replacement) {
-        $envContent = preg_replace($pattern, $replacement, $envContent);
+        $envContent = preg_replace_callback($pattern, static fn () => $replacement, $envContent, 1);
     }
 
     $envPath = $backendDir . '/.env';
@@ -421,8 +450,8 @@ function runInstall(array $data): array
             } elseif (str_contains($msg, 'Connection refused')) {
                 $msg = 'Connection refused. Is MySQL running?';
             } else {
-                // Strip file paths and internal details
-                $msg = preg_replace('/in \/.*$/', '', $msg);
+                // Strip file paths and internal details (both Unix "/path" and Windows "C:\path")
+                $msg = preg_replace('#\sin\s+(?:/|[A-Za-z]:\\\\).*$#s', '', $msg);
                 $msg = 'Database error: ' . trim(substr($msg, 0, 200));
             }
             $steps[] = ['label' => 'Database setup', 'status' => 'error', 'message' => $msg];
