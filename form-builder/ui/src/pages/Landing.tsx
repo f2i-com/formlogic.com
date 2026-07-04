@@ -1013,7 +1013,7 @@ export function Landing() {
                 <Star className="h-4 w-4 fill-amber-400 text-amber-400 transition-transform group-hover:scale-110" />
               </a>
               <p className="text-gray-400 dark:text-slate-500 mt-3 text-xs leading-relaxed">
-                FormLogic is open source &mdash; a star helps more people find it.
+                FormLogic is source-available &mdash; a star helps more people find it.
               </p>
             </div>
             <div>

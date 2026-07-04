@@ -1,0 +1,107 @@
+FormLogic License
+Version 1.0 (2026)
+
+Copyright (c) 2026 FormLogic. All rights reserved.
+
+This is a proprietary, source-available license. It is NOT an open-source license
+(it does not meet the Open Source Definition), because it restricts selling the
+Software. The full source is published so you can run, inspect, and modify it.
+
+===============================================================================
+Plain-language summary (informational only; the Terms below are what govern)
+===============================================================================
+
+  ALLOWED
+    - Run and self-host FormLogic for free, for any purpose — personal use,
+      internal business use, and running your own for-profit business on it.
+    - Read the source code, and modify it for your own use.
+    - Run your modified version on infrastructure you control.
+    - Share the code or your changes with others for free, with notices intact.
+
+  NOT ALLOWED (without a separate commercial agreement from FormLogic)
+    - Selling or reselling the Software.
+    - Offering the Software (or a modified version) to other people as a paid
+      product or a hosted / managed / software-as-a-service.
+    - Charging a third party to host or run it on their behalf.
+
+  The right to sell FormLogic as a paid product or hosted service — for example,
+  FormLogic's own "Cloud" plans — is reserved to FormLogic.
+
+===============================================================================
+Terms and Conditions
+===============================================================================
+
+1. Definitions.
+   "Software" means the FormLogic source code, object code, documentation, and
+   assets contained in this repository, together with any modified versions or
+   derivative works of them.
+   "Licensor" means FormLogic, the holder of copyright in the Software.
+   "You" means any individual or legal entity exercising rights under this
+   License.
+   "Self-Host" means to install, run, and operate the Software on computing
+   infrastructure that You control, for use by You or Your organization.
+   "Commercial Offering" means making the Software or any derivative available
+   to a third party — whether as a product, a distribution, or a hosted,
+   managed, or software-as-a-service offering — in exchange for a fee or other
+   commercial consideration.
+
+2. License Grant. Subject to Your compliance with this License, the Licensor
+   grants You a worldwide, royalty-free, non-exclusive, non-transferable license
+   to:
+   (a) Self-Host and use the Software for any purpose, including internal
+       commercial use, at no charge;
+   (b) access, study, and modify the source code of the Software; and
+   (c) create and run modified versions and derivative works of the Software for
+       Your own Self-Hosted use.
+
+3. Redistribution. You may redistribute copies of the Software or of Your
+   modifications only if all of the following are true:
+   (a) You do so free of charge;
+   (b) You retain intact all copyright, license, and attribution notices, and
+       include a complete copy of this License; and
+   (c) the recipient's use remains subject to this License.
+
+4. Commercial Restriction (No Reselling). Except under a separate written
+   commercial agreement signed by the Licensor, You may NOT:
+   (a) sell, resell, sublicense, rent, or lease the Software or any derivative;
+   (b) provide a Commercial Offering of the Software or any derivative; or
+   (c) charge any third party a fee for access to the Software, or for hosting
+       or operating it on that party's behalf.
+   For clarity: using the Software to operate Your own business (including a
+   for-profit business) is permitted by Section 2. Charging others for the
+   Software itself, or for hosting it for them, is not. The right to make a
+   Commercial Offering of the Software — including FormLogic's own hosted
+   "Cloud" plans — is reserved exclusively to the Licensor.
+
+5. Reservation of Rights. All rights not expressly granted in this License are
+   reserved by the Licensor. This License grants no rights in the Licensor's
+   trademarks, service marks, or trade names, except as reasonably required for
+   customary attribution.
+
+6. Notices. You must not remove, obscure, or alter any copyright, license, or
+   attribution notice contained in the Software.
+
+7. Termination. This License and the rights granted under it terminate
+   automatically and immediately if You breach any of its terms, and in
+   particular Section 4. On termination You must stop using and distributing the
+   Software. Sections 8, 9, and 10 survive termination.
+
+8. No Warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+9. Limitation of Liability. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
+   OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+   OR OTHER DEALINGS IN THE SOFTWARE.
+
+10. Miscellaneous. If any provision of this License is held unenforceable, the
+    remaining provisions remain in full effect. This License, together with any
+    separate written commercial agreement with the Licensor, is the entire
+    agreement between You and the Licensor regarding the Software.
+
+===============================================================================
+For commercial licensing — selling, reselling, or offering FormLogic as a paid
+product or hosted service — contact the Licensor via the project repository at
+https://github.com/izuc/formlogic-app
+===============================================================================
