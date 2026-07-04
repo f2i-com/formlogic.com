@@ -2,7 +2,7 @@
 
 **FormLogic is a self-hostable business app platform. Install a ready-made vertical app, customise forms and dashboards, collect linked records, generate reports and PDFs, and let your AI extend apps over MCP.**
 
-Every app is *forms + workflow + a live dashboard + reports*, deployable with role-based access. Install a niche app from the marketplace (plumbing field service, salon bookings, job & invoicing, mechanic workshop, HR, OHS…), adapt it to your business, or point your own AI at it over MCP to generate and edit apps for you. Under the hood it's a full drag-and-drop form builder with a sandboxed JavaScript runtime, linked records, analytics, and audit logging.
+Every app is *forms + workflow + a configurable dashboard + reports*, deployable with role-based access. Install a niche app from the marketplace (plumbing field service, salon bookings, café & restaurant ops, short-stay turnovers, fleet logbooks, retail, HR, OHS…), adapt it to your business, or point your own AI at it over MCP to generate and edit apps for you. Under the hood it's a full drag-and-drop form builder with a sandboxed JavaScript runtime, linked records, no-code widget dashboards, analytics, and audit logging.
 
 ![FormLogic form builder — drag-and-drop canvas, field palette, and per-field settings](docs/images/builder.png)
 
@@ -21,14 +21,15 @@ Every app is *forms + workflow + a live dashboard + reports*, deployable with ro
 
 ## Overview
 
-FormLogic is built around a simple loop: **land → try the live demo → install a ready-made vertical app → customise it → hand it to your AI to improve → export/share it.** Each marketplace app bundles the forms, the workflow (roles, linked records, `onSubmit` scripts), and a live custom dashboard, so you start from a working business system rather than a blank canvas. It's fully self-hosted, with a Typeform-style builder and a sandboxed JavaScript (QuickJS) runtime underneath.
+FormLogic is built around a simple loop: **land → try the live demo → install a ready-made vertical app → customise it → hand it to your AI to improve → export/share it.** Each marketplace app bundles the forms, the workflow (roles, linked records, `onSubmit` scripts), and a configurable, drag-and-drop widget dashboard, so you start from a working business system rather than a blank canvas. It's fully self-hosted, with a Typeform-style builder and a sandboxed JavaScript (QuickJS) runtime underneath.
 
 ### Key Capabilities
 
-- **App Marketplace** -- 13 ready-made vertical business apps, each a real working system (forms + workflow + custom dashboard + demo data). Install in one click, customise, hand to your AI, or export as a portable `.json`. Browse by dynamic categories/tags. See [App Marketplace](#app-marketplace) below.
-- **Live Demo** -- A no-signup shared Demo account with the whole marketplace pre-installed and populated, so dashboards are live on first look. Visitors' changes (new records, new forms, settings) stay in *their* browser — the shared demo never gets polluted.
+- **App Marketplace** -- 28 ready-made vertical business apps, each a real working system (forms + workflow + configurable dashboard + demo data). Install in one click, customise, hand to your AI, or export as a portable `.json`. Browse by dynamic categories/tags. See [App Marketplace](#app-marketplace) below.
+- **Live Demo** -- A no-signup shared Demo account with the whole marketplace pre-installed and populated, so dashboards are live on first look. *Launch the live demo* drops you into the full platform; visitors' changes (new records, new forms, settings) stay in *their* browser — the shared demo never gets polluted.
+- **Configurable Dashboards** -- Every app screen — the home dashboard and each form's section screen — is a no-code, drag-and-drop grid of **recharts** widgets: KPIs, bar/line/area/pie/donut charts, record lists, and activity feeds. Edit a widget's query and chart type inline, exactly like a report — no code. (Advanced users can still drop to a sandboxed HTML/JS custom screen.)
 - **Reports & PDFs** -- Each app has a no-code Reports section: compose bar, line, area, pie, donut, KPI, and table charts with grouping, measures, filters, and cross-form (linked-record) joins. Arrange charts and text blocks into exportable PDF documents.
-- **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a sandboxed custom-screen dashboard.
+- **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, linked records, and a configurable widget dashboard.
 - **Build with AI / MCP** -- Generate forms/apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit whole apps — including forms, screens, and reports — for you. See [Build with your own AI (MCP)](#build-with-your-own-ai-mcp).
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — the same engine and standard-library prelude run in the browser and on the server
@@ -47,39 +48,66 @@ FormLogic is built around a simple loop: **land → try the live demo → instal
 
 ## App Marketplace
 
-FormLogic ships with a catalog of **ready-made vertical apps** — each one is a real, working business system (not a "Contact Us" form): several linked forms, role-based access, seeded demo data, and a live custom dashboard. Install one in a click, then customise it, hand it to your AI over MCP, or export it as a portable `.json`. The public **[Live Demo](#)** has every app pre-installed and populated, so you can click straight into a working dashboard.
+FormLogic ships with a catalog of **28 ready-made vertical apps** — each one is a real, working business system (not a "Contact Us" form): several linked forms, role-based access, seeded demo data, and a configurable widget dashboard. Install one in a click, then customise it, hand it to your AI over MCP, or export it as a portable `.json`. The public **[Live Demo](#)** has every app pre-installed and populated, so you can click straight into a working dashboard.
 
 <p align="center">
-  <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — jobs, revenue, and status dashboard" />
+  <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — invoiced-over-time, jobs-by-status, and recent jobs" />
   &nbsp;
-  <img src="docs/images/packs/salon.png" width="49%" alt="Hair Salon & Beauty Studio — appointments and revenue dashboard" />
+  <img src="docs/images/packs/salon.png" width="49%" alt="Hair Salon & Beauty Studio — revenue KPIs, appointments by status, bookings over time" />
 </p>
 <p align="center">
-  <img src="docs/images/packs/job-invoice.png" width="49%" alt="Job & Invoice Management — billing pipeline dashboard" />
+  <img src="docs/images/packs/fitstudio.png" width="49%" alt="FitStudio — client and session KPIs, revenue trend, sessions by trainer" />
   &nbsp;
-  <img src="docs/images/packs/inventory.png" width="49%" alt="Inventory & Purchase Orders — stock and low-stock dashboard" />
+  <img src="docs/images/packs/stayready.png" width="49%" alt="StayReady — short-stay bookings, turnovers by status, guests hosted" />
 </p>
-<p align="center"><sub>A few of the marketplace dashboards — Plumbing field service · Salon bookings · Job &amp; invoicing · Inventory (all render in light &amp; dark)</sub></p>
+<p align="center">
+  <img src="docs/images/packs/brewdesk.png" width="49%" alt="BrewDesk — café orders over time, drinks by type, stock-to-reorder donut" />
+  &nbsp;
+  <img src="docs/images/packs/counterflow.png" width="49%" alt="CounterFlow — retail stock movements, products by category, recent movements" />
+</p>
+<p align="center">
+  <img src="docs/images/packs/fleetflow.png" width="49%" alt="FleetFlow — trips over time, fleet by status donut, incidents by severity" />
+  &nbsp;
+  <img src="docs/images/packs/ohs.png" width="49%" alt="OHS & Quality Management — incidents by severity, incidents over time, recent incidents" />
+</p>
+<p align="center"><sub>Eight of the marketplace dashboards — Plumbing · Salon · FitStudio · StayReady · BrewDesk · CounterFlow · FleetFlow · OHS/QMS. Every dashboard is a no-code recharts widget grid and renders in light &amp; dark.</sub></p>
 
 Browse by **dynamic categories and tags** derived from whatever's in the catalog (no hardcoded taxonomy) — publish your own packs and the browse chips update automatically.
 
 | App | Category | What it runs |
 |-----|----------|--------------|
-| 🔧 Plumbing & Trades Field Service | Trades & Field Service | Customers → jobs → site visits → invoices → parts |
+| 🔧 Plumbing & Trades Field Service | Trades & Field Service | Customers → jobs → site visits → invoices → parts requests |
 | 🚗 Mechanic Workshop Manager | Trades & Field Service | Customers → vehicles → job cards → parts → invoices |
 | 🏠 Property Maintenance & Handyman | Trades & Field Service | Properties → tenants → requests → work orders → inspections |
-| 🧾 Job & Invoice Management | Billing & Invoicing | Clients → jobs → quotes → invoices → payments |
-| 💇 Hair Salon & Beauty Studio | Beauty & Wellness | Clients → services → stylists → appointments → sales |
-| 🩺 Clinic Appointment & Intake | Health & Wellness | Patients → providers → appointments → intake → follow-ups (front-desk only) |
-| 📦 Inventory & Purchase Orders | Operations | Products → suppliers → purchase orders → line items → stock movements |
-| 👥 HR & People Management | HR | Recruitment, onboarding, leave, reviews, expenses, training, exits |
-| ⛑️ OHS & Quality Management | Safety & Quality | Incidents, hazards, audits, corrective actions, NCRs (ISO 45001 / 9001) |
-| 🎧 Customer Service | Customer Service | Tickets, bugs, feature requests, feedback, refunds, escalations, KB |
-| 🎉 Event Management | Events | Registration, speakers, vendors, volunteers, incidents, budget, feedback |
+| 🧹 CleanShift — Cleaning Scheduler | Trades & Field Service | Clients → teams → jobs → quality checks → supplies → issues |
+| 🐾 PawRoute — Dog Walking & Pet Care | Trades & Field Service | Clients → pets → bookings → walks/visits → incidents & care notes |
+| ☕ BrewDesk — Cafe & Barista Ops | Hospitality & Food | Orders → barista queue → menu → bean/milk stock → roster → daily close |
+| 🍔 GrillStack — Burger Command Center | Hospitality & Food | Order board → kitchen pass → prep → stock → shifts → daily close |
+| 🍽️ PassMaster — Restaurant Service | Hospitality & Food | Reservations → tables → orders → kitchen tickets → prep → shift close |
+| 🎂 CaterCraft — Catering & Events | Hospitality & Food | Clients → menu packages → event pipeline → production → deliveries |
+| 🛎️ StayReady — Short-Stay Turnover | Hospitality & Food | Properties → bookings → cleaner turnovers → inspections → supplies |
+| 💇 Hair Salon & Beauty Studio | Beauty, Health & Fitness | Clients → services → stylists → appointments → product sales |
+| 💪 FitStudio — Training & Coaching | Beauty, Health & Fitness | Clients → trainers → sessions → assessments → programs → payments |
+| 🩺 Clinic Appointment & Intake | Beauty, Health & Fitness | Patients → providers → appointments → intake → follow-ups (front-desk) |
+| 📦 Inventory & Purchase Orders | Retail & Operations | Products → suppliers → purchase orders → line items → stock movements |
+| 🛍️ CounterFlow — Retail Store Ops | Retail & Operations | Products → suppliers → stock movements → store tasks → staff → returns |
+| 🚚 FleetFlow — Fleet & Driver Log | Retail & Operations | Vehicles → drivers → trips → fuel → maintenance → incidents |
+| ⛑️ OHS & Quality Management | Field Ops & Compliance | Incidents, hazards, audits, corrective actions, NCRs (ISO 45001 / 9001) |
+| 🏗️ SitePulse — Construction Site Diary | Field Ops & Compliance | Projects → daily diaries → deliveries → defects → variations → insurances |
+| 🌾 AgriLog — Farm Jobs & Harvest | Field Ops & Compliance | Paddocks → crop jobs → harvests → chemical register → machinery |
+| 🎟️ VenueOps — Venue Hire & Bookings | Bookings & Education | Spaces → hirers → bookings → setups → payments → incidents |
+| 📚 TutorTrack — Tutoring & Lessons | Bookings & Education | Students → tutors → lessons → progress notes → invoices |
+| 🎉 Event Management | Bookings & Education | Registration, speakers, vendors, volunteers, incidents, budget, feedback |
+| 🧾 Job & Invoice Management | Billing & Business | Clients → jobs → quotes → invoices → payments |
+| 🛠️ RepairBench — Device Repair Shop | Billing & Business | Customers → devices → repair jobs → parts → quality sign-off → pickup |
+| 👥 HR & People Management | Billing & Business | Recruitment, onboarding, leave, reviews, expenses, training, exits |
+| 🎧 Customer Service | Billing & Business | Tickets, bugs, feature requests, feedback, refunds, escalations, KB |
 | 🏦 Finance OS (US) | Finance | RIA/broker-dealer onboarding, compliance & advisory (Reg BI, Form CRS) |
 | 🦘 Finance OS (AU) | Finance | AFSL advice, Best Interest Duty, super, AUSTRAC |
 
-**Producing packs is a repeatable pipeline**: an AI author→review workflow generates the forms + linked records + dashboard + sample data, then each pack is verified (imports, renders light/dark, data populates), auto-screenshotted for the gallery, and published. New verticals are cheap to add.
+The Live Demo carries a few of these as multi-app packs (e.g. Finance OS ships onboarding **and** a portfolio/transition hub), so there are **34 installable demo apps** across the 28 catalog packs.
+
+**Producing packs is a repeatable pipeline**: an AI author→review workflow generates the forms + linked records + widget dashboard + sample data, then each pack is verified (imports, renders light/dark, data populates, no dead KPIs) — including an automated screenshot vision-QA sweep — auto-screenshotted for the gallery, and published. New verticals are cheap to add.
 
 ---
 
@@ -140,7 +168,7 @@ formlogic-app/
 │   │
 │   └── ui/
 │       └── src/
-│           ├── pages/                 # 11 pages + 9 app admin pages
+│           ├── pages/                 # 24 pages + 9 app admin pages
 │           ├── components/
 │           │   ├── app-runtime/       # Business app runtime (data tables, form views, auth guards)
 │           │   ├── builder/           # Form builder (field palette, script editor, NIGO dashboard...)
@@ -153,7 +181,7 @@ formlogic-app/
 │           ├── types/                 # TypeScript interfaces (form, app)
 │           └── data/
 │               ├── formTemplates.ts   # Built-in form templates
-│               └── packs/             # Pre-built pack bundles (Finance OS)
+│               └── packs/             # 28 marketplace pack bundles (forms + apps + widget dashboards)
 ```
 
 > The FormLogic scripting engine is embedded in `form-builder/`: the browser side in
