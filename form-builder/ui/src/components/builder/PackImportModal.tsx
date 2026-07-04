@@ -26,6 +26,7 @@ import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
 import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack } from '../../lib/api';
+import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -407,21 +408,10 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const appCount = uploadedPack?.apps?.length ?? 0;
   // Surface that a pack bundles server-side logic (runs on submit, can make
   // outbound requests) so the installer can review/consent before importing.
-  const hasLogicScript = (uploadedPack?.forms ?? []).some((f) => {
-    const s = (f as Record<string, unknown>).logicScript;
-    return typeof s === 'string' && s.trim() !== '';
-  });
-  // Distinguish no-code widget dashboards (kind:'dashboard') from sandboxed CUSTOM CODE screens
-  // (HTML/CSS/JS). Code screens run in the SDK sandbox but can read data the viewer may see, so
-  // imported/community packs that carry them get an explicit heads-up before install.
-  const hasCodeScreen = [
-    ...((uploadedPack?.forms ?? []) as Record<string, unknown>[]),
-    ...((uploadedPack?.apps ?? []) as Record<string, unknown>[]),
-  ].some((entity) => {
-    const cs = entity.customScreen as Record<string, unknown> | undefined;
-    if (!cs || !cs.enabled || cs.kind === 'dashboard') return false;
-    return !!(cs.html || cs.js || cs.ts || (Array.isArray(cs.files) && cs.files.length > 0));
-  });
+  // Surface a pack's code trust-surface (shared with the marketplace install flow via lib/packTrust):
+  // backend onSubmit scripts, and sandboxed custom CODE screens (vs no-code widget dashboards).
+  const hasLogicScript = uploadedPack ? packHasLogicScript(uploadedPack) : false;
+  const hasCodeScreen = uploadedPack ? packHasCodeScreen(uploadedPack) : false;
 
   return (
     <>

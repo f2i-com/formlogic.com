@@ -18,6 +18,7 @@ import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
 import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../../lib/api';
+import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
 import { PackScreenshots } from './PackScreenshots';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
@@ -128,7 +129,26 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         toast.error('Failed to download pack data');
         return;
       }
-      const importResult = await api.importPack(dlResult.data.pack, {
+      // Same trust gate as the upload/import flow: consent before installing a pack that carries code
+      // (custom code screens and/or server-side onSubmit scripts). Official packs (published under the
+      // FormLogic account) get a lighter notice; community packs get a stronger confirmation.
+      const dl = dlResult.data.pack;
+      const hasScreen = packHasCodeScreen(dl);
+      const hasScript = packHasLogicScript(dl);
+      if (hasScreen || hasScript) {
+        const bits: string[] = [];
+        if (hasScreen) bits.push('custom code screens (sandboxed HTML/CSS/JS)');
+        if (hasScript) bits.push('backend logic scripts that run on your server when a form is submitted');
+        const what = bits.join(' and ');
+        const official = !pack.publisherName || pack.publisherName === 'FormLogic';
+        const msg = official
+          ? `This pack includes ${what}. They run sandboxed with access only to data you're permitted to see. Install it?`
+          : `⚠ This community pack includes ${what}. Sandboxed code can still read data you're allowed to see, and backend scripts run on your server. Only install packs from sources you trust.\n\nInstall anyway?`;
+        if (!window.confirm(msg)) {
+          return; // finally{} clears the installing flag
+        }
+      }
+      const importResult = await api.importPack(dl, {
         catalogId: dlResult.data.catalogId,
         versionId: dlResult.data.versionId,
       });
