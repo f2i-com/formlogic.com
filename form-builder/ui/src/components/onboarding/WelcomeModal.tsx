@@ -1,5 +1,6 @@
 import { FilePlus2, LayoutTemplate, Sparkles, ArrowRight } from 'lucide-react';
 import { Modal } from '../ui/Modal';
+import { useAiAvailable } from '../../hooks/useAiAvailable';
 
 interface WelcomeModalProps {
   isOpen: boolean;
@@ -22,6 +23,9 @@ const PATHS = [
  */
 export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI }: WelcomeModalProps) {
   const handlers: Record<string, () => void> = { blank: onBlank, template: onTemplate, ai: onAI };
+  // Hide the "Generate with AI" path when the in-app AI is off (AI_ENABLED=false) or unconfigured.
+  const aiAvailable = useAiAvailable();
+  const paths = PATHS.filter((p) => p.key !== 'ai' || aiAvailable);
 
   return (
     <Modal
@@ -31,8 +35,8 @@ export function WelcomeModal({ isOpen, onClose, onBlank, onTemplate, onAI }: Wel
       title="Welcome to FormLogic 👋"
       description="Let's build your first form — it takes about a minute. Pick how you'd like to start:"
     >
-      <div className="grid sm:grid-cols-3 gap-3">
-        {PATHS.map(({ key, icon: Icon, title, desc }) => (
+      <div className={`grid gap-3 ${paths.length >= 3 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        {paths.map(({ key, icon: Icon, title, desc }) => (
           <button
             key={key}
             type="button"

@@ -59,6 +59,7 @@ import { useFormStore } from '../stores/formStore';
 import { useKeyboardShortcuts, type KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useAiAvailable } from '../hooks/useAiAvailable';
 import { useUIStore } from '../stores/uiStore';
 import { FIELD_TYPE_INFO, type FormField, type FieldType, type CustomScreen } from '../types/form';
 
@@ -126,6 +127,9 @@ export default function FormBuilder() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  // Whether the built-in AI is available (AI_ENABLED + configured). Hides the "Generate with AI"
+  // entry points when off — users can still bring their own AI via the MCP "Connect an AI" flow.
+  const aiAvailable = useAiAvailable();
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   // Snapshot of the form serialized to a pack, captured when "Publish as pack" opens (so
   // it stays stable while the publish dialog is open rather than rebuilding on each edit).
@@ -205,10 +209,12 @@ export default function FormBuilder() {
   useEffect(() => {
     if (loadFinished && !aiAutoOpened.current && searchParams.get('ai') !== null) {
       aiAutoOpened.current = true;
-      setActiveModal('ai');
+      // Only auto-open the generator if the in-app AI is actually available; otherwise just
+      // strip the param (a stale/hand-typed ?ai=1 shouldn't surface a dead modal).
+      if (aiAvailable) setActiveModal('ai');
       setSearchParams((p) => { p.delete('ai'); return p; }, { replace: true });
     }
-  }, [loadFinished, searchParams, setSearchParams]);
+  }, [loadFinished, searchParams, setSearchParams, aiAvailable]);
 
   // On a wide screen, open the builder with both docks: select the first editable
   // field once the form loads so the settings dock appears alongside the (default-open)
@@ -624,7 +630,8 @@ export default function FormBuilder() {
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
-          {/* AI Generator - always visible */}
+          {/* AI Generator — hidden when the in-app AI is off (AI_ENABLED=false) or unconfigured. */}
+          {aiAvailable && (
           <Button
             variant="outline"
             size="sm"
@@ -636,6 +643,7 @@ export default function FormBuilder() {
             <Sparkles className="h-4 w-4 text-purple-400" />
             <span className="hidden xl:inline ml-2 text-purple-600 dark:text-purple-300">AI</span>
           </Button>
+          )}
 
           {/* Settings - hidden on smallest screens */}
           <Button
@@ -950,14 +958,18 @@ export default function FormBuilder() {
                       <Button onClick={openPalette} variant="outline" leftIcon={<Plus className="h-4 w-4" />}>
                         Add Field
                       </Button>
-                      <span className="text-gray-400 dark:text-slate-500">or</span>
-                      <Button
-                        onClick={() => setActiveModal('ai')}
-                        className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
-                      >
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        Generate with AI
-                      </Button>
+                      {aiAvailable && (
+                        <>
+                          <span className="text-gray-400 dark:text-slate-500">or</span>
+                          <Button
+                            onClick={() => setActiveModal('ai')}
+                            className="bg-gradient-to-r from-purple-500 to-blue-500 hover:from-purple-600 hover:to-blue-600"
+                          >
+                            <Sparkles className="h-4 w-4 mr-2" />
+                            Generate with AI
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ) : (

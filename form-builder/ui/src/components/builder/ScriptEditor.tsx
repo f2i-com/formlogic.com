@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useAiAvailable } from '../../hooks/useAiAvailable';
 import { X, Play, Book, AlertCircle, CheckCircle, Code2, Sparkles } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -326,6 +327,8 @@ const custom = ctx.http.request({
 export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, formId }: ScriptEditorProps) {
   const [editedScript, setEditedScript] = useState(script);
   const [activeTab, setActiveTab] = useState<'editor' | 'ai' | 'docs' | 'fields'>('editor');
+  // Hide the "AI Generate" tab when the in-app AI is off (AI_ENABLED=false) or unconfigured.
+  const aiAvailable = useAiAvailable();
 
   // Sync editedScript when the script prop changes (e.g. switching forms)
   useEffect(() => {
@@ -558,7 +561,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
             { key: 'ai' as const, label: 'AI Generate', icon: Sparkles },
             { key: 'docs' as const, label: 'API Reference', icon: Book },
             { key: 'fields' as const, label: 'Form Fields', icon: undefined },
-          ] as const).map((tab) => (
+          ] as const).filter((tab) => tab.key !== 'ai' || aiAvailable).map((tab) => (
             <button
               key={tab.key}
               type="button"
@@ -668,7 +671,7 @@ export function ScriptEditor({ isOpen, onClose, script, onSave, formFields, form
             </div>
           )}
 
-          {activeTab === 'ai' && (
+          {activeTab === 'ai' && aiAvailable && (
             <div className="h-full overflow-y-auto p-6">
               <div className="max-w-2xl mx-auto space-y-6">
                 {/* Field context — shows the AI is grounded in this form */}
