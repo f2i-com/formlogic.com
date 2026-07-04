@@ -478,6 +478,32 @@ class ResponseService
     }
 
     /**
+     * True if $fileId is attached to a response submitted by $userId on $formId — an UNBOUNDED lookup
+     * (no pagination) so a view-own member can reach their own upload no matter how many responses they
+     * have (getFormResponses caps at 100). The fileId is a server-generated id embedded in the answers
+     * JSON, and the query is scoped to the caller's OWN rows, so a raw LIKE is an authoritative
+     * membership test. LIKE wildcards in the (URL-supplied) id are escaped so it can't broaden the match.
+     */
+    public function userOwnsFile(string $formId, string $fileId, string $userId): bool
+    {
+        if ($fileId === '' || !$this->sqlite->formDatabaseExists($formId)) {
+            return false;
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $needle = '%' . strtr($fileId, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
+        $stmt = $db->prepare(
+            "SELECT 1 FROM responses
+             WHERE json_extract(metadata, '$.submittedByUserId') = :uid
+               AND answers LIKE :needle ESCAPE '\\'
+             LIMIT 1"
+        );
+        $stmt->bindValue('uid', $userId);
+        $stmt->bindValue('needle', $needle);
+        $stmt->execute();
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /**
      * Get responses by specific IDs (batch fetch)
      */
     public function getResponsesByIds(string $formId, array $responseIds): array

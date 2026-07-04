@@ -294,10 +294,11 @@ class FileController
      * GET /api/files/{formId}/{fileId}/{filename}
      *
      * Files for standalone published forms are public (the form itself is public).
-     * Files for app-scoped forms (or unpublished forms) are access-controlled:
-     * only the form owner or an active member of an app containing the form may
-     * fetch them — UUID secrecy alone is not relied upon, and access is revoked
-     * when membership is revoked.
+     * Files for app-scoped forms (or unpublished forms) are access-controlled: only the form owner, a
+     * member with VIEW_ALL_RESPONSES on the form (any file), or a member with VIEW_OWN_RESPONSES (only
+     * files on their OWN responses) may fetch them. Mere app membership is NOT enough. UUID secrecy is
+     * not relied upon, and access is revoked when membership/permission is revoked. See
+     * authorizeFileAccess().
      */
     public function serve(Request $request, Response $response, array $args): Response
     {
@@ -400,24 +401,13 @@ class FileController
 
     /**
      * True if $fileId is attached to one of $userId's OWN submitted responses on $formId — the linkage
-     * that lets a view-own member fetch their own upload but not another member's. Conservative: with
-     * no ResponseService wired, returns false (view-own members then can't reach files this way).
+     * that lets a view-own member fetch their own upload but not another member's. Uses an unbounded
+     * lookup (ResponseService::userOwnsFile), so it works regardless of how many responses the user has.
+     * Conservative: with no ResponseService wired, returns false.
      */
     private function fileBelongsToOwnResponse(string $formId, string $fileId, string $userId): bool
     {
-        if (!$this->responseService) {
-            return false;
-        }
-        $own = $this->responseService->getFormResponses($formId, ['submittedByUserId' => $userId]);
-        foreach ($own as $r) {
-            $answers = $r['answers'] ?? [];
-            if (is_string($answers)) {
-                $answers = json_decode($answers, true) ?: [];
-            }
-            if (in_array($fileId, $this->fileStorage->extractFileIds($answers), true)) {
-                return true;
-            }
-        }
-        return false;
+        return $this->responseService !== null
+            && $this->responseService->userOwnsFile($formId, $fileId, $userId);
     }
 }

@@ -163,12 +163,9 @@ class FileAccessRbacTest extends TestCase
         });
 
         $responseService = $this->createMock(ResponseService::class);
-        $responseService->method('getFormResponses')->willReturnCallback(function (string $fid, array $opts) use ($appFormId, $ownerOfFileUser, $ownFileId) {
-            if ($fid === $appFormId && ($opts['submittedByUserId'] ?? null) === $ownerOfFileUser) {
-                return [['answers' => ['field1' => [['id' => $ownFileId, 'storedFilename' => $ownFileId . '.png']]]]];
-            }
-            return [];
-        });
+        $responseService->method('userOwnsFile')->willReturnCallback(
+            fn(string $fid, string $file, string $uid) => $fid === $appFormId && $file === $ownFileId && $uid === $ownerOfFileUser
+        );
 
         $storage = new FileStorageService(['storagePath' => sys_get_temp_dir() . '/fl-test-' . $this->uuid()]);
 
