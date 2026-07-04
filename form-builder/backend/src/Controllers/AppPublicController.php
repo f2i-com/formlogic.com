@@ -1237,11 +1237,29 @@ class AppPublicController
             ];
         }
 
+        // Linked-record labels in table cells may only reveal target forms this member can view (else
+        // the label leaks a hidden record's name). Build that allowlist from the member's permissions.
+        $perms = $this->appUserService->getUserPermissions($app['id'], $userId);
+        $appLevel = $perms['appLevel'] ?? [];
+        $viewAppWide = in_array(AppPermissions::VIEW_ALL_RESPONSES, $appLevel, true)
+            || in_array(AppPermissions::VIEW_OWN_RESPONSES, $appLevel, true)
+            || in_array(AppPermissions::MANAGE_APP, $appLevel, true);
+        $resolvableFormIds = [];
+        foreach ($this->appService->getAppForms($app['id']) as $af) {
+            $fid = (string) ($af['formId'] ?? '');
+            $fl = $perms['formLevel'][$fid] ?? [];
+            if ($fid !== '' && ($viewAppWide
+                || in_array(AppPermissions::VIEW_ALL_RESPONSES, $fl, true)
+                || in_array(AppPermissions::VIEW_OWN_RESPONSES, $fl, true))) {
+                $resolvableFormIds[] = $fid;
+            }
+        }
+
         try {
             // Relative date filters are evaluated in the app's timezone (falls back to UTC).
             $tz = (string) ($app['settings']['timezone'] ?? 'UTC') ?: 'UTC';
-            $svc = new \FormLogic\Services\ReportService($this->sqlite);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz);
+            $svc = new \FormLogic\Services\ReportService($this->sqlite, $this->formService);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz, $resolvableFormIds);
             return ['status' => 200, 'body' => $result];
         } catch (\Throwable $e) {
             return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Helpers\RecordLabel;
 use PDO;
 
 /**
@@ -40,14 +41,18 @@ class ReportService
     // Drafts + archived never appear in reports; everything else (submitted, reviewed, approved, …) does.
     private const HIDDEN_STATUSES = "('draft', 'archived')";
 
-    public function __construct(private SQLiteConnection $sqlite) {}
+    public function __construct(private SQLiteConnection $sqlite, private ?FormService $formService = null) {}
 
     /**
      * @param array $spec  { viz, filters, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit? }
      * @param array $fields the base form's field definitions
      * @param array $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', scope:'all'|'own', fields, path }]
+     * @param ?array $resolvableFormIds  target forms whose linked_record labels the caller may reveal in
+     *   table cells: an allowlist (app members → only forms they can view), null = resolve any (owner),
+     *   [] = resolve none (default; e.g. public). Others render as an opaque "Linked record" placeholder,
+     *   never a raw id.
      */
-    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC'): array
+    public function runReport(array $spec, array $fields, string $formId, string $scope, ?string $userId, array $joins = [], string $timezone = 'UTC', ?array $resolvableFormIds = []): array
     {
         $viz = in_array($spec['viz'] ?? 'table', self::VIZ, true) ? (string) $spec['viz'] : 'table';
 
@@ -311,11 +316,44 @@ class ReportService
             foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
             $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
             $stmt->execute();
+            $rawRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            // linked_record columns NEVER render a raw target-record id. When the caller may reveal the
+            // target form (permission-gated by $resolvableFormIds) we resolve to a human label; otherwise
+            // an opaque "Linked record" placeholder.
+            $linkedCols = [];           // "c$i" => ['field' => def, 'resolvable' => bool]
+            foreach ($refs as $i => $ref) {
+                $f = $refField((string) $ref);
+                if (($f['type'] ?? '') === 'linked_record' && !empty($f['properties']['targetFormId'])) {
+                    $linkedCols["c$i"] = [
+                        'field' => $f,
+                        'resolvable' => $this->canResolveForm((string) $f['properties']['targetFormId'], $resolvableFormIds),
+                    ];
+                }
+            }
+            $linkedMaps = [];           // "c$i" => [recordId => label]
+            foreach ($linkedCols as $col => $info) {
+                if (!$info['resolvable']) { continue; }
+                $ids = [];
+                foreach ($rawRows as $rr) {
+                    foreach ($this->linkedIds($rr[$col] ?? null) as $id) { $ids[$id] = $id; }
+                }
+                $linkedMaps[$col] = $this->resolveLinkedLabelMap($info['field'], array_values($ids));
+            }
+
             $rows = [];
-            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $rrow) {
+            foreach ($rawRows as $rrow) {
                 $row = [];
                 foreach ($refs as $i => $ref) {
-                    $row["c$i"] = $this->displayValue($refField((string) $ref), $rrow["c$i"] ?? null);
+                    $col = "c$i";
+                    if (isset($linkedCols[$col])) {
+                        $ids = $this->linkedIds($rrow[$col] ?? null);
+                        if (empty($ids)) { $row[$col] = ''; continue; }
+                        $map = $linkedMaps[$col] ?? [];
+                        $row[$col] = implode(', ', array_map(fn ($id) => $map[$id] ?? 'Linked record', $ids));
+                    } else {
+                        $row[$col] = $this->displayValue($refField((string) $ref), $rrow[$col] ?? null);
+                    }
                 }
                 $rows[] = $row;
             }
@@ -352,5 +390,75 @@ class ReportService
             }
         }
         return $this->optLabel($field, (string) $val);
+    }
+
+    /** Whether the caller may reveal labels from $targetFormId (see runReport's $resolvableFormIds). */
+    private function canResolveForm(string $targetFormId, ?array $resolvableFormIds): bool
+    {
+        if (!$this->formService) { return false; }            // no way to fetch target fields → don't resolve
+        if ($resolvableFormIds === null) { return true; }      // owner: any linked target is theirs
+        return in_array($targetFormId, $resolvableFormIds, true);
+    }
+
+    /** The referenced target-record id(s) from a stored linked_record value (single id or JSON array). */
+    private function linkedIds(mixed $val): array
+    {
+        if ($val === null || $val === '') { return []; }
+        if (is_string($val) && str_starts_with($val, '[')) {
+            $decoded = json_decode($val, true);
+            if (is_array($decoded)) {
+                return array_values(array_filter(
+                    array_map(fn ($x) => is_scalar($x) ? (string) $x : '', $decoded),
+                    fn ($s) => $s !== ''
+                ));
+            }
+        }
+        return [(string) $val];
+    }
+
+    /**
+     * Build a recordId => human-label map for a linked_record field's referenced ids, reading the target
+     * form's fields (FormService) + records (its SQLite). Prefers the field's configured displayFieldIds,
+     * else RecordLabel::guess. Records with no derivable label are omitted (caller shows a placeholder).
+     *
+     * @param string[] $ids
+     * @return array<string,string>
+     */
+    private function resolveLinkedLabelMap(array $field, array $ids): array
+    {
+        $targetFormId = (string) ($field['properties']['targetFormId'] ?? '');
+        if ($targetFormId === '' || empty($ids) || !$this->formService || !$this->sqlite->formDatabaseExists($targetFormId)) {
+            return [];
+        }
+        $targetForm = $this->formService->getForm($targetFormId);
+        $targetFields = is_array($targetForm['fields'] ?? null) ? $targetForm['fields'] : [];
+        $displayFieldIds = is_array($field['properties']['displayFieldIds'] ?? null) ? $field['properties']['displayFieldIds'] : null;
+
+        $db = $this->sqlite->getFormDatabase($targetFormId);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $db->prepare("SELECT id, answers FROM responses WHERE id IN ($placeholders)");
+        $stmt->execute(array_values($ids));
+
+        $map = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
+            $answers = json_decode((string) ($tr['answers'] ?? '{}'), true);
+            if (!is_array($answers)) { $answers = []; }
+            $label = '';
+            if ($displayFieldIds) {
+                $parts = [];
+                foreach ($displayFieldIds as $fid) {
+                    $tf = null;
+                    foreach ($targetFields as $cand) { if (($cand['id'] ?? null) === $fid) { $tf = $cand; break; } }
+                    $v = $this->displayValue($tf, $answers[$fid] ?? null);
+                    if (trim($v) !== '') { $parts[] = trim($v); }
+                }
+                $label = implode(' · ', $parts);
+            }
+            if ($label === '') {
+                $label = RecordLabel::guess($targetFields, $answers) ?? '';
+            }
+            if ($label !== '') { $map[(string) $tr['id']] = $label; }
+        }
+        return $map;
     }
 }

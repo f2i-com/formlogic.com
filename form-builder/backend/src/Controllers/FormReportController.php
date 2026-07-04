@@ -135,8 +135,9 @@ class FormReportController
             ];
         }
         try {
-            $svc = new ReportService($this->sqlite);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, 'all', $userId, $resolvedJoins, 'UTC');
+            // Owner: may resolve linked-record labels from any of their own target forms (null allowlist).
+            $svc = new ReportService($this->sqlite, $this->formService);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, 'all', $userId, $resolvedJoins, 'UTC', null);
             return ['status' => 200, 'body' => $result];
         } catch (\Throwable $e) {
             return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];
