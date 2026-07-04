@@ -48,7 +48,7 @@ FormLogic is built around a simple loop: **land → try the live demo → instal
 
 ## App Marketplace
 
-FormLogic ships with a catalog of **28 ready-made vertical apps** — each one is a real, working business system (not a "Contact Us" form): several linked forms, role-based access, seeded demo data, and a configurable widget dashboard. Install one in a click, then customise it, hand it to your AI over MCP, or export it as a portable `.json`. The public **[Live Demo](#)** has every app pre-installed and populated, so you can click straight into a working dashboard.
+FormLogic ships with a catalog of **28 ready-made vertical apps** — each one is a real, working business system (not a "Contact Us" form): several linked forms, role-based access, seeded demo data, and a configurable widget dashboard. Install one in a click, then customise it, hand it to your AI over MCP, or export it as a portable `.json`. The public **Live Demo** (no signup) has every app pre-installed and populated, so you can click straight into a working dashboard.
 
 <p align="center">
   <img src="docs/images/packs/plumbing.png" width="49%" alt="Plumbing & Trades Field Service — invoiced-over-time, jobs-by-status, and recent jobs" />

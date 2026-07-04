@@ -1,8 +1,21 @@
-# Default-App Dashboard Design (custom screens)
+# Custom-Screen Dashboard Kit (LEGACY — sandboxed HTML/CSS/JS screens)
 
-> How the 16 pack dashboards (+ 3 sample apps) are designed and verified. The kit below is
-> duplicated verbatim into every pack's customScreen — edit a screen by editing its pack .ts,
-> then: `node scripts/emit-marketplace.mjs` → `php scripts/provision-demo.php` (see below).
+> ⚠️ **This is the legacy custom-code screen kit, not the current dashboard system.** App and form
+> dashboards are now **no-code, host-rendered `recharts` widget grids** (`customScreen.kind:
+> 'dashboard'`) — see **[WIDGET_DASHBOARD_DESIGN.md](WIDGET_DASHBOARD_DESIGN.md)**. This document
+> covers the *sandboxed HTML/CSS/JS* custom screens (`customScreen.kind: 'code'`), which still exist
+> as an advanced escape hatch (edited in the Studio, run in the SDK iframe). Reach for widget
+> dashboards first; only use this kit for genuinely bespoke screens.
+>
+> **Editing agents:** if the task is a normal app dashboard/section screen, edit the widget dashboard,
+> NOT this kit. Only touch a `kind: 'code'` screen when the design truly can't be a widget grid.
+>
+> Screen-kit CSP rule: custom screens are no-egress — **no remote images/fonts/media** (only
+> `data:`/`blob:`), enforced by `SCREEN_CSP` in `ui/src/components/custom-screen/sdkRuntime.ts`.
+
+> How the original pack dashboards (+ sample apps) were designed and verified. The kit below is
+> duplicated verbatim into every code-screen pack's customScreen — edit a screen by editing its pack
+> .ts, then: `node scripts/emit-marketplace.mjs` → `php scripts/provision-demo.php` (see below).
 
 # FormLogic Default-App Dashboard Design Language — v2 (FINAL)
 

@@ -1,0 +1,37 @@
+# Scheduled dependency PRs to keep launch maintenance boring. CI already runs `composer audit` and
+# `npm audit --audit-level=high`; this opens the actual update PRs. Security updates are not batched
+# (Dependabot always raises those immediately, ungrouped).
+version: 2
+updates:
+  # Frontend (React/Vite/TS) — form-builder/ui
+  - package-ecosystem: npm
+    directory: /form-builder/ui
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Dev tooling (linters, types, build) churns often and is low-risk — one PR.
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+      # Runtime deps: group non-major so a routine bump is one reviewable PR; majors stay separate.
+      runtime-minor-patch:
+        dependency-type: production
+        update-types: [minor, patch]
+
+  # Backend (PHP/Slim) — form-builder/backend
+  - package-ecosystem: composer
+    directory: /form-builder/backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      composer-minor-patch:
+        update-types: [minor, patch]
+
+  # GitHub Actions workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

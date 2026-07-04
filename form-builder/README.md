@@ -4,13 +4,14 @@ FormLogic is a self-hostable business app platform. Install ready-made business 
 
 ## Overview
 
-FormLogic combines a Typeform-style form builder with a full business apps platform and a marketplace of 13 ready-made vertical apps — each a real, working system (forms, roles, linked records, custom dashboard, demo data, and reports). Install a vertical app in one click and customise it instead of starting from scratch. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms compose into deployable applications with user management, roles, and permissions, and each app gets a no-code Reports section for charts and exportable PDFs.
+FormLogic combines a Typeform-style form builder with a full business apps platform and a marketplace of 28 ready-made vertical apps — each a real, working system (forms, roles, linked records, a no-code widget dashboard, demo data, and reports). Install a vertical app in one click and customise it instead of starting from scratch. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms compose into deployable applications with user management, roles, and permissions, and each app gets a no-code Reports section for charts and exportable PDFs.
 
-A **Live Demo** (no signup required) has the full marketplace pre-installed, so you can explore a working business app before running your own instance.
+A **Live Demo** (no signup required) has the full marketplace pre-installed (34 installable demo apps across the 28 catalog packs), so you can explore a working business app — and the whole platform — before running your own instance. See the [root README](../README.md#app-marketplace) for the full app catalog, screenshots, and architecture.
 
 ### Key Capabilities
 
-- **App Marketplace** -- 13 ready-made vertical business apps, each a complete working system (forms, roles, linked records, custom dashboard, demo data). Install in one click, customise, or export as a portable `.json`. Verticals: Finance OS (US), Finance OS (AU), OHS & Quality Management, HR & People Management, Event Management, Customer Service, Plumbing & Trades Field Service, Job & Invoice Management, Hair Salon & Beauty Studio, Mechanic Workshop Manager, Property Maintenance & Handyman, Clinic Appointment & Intake, Inventory & Purchase Orders.
+- **App Marketplace** -- 28 ready-made vertical business apps, each a complete working system (forms, roles, linked records, a configurable widget dashboard, demo data). Install in one click, customise, or export as a portable `.json`. Verticals span trades & field service, hospitality & food, beauty/health/fitness, retail & operations, compliance, bookings & education, billing, and finance — see the [full catalog in the root README](../README.md#app-marketplace).
+- **Configurable Dashboards** -- Every app screen (home + per-form sections) is a no-code, drag-and-drop grid of recharts widgets — KPIs, bar/line/area/pie/donut charts, record lists, activity feeds — with the query and chart type editable inline like a report.
 - **Reports & PDFs** -- Each app has a no-code Reports section: bar, line, area, pie, donut, KPI, and table charts with grouping, measures, filters, and cross-form (linked-record) joins. Compose charts and text into exportable PDF documents.
 - **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
 - **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — one engine and prelude shared by the browser and the server
@@ -200,28 +201,46 @@ Configure your web server (Apache/Nginx) to:
 - Proxy `/api/*` requests to `backend/public/index.php`
 - Or serve `backend/public/` at a subdomain (e.g., `api.example.com`)
 
+> **Production must be HTTPS.** Auth uses `Secure` cookies in production, so they will not be sent
+> over plain HTTP and login will fail. Terminate TLS either directly (as below) or at a reverse
+> proxy / load balancer, and 301-redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md).
+>
+> **Only expose two directories:** serve `ui/dist` (static SPA) and `backend/public` under `/api`.
+> **Never** let the web server reach `backend/storage` (per-form SQLite response DBs + uploads),
+> `backend/logs`, or any `.env` — those hold your data and secrets. The configs below keep the
+> document roots inside `ui/dist` / `backend/public` so the rest of the repo is not web-reachable.
+
 <details>
-<summary><strong>Example Apache VirtualHost</strong></summary>
+<summary><strong>Example Apache VirtualHost (HTTPS)</strong></summary>
 
 ```apache
+# Redirect all plain HTTP to HTTPS.
 <VirtualHost *:80>
+    ServerName formlogic.example.com
+    Redirect permanent / https://formlogic.example.com/
+</VirtualHost>
+
+<VirtualHost *:443>
     ServerName formlogic.example.com
     DocumentRoot /var/www/formlogic/ui/dist
 
-    # Frontend (SPA fallback)
+    SSLEngine on
+    SSLCertificateFile      /etc/letsencrypt/live/formlogic.example.com/fullchain.pem
+    SSLCertificateKeyFile   /etc/letsencrypt/live/formlogic.example.com/privkey.pem
+
+    # Frontend (SPA fallback) — document root is ui/dist ONLY.
     <Directory /var/www/formlogic/ui/dist>
         AllowOverride None
         FallbackResource /index.html
     </Directory>
 
-    # Backend API proxy
+    # Backend API — exposes backend/public ONLY (never backend/storage, backend/logs, or .env).
     Alias /api /var/www/formlogic/backend/public
     <Directory /var/www/formlogic/backend/public>
         AllowOverride All
         Require all granted
     </Directory>
 
-    # Rewrite /api/* to backend
     RewriteEngine On
     RewriteRule ^/api/(.*)$ /api/index.php [QSA,L]
 </VirtualHost>
@@ -230,12 +249,24 @@ Configure your web server (Apache/Nginx) to:
 </details>
 
 <details>
-<summary><strong>Example Nginx config</strong></summary>
+<summary><strong>Example Nginx config (HTTPS)</strong></summary>
 
 ```nginx
+# Redirect all plain HTTP to HTTPS.
 server {
     listen 80;
     server_name formlogic.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name formlogic.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/formlogic.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/formlogic.example.com/privkey.pem;
+
+    # Serve ui/dist ONLY (never expose backend/storage, backend/logs, or .env).
     root /var/www/formlogic/ui/dist;
     index index.html;
 
@@ -244,7 +275,7 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Backend API
+    # Backend API — backend/public ONLY.
     location /api/ {
         alias /var/www/formlogic/backend/public/;
         try_files $uri /api/index.php$is_args$args;
@@ -257,6 +288,10 @@ server {
     }
 }
 ```
+
+Behind a TLS-terminating reverse proxy or load balancer instead? Keep the server blocks on HTTP
+internally but ensure the proxy sets `X-Forwarded-Proto: https` so the app treats the request as
+secure (and still issues `Secure` cookies).
 
 </details>
 
