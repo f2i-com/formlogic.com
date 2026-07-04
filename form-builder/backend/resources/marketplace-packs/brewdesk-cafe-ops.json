@@ -2134,7 +2134,14 @@
                   "viz": "kpi",
                   "measure": {
                     "fn": "count"
-                  }
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "ne",
+                      "value": "ready"
+                    }
+                  ]
                 }
               },
               {

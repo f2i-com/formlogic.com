@@ -13,6 +13,15 @@ const fmt = (n: unknown): string => {
   return Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 };
 
+/** Compact large numbers (18.9M / 120k) so axis ticks + big KPIs don't clip/overflow; small values unchanged. */
+const fmtCompact = (n: unknown): string => {
+  const v = Number(n || 0);
+  const a = Math.abs(v);
+  if (a >= 1_000_000) return (v / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + 'M';
+  if (a >= 10_000) return Math.round(v / 1000).toLocaleString() + 'k';
+  return fmt(v);
+};
+
 /** Read the app's accent + whether we're in dark mode, so charts match the runtime theme. */
 function useChartTheme(primaryColor?: string, forceLight = false) {
   return useMemo(() => {
@@ -60,7 +69,7 @@ export function ReportResultView({ result, primaryColor, print = false, fill = f
   if (result.viz === 'kpi') {
     return (
       <div className={print ? 'py-6 text-center' : fill ? 'h-full min-h-0 flex flex-col items-center justify-center text-center' : 'py-10 text-center'}>
-        <div className="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">{fmt(result.value)}</div>
+        <div className="max-w-full truncate px-2 text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums" title={fmt(result.value)}>{fill ? fmtCompact(result.value) : fmt(result.value)}</div>
       </div>
     );
   }
@@ -116,7 +125,7 @@ export function ReportResultView({ result, primaryColor, print = false, fill = f
       <>
         <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
         <XAxis dataKey="label" tick={tick} tickLine={false} axisLine={{ stroke: t.grid }} interval="preserveStartEnd" minTickGap={20} />
-        <YAxis tick={tick} tickLine={false} axisLine={false} allowDecimals={false} width={44} tickFormatter={(v) => fmt(v)} />
+        <YAxis tick={tick} tickLine={false} axisLine={false} allowDecimals={false} width={48} tickFormatter={(v) => fmtCompact(v)} />
         <Tooltip contentStyle={t.tooltip} formatter={(v) => fmt(v)} cursor={{ stroke: t.grid }} />
       </>
     );
@@ -163,12 +172,12 @@ export function ReportResultView({ result, primaryColor, print = false, fill = f
               nameKey="label"
               cx="50%"
               cy="50%"
-              innerRadius={result.viz === 'donut' ? '55%' : 0}
-              outerRadius="82%"
+              innerRadius={result.viz === 'donut' ? '52%' : 0}
+              outerRadius="74%"
               paddingAngle={series.length > 1 ? 2 : 0}
               isAnimationActive={anim}
               animationDuration={600}
-              label={({ percent }) => (percent && percent > 0.04 ? `${Math.round(percent * 100)}%` : '')}
+              label={({ percent }) => (series.length > 1 && percent && percent > 0.05 ? `${Math.round(percent * 100)}%` : '')}
               labelLine={false}
               stroke={t.isDark ? '#0f172a' : '#ffffff'}
               strokeWidth={2}
@@ -200,12 +209,12 @@ export function ReportResultView({ result, primaryColor, print = false, fill = f
       {frame(barHeight, (
         <BarChart data={series} layout="vertical" margin={{ top: 4, right: 34, left: 4, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={t.grid} horizontal={false} />
-          <XAxis type="number" tick={tick} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v) => fmt(v)} />
+          <XAxis type="number" tick={tick} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v) => fmtCompact(v)} />
           <YAxis type="category" dataKey="label" tick={tick} tickLine={false} axisLine={false} width={labelWidth} />
           <Tooltip contentStyle={t.tooltip} formatter={(v) => fmt(v)} cursor={{ fill: t.isDark ? 'rgba(148,163,184,0.08)' : 'rgba(0,0,0,0.03)' }} />
           <Bar dataKey="value" name="Value" radius={[0, 6, 6, 0]} isAnimationActive={anim} maxBarSize={38}>
             {series.map((_, i) => <Cell key={i} fill={t.palette[i % t.palette.length]} />)}
-            <LabelList dataKey="value" position="right" formatter={(v: unknown) => fmt(v)} style={{ fontSize: 11, fill: t.axis }} />
+            <LabelList dataKey="value" position="right" formatter={(v: unknown) => fmtCompact(v)} style={{ fontSize: 11, fill: t.axis }} />
           </Bar>
         </BarChart>
       ))}

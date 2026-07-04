@@ -278,7 +278,7 @@
             },
             {
               "id": "k2",
-              "title": "Pipeline value",
+              "title": "Total deal value",
               "layout": {
                 "x": 3,
                 "y": 0,
@@ -796,7 +796,7 @@
             },
             {
               "id": "k3",
-              "title": "Pipeline value",
+              "title": "Total deal value",
               "layout": {
                 "x": 6,
                 "y": 0,

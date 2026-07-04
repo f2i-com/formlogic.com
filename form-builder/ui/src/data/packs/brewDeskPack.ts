@@ -760,7 +760,7 @@ export const brewDeskPack: PackData = {
           widgets: [
             { id: 'k1', title: 'Orders taken', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:order', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'k2', title: 'Revenue', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:order', viz: 'kpi', measure: { fn: 'sum', field: 'total' } } },
-            { id: 'k3', title: 'On the rail', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:barista-ticket', viz: 'kpi', measure: { fn: 'count' } } },
+            { id: 'k3', title: 'On the rail', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:barista-ticket', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'ne', value: 'ready' }] } },
             { id: 'k4', title: 'Stock to reorder', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:stock-item', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'ne', value: 'ok' }] } },
             { id: 'c1', title: 'Orders over time', layout: { x: 0, y: 1, w: 8, h: 3 }, kind: 'report', spec: { formId: '@pack:order', viz: 'area', groupBy: { field: '__submitted_at', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
             { id: 'ac1', title: 'Recent activity', layout: { x: 8, y: 1, w: 4, h: 3 }, kind: 'activity' },

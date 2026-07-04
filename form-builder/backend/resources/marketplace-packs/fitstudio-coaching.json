@@ -1820,7 +1820,7 @@
                   "viz": "area",
                   "groupBy": {
                     "field": "date",
-                    "bucket": "month"
+                    "bucket": "day"
                   },
                   "measure": {
                     "fn": "sum",
@@ -1834,7 +1834,7 @@
                     }
                   ],
                   "seriesSort": "label",
-                  "limit": 12
+                  "limit": 31
                 }
               },
               {
@@ -2021,7 +2021,7 @@
                   "viz": "area",
                   "groupBy": {
                     "field": "date",
-                    "bucket": "month"
+                    "bucket": "day"
                   },
                   "measure": {
                     "fn": "sum",
@@ -2035,7 +2035,7 @@
                     }
                   ],
                   "seriesSort": "label",
-                  "limit": 12
+                  "limit": 31
                 }
               },
               {

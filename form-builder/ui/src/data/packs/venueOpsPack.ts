@@ -674,7 +674,7 @@ export const venueOpsPack: PackData = {
           widgets: [
             { id: 'k1', title: 'Spaces', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:space', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'k2', title: 'Bookings', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:booking', viz: 'kpi', measure: { fn: 'count' } } },
-            { id: 'k3', title: 'Awaiting payment', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:booking', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'confirmed' }] } },
+            { id: 'k3', title: 'Awaiting payment', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'pending' }] } },
             { id: 'k4', title: 'Collected', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:payment', viz: 'kpi', measure: { fn: 'sum', field: 'amount' }, filters: [{ field: 'status', op: 'eq', value: 'paid' }] } },
             { id: 'c1', title: 'Bookings over time', layout: { x: 0, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:booking', viz: 'area', groupBy: { field: 'booking_date', bucket: 'month' }, measure: { fn: 'count' }, seriesSort: 'label', limit: 12 } },
             { id: 'c2', title: 'Bookings by space', layout: { x: 6, y: 1, w: 6, h: 3 }, kind: 'report', spec: { formId: '@pack:booking', viz: 'bar', joins: [{ via: 'space', formId: '@pack:space', type: 'left' }], groupBy: { field: '@pack:space::space_name', bucket: 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8 } },

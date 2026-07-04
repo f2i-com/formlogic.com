@@ -1513,7 +1513,7 @@
               },
               {
                 "id": "l1",
-                "title": "Recent reviews",
+                "title": "Upcoming reviews",
                 "layout": {
                   "x": 0,
                   "y": 4,
@@ -1523,8 +1523,7 @@
                 "kind": "list",
                 "list": {
                   "formId": "@pack:au-annual-review",
-                  "titleField": "current_portfolio_value",
-                  "subtitleField": "next_review_date",
+                  "titleField": "next_review_date",
                   "limit": 6
                 }
               }
@@ -1832,7 +1831,6 @@
                 "kind": "list",
                 "list": {
                   "formId": "@pack:au-fee-agreement",
-                  "titleField": "portfolio_value",
                   "subtitleField": "billing_frequency",
                   "limit": 6
                 }
@@ -4197,8 +4195,7 @@
                 "kind": "list",
                 "list": {
                   "formId": "@pack:au-annual-review",
-                  "titleField": "current_portfolio_value",
-                  "subtitleField": "next_review_date",
+                  "titleField": "next_review_date",
                   "limit": 6
                 }
               },

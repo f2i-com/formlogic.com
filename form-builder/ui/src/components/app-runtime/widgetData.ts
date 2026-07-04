@@ -39,7 +39,10 @@ export interface WidgetData {
 
 type RtField = { id: string; label?: string; type: string; properties?: { options?: Array<{ value: string; label?: string }> } };
 
-const TITLE_FIELD_TYPES = new Set(['short_text', 'email', 'phone', 'url', 'dropdown', 'long_text', 'number', 'date', 'datetime', 'time']);
+// Prefer human-readable text for a record title; only fall back to number/date when there's nothing
+// text-like (so a list/activity row never reads as a bare "4380000" or a stray date).
+const TEXT_TITLE_TYPES = ['short_text', 'email', 'phone', 'url', 'dropdown', 'long_text'];
+const FALLBACK_TITLE_TYPES = ['number', 'date', 'datetime', 'time', 'rating', 'scale'];
 
 export const fieldsOf = (form?: WidgetDataForm): RtField[] => ((form?.fields ?? []) as RtField[]);
 
@@ -58,12 +61,14 @@ export function displayAnswer(fields: RtField[], answers: Record<string, unknown
   return text;
 }
 
-/** First non-empty text-ish answer, choice values mapped to labels. */
+/** First non-empty text-like answer (choice values → labels); falls back to number/date only if none. */
 export function autoTitle(fields: RtField[], answers: Record<string, unknown>): string {
-  for (const f of fields) {
-    if (!TITLE_FIELD_TYPES.has(f.type)) continue;
-    const t = displayAnswer(fields, answers, f.id);
-    if (t) return t;
+  for (const types of [TEXT_TITLE_TYPES, FALLBACK_TITLE_TYPES]) {
+    for (const f of fields) {
+      if (!types.includes(f.type)) continue;
+      const t = displayAnswer(fields, answers, f.id);
+      if (t) return t;
+    }
   }
   return 'Untitled record';
 }

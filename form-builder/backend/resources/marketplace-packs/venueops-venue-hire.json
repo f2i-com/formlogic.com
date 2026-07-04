@@ -1975,16 +1975,17 @@
                 },
                 "kind": "report",
                 "spec": {
-                  "formId": "@pack:booking",
+                  "formId": "@pack:payment",
                   "viz": "kpi",
                   "measure": {
-                    "fn": "count"
+                    "fn": "sum",
+                    "field": "amount"
                   },
                   "filters": [
                     {
                       "field": "status",
                       "op": "eq",
-                      "value": "confirmed"
+                      "value": "pending"
                     }
                   ]
                 }
