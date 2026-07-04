@@ -129,6 +129,22 @@ class AppService
         return $stmt->fetchColumn() !== false;
     }
 
+    /**
+     * App IDs of every app that contains $formId AND in which $userId is an active member.
+     * Used to resolve the per-app, per-form permission that gates access to the form's files.
+     * @return string[]
+     */
+    public function activeAppIdsContainingForm(string $formId, string $userId): array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT af.app_id FROM app_forms af
+             JOIN app_users au ON au.app_id = af.app_id
+             WHERE af.form_id = :fid AND au.user_id = :uid AND au.status = 'active'"
+        );
+        $stmt->execute(['fid' => $formId, 'uid' => $userId]);
+        return $stmt->fetchAll(\PDO::FETCH_COLUMN) ?: [];
+    }
+
     public function getAppBySlug(string $slug): ?array
     {
         $stmt = $this->mysql->prepare("SELECT * FROM apps WHERE slug = :slug");
