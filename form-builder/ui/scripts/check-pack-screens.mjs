@@ -33,6 +33,35 @@ function checkScreen(label, cs, { isForm }) {
     fail = 1;
     return;
   }
+  // Host-rendered widget dashboards are declarative config (no user JS/CSS) — validate the widget
+  // structure + grid layout instead of the code-screen heuristics below.
+  if (cs.kind === 'dashboard') {
+    const d = cs.dashboard;
+    if (!d || !Array.isArray(d.widgets) || d.widgets.length === 0) {
+      console.error(`[${label}] dashboard has no widgets`); fail = 1; return;
+    }
+    const cols = d.cols || 12;
+    const occ = new Set();
+    for (const w of d.widgets) {
+      if (!w || !['report', 'list', 'text', 'actions', 'activity'].includes(w.kind)) {
+        console.error(`[${label}] invalid widget kind: ${w && w.kind}`); fail = 1; continue;
+      }
+      const L = w.layout || {};
+      if (![L.x, L.y, L.w, L.h].every((n) => Number.isInteger(n)) || L.x < 0 || L.y < 0 || L.w < 1 || L.h < 1 || L.x + L.w > cols) {
+        console.error(`[${label}] widget ${w.id || w.kind} layout out of bounds`); fail = 1; continue;
+      }
+      for (let yy = L.y; yy < L.y + L.h; yy++) for (let xx = L.x; xx < L.x + L.w; xx++) {
+        const k = `${xx},${yy}`;
+        if (occ.has(k)) { console.error(`[${label}] widgets overlap at cell ${k}`); fail = 1; }
+        occ.add(k);
+      }
+      if (w.kind === 'report' && (!w.spec || !w.spec.formId || !w.spec.viz)) { console.error(`[${label}] report widget ${w.id} missing spec.formId/viz`); fail = 1; }
+      if (w.kind === 'list' && (!w.list || !w.list.formId)) { console.error(`[${label}] list widget ${w.id} missing list.formId`); fail = 1; }
+      if (isForm && (w.kind === 'actions' || w.kind === 'activity')) { console.error(`[${label}] section screens can't use app-scope widget '${w.kind}'`); fail = 1; }
+    }
+    if (isForm && cs.allowNewResponses !== true) { console.error(`[${label}] allowNewResponses must be true on section screens`); fail = 1; }
+    return;
+  }
   // Multi-file TS screens (sample-app homes) compile at runtime — the js-string heuristics don't
   // apply. Run only the content policy checks over their sources.
   if (!cs.js && cs.files?.length) {

@@ -1001,23 +1001,66 @@ class AppPublicController
 
         $body = $request->getParsedBody() ?? [];
         $spec = is_array($body['spec'] ?? null) ? $body['spec'] : (is_array($body) ? $body : []);
-        $formId = (string) ($spec['formId'] ?? $body['formId'] ?? '');
+        if (!isset($spec['formId']) && isset($body['formId'])) { $spec['formId'] = $body['formId']; }
+        $r = $this->resolveAndRunSpec($app, (string) $userId, is_array($spec) ? $spec : []);
+        return $this->jsonResponse($response, $r['body'], $r['status']);
+    }
+
+    /**
+     * POST /api/app/{slug}/reports/run-batch
+     * Run several report specs in one round (one request per dashboard, not one per widget). Same
+     * permission scoping as run; a spec that fails individually yields an {error:true} entry rather
+     * than failing the whole batch, so one broken widget can't blank the dashboard.
+     */
+    public function runReportBatch(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'] ?? '';
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $body = $request->getParsedBody() ?? [];
+        $specs = is_array($body['specs'] ?? null) ? array_slice($body['specs'], 0, 40) : [];
+        $results = [];
+        foreach ($specs as $spec) {
+            if (!is_array($spec)) { $results[] = ['error' => true]; continue; }
+            $r = $this->resolveAndRunSpec($app, (string) $userId, $spec);
+            $results[] = $r['status'] === 200 ? $r['body'] : ['viz' => (string) ($spec['viz'] ?? 'kpi'), 'error' => true];
+        }
+        return $this->jsonResponse($response, ['results' => $results]);
+    }
+
+    /**
+     * Shared per-spec resolve → permission-check → join-authorise → run. Returns
+     * ['status' => int, 'body' => array] so both the single and batch endpoints reuse identical
+     * scoping (joins re-derived server-side; the spec's declared joins are never trusted).
+     */
+    private function resolveAndRunSpec(array $app, string $userId, array $spec): array
+    {
+        $formId = (string) ($spec['formId'] ?? '');
         if ($formId === '') {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'formId is required'], 400);
+            return ['status' => 400, 'body' => ['error' => true, 'message' => 'formId is required']];
         }
         if (!$this->verifyFormBelongsToApp($app['id'], $formId)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found in this app'], 404);
+            return ['status' => 404, 'body' => ['error' => true, 'message' => 'Form not found in this app']];
         }
 
         $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
         $canViewOwn = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId);
         if (!$canViewAll && !$canViewOwn) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
+            return ['status' => 403, 'body' => ['error' => true, 'message' => 'Permission denied']];
         }
 
         $form = $this->formService->getForm($formId);
         if (!$form) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found'], 404);
+            return ['status' => 404, 'body' => ['error' => true, 'message' => 'Form not found']];
         }
 
         // Resolve + authorise cross-form joins. A join is only allowed ALONG a real linked_record
@@ -1059,10 +1102,10 @@ class AppPublicController
             // Relative date filters are evaluated in the app's timezone (falls back to UTC).
             $tz = (string) ($app['settings']['timezone'] ?? 'UTC') ?: 'UTC';
             $svc = new \FormLogic\Services\ReportService($this->sqlite);
-            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', (string) $userId, $resolvedJoins, $tz);
-            return $this->jsonResponse($response, $result);
+            $result = $svc->runReport($spec, $form['fields'] ?? [], $formId, $canViewAll ? 'all' : 'own', $userId, $resolvedJoins, $tz);
+            return ['status' => 200, 'body' => $result];
         } catch (\Throwable $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to run report'], 500);
+            return ['status' => 500, 'body' => ['error' => true, 'message' => 'Failed to run report']];
         }
     }
 

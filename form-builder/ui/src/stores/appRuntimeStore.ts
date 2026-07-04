@@ -3,10 +3,13 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
-import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult } from '../types/app';
+import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
+import type { CustomScreen } from '../types/form';
 
-// Demo report authoring stays per-browser (the shared demo is read-only on the server).
+// Demo report + dashboard authoring stays per-browser (the shared demo is read-only on the server).
 const demoReportsKey = (appId: string) => `formlogic-demo-reports-${appId}`;
+const demoDashboardKey = (appId: string) => `formlogic-demo-dashboard-${appId}`;
+const demoFormDashboardKey = (formId: string) => `formlogic-demo-form-dashboard-${formId}`;
 
 interface AppRuntimeState {
   config: AppRuntimeConfig | null;
@@ -27,6 +30,8 @@ interface AppRuntimeState {
   // Response CRUD
   fetchResponses: (formId: string, options?: { limit?: number; offset?: number; resolve?: boolean }) => Promise<unknown[]>;
   fetchResponsePage: (formId: string, options: { limit: number; offset: number; search?: string; resolve?: boolean }) => Promise<{ rows: unknown[]; total: number }>;
+  /** Newest rows of a form as {id, answers, submittedAt} — demo-aware; powers dashboard list/activity widgets. */
+  fetchRecentRows: (formId: string, limit: number) => Promise<Array<{ id: string; answers: Record<string, unknown>; submittedAt: string }>>;
   createResponse: (formId: string, answers: Record<string, unknown>) => Promise<unknown>;
   updateResponse: (formId: string, responseId: string, data: Record<string, unknown>) => Promise<unknown>;
   deleteResponse: (formId: string, responseId: string) => Promise<boolean>;
@@ -36,7 +41,13 @@ interface AppRuntimeState {
 
   // Reports
   runReport: (spec: AppReportSpec) => Promise<AppReportResult | null>;
+  runReportBatch: (specs: AppReportSpec[]) => Promise<(AppReportResult | null)[]>;
   saveReports: (reports: AppReportItem[]) => Promise<boolean>;
+
+  // Dashboard (widget home screen, stored on app.customScreen)
+  saveDashboard: (screen: DashboardScreen) => Promise<boolean>;
+  // Section-screen dashboard for one form (stored on that form's customScreen)
+  saveFormDashboard: (formId: string, screen: DashboardScreen) => Promise<boolean>;
 
   // Permission helpers
   canSubmit: (formId: string) => boolean;
@@ -84,11 +95,17 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
             const perms = data.permissions as AppUserPermissions | undefined;
             const forms = (data.forms as AppRuntimeForm[]) ?? [];
             const app = data.app as AppRuntimeConfig['app'];
-            // Demo authors reports in their browser only — merge any local ones over the server set.
+            // Demo authors reports + dashboards in their browser only — merge any local ones over the server set.
             if (api.isDemoMode() && app?.id) {
               try {
                 const raw = localStorage.getItem(demoReportsKey(app.id));
                 if (raw) { app.reports = JSON.parse(raw) as AppReportItem[]; }
+                const dash = localStorage.getItem(demoDashboardKey(app.id));
+                if (dash) { app.customScreen = JSON.parse(dash) as CustomScreen; }
+                for (const f of forms) {
+                  const fd = localStorage.getItem(demoFormDashboardKey(f.formId));
+                  if (fd) { f.customScreen = JSON.parse(fd) as CustomScreen; }
+                }
               } catch { /* ignore */ }
             }
             const config: AppRuntimeConfig = {
@@ -147,6 +164,18 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         return { rows: result.data?.responses ?? [], total: result.data?.total ?? 0 };
       },
 
+      fetchRecentRows: async (formId, limit) => {
+        const map = (r: Record<string, unknown>) => ({ id: String(r.id ?? ''), answers: (r.answers as Record<string, unknown>) ?? {}, submittedAt: String(r.submittedAt ?? '') });
+        try {
+          if (!api.isDemoMode()) {
+            const { rows } = await get().fetchResponsePage(formId, { limit, offset: 0 });
+            return (rows as Record<string, unknown>[]).map(map);
+          }
+          const rows = (await get().fetchResponses(formId, { limit })) as Record<string, unknown>[];
+          return rows.map(map);
+        } catch { return []; }
+      },
+
       createResponse: async (formId, answers) => {
         const slug = get().appSlug;
         if (!slug) throw new Error('App not initialized');
@@ -194,6 +223,16 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         return result.data ?? null;
       },
 
+      runReportBatch: async (specs) => {
+        const slug = get().appSlug;
+        if (!slug || specs.length === 0) return specs.map(() => null);
+        const result = await api.runReportBatch(slug, specs as unknown as Record<string, unknown>[]);
+        if (result.error || !result.data) return specs.map(() => null);
+        const arr = result.data.results ?? [];
+        // A per-spec {error:true} entry (one broken widget) maps to null, not a thrown batch.
+        return specs.map((_, i) => { const r = arr[i]; return r && !r.error ? r : null; });
+      },
+
       saveReports: async (reports) => {
         const cfg = get().config;
         if (!cfg) return false;
@@ -206,6 +245,38 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         }
         const r = await api.updateApp(cfg.app.id, { reports });
         if (r.error) { toast.error('Failed to save report', typeof r.error === 'string' ? r.error : undefined); return false; }
+        return true;
+      },
+
+      saveDashboard: async (screen) => {
+        const cfg = get().config;
+        if (!cfg) return false;
+        const existing = cfg.app.customScreen ?? {};
+        const customScreen: CustomScreen = { ...existing, enabled: true, kind: 'dashboard', dashboard: screen };
+        // Optimistic: reflect immediately so the home re-renders with the saved layout.
+        set({ config: { ...cfg, app: { ...cfg.app, customScreen } } });
+        if (api.isDemoMode()) {
+          try { localStorage.setItem(demoDashboardKey(cfg.app.id), JSON.stringify(customScreen)); } catch { /* ignore */ }
+          return true;
+        }
+        const r = await api.updateApp(cfg.app.id, { customScreen });
+        if (r.error) { toast.error('Failed to save dashboard', typeof r.error === 'string' ? r.error : undefined); return false; }
+        return true;
+      },
+
+      saveFormDashboard: async (formId, screen) => {
+        const cfg = get().config;
+        if (!cfg) return false;
+        const existing = (cfg.forms.find((f) => f.formId === formId)?.customScreen ?? {}) as CustomScreen;
+        const customScreen: CustomScreen = { ...existing, enabled: true, kind: 'dashboard', dashboard: screen };
+        // Optimistic: update this form's section screen in the runtime config.
+        set({ config: { ...cfg, forms: cfg.forms.map((f) => (f.formId === formId ? { ...f, customScreen } : f)) } });
+        if (api.isDemoMode()) {
+          try { localStorage.setItem(demoFormDashboardKey(formId), JSON.stringify(customScreen)); } catch { /* ignore */ }
+          return true;
+        }
+        const r = await api.updateForm(formId, { customScreen } as unknown as Record<string, unknown>);
+        if (r.error) { toast.error('Failed to save section screen', typeof r.error === 'string' ? r.error : undefined); return false; }
         return true;
       },
 

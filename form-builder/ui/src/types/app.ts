@@ -114,6 +114,46 @@ export interface AppReportResult {
   value?: number;
 }
 
+// ── Configurable dashboards (host-rendered widget grids) ──────────────────────
+// A dashboard is a declarative grid of widgets rendered natively with recharts
+// (NOT sandboxed user code). It is stored on customScreen.dashboard when
+// customScreen.kind === 'dashboard', on both apps (home/Dashboard) and forms
+// (section screens). Chart/number/table widgets reuse the Reports engine verbatim
+// (AppReportSpec → runReport → ReportResultView).
+
+/** Grid placement for a widget: 12-column grid; h is in row units (~120px each). */
+export interface WidgetLayout {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export type DashboardWidgetKind = 'report' | 'list' | 'text' | 'actions' | 'activity';
+
+/** A single tile on a configurable dashboard. */
+export interface DashboardWidget {
+  id: string;
+  title?: string;
+  layout: WidgetLayout;
+  kind: DashboardWidgetKind;
+  /** kind 'report' — the no-code query + chart type (any AppReportSpec viz). */
+  spec?: AppReportSpec;
+  /** kind 'list' — a compact recent-records list from one form. */
+  list?: { formId: string; titleField?: string; subtitleField?: string; limit?: number };
+  /** kind 'text' — a static note / section heading. */
+  text?: { body: string };
+  // kind 'actions' | 'activity' — app-scope built-ins derived from the app (no extra config).
+}
+
+/** A declarative dashboard stored on customScreen.dashboard (host-rendered, no sandbox). */
+export interface DashboardScreen {
+  version: 1;
+  /** Grid column count (default 12). */
+  cols?: number;
+  widgets: DashboardWidget[];
+}
+
 export interface AppForm {
   id: string;
   appId: string;

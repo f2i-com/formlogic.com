@@ -49,15 +49,17 @@ interface Props {
   primaryColor?: string;
   /** Print mode: fixed dimensions + no animation, so charts are fully drawn before window.print(). */
   print?: boolean;
+  /** Fill the parent's height (for fixed-size dashboard widget cells) instead of the intrinsic chart height. */
+  fill?: boolean;
 }
 
-export function ReportResultView({ result, primaryColor, print = false }: Props) {
+export function ReportResultView({ result, primaryColor, print = false, fill = false }: Props) {
   const t = useChartTheme(primaryColor, print);
 
   // KPI ─────────────────────────────────────────────
   if (result.viz === 'kpi') {
     return (
-      <div className={print ? 'py-6 text-center' : 'py-10 text-center'}>
+      <div className={print ? 'py-6 text-center' : fill ? 'h-full min-h-0 flex flex-col items-center justify-center text-center' : 'py-10 text-center'}>
         <div className="text-5xl sm:text-6xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">{fmt(result.value)}</div>
       </div>
     );
@@ -69,7 +71,7 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
     const rows = result.rows ?? [];
     if (rows.length === 0) return <EmptyResult />;
     return (
-      <div className={print ? '' : 'overflow-x-auto -mx-1 px-1'}>
+      <div className={print ? '' : fill ? 'overflow-auto h-full min-h-0 -mx-1 px-1' : 'overflow-x-auto -mx-1 px-1'}>
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="border-b-2 border-gray-200 dark:border-slate-700">
@@ -96,11 +98,14 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
   const series = (result.series ?? []).map((s) => ({ ...s, label: s.label || '—' }));
   if (series.length === 0) return <EmptyResult />;
 
-  // Wrap a chart either in a ResponsiveContainer (screen) or fixed dims (print).
+  // Wrap a chart in fixed dims (print), fill-parent (dashboard widget), or intrinsic height (screen).
   const frame = (height: number, chart: ReactElement) =>
     print
       ? <div style={{ width: PRINT_WIDTH, height }}>{cloneElement(chart as ReactElement<{ width?: number; height?: number }>, { width: PRINT_WIDTH, height })}</div>
-      : <ResponsiveContainer width="100%" height={height}>{chart}</ResponsiveContainer>;
+      : fill
+        ? <ResponsiveContainer width="100%" height="100%">{chart}</ResponsiveContainer>
+        : <ResponsiveContainer width="100%" height={height}>{chart}</ResponsiveContainer>;
+  const chartWrap = print ? '' : fill ? 'h-full min-h-0' : 'py-1';
 
   const anim = !print;
   const tick = { fontSize: 12, fill: t.axis };
@@ -116,7 +121,7 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
       </>
     );
     return (
-      <div className={print ? '' : 'py-1'}>
+      <div className={chartWrap}>
         {result.viz === 'area'
           ? frame(height, (
             <AreaChart data={series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -148,7 +153,8 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
     const legendText = print ? 'text-gray-700' : 'text-gray-600 dark:text-slate-300';
     const legendValue = print ? 'text-gray-500' : 'text-gray-400 dark:text-slate-500';
     return (
-      <div className={print ? '' : 'py-1'}>
+      <div className={fill ? 'h-full min-h-0 flex flex-col py-1' : chartWrap}>
+        <div className={fill ? 'flex-1 min-h-0' : ''}>
         {frame(height, (
           <PieChart margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
             <Pie
@@ -172,7 +178,8 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
             <Tooltip contentStyle={t.tooltip} formatter={(v) => `${fmt(v)} · ${Math.round((Number(v) / total) * 100)}%`} />
           </PieChart>
         ))}
-        <ul className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5" style={print ? { maxWidth: PRINT_WIDTH } : undefined}>
+        </div>
+        <ul className={`mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1.5${fill ? ' shrink-0 overflow-auto max-h-20' : ''}`} style={print ? { maxWidth: PRINT_WIDTH } : undefined}>
           {series.map((s, i) => (
             <li key={s.label + i} className="inline-flex items-center gap-1.5 text-xs">
               <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ backgroundColor: t.palette[i % t.palette.length] }} />
@@ -189,7 +196,7 @@ export function ReportResultView({ result, primaryColor, print = false }: Props)
   const barHeight = Math.max(140, Math.min(series.length * 40 + 24, 520));
   const labelWidth = print ? 130 : Math.min(140, Math.max(70, ...series.map((s) => s.label.length * 6.5)));
   return (
-    <div className={print ? '' : 'py-1'}>
+    <div className={chartWrap}>
       {frame(barHeight, (
         <BarChart data={series} layout="vertical" margin={{ top: 4, right: 34, left: 4, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={t.grid} horizontal={false} />

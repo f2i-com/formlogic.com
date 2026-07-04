@@ -223,8 +223,8 @@ foreach ($sources as $s) {
     if ($packs->isCatalogPackInstalled($catalogId, $demoId)) {
         // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
         // re-authoring dashboards) without wiping the seeded response data.
-        $updated = refreshDemoScreens($pdo, $demoId, $s['pack']);
-        $updatedForms = refreshDemoFormScreens($pdo, $demoId, $catalogId, $s['pack']);
+        $updated = refreshDemoScreens($pdo, $packs, $demoId, $s['pack']);
+        $updatedForms = refreshDemoFormScreens($pdo, $packs, $demoId, $catalogId, $s['pack']);
         $syncedReq = syncDemoFormFieldRequired($pdo, $sqlite, $demoId, $catalogId, $s['pack']);
         out("  demo: already installed (refreshed $updated app screen(s), $updatedForms form screen(s), synced $syncedReq field flag(s))");
         continue;
@@ -390,8 +390,13 @@ if (!empty($GLOBALS['demoDataChanged'])) {
 out("\nDone. Demo apps: " . count($apps->getAllApps($demoId)));
 
 /** Update the demo apps' custom screens to match the pack (by app name), without touching data. */
-function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
+function refreshDemoScreens(PDO $pdo, PackService $packs, string $demoId, array $pack): int
 {
+    // packFormId => form title (to remap @pack: refs in a widget dashboard to installed form ids).
+    $titleByPackForm = [];
+    foreach ($pack['forms'] ?? [] as $pf) {
+        if (!empty($pf['packFormId'])) { $titleByPackForm[$pf['packFormId']] = $pf['title'] ?? ''; }
+    }
     $n = 0;
     foreach ($pack['apps'] ?? [] as $app) {
         $cs = $app['customScreen'] ?? null;
@@ -399,9 +404,21 @@ function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
         if (!$cs || !$name) {
             continue;
         }
-        $stmt = $pdo->prepare("UPDATE apps SET custom_screen = ? WHERE owner_id = ? AND name = ?");
-        $stmt->execute([json_encode($cs), $demoId, $name]);
-        $n += $stmt->rowCount();
+        $sel = $pdo->prepare("SELECT id FROM apps WHERE owner_id = ? AND name = ?");
+        $sel->execute([$demoId, $name]);
+        foreach ($sel->fetchAll(PDO::FETCH_COLUMN) as $appId) {
+            $csOut = $cs;
+            if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null)) {
+                $rows = $pdo->query("SELECT f.id, f.title FROM app_forms af JOIN forms f ON f.id = af.form_id WHERE af.app_id = " . $pdo->quote((string) $appId))->fetchAll(PDO::FETCH_ASSOC);
+                $idByTitle = [];
+                foreach ($rows as $r) { $idByTitle[$r['title']] = $r['id']; }
+                $formIdMap = [];
+                foreach ($titleByPackForm as $pfid => $t) { if ($t !== '' && isset($idByTitle[$t])) { $formIdMap[$pfid] = $idByTitle[$t]; } }
+                $csOut['dashboard'] = $packs->resolvePackDashboard($cs['dashboard'], $formIdMap);
+            }
+            $pdo->prepare("UPDATE apps SET custom_screen = ? WHERE id = ?")->execute([json_encode($csOut), (string) $appId]);
+            $n++;
+        }
         // Also sync the pack-authored app icon (settings.icon) onto already-installed demo apps —
         // installs copy settings once, so icon additions would otherwise never reach the demo.
         $icon = is_array($app['settings'] ?? null) ? ($app['settings']['icon'] ?? null) : null;
@@ -429,13 +446,15 @@ function refreshDemoScreens(PDO $pdo, string $demoId, array $pack): int
  * titles repeat across packs ("Document Vault" ships in both Finance OS packs), so a global
  * title match would cross-contaminate.
  */
-function refreshDemoFormScreens(PDO $pdo, string $demoId, string $catalogId, array $pack): int
+function refreshDemoFormScreens(PDO $pdo, PackService $packs, string $demoId, string $catalogId, array $pack): int
 {
     $byTitle = [];
+    $titleByPackForm = [];
     foreach ($pack['forms'] ?? [] as $pf) {
         if (!empty($pf['customScreen']) && !empty($pf['title'])) {
             $byTitle[(string) $pf['title']] = $pf['customScreen'];
         }
+        if (!empty($pf['packFormId'])) { $titleByPackForm[$pf['packFormId']] = (string) ($pf['title'] ?? ''); }
     }
     if (!$byTitle) {
         return 0;
@@ -449,11 +468,20 @@ function refreshDemoFormScreens(PDO $pdo, string $demoId, string $catalogId, arr
     $in = implode(',', array_fill(0, count($formIds), '?'));
     $sel = $pdo->prepare("SELECT id, title FROM forms WHERE user_id = ? AND id IN ($in)");
     $sel->execute(array_merge([$demoId], $formIds));
+    $installed = $sel->fetchAll(PDO::FETCH_ASSOC);
+    // packFormId => installed form id (title-matched within this pack's install) for dashboard remaps.
+    $idByTitle = [];
+    foreach ($installed as $row) { $idByTitle[(string) $row['title']] = $row['id']; }
+    $formIdMap = [];
+    foreach ($titleByPackForm as $pfid => $t) { if ($t !== '' && isset($idByTitle[$t])) { $formIdMap[$pfid] = $idByTitle[$t]; } }
     $n = 0;
-    foreach ($sel->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    foreach ($installed as $row) {
         $cs = $byTitle[(string) $row['title']] ?? null;
         if ($cs === null) {
             continue;
+        }
+        if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null)) {
+            $cs['dashboard'] = $packs->resolvePackDashboard($cs['dashboard'], $formIdMap);
         }
         $upd = $pdo->prepare("UPDATE forms SET custom_screen = ? WHERE id = ?");
         $upd->execute([json_encode($cs), $row['id']]);

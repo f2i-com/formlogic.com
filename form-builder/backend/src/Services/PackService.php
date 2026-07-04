@@ -96,7 +96,7 @@ class PackService
                     'settings' => $importSettings,
                     'theme' => $packForm['theme'] ?? [],
                     'logicScript' => $packForm['logicScript'] ?? null,
-                    'customScreen' => !empty($packForm['customScreen']) ? $packForm['customScreen'] : null,
+                    'customScreen' => $this->resolveCustomScreen($packForm['customScreen'] ?? null, $formIdMap),
                     'icon' => $packForm['icon'] ?? null,
                     'fields' => $fields,
                 ];
@@ -141,7 +141,7 @@ class PackService
                     'theme' => $packApp['theme'] ?? [],
                     'logoUrl' => $packApp['logoUrl'] ?? null,
                     'navConfig' => $navConfig,
-                    'customScreen' => !empty($packApp['customScreen']) ? $packApp['customScreen'] : null,
+                    'customScreen' => $this->resolveCustomScreen($packApp['customScreen'] ?? null, $formIdMap),
                 ];
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
@@ -338,7 +338,7 @@ class PackService
                 $entry['logicScript'] = $form['logicScript'];
             }
             if (!empty($form['customScreen'])) {
-                $entry['customScreen'] = $form['customScreen'];
+                $entry['customScreen'] = $this->packifyCustomScreen($form['customScreen'], $realToPackKey);
             }
             $packForms[] = $entry;
         }
@@ -433,7 +433,7 @@ class PackService
             'roles' => $packRoles,
         ];
         if (!empty($app['customScreen'])) {
-            $packApp['customScreen'] = $app['customScreen'];
+            $packApp['customScreen'] = $this->packifyCustomScreen($app['customScreen'], $realToPackKey);
         }
         // Reports (charts + PDF documents): rewrite real form ids → @pack: refs so they round-trip.
         if (!empty($app['reports']) && is_array($app['reports'])) {
@@ -1067,6 +1067,152 @@ class PackService
             $out[] = ['id' => $id, 'name' => $r['name'] ?? 'Report', 'description' => $r['description'] ?? null, 'type' => 'builder', 'spec' => $ns];
         }
         return $out;
+    }
+
+    /**
+     * Resolve @pack: refs in ONE report/widget spec → real ids. Returns null if the base form (or a
+     * declared join / required field ref) can't be resolved. Mirrors the chart branch of
+     * resolvePackReports so widget-dashboard specs remap identically.
+     */
+    private function resolveSpecRefs(array $spec, callable $resolveForm, callable $resolveFieldRef): ?array
+    {
+        $base = $resolveForm($spec['formId'] ?? null);
+        if ($base === null) { return null; }
+        $ns = ['formId' => $base, 'viz' => in_array($spec['viz'] ?? '', ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'], true) ? $spec['viz'] : 'bar'];
+        if (!empty($spec['joins'])) {
+            $joins = [];
+            foreach ($spec['joins'] as $j) {
+                $jf = $resolveForm($j['formId'] ?? null);
+                if ($jf === null) { return null; }
+                $joins[] = ['via' => (string) ($j['via'] ?? ''), 'formId' => $jf, 'type' => ($j['type'] ?? 'left') === 'inner' ? 'inner' : 'left'];
+            }
+            $ns['joins'] = $joins;
+        }
+        if (!empty($spec['groupBy']['field'])) {
+            $gf = $resolveFieldRef($spec['groupBy']['field']);
+            if ($gf === null) { return null; }
+            $ns['groupBy'] = ['field' => $gf];
+            if (!empty($spec['groupBy']['bucket'])) { $ns['groupBy']['bucket'] = $spec['groupBy']['bucket']; }
+        }
+        if (!empty($spec['measure'])) {
+            $m = $spec['measure'];
+            if (isset($m['field'])) { $mf = $resolveFieldRef($m['field']); if ($mf === null) { return null; } $m['field'] = $mf; }
+            $ns['measure'] = $m;
+        }
+        if (!empty($spec['filters'])) {
+            $filters = [];
+            foreach ($spec['filters'] as $f) {
+                $ff = $resolveFieldRef($f['field'] ?? null);
+                if ($ff === null) { continue; }
+                $filters[] = ['field' => $ff, 'op' => (string) ($f['op'] ?? 'eq'), 'value' => (string) ($f['value'] ?? '')];
+            }
+            if ($filters) { $ns['filters'] = $filters; }
+        }
+        if (!empty($spec['columns'])) {
+            $cols = [];
+            foreach ($spec['columns'] as $c) { $cf = $resolveFieldRef($c); if ($cf !== null) { $cols[] = $cf; } }
+            if ($cols) { $ns['columns'] = $cols; }
+        }
+        if (!empty($spec['seriesSort'])) { $ns['seriesSort'] = $spec['seriesSort']; }
+        if (isset($spec['sort'])) {
+            if (is_string($spec['sort'])) { $ns['sort'] = $spec['sort']; }
+            elseif (is_array($spec['sort']) && isset($spec['sort']['by'])) {
+                $sb = $resolveFieldRef($spec['sort']['by']);
+                if ($sb !== null) { $ns['sort'] = ['by' => $sb, 'dir' => ($spec['sort']['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc']; }
+            }
+        }
+        if (!empty($spec['having']) && is_array($spec['having']) && isset($spec['having']['op'])) {
+            $ns['having'] = ['op' => (string) $spec['having']['op'], 'value' => $spec['having']['value'] ?? 0];
+        }
+        if (isset($spec['limit'])) { $ns['limit'] = (int) $spec['limit']; }
+        return $ns;
+    }
+
+    /** Resolve @pack: refs inside a widget-dashboard config → real ids (install/refresh side). */
+    public function resolvePackDashboard(array $dashboard, array $formIdMap): array
+    {
+        $resolveForm = static function (mixed $ref) use ($formIdMap): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (str_starts_with($ref, '@pack:')) { return $formIdMap[substr($ref, 6)] ?? null; }
+            return $ref; // already a real id (defensive)
+        };
+        $resolveFieldRef = static function (mixed $ref) use ($formIdMap): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (!str_contains($ref, '::')) { return $ref; }
+            [$fp, $fid] = explode('::', $ref, 2);
+            if (!str_starts_with($fp, '@pack:')) { return $ref; }
+            $id = $formIdMap[substr($fp, 6)] ?? null;
+            return $id !== null ? $id . '::' . $fid : null;
+        };
+        $widgets = [];
+        foreach ($dashboard['widgets'] ?? [] as $w) {
+            if (!is_array($w)) { continue; }
+            $kind = $w['kind'] ?? '';
+            if ($kind === 'report' && is_array($w['spec'] ?? null)) {
+                $ns = $this->resolveSpecRefs($w['spec'], $resolveForm, $resolveFieldRef);
+                if ($ns === null) { continue; }
+                $w['spec'] = $ns;
+            } elseif ($kind === 'list' && is_array($w['list'] ?? null)) {
+                $lf = $resolveForm($w['list']['formId'] ?? null);
+                if ($lf === null) { continue; }
+                $w['list']['formId'] = $lf;
+            }
+            $widgets[] = $w;
+        }
+        return ['version' => 1, 'cols' => (int) ($dashboard['cols'] ?? 12), 'widgets' => array_values($widgets)];
+    }
+
+    /** Resolve @pack: refs in a customScreen (only widget dashboards carry them). */
+    private function resolveCustomScreen(?array $cs, array $formIdMap): ?array
+    {
+        if (empty($cs)) { return null; }
+        if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null)) {
+            $cs['dashboard'] = $this->resolvePackDashboard($cs['dashboard'], $formIdMap);
+        }
+        return $cs;
+    }
+
+    /** Inverse of resolvePackDashboard: rewrite real form ids in a dashboard → @pack: refs for export. */
+    private function packifyDashboard(array $dashboard, array $realToPackKey): array
+    {
+        $packForm = static function (mixed $ref) use ($realToPackKey): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (str_starts_with($ref, '@pack:')) { return $ref; }
+            return isset($realToPackKey[$ref]) ? '@pack:' . $realToPackKey[$ref] : null;
+        };
+        $packFieldRef = static function (mixed $ref) use ($realToPackKey): ?string {
+            if (!is_string($ref) || $ref === '') { return null; }
+            if (!str_contains($ref, '::')) { return $ref; }
+            [$f0, $fid] = explode('::', $ref, 2);
+            if (str_starts_with($f0, '@pack:')) { return $ref; }
+            return isset($realToPackKey[$f0]) ? '@pack:' . $realToPackKey[$f0] . '::' . $fid : null;
+        };
+        $widgets = [];
+        foreach ($dashboard['widgets'] ?? [] as $w) {
+            if (!is_array($w)) { continue; }
+            $kind = $w['kind'] ?? '';
+            if ($kind === 'report' && is_array($w['spec'] ?? null)) {
+                $ns = $this->resolveSpecRefs($w['spec'], $packForm, $packFieldRef);
+                if ($ns === null) { continue; } // form outside the exported app → drop (never leak a UUID)
+                $w['spec'] = $ns;
+            } elseif ($kind === 'list' && is_array($w['list'] ?? null)) {
+                $lf = $packForm($w['list']['formId'] ?? null);
+                if ($lf === null) { continue; }
+                $w['list']['formId'] = $lf;
+            }
+            $widgets[] = $w;
+        }
+        return ['version' => 1, 'cols' => (int) ($dashboard['cols'] ?? 12), 'widgets' => array_values($widgets)];
+    }
+
+    /** Packify a customScreen for export (only widget dashboards carry form refs to rewrite). */
+    private function packifyCustomScreen(?array $cs, array $realToPackKey): ?array
+    {
+        if (empty($cs)) { return null; }
+        if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null)) {
+            $cs['dashboard'] = $this->packifyDashboard($cs['dashboard'], $realToPackKey);
+        }
+        return $cs;
     }
 
     /**

@@ -1,20 +1,24 @@
 import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
-import { AppDashboard } from './AppDashboard';
+import { AppDashboardHome } from './AppDashboardHome';
 
 /**
- * The app's landing page. If the app has an enabled custom home screen, render it (sandboxed,
- * app-context SDK); otherwise fall back to the default dashboard. The shell's nav remains as an
- * escape hatch, and the screen can navigate via FormLogic.navigate(formId).
+ * The app's landing page. A sandboxed custom code screen takes over when present; otherwise the home
+ * is a configurable widget dashboard (or the built-in pulse when empty), with an owner edit button.
+ * The shell's nav remains as an escape hatch; code screens navigate via FormLogic.navigate(formId).
  */
 export function AppHomeScreen() {
   const navigate = useNavigate();
   const config = useAppRuntimeStore((s) => s.config);
   const cs = config?.app?.customScreen;
 
-  if (!config || !cs?.enabled || !(cs.html || cs.js || cs.ts || cs.files?.length)) {
-    return <AppDashboard />;
+  if (!config) return null;
+
+  // A sandboxed code home screen (edited in the Studio) takes over; everything else is a dashboard.
+  const isCodeScreen = cs?.enabled && cs.kind !== 'dashboard' && (cs.html || cs.js || cs.ts || cs.files?.length);
+  if (!isCodeScreen) {
+    return <AppDashboardHome dashboard={cs?.kind === 'dashboard' ? cs.dashboard : undefined} />;
   }
 
   return (

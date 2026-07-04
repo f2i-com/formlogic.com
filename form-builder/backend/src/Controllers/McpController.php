@@ -491,7 +491,7 @@ class McpController
             if (!is_array($args['customScreen'])) {
                 throw new \Exception('customScreen must be an object');
             }
-            $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields'];
+            $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard'];
             $unknown = array_diff(array_keys($args['customScreen']), $allowed);
             if (!empty($unknown)) {
                 throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown));

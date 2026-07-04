@@ -14,6 +14,7 @@ import { useAuthStore } from '../stores/authStore';
 import { api, type LinkedRecord } from '../lib/api';
 import { LinkedRecordInput } from '../components/app-runtime/LinkedRecordInput';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
+import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { logger } from '../lib/logger';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
@@ -1032,6 +1033,40 @@ export default function FormResponse() {
           <Button onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
             Try again
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // A section-screen widget dashboard takes over the public/embed view (host-rendered recharts;
+  // aggregates come from the whitelisted public endpoint).
+  if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard && !showFormView) {
+    const allowNew = !!form.customScreen?.allowNewResponses;
+    return (
+      <div className="relative min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
+        <div className="max-w-6xl mx-auto">
+          {allowNew && (
+            <div className="mb-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowFormView(true)}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+              >
+                <Plus className="h-4 w-4" />
+                New response
+              </button>
+            </div>
+          )}
+          <FormWidgetDashboard
+            dashboard={form.customScreen.dashboard}
+            formId={form.id}
+            fields={form.fields}
+            formTitle={form.title}
+            publicMode={!api.isAuthenticated()}
+            accent={form.theme.primaryColor}
+            onOpenForm={allowNew ? () => setShowFormView(true) : undefined}
+          />
         </div>
       </div>
     );

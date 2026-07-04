@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { AppSectionDashboard } from './AppSectionDashboard';
 
 // Foreground for text/icons on a solid fill of `c`. When the form sets its own theme
 // color we derive contrast from THAT hex; otherwise fall back to the app's
@@ -969,6 +970,22 @@ export function AppFormView() {
         </div>
       </div>
     );
+  }
+
+  // A section-screen widget dashboard (host-rendered recharts, app-scoped data) takes over the form
+  // view, just like a sandboxed screen — unless the viewer stepped through to the real form.
+  {
+    const cs = form?.customScreen as (CustomScreen | undefined);
+    if (cs?.enabled && cs.kind === 'dashboard' && cs.dashboard && !showFormView) {
+      return (
+        <AppSectionDashboard
+          formId={formId}
+          dashboard={cs.dashboard}
+          allowNew={!!cs.allowNewResponses && canSubmit(formId)}
+          onNew={() => setShowFormView(true)}
+        />
+      );
+    }
   }
 
   // A form's custom screen takes over its view in the app runtime too (SDK routed through the app

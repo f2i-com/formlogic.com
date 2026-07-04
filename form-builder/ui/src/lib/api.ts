@@ -1015,6 +1015,30 @@ class ApiClient {
     });
   }
 
+  /** Run several report specs in one round (a widget dashboard fetches all charts at once). */
+  async runReportBatch(slug: string, specs: Record<string, unknown>[]): Promise<ApiResponse<{ results: Array<import('../types/app').AppReportResult & { error?: boolean }> }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/reports/run-batch`, {
+      method: 'POST',
+      body: JSON.stringify({ specs }),
+    });
+  }
+
+  /** Owner-scoped report for a form section-screen dashboard (builder preview / play / standalone form). */
+  async runFormReport(formId: string, spec: Record<string, unknown>): Promise<ApiResponse<import('../types/app').AppReportResult>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/reports/run`, { method: 'POST', body: JSON.stringify({ spec }) });
+  }
+  async runFormReportBatch(formId: string, specs: Record<string, unknown>[]): Promise<ApiResponse<{ results: Array<import('../types/app').AppReportResult & { error?: boolean }> }>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/reports/run-batch`, { method: 'POST', body: JSON.stringify({ specs }) });
+  }
+
+  /** Anonymous public-link report for a section-screen dashboard (whitelisted fields only, no joins). */
+  async runPublicFormReport(formId: string, spec: Record<string, unknown>): Promise<ApiResponse<import('../types/app').AppReportResult>> {
+    return this.request(`/public/forms/${encodeURIComponent(formId)}/reports/run`, { method: 'POST', body: JSON.stringify({ spec }) });
+  }
+  async runPublicFormReportBatch(formId: string, specs: Record<string, unknown>[]): Promise<ApiResponse<{ results: Array<import('../types/app').AppReportResult & { error?: boolean }> }>> {
+    return this.request(`/public/forms/${encodeURIComponent(formId)}/reports/run-batch`, { method: 'POST', body: JSON.stringify({ specs }) });
+  }
+
   async lookupOwnedRecords(
     formId: string,
     options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] }

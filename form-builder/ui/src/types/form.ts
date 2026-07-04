@@ -1,3 +1,5 @@
+import type { DashboardScreen } from './app';
+
 export type FieldType =
   | 'short_text'
   | 'long_text'
@@ -132,6 +134,10 @@ export interface CustomScreen {
   /** When true, viewers can still open the real form while the screen is shown — the runtime
    *  overlays a "New record" button and the screen may call FormLogic.openForm(). */
   allowNewResponses?: boolean;
+  /** Screen mode: 'code' = sandboxed HTML/CSS/JS (default), 'dashboard' = host-rendered widget grid. */
+  kind?: 'code' | 'dashboard';
+  /** Declarative widget dashboard (host-rendered recharts). Present when kind === 'dashboard'. */
+  dashboard?: DashboardScreen;
 }
 
 export interface Form {

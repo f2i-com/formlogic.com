@@ -3,7 +3,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Loader2, Plus, X, BarChart3, LineChart, AreaChart, PieChart, CircleDot, Hash, Table2 } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import type { AppReport, AppReportSpec, AppReportResult, ReportViz } from '../../types/app';
+import type { AppReport, AppReportSpec, AppReportResult, ReportViz, AppRuntimeForm } from '../../types/app';
 import { ReportResultView } from './ReportResultView';
 
 type Field = { id: string; label: string; type: string; properties?: { options?: Array<{ value: string; label?: string }>; targetFormId?: string; allowMultiple?: boolean } };
@@ -54,10 +54,21 @@ const NO_VALUE_OPS = ['empty', 'notempty', 'this_month', 'this_year', 'today'];
 
 const uid = () => 'rep_' + Math.random().toString(36).slice(2, 10);
 
-/** No-code report builder. Live-previews as you change controls; saves a builder-type report. */
-export function ReportBuilder({ report, onClose, onSave }: { report: AppReport | null; onClose: () => void; onSave: (r: AppReport) => void }) {
-  const { config, runReport } = useAppRuntimeStore();
-  const forms = useMemo(() => config?.forms ?? [], [config]);
+/**
+ * No-code report builder. Live-previews as you change controls; saves a builder-type report.
+ * Defaults to the app-runtime store, but `forms`/`runReport` can be injected so the same editor drives
+ * form-scoped and public dashboards (Phase 3) — nothing here is app-specific beyond those two deps.
+ */
+export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runReport: runReportProp }: {
+  report: AppReport | null;
+  onClose: () => void;
+  onSave: (r: AppReport) => void;
+  forms?: AppRuntimeForm[];
+  runReport?: (spec: AppReportSpec) => Promise<AppReportResult | null>;
+}) {
+  const store = useAppRuntimeStore();
+  const forms = useMemo(() => formsProp ?? store.config?.forms ?? [], [formsProp, store.config]);
+  const runReport = runReportProp ?? store.runReport;
 
   const initSpec = report?.spec;
   const [name, setName] = useState(report?.name ?? '');

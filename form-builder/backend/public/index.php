@@ -216,7 +216,8 @@ $container->set(FormController::class, function (Container $c) {
         $c->get(LoggerInterface::class),
         $c->get(FormVersionService::class),
         $c->get(AuditService::class),
-        $c->get(\FormLogic\Services\PlanService::class)
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\AppReportService::class)
     );
 });
 
@@ -446,6 +447,16 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(ResponseService::class),
         $c->get(MySQLConnection::class),
         $c->get(SQLiteConnection::class)
+    );
+});
+
+// Form-scoped report execution (section-screen widget dashboards outside the app runtime).
+$container->set(\FormLogic\Controllers\FormReportController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FormReportController(
+        $c->get(FormService::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AppReportService::class)
     );
 });
 
@@ -814,6 +825,15 @@ $app->get('/api/forms/{formId}/lookup', function ($request, $response) use ($con
     return $container->get(ResponseController::class)->lookupOwnedRecords($request, $response, $getArgs($request));
 })->add($authRequired);
 
+// Owner-scoped report execution — powers form section-screen widget dashboards in the builder
+// preview / play route / standalone (non-app) forms. Read-only; the owner sees all their responses.
+$app->post('/api/forms/{id}/reports/run', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FormReportController::class)->runOwner($request, $response, $getArgs($request));
+})->add($authRequired);
+$app->post('/api/forms/{id}/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FormReportController::class)->runOwnerBatch($request, $response, $getArgs($request));
+})->add($authRequired);
+
 // Test an onSubmit script against sample answers without persisting (protected,
 // rate-limited per user — runs sandboxed user code + may make ctx.http calls)
 $app->post('/api/forms/{formId}/script/test', function ($request, $response) use ($container, $getArgs) {
@@ -920,6 +940,15 @@ $app->get('/api/public/forms/{id}/screen-records', function ($request, $response
     }, $rows);
     $response->getBody()->write(json_encode(['records' => $records]));
     return $response->withHeader('Content-Type', 'application/json');
+})->add($publicFormRateLimiter);
+
+// Public widget-dashboard report execution — same gate as /screen-records (publicRecords + whitelist,
+// no joins, no status). Read-only aggregate over the form's own responses.
+$app->post('/api/public/forms/{id}/reports/run', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FormReportController::class)->runPublic($request, $response, $getArgs($request));
+})->add($publicFormRateLimiter);
+$app->post('/api/public/forms/{id}/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FormReportController::class)->runPublicBatch($request, $response, $getArgs($request));
 })->add($publicFormRateLimiter);
 
 // Pack management routes (protected)
@@ -1377,6 +1406,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Run a no-code report (read-only SELECT; POST carries the report spec). Whitelisted for the demo.
     $group->post('/reports/run', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->runReport($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Batch: run many specs in one round (a widget dashboard fetches all its charts at once).
+    $group->post('/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->runReportBatch($request, $response, $getArgs($request));
     })->add($authRequired);
 
     // File upload for app forms — gated on the form owner's cloud access.

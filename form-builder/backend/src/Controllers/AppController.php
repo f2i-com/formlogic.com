@@ -153,6 +153,11 @@ class AppController
             if (!is_array($data['customScreen'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be an object'], 400);
             }
+            // A widget dashboard is data, not code — sanitize its specs against this app so no widget can
+            // query a form/field outside it (the same save boundary as reports).
+            if (($data['customScreen']['kind'] ?? '') === 'dashboard' && is_array($data['customScreen']['dashboard'] ?? null) && $this->reportValidator !== null) {
+                $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboardForApp($data['customScreen']['dashboard'], $args['id']);
+            }
             $screenJson = json_encode($data['customScreen']);
             if ($screenJson !== false && strlen($screenJson) > 524288) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 512KB or smaller'], 400);

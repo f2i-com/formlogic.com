@@ -8,6 +8,7 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\FormVersionService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\PlanService;
+use FormLogic\Services\AppReportService;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -24,19 +25,22 @@ class FormController
     private ?FormVersionService $versionService;
     private ?AuditService $auditService;
     private ?PlanService $planService;
+    private ?AppReportService $reportValidator;
 
     public function __construct(
         FormService $formService,
         ?LoggerInterface $logger = null,
         ?FormVersionService $versionService = null,
         ?AuditService $auditService = null,
-        ?PlanService $planService = null
+        ?PlanService $planService = null,
+        ?AppReportService $reportValidator = null
     ) {
         $this->formService = $formService;
         $this->logger = $logger ?? new NullLogger();
         $this->versionService = $versionService;
         $this->auditService = $auditService;
         $this->planService = $planService;
+        $this->reportValidator = $reportValidator;
     }
 
     /**
@@ -54,6 +58,25 @@ class FormController
             ], 402);
         }
         return null;
+    }
+
+    /**
+     * When saving a section-screen widget dashboard, sanitize its specs against the form's own fields
+     * (+ linked targets) so no widget can query outside them. Mutates $data in place. Execution is
+     * independently re-validated at run time; this hardens the save boundary (mirrors app dashboards).
+     */
+    private function sanitizeDashboardScreen(array &$data, string $formId): void
+    {
+        if (!$this->reportValidator || !isset($data['customScreen']) || !is_array($data['customScreen'])) {
+            return;
+        }
+        if (($data['customScreen']['kind'] ?? '') !== 'dashboard' || !is_array($data['customScreen']['dashboard'] ?? null)) {
+            return;
+        }
+        $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboard(
+            $data['customScreen']['dashboard'],
+            $this->reportValidator->formFieldMap($formId)
+        );
     }
 
     /**
@@ -310,6 +333,7 @@ class FormController
         if ($sizeError !== null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $sizeError], 422);
         }
+        $this->sanitizeDashboardScreen($data, $formId);
 
         try {
             // Snapshot current state before updating (non-blocking: version failure should not prevent saving)

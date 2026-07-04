@@ -6,6 +6,7 @@ import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { FieldResponse } from './FormResponse';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
+import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { useFormStore } from '../stores/formStore';
 import { useUIStore } from '../stores/uiStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
@@ -111,6 +112,24 @@ export default function FormPreview() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950">
         <p className="text-gray-500 dark:text-slate-400">Form not found</p>
+      </div>
+    );
+  }
+
+  // A section-screen widget dashboard replaces the default form in preview (owner → live data).
+  if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
+    return (
+      <div className="min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
+        <div className="max-w-6xl mx-auto">
+          <FormWidgetDashboard
+            dashboard={form.customScreen.dashboard}
+            formId={form.id}
+            fields={form.fields}
+            formTitle={form.title}
+            publicMode={false}
+            accent={form.theme.primaryColor}
+          />
+        </div>
       </div>
     );
   }

@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
-import { CustomScreenRuntime, type CustomScreen } from '../components/custom-screen/CustomScreenRuntime';
+import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
+import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import type { CustomScreen } from '../types/form';
+
+type PlayField = { id: string; label: string; type: string; properties?: { options?: Array<{ label: string; value: string }> } };
 
 /**
  * Renders a form's custom screen full-bleed (the sandboxed runtime). The screen talks to the form's
@@ -15,7 +19,7 @@ export default function CustomScreenPlay() {
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState<CustomScreen | null>(null);
   const [title, setTitle] = useState('');
-  const [fields, setFields] = useState<Array<{ id: string; label: string; type: string }>>([]);
+  const [fields, setFields] = useState<PlayField[]>([]);
   useDocumentTitle(title || 'Custom screen');
 
   useEffect(() => {
@@ -23,11 +27,12 @@ export default function CustomScreenPlay() {
     let cancelled = false;
     api.getForm(formId).then((res) => {
       if (cancelled) return;
-      const form = res.data?.form as { title?: string; customScreen?: CustomScreen & { enabled?: boolean }; fields?: Array<{ id: string; label: string; type: string }> } | undefined;
+      const form = res.data?.form as { title?: string; customScreen?: CustomScreen & { enabled?: boolean }; fields?: PlayField[] } | undefined;
       const cs = form?.customScreen;
       setTitle(form?.title || '');
-      setFields((form?.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
-      setScreen(cs && (cs.html || cs.js || cs.ts || cs.files?.length) ? cs : null);
+      setFields(form?.fields || []);
+      const usable = cs?.enabled && (cs.kind === 'dashboard' ? !!cs.dashboard : (cs.html || cs.js || cs.ts || cs.files?.length));
+      setScreen(usable ? cs! : null);
       setLoading(false);
     }).catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -44,8 +49,14 @@ export default function CustomScreenPlay() {
       <div className="flex-1 min-h-0">
         {loading ? (
           <div className="h-full flex items-center justify-center"><Loader2 className="h-7 w-7 animate-spin text-primary-500" /></div>
+        ) : screen && screen.kind === 'dashboard' && screen.dashboard ? (
+          <div className="h-full overflow-auto bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
+            <div className="max-w-6xl mx-auto">
+              <FormWidgetDashboard dashboard={screen.dashboard} formId={formId!} fields={fields} formTitle={title} publicMode={false} />
+            </div>
+          </div>
         ) : screen ? (
-          <CustomScreenRuntime screen={screen} formId={formId!} formTitle={title} fields={fields} className="w-full h-full border-0" />
+          <CustomScreenRuntime screen={screen} formId={formId!} formTitle={title} fields={fields.map((f) => ({ id: f.id, label: f.label, type: f.type, options: f.properties?.options }))} className="w-full h-full border-0" />
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-500 dark:text-slate-400">This form has no custom screen.</div>
         )}

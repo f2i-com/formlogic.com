@@ -27,6 +27,7 @@ class AppReportService
     private const TEXT_BODY_MAX = 5000;
     private const MAX_ITEMS = 200;
     private const MAX_BLOCKS = 100;
+    private const MAX_WIDGETS = 60;
 
     public function __construct(private AppService $appService, private FormService $formService) {}
 
@@ -132,6 +133,156 @@ class AppReportService
     private function rid(string $prefix): string
     {
         return $prefix . '_' . bin2hex(random_bytes(5));
+    }
+
+    /**
+     * Sanitize a report spec for the ANONYMOUS public form link: field refs are restricted to the
+     * form's publicRecordFields whitelist (+ the submitted-date pseudo-field), joins are forbidden,
+     * and __status is NOT exposed. Returns a safe spec bound to $formId (never trusts the client).
+     */
+    public function sanitizePublicSpec(array $spec, string $formId, array $allowedFieldIds): array
+    {
+        $allowed = array_flip(array_values(array_filter($allowedFieldIds, 'is_string')));
+        $refValid = static function (mixed $ref) use ($allowed): bool {
+            if (!is_string($ref) || $ref === '') { return false; }
+            if ($ref === '__submitted_at') { return true; } // aggregate time trends are safe; __status is not exposed
+            if (str_contains($ref, '::')) { return false; }  // no cross-form joins on public links
+            return isset($allowed[$ref]);
+        };
+
+        $viz = in_array($spec['viz'] ?? '', self::VIZ, true) ? (string) $spec['viz'] : 'bar';
+        $clean = ['formId' => $formId, 'viz' => $viz];
+
+        if (!empty($spec['groupBy']['field']) && $refValid($spec['groupBy']['field'])) {
+            $gb = ['field' => (string) $spec['groupBy']['field']];
+            if (in_array($spec['groupBy']['bucket'] ?? '', self::BUCKETS, true)) { $gb['bucket'] = $spec['groupBy']['bucket']; }
+            $clean['groupBy'] = $gb;
+        }
+
+        if (!empty($spec['measure']) && is_array($spec['measure'])) {
+            $fn = in_array($spec['measure']['fn'] ?? '', self::AGG, true) ? (string) $spec['measure']['fn'] : 'count';
+            $m = ['fn' => $fn];
+            $mf = $spec['measure']['field'] ?? null;
+            if ($mf !== null && $refValid($mf)) {
+                $m['field'] = (string) $mf;
+            } elseif (in_array($fn, ['sum', 'avg', 'min', 'max'], true)) {
+                $m['fn'] = 'count';
+            }
+            $clean['measure'] = $m;
+        }
+
+        if (!empty($spec['filters']) && is_array($spec['filters'])) {
+            $filters = [];
+            foreach ($spec['filters'] as $f) {
+                if (!is_array($f) || !$refValid($f['field'] ?? null) || !in_array($f['op'] ?? '', self::OPS, true)) { continue; }
+                $filters[] = array_filter(['field' => (string) $f['field'], 'op' => (string) $f['op'], 'value' => isset($f['value']) ? (string) $f['value'] : null], static fn ($v) => $v !== null);
+            }
+            if ($filters) { $clean['filters'] = $filters; }
+        }
+
+        if (!empty($spec['columns']) && is_array($spec['columns'])) {
+            $cols = array_values(array_filter(array_map('strval', $spec['columns']), $refValid));
+            if ($cols) { $clean['columns'] = array_slice($cols, 0, 30); }
+        }
+
+        if (in_array($spec['seriesSort'] ?? '', ['value', 'label'], true)) { $clean['seriesSort'] = $spec['seriesSort']; }
+        if (isset($spec['sort'])) {
+            if (is_string($spec['sort']) && in_array($spec['sort'], ['asc', 'desc'], true)) {
+                $clean['sort'] = $spec['sort'];
+            } elseif (is_array($spec['sort']) && $refValid($spec['sort']['by'] ?? null)) {
+                $clean['sort'] = ['by' => (string) $spec['sort']['by'], 'dir' => ($spec['sort']['dir'] ?? 'asc') === 'desc' ? 'desc' : 'asc'];
+            }
+        }
+        if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
+
+        return $clean;
+    }
+
+    /** Sanitize a widget-dashboard config (customScreen.dashboard) against an app's forms. */
+    public function sanitizeDashboardForApp(array $dashboard, string $appId): array
+    {
+        return $this->sanitizeDashboard($dashboard, $this->appFormFields($appId));
+    }
+
+    /** Build a [formId => [fieldId => def]] map for one form + the forms its linked_record fields target. */
+    public function formFieldMap(string $formId): array
+    {
+        $map = [];
+        $form = $this->formService->getForm($formId);
+        if (!$form) { return $map; }
+        $byId = [];
+        foreach (($form['fields'] ?? []) as $f) {
+            if (!empty($f['id'])) { $byId[$f['id']] = $f; }
+        }
+        $map[$formId] = $byId;
+        // Include linked target forms so joins/joined-field refs validate for form-scoped dashboards.
+        foreach (($form['fields'] ?? []) as $f) {
+            if (($f['type'] ?? '') === 'linked_record' && !empty($f['properties']['targetFormId'])) {
+                $tid = (string) $f['properties']['targetFormId'];
+                if (isset($map[$tid])) { continue; }
+                $tform = $this->formService->getForm($tid);
+                if (!$tform) { continue; }
+                $tById = [];
+                foreach (($tform['fields'] ?? []) as $tf) {
+                    if (!empty($tf['id'])) { $tById[$tf['id']] = $tf; }
+                }
+                $map[$tid] = $tById;
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Sanitize a widget-dashboard config against a set of form fields: drop widgets whose report spec /
+     * list form isn't in scope, clamp layout + counts, cap widget count. Never trusts client geometry.
+     *
+     * @param array $formFields [formId => [fieldId => def]]
+     */
+    public function sanitizeDashboard(array $dashboard, array $formFields): array
+    {
+        $cols = isset($dashboard['cols']) ? max(1, min((int) $dashboard['cols'], 24)) : 12;
+        $widgets = is_array($dashboard['widgets'] ?? null) ? $dashboard['widgets'] : [];
+        $out = [];
+        foreach (array_slice($widgets, 0, self::MAX_WIDGETS) as $w) {
+            if (!is_array($w)) { continue; }
+            $kind = (string) ($w['kind'] ?? '');
+            if (!in_array($kind, ['report', 'list', 'text', 'actions', 'activity'], true)) { continue; }
+
+            $layout = is_array($w['layout'] ?? null) ? $w['layout'] : [];
+            $ww = max(1, min((int) ($layout['w'] ?? 4), $cols));
+            $x = max(0, min((int) ($layout['x'] ?? 0), $cols - 1));
+            if ($x + $ww > $cols) { $x = max(0, $cols - $ww); }
+            $y = max(0, (int) ($layout['y'] ?? 0));
+            $hh = max(1, min((int) ($layout['h'] ?? 2), 12));
+
+            $clean = [
+                'id' => (string) ($w['id'] ?? '') ?: $this->rid('w'),
+                'kind' => $kind,
+                'layout' => ['x' => $x, 'y' => $y, 'w' => $ww, 'h' => $hh],
+            ];
+            $title = $this->clamp($w['title'] ?? null, self::TEXT_TITLE_MAX);
+            if ($title !== null) { $clean['title'] = $title; }
+
+            if ($kind === 'report') {
+                $res = $this->cleanChartSpec(is_array($w['spec'] ?? null) ? $w['spec'] : [], $formFields);
+                if (!$res['ok']) { continue; } // drop widgets whose base form isn't in scope
+                $clean['spec'] = $res['spec'];
+            } elseif ($kind === 'list') {
+                $fid = (string) ($w['list']['formId'] ?? '');
+                if (!isset($formFields[$fid])) { continue; }
+                $list = ['formId' => $fid, 'limit' => max(1, min((int) ($w['list']['limit'] ?? 6), 25))];
+                foreach (['titleField', 'subtitleField'] as $k) {
+                    $ref = (string) ($w['list'][$k] ?? '');
+                    if ($ref !== '' && isset($formFields[$fid][$ref])) { $list[$k] = $ref; }
+                }
+                $clean['list'] = $list;
+            } elseif ($kind === 'text') {
+                $clean['text'] = ['body' => $this->clamp($w['text']['body'] ?? null, self::TEXT_BODY_MAX) ?? ''];
+            }
+            // actions/activity carry no extra config.
+            $out[] = $clean;
+        }
+        return ['version' => 1, 'cols' => $cols, 'widgets' => array_values($out)];
     }
 
     /**
