@@ -179,7 +179,13 @@ export function Docs() {
             <button onClick={() => setMobileNav((v) => !v)} aria-label="Toggle docs menu" aria-expanded={mobileNav} className="lg:hidden p-2 -ml-2 rounded-lg text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 motion-safe:transition-colors cursor-pointer">
               {mobileNav ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
-            <Logo size="md" />
+            <Link
+              to="/"
+              aria-label="FormLogic home"
+              className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+            >
+              <Logo size="md" />
+            </Link>
             <span className="fl-mono hidden sm:inline text-[11px] uppercase tracking-[0.2em] text-primary-600 dark:text-primary-400 border border-primary-200/70 dark:border-primary-500/25 rounded-full px-2.5 py-0.5">Docs</span>
           </div>
           <div className="flex items-center gap-3">

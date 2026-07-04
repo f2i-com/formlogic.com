@@ -295,7 +295,13 @@ export function Landing() {
       <nav className="fixed top-0 left-0 right-0 bg-white/85 dark:bg-slate-950/75 backdrop-blur-xl border-b border-gray-100 dark:border-primary-500/10 z-50 transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <Logo size="md" />
+            <Link
+              to="/"
+              aria-label="FormLogic home"
+              className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50"
+            >
+              <Logo size="md" />
+            </Link>
             <div className="hidden md:flex items-center gap-8">
               <a href="#features" className="fl-mono text-xs uppercase tracking-wider text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
                 Features
