@@ -42,9 +42,18 @@ export function contrastRatio(a: RGB, b: RGB): number {
 const WHITE: RGB = { r: 255, g: 255, b: 255 };
 const NEAR_BLACK: RGB = { r: 17, g: 24, b: 39 }; // slate-900
 
-/** Pick white or near-black — whichever contrasts better against `bg`. */
+/**
+ * Pick white or near-black ink for text sitting ON `bg` (e.g. a solid accent button).
+ *
+ * NOT a pure max-WCAG-contrast pick: that crossover sits around luminance 0.18, so medium *brand*
+ * colors — orange/teal/cyan/emerald/sky/green-600 — flip to dark navy ink, where white is the
+ * expected, better-looking button convention. Instead we bias to white and only switch to dark once
+ * the background is genuinely LIGHT. This matches the intuitive rule "dark background → white text,
+ * bright background → dark text". Genuinely light/pastel accents (yellow, lime, pale cyan) still get
+ * dark ink, where white would be unreadable.
+ */
 export function readableForeground(bg: RGB): RGB {
-  return contrastRatio(bg, WHITE) >= contrastRatio(bg, NEAR_BLACK) ? WHITE : NEAR_BLACK;
+  return luminance(bg) > 0.4 ? NEAR_BLACK : WHITE;
 }
 
 export function toRgbString({ r, g, b }: RGB): string {
