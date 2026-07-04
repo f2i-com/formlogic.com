@@ -39,6 +39,19 @@ pre-launch sequence. Fast CI (`ci.yml`, every PR) additionally pins the custom-s
 - [x] **P1 navigate() allowlist** — sandboxed app screens can only navigate to a safe app-relative set.
 - [x] **P1 docs** — nested README aligned (28 apps / 34 demo), HTTPS-first deploy examples, doc split
   (widget vs legacy custom-screen), placeholder demo link removed, Dependabot added.
+- [x] **P1 #6 pack trust warning** — import preview flags packs carrying custom CODE screens (vs
+  no-code dashboards).
+- [x] **P1 #9 email Doctor check** — `/doctor` surfaces the SMTP silent-failure traps (no from-address;
+  SMTP set but symfony/mailer missing) with the exact fix.
+- [x] **P2 #10 runbook** — `docs/RELEASE_RUNBOOK.md`. **#15 perf/bundle** — CI bundle-budget report +
+  `perf-demo-dashboards.mjs`. **#16 device matrix** — `docs/BROWSER_DEVICE_MATRIX.md`. **#17 backup
+  copy** — app export card states "structure, not a data backup".
+- [ ] **P2 #11 guided coach-mark tour** — deferred follow-up. WelcomeModal first-run exists; a
+  multi-step overlay tour (install → dashboard → submit → view → edit widget → invite/export) is a
+  larger UX build, intentionally not rushed this pass.
+- [ ] **P2 #12 dedicated "starter" pack** — deferred follow-up. The 28-pack catalog covers onboarding
+  (several tagged `onboarding`); a bespoke 3–4-form starter + making it *the* featured default is
+  net-new content + a marketplace-curation decision (all demo packs are currently `featured=1`).
 
 ---
 
