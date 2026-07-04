@@ -163,6 +163,16 @@ class FileServeRouteTest extends TestCase
             ->execute(['r' . $this->uuid(), $answers, $meta, $submittedAt]);
     }
 
+    /** A response whose only reference to $text is a plain TEXT answer (not file-upload metadata). */
+    private function insertTextResponse(string $formId, string $text, string $submittedBy, string $submittedAt): void
+    {
+        $db = self::$sqlite->getFormDatabase($formId);
+        $answers = json_encode(['note' => $text]);
+        $meta = json_encode(['submittedByUserId' => $submittedBy]);
+        $db->prepare("INSERT INTO responses (id, answers, metadata, status, submitted_at) VALUES (?, ?, ?, 'submitted', ?)")
+            ->execute(['r' . $this->uuid(), $answers, $meta, $submittedAt]);
+    }
+
     private function placeFile(string $formId, string $fileId): void
     {
         $dir = self::$tmp . '/uploads/' . $formId;
@@ -219,6 +229,28 @@ class FileServeRouteTest extends TestCase
         $this->assertSame(404, $this->serve($userNone, $form, $ownFile)['status']);
         // Anonymous → 404 for app-scoped.
         $this->assertSame(404, $this->serve(null, $form, $ownFile)['status']);
+    }
+
+    public function testViewOwnCannotReachFileMentionedOnlyInTextAnswer(): void
+    {
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner);
+        $form = $this->makeForm($owner);
+        $this->addFormToApp($appId, $form);
+        $userAll = $this->makeUser();
+        $userOwn = $this->makeUser();
+        $this->addMember($appId, $userAll, $this->makeRole($appId, AppPermissions::VIEW_ALL_RESPONSES));
+        $this->addMember($appId, $userOwn, $this->makeRole($appId, AppPermissions::VIEW_OWN_RESPONSES));
+
+        $otherFile = 'secret' . substr($this->uuid(), 0, 6);
+        // The file really belongs to userAll (attached via a file_upload field) and exists on disk.
+        $this->insertResponse($form, $otherFile, $userAll, '2024-06-01 00:00:00');
+        $this->placeFile($form, $otherFile);
+        // userOwn types that file id into a TEXT field of their OWN response — must NOT grant access.
+        $this->insertTextResponse($form, $otherFile, $userOwn, '2024-07-01 00:00:00');
+
+        $this->assertSame(404, $this->serve($userOwn, $form, $otherFile)['status'], 'a file id in a text answer must not grant access');
+        $this->assertSame(200, $this->serve($userAll, $form, $otherFile)['status'], 'view_all still reaches the real file');
     }
 
     public function testStandalonePublishedFormFileIsPublicAndImmutable(): void

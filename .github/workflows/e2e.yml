@@ -34,7 +34,8 @@ jobs:
       DB_USERNAME: root
       DB_PASSWORD: root
       E2E_BASE_URL: http://127.0.0.1:8080
-      E2E_API_URL: http://127.0.0.1:8080/api
+      # Host only — the specs append "/api/..." themselves (matches the api.formlogic.local default).
+      E2E_API_URL: http://127.0.0.1:8080
       E2E_EMAIL: test@example.com
       E2E_PASSWORD: password123
     steps:
@@ -61,7 +62,7 @@ jobs:
       - name: Backend config (.env) + storage dirs
         working-directory: form-builder/backend
         run: |
-          mkdir -p storage/forms storage/packs storage/uploads logs
+          mkdir -p storage/forms storage/packs storage/uploads storage/pack-screenshots logs
           cat > .env <<EOF
           APP_ENV=development
           DB_HOST=127.0.0.1
@@ -102,6 +103,13 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"email":"test@example.com","password":"password123","name":"E2E Test"}' \
             || echo "register returned non-2xx (user may already exist) — continuing"
+
+      # Seed the marketplace catalog + the shared Demo account's apps (idempotent). The pack sources
+      # are the committed resources/marketplace-packs/*.json, so no emit-marketplace step is needed.
+      # Required by app-dashboard.spec.ts (which drives the Live Demo).
+      - name: Provision marketplace + demo data
+        working-directory: form-builder/backend
+        run: php scripts/provision-demo.php
 
       - name: Install Playwright Chrome
         working-directory: form-builder/ui

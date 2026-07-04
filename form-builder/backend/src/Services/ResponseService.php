@@ -480,9 +480,12 @@ class ResponseService
     /**
      * True if $fileId is attached to a response submitted by $userId on $formId — an UNBOUNDED lookup
      * (no pagination) so a view-own member can reach their own upload no matter how many responses they
-     * have (getFormResponses caps at 100). The fileId is a server-generated id embedded in the answers
-     * JSON, and the query is scoped to the caller's OWN rows, so a raw LIKE is an authoritative
-     * membership test. LIKE wildcards in the (URL-supplied) id are escaped so it can't broaden the match.
+     * have (getFormResponses caps at 100).
+     *
+     * The LIKE is only a cheap PREFILTER: the caller-supplied id could appear as a plain text answer, so
+     * a raw substring match would let a view-own member grant themselves access to another user's file by
+     * typing its id into a text field. We therefore decode each candidate and require the id to appear as
+     * a real file-upload metadata object ({ id, storedFilename }) — exact ownership, not substring.
      */
     public function userOwnsFile(string $formId, string $fileId, string $userId): bool
     {
@@ -492,15 +495,44 @@ class ResponseService
         $db = $this->sqlite->getFormDatabase($formId);
         $needle = '%' . strtr($fileId, ['\\' => '\\\\', '%' => '\\%', '_' => '\\_']) . '%';
         $stmt = $db->prepare(
-            "SELECT 1 FROM responses
+            "SELECT answers FROM responses
              WHERE json_extract(metadata, '$.submittedByUserId') = :uid
-               AND answers LIKE :needle ESCAPE '\\'
-             LIMIT 1"
+               AND answers LIKE :needle ESCAPE '\\'"
         );
         $stmt->bindValue('uid', $userId);
         $stmt->bindValue('needle', $needle);
         $stmt->execute();
-        return (bool) $stmt->fetchColumn();
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $answersJson) {
+            $answers = json_decode((string) $answersJson, true);
+            if (is_array($answers) && in_array($fileId, $this->fileUploadIds($answers), true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The stored ids of files actually attached via file_upload fields in $answers — a file_upload answer
+     * is an array of { id, storedFilename, … } objects. Mirrors FileStorageService::extractFileIds so a
+     * bare id sitting in an unrelated text answer is NOT treated as an attached file.
+     *
+     * @param array<string,mixed> $answers
+     * @return string[]
+     */
+    private function fileUploadIds(array $answers): array
+    {
+        $ids = [];
+        foreach ($answers as $value) {
+            if (!is_array($value)) {
+                continue;
+            }
+            foreach ($value as $item) {
+                if (is_array($item) && isset($item['id'], $item['storedFilename']) && is_string($item['id'])) {
+                    $ids[] = $item['id'];
+                }
+            }
+        }
+        return $ids;
     }
 
     /**
