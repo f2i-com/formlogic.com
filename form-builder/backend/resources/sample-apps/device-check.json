@@ -4,7 +4,13 @@
     "name": "Field Device Check",
     "description": "A field-check form that auto-fills from the phone: device model, OS, battery, network and timezone are read from the device connector on screen open. Demonstrates dynamic phone-ability connectors — the same app-logic pattern as any connector, using no hardware.",
     "version": "1.0.0",
-    "tags": ["demo", "device", "connector", "app-logic", "field"]
+    "tags": [
+      "demo",
+      "device",
+      "connector",
+      "app-logic",
+      "field"
+    ]
   },
   "forms": [
     {
@@ -12,7 +18,9 @@
       "title": "Site Check-in",
       "description": "Auto-filled from the device on open.",
       "icon": "MapPin",
-      "settings": { "defaultPresentationMode": "classic" },
+      "settings": {
+        "defaultPresentationMode": "classic"
+      },
       "theme": [],
       "logicScript": "",
       "fields": [
@@ -21,51 +29,155 @@
           "type": "short_text",
           "label": "Site / location name",
           "required": true,
-          "properties": { "placeholder": "e.g. North Yard" }
+          "properties": {
+            "placeholder": "e.g. North Yard"
+          }
         },
         {
           "id": "device_model",
           "type": "short_text",
           "label": "Device model",
           "required": false,
-          "properties": { "placeholder": "Auto-filled from the device" }
+          "properties": {
+            "placeholder": "Auto-filled from the device"
+          }
         },
         {
           "id": "platform",
           "type": "short_text",
           "label": "Platform / OS",
           "required": false,
-          "properties": { "placeholder": "Auto-filled from the device" }
+          "properties": {
+            "placeholder": "Auto-filled from the device"
+          }
         },
         {
           "id": "battery_percent",
           "type": "number",
           "label": "Battery (%)",
           "required": false,
-          "properties": { "min": 0, "max": 100 }
+          "properties": {
+            "min": 0,
+            "max": 100
+          }
         },
         {
           "id": "network_type",
           "type": "short_text",
           "label": "Network",
           "required": false,
-          "properties": { "placeholder": "Auto-filled from the device" }
+          "properties": {
+            "placeholder": "Auto-filled from the device"
+          }
         },
         {
           "id": "timezone",
           "type": "short_text",
           "label": "Timezone",
           "required": false,
-          "properties": { "placeholder": "Auto-filled from the device" }
+          "properties": {
+            "placeholder": "Auto-filled from the device"
+          }
         },
         {
           "id": "notes",
           "type": "long_text",
           "label": "Notes",
           "required": false,
-          "properties": { "placeholder": "Anything to report" }
+          "properties": {
+            "placeholder": "Anything to report"
+          }
         }
-      ]
+      ],
+      "customScreen": {
+        "enabled": true,
+        "allowNewResponses": true,
+        "kind": "dashboard",
+        "dashboard": {
+          "version": 1,
+          "cols": 12,
+          "widgets": [
+            {
+              "id": "k1",
+              "title": "Check-ins",
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:field-check",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
+            },
+            {
+              "id": "k2",
+              "title": "Sites",
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:field-check",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "countDistinct",
+                  "field": "site_name"
+                }
+              }
+            },
+            {
+              "id": "c1",
+              "title": "Check-ins over time",
+              "layout": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 3
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:field-check",
+                "viz": "area",
+                "groupBy": {
+                  "field": "__submitted_at",
+                  "bucket": "day"
+                },
+                "measure": {
+                  "fn": "count"
+                },
+                "seriesSort": "label",
+                "limit": 14
+              }
+            },
+            {
+              "id": "l1",
+              "title": "Recent check-ins",
+              "layout": {
+                "x": 0,
+                "y": 4,
+                "w": 12,
+                "h": 3
+              },
+              "kind": "list",
+              "list": {
+                "formId": "@pack:field-check",
+                "titleField": "site_name",
+                "subtitleField": "device_model",
+                "limit": 8
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "apps": [
@@ -74,13 +186,28 @@
       "name": "Field Device Check",
       "description": "A field-check form that auto-fills from the phone.",
       "logoUrl": null,
-      "settings": { "landingPage": "dashboard", "icon": "Smartphone" },
-      "theme": { "primaryColor": "#f59e0b" },
+      "settings": {
+        "landingPage": "dashboard",
+        "icon": "Smartphone"
+      },
+      "theme": {
+        "primaryColor": "#f59e0b"
+      },
       "navConfig": [
-        { "formId": "@pack:field-check", "label": "Check-in", "icon": "MapPin" }
+        {
+          "formId": "@pack:field-check",
+          "label": "Check-in",
+          "icon": "MapPin"
+        }
       ],
       "forms": [
-        { "packFormId": "field-check", "displayName": "Check-in", "sortOrder": 0, "isVisible": true, "settings": [] }
+        {
+          "packFormId": "field-check",
+          "displayName": "Check-in",
+          "sortOrder": 0,
+          "isVisible": true,
+          "settings": []
+        }
       ],
       "roles": [
         {
@@ -88,8 +215,14 @@
           "description": "Submits device-aware site check-ins.",
           "system": false,
           "permissions": [
-            { "packFormId": "@pack:field-check", "permission": "submit_responses" },
-            { "packFormId": "@pack:field-check", "permission": "view_own_responses" }
+            {
+              "packFormId": "@pack:field-check",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:field-check",
+              "permission": "view_own_responses"
+            }
           ]
         }
       ],
@@ -103,16 +236,37 @@
             {
               "id": "k1",
               "title": "Check-ins",
-              "layout": { "x": 0, "y": 0, "w": 6, "h": 1 },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "w": 6,
+                "h": 1
+              },
               "kind": "report",
-              "spec": { "formId": "@pack:field-check", "viz": "kpi", "measure": { "fn": "count" } }
+              "spec": {
+                "formId": "@pack:field-check",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
             },
             {
               "id": "l1",
               "title": "Recent check-ins",
-              "layout": { "x": 0, "y": 1, "w": 12, "h": 3 },
+              "layout": {
+                "x": 0,
+                "y": 1,
+                "w": 12,
+                "h": 3
+              },
               "kind": "list",
-              "list": { "formId": "@pack:field-check", "titleField": "site_name", "subtitleField": "device_model", "limit": 8 }
+              "list": {
+                "formId": "@pack:field-check",
+                "titleField": "site_name",
+                "subtitleField": "device_model",
+                "limit": 8
+              }
             }
           ]
         }

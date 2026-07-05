@@ -27,21 +27,27 @@
           "type": "short_text",
           "label": "Vehicle ID",
           "required": true,
-          "properties": { "placeholder": "e.g. TRUCK-044" }
+          "properties": {
+            "placeholder": "e.g. TRUCK-044"
+          }
         },
         {
           "id": "fleet_number",
           "type": "short_text",
           "label": "Fleet number",
           "required": true,
-          "properties": { "placeholder": "e.g. F044" }
+          "properties": {
+            "placeholder": "e.g. F044"
+          }
         },
         {
           "id": "make_model",
           "type": "short_text",
           "label": "Make / model",
           "required": false,
-          "properties": { "placeholder": "e.g. CAT 793F" }
+          "properties": {
+            "placeholder": "e.g. CAT 793F"
+          }
         },
         {
           "id": "status",
@@ -50,9 +56,21 @@
           "required": true,
           "properties": {
             "options": [
-              { "id": "ready", "label": "Ready", "value": "ready" },
-              { "id": "warning", "label": "Warning", "value": "warning" },
-              { "id": "fault", "label": "Fault", "value": "fault" }
+              {
+                "id": "ready",
+                "label": "Ready",
+                "value": "ready"
+              },
+              {
+                "id": "warning",
+                "label": "Warning",
+                "value": "warning"
+              },
+              {
+                "id": "fault",
+                "label": "Fault",
+                "value": "fault"
+              }
             ],
             "defaultValue": "ready"
           }
@@ -62,16 +80,92 @@
           "type": "number",
           "label": "Engine hours",
           "required": false,
-          "properties": { "min": 0, "step": 0.1 }
+          "properties": {
+            "min": 0,
+            "step": 0.1
+          }
         }
-      ]
+      ],
+      "customScreen": {
+        "enabled": true,
+        "allowNewResponses": true,
+        "kind": "dashboard",
+        "dashboard": {
+          "version": 1,
+          "cols": 12,
+          "widgets": [
+            {
+              "id": "k1",
+              "title": "Vehicles",
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:vehicles",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
+            },
+            {
+              "id": "c1",
+              "title": "By status",
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "w": 8,
+                "h": 3
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:vehicles",
+                "viz": "bar",
+                "groupBy": {
+                  "field": "status",
+                  "bucket": "none"
+                },
+                "measure": {
+                  "fn": "count"
+                },
+                "seriesSort": "value",
+                "sort": "desc",
+                "limit": 6
+              }
+            },
+            {
+              "id": "l1",
+              "title": "Fleet",
+              "layout": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 3
+              },
+              "kind": "list",
+              "list": {
+                "formId": "@pack:vehicles",
+                "titleField": "vehicle_id",
+                "subtitleField": "status",
+                "limit": 8
+              }
+            }
+          ]
+        }
+      }
     },
     {
       "packFormId": "prestarts",
       "title": "Pre-start Inspection",
       "description": "Complete a cab pre-start before starting a shift.",
       "icon": "ClipboardCheck",
-      "settings": { "defaultPresentationMode": "classic" },
+      "settings": {
+        "defaultPresentationMode": "classic"
+      },
       "theme": [],
       "logicScript": "",
       "fields": [
@@ -80,7 +174,9 @@
           "type": "short_text",
           "label": "Vehicle ID",
           "required": true,
-          "properties": { "placeholder": "Auto-filled from the vehicle" }
+          "properties": {
+            "placeholder": "Auto-filled from the vehicle"
+          }
         },
         {
           "id": "fleet_number",
@@ -101,21 +197,29 @@
           "type": "number",
           "label": "Engine hours",
           "required": false,
-          "properties": { "min": 0, "step": 0.1 }
+          "properties": {
+            "min": 0,
+            "step": 0.1
+          }
         },
         {
           "id": "fuel_percent",
           "type": "number",
           "label": "Fuel level (%)",
           "required": true,
-          "properties": { "min": 0, "max": 100 }
+          "properties": {
+            "min": 0,
+            "max": 100
+          }
         },
         {
           "id": "active_fault_codes",
           "type": "short_text",
           "label": "Active fault codes",
           "required": false,
-          "properties": { "placeholder": "None" }
+          "properties": {
+            "placeholder": "None"
+          }
         },
         {
           "id": "tyres_ok",
@@ -124,8 +228,16 @@
           "required": true,
           "properties": {
             "options": [
-              { "id": "yes", "label": "Yes", "value": "yes" },
-              { "id": "no", "label": "No", "value": "no" }
+              {
+                "id": "yes",
+                "label": "Yes",
+                "value": "yes"
+              },
+              {
+                "id": "no",
+                "label": "No",
+                "value": "no"
+              }
             ],
             "defaultValue": "yes"
           }
@@ -137,8 +249,16 @@
           "required": true,
           "properties": {
             "options": [
-              { "id": "yes", "label": "Yes", "value": "yes" },
-              { "id": "no", "label": "No", "value": "no" }
+              {
+                "id": "yes",
+                "label": "Yes",
+                "value": "yes"
+              },
+              {
+                "id": "no",
+                "label": "No",
+                "value": "no"
+              }
             ],
             "defaultValue": "yes"
           }
@@ -150,13 +270,92 @@
           "required": true,
           "properties": {
             "options": [
-              { "id": "pass", "label": "Pass", "value": "pass" },
-              { "id": "fail", "label": "Fail", "value": "fail" }
+              {
+                "id": "pass",
+                "label": "Pass",
+                "value": "pass"
+              },
+              {
+                "id": "fail",
+                "label": "Fail",
+                "value": "fail"
+              }
             ],
             "defaultValue": "pass"
           }
         }
-      ]
+      ],
+      "customScreen": {
+        "enabled": true,
+        "allowNewResponses": true,
+        "kind": "dashboard",
+        "dashboard": {
+          "version": 1,
+          "cols": 12,
+          "widgets": [
+            {
+              "id": "k1",
+              "title": "Pre-starts",
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:prestarts",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
+            },
+            {
+              "id": "c1",
+              "title": "By result",
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "w": 8,
+                "h": 3
+              },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:prestarts",
+                "viz": "bar",
+                "groupBy": {
+                  "field": "result",
+                  "bucket": "none"
+                },
+                "measure": {
+                  "fn": "count"
+                },
+                "seriesSort": "value",
+                "sort": "desc",
+                "limit": 6
+              }
+            },
+            {
+              "id": "l1",
+              "title": "Recent pre-starts",
+              "layout": {
+                "x": 0,
+                "y": 3,
+                "w": 12,
+                "h": 3
+              },
+              "kind": "list",
+              "list": {
+                "formId": "@pack:prestarts",
+                "titleField": "vehicle_id",
+                "subtitleField": "result",
+                "limit": 8
+              }
+            }
+          ]
+        }
+      }
     }
   ],
   "apps": [
@@ -173,12 +372,32 @@
         "primaryColor": "#f59e0b"
       },
       "navConfig": [
-        { "formId": "@pack:prestarts", "label": "Pre-starts", "icon": "ClipboardCheck" },
-        { "formId": "@pack:vehicles", "label": "Vehicles", "icon": "Truck" }
+        {
+          "formId": "@pack:prestarts",
+          "label": "Pre-starts",
+          "icon": "ClipboardCheck"
+        },
+        {
+          "formId": "@pack:vehicles",
+          "label": "Vehicles",
+          "icon": "Truck"
+        }
       ],
       "forms": [
-        { "packFormId": "prestarts", "displayName": "Pre-starts", "sortOrder": 0, "isVisible": true, "settings": [] },
-        { "packFormId": "vehicles", "displayName": "Vehicles", "sortOrder": 1, "isVisible": true, "settings": [] }
+        {
+          "packFormId": "prestarts",
+          "displayName": "Pre-starts",
+          "sortOrder": 0,
+          "isVisible": true,
+          "settings": []
+        },
+        {
+          "packFormId": "vehicles",
+          "displayName": "Vehicles",
+          "sortOrder": 1,
+          "isVisible": true,
+          "settings": []
+        }
       ],
       "roles": [
         {
@@ -186,9 +405,18 @@
           "description": "Completes pre-starts for their shift.",
           "system": false,
           "permissions": [
-            { "packFormId": "@pack:prestarts", "permission": "submit_responses" },
-            { "packFormId": "@pack:prestarts", "permission": "view_own_responses" },
-            { "packFormId": "@pack:vehicles", "permission": "view_all_responses" }
+            {
+              "packFormId": "@pack:prestarts",
+              "permission": "submit_responses"
+            },
+            {
+              "packFormId": "@pack:prestarts",
+              "permission": "view_own_responses"
+            },
+            {
+              "packFormId": "@pack:vehicles",
+              "permission": "view_all_responses"
+            }
           ]
         }
       ],
@@ -202,27 +430,59 @@
             {
               "id": "k1",
               "title": "Pre-starts logged",
-              "layout": { "x": 0, "y": 0, "w": 4, "h": 1 },
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
               "kind": "report",
-              "spec": { "formId": "@pack:prestarts", "viz": "kpi", "measure": { "fn": "count" } }
+              "spec": {
+                "formId": "@pack:prestarts",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
             },
             {
               "id": "k2",
               "title": "Vehicles",
-              "layout": { "x": 4, "y": 0, "w": 4, "h": 1 },
+              "layout": {
+                "x": 4,
+                "y": 0,
+                "w": 4,
+                "h": 1
+              },
               "kind": "report",
-              "spec": { "formId": "@pack:vehicles", "viz": "kpi", "measure": { "fn": "count" } }
+              "spec": {
+                "formId": "@pack:vehicles",
+                "viz": "kpi",
+                "measure": {
+                  "fn": "count"
+                }
+              }
             },
             {
               "id": "c1",
               "title": "Pre-starts by result",
-              "layout": { "x": 0, "y": 1, "w": 6, "h": 3 },
+              "layout": {
+                "x": 0,
+                "y": 1,
+                "w": 6,
+                "h": 3
+              },
               "kind": "report",
               "spec": {
                 "formId": "@pack:prestarts",
                 "viz": "bar",
-                "groupBy": { "field": "result", "bucket": "none" },
-                "measure": { "fn": "count" },
+                "groupBy": {
+                  "field": "result",
+                  "bucket": "none"
+                },
+                "measure": {
+                  "fn": "count"
+                },
                 "seriesSort": "value",
                 "sort": "desc",
                 "limit": 6
@@ -231,9 +491,19 @@
             {
               "id": "l1",
               "title": "Recent pre-starts",
-              "layout": { "x": 6, "y": 1, "w": 6, "h": 3 },
+              "layout": {
+                "x": 6,
+                "y": 1,
+                "w": 6,
+                "h": 3
+              },
               "kind": "list",
-              "list": { "formId": "@pack:prestarts", "titleField": "vehicle_id", "subtitleField": "result", "limit": 6 }
+              "list": {
+                "formId": "@pack:prestarts",
+                "titleField": "vehicle_id",
+                "subtitleField": "result",
+                "limit": 6
+              }
             }
           ]
         }
