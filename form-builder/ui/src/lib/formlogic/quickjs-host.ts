@@ -19,7 +19,7 @@ import variant from '@jitl/quickjs-singlefile-browser-release-sync';
 // Canonical standard library — single source of truth, shared with the backend.
 import PRELUDE from './prelude.js?raw';
 
-export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax';
+export type EvalKind = 'condition' | 'calc' | 'validate' | 'test' | 'syntax' | 'applogic';
 
 const MEMORY_LIMIT_BYTES = 64 * 1024 * 1024; // 64 MiB
 const MAX_STACK_BYTES = 512 * 1024; // 512 KiB
@@ -79,6 +79,15 @@ function buildSource(kind: EvalKind, expression: string): string {
     // Parse-only: define-but-never-call so syntax is validated without executing
     // the (potentially side-effecting) expression.
     return `${PRELUDE}\n0 && (function(){ return (\n${expression}\n); });`;
+  }
+  if (kind === 'applogic') {
+    // Custom app-logic hook. The `expression` is a full script that declares
+    // `function run(ctx) { ... }`. We parse the injected JSON ctx (never string
+    // concatenation) and return the result of run(ctx) as a plain JSON value.
+    // Same empty-global / no-host-binding sandbox as everything else here — the
+    // script gets ZERO IO; it can only return an effects/ui object that the
+    // trusted host applies after permission checks.
+    return `${PRELUDE}\n(function(){\n  var __ctx;\n  try { __ctx = JSON.parse(globalThis.__ctxJson || "{}"); } catch (e) { __ctx = {}; }\n  ${expression}\n  ;\n  return (typeof run === 'function') ? run(__ctx) : undefined;\n})();`;
   }
   return `${PRELUDE}\n${BOOTSTRAP}\n${expression}`;
 }

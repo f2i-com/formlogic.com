@@ -5,11 +5,13 @@ import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
 import type { CustomScreen } from '../types/form';
+import type { CustomAppLogicBundle } from '../types/customAppLogic';
 
 // Demo report + dashboard authoring stays per-browser (the shared demo is read-only on the server).
 const demoReportsKey = (appId: string) => `formlogic-demo-reports-${appId}`;
 const demoDashboardKey = (appId: string) => `formlogic-demo-dashboard-${appId}`;
 const demoFormDashboardKey = (formId: string) => `formlogic-demo-form-dashboard-${formId}`;
+const demoCustomLogicKey = (appId: string) => `formlogic-demo-logic-${appId}`;
 
 interface AppRuntimeState {
   config: AppRuntimeConfig | null;
@@ -48,6 +50,9 @@ interface AppRuntimeState {
   saveDashboard: (screen: DashboardScreen) => Promise<boolean>;
   // Section-screen dashboard for one form (stored on that form's customScreen)
   saveFormDashboard: (formId: string, screen: DashboardScreen) => Promise<boolean>;
+
+  // Custom app-logic (sandboxed QuickJS hooks, stored on app.customLogic)
+  saveCustomLogic: (bundle: CustomAppLogicBundle) => Promise<boolean>;
 
   // Permission helpers
   /** True only for the app owner (someone who can manage/edit the app + its dashboards). */
@@ -104,6 +109,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
                 if (raw) { app.reports = JSON.parse(raw) as AppReportItem[]; }
                 const dash = localStorage.getItem(demoDashboardKey(app.id));
                 if (dash) { app.customScreen = JSON.parse(dash) as CustomScreen; }
+                const logic = localStorage.getItem(demoCustomLogicKey(app.id));
+                if (logic) { app.customLogic = JSON.parse(logic) as CustomAppLogicBundle; }
                 for (const f of forms) {
                   const fd = localStorage.getItem(demoFormDashboardKey(f.formId));
                   if (fd) { f.customScreen = JSON.parse(fd) as CustomScreen; }
@@ -279,6 +286,20 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         }
         const r = await api.updateForm(formId, { customScreen } as unknown as Record<string, unknown>);
         if (r.error) { toast.error('Failed to save section screen', typeof r.error === 'string' ? r.error : undefined); return false; }
+        return true;
+      },
+
+      saveCustomLogic: async (bundle) => {
+        const cfg = get().config;
+        if (!cfg) return false;
+        // Optimistic: reflect immediately so hooks pick up the new logic without a reload.
+        set({ config: { ...cfg, app: { ...cfg.app, customLogic: bundle } } });
+        if (api.isDemoMode()) {
+          try { localStorage.setItem(demoCustomLogicKey(cfg.app.id), JSON.stringify(bundle)); } catch { /* ignore */ }
+          return true;
+        }
+        const r = await api.updateApp(cfg.app.id, { customLogic: bundle });
+        if (r.error) { toast.error('Failed to save app logic', typeof r.error === 'string' ? r.error : undefined); return false; }
         return true;
       },
 

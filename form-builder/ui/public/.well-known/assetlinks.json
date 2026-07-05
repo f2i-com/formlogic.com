@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.formlogic.runtime",
+      "sha256_cert_fingerprints": [
+        "BB:B4:82:AC:7A:E1:AF:A7:35:2F:B6:C8:83:36:41:58:09:21:19:42:E6:63:59:4E:D5:51:EB:0D:38:C3:48:08"
+      ]
+    }
+  }
+]

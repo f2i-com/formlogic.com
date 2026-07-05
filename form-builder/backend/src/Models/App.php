@@ -19,6 +19,7 @@ class App
         public array $navConfig = [],
         public array $customScreen = [],
         public array $reports = [],
+        public array $customLogic = [],
         public ?string $createdAt = null,
         public ?string $updatedAt = null
     ) {}
@@ -48,6 +49,9 @@ class App
             reports: is_string($data['reports'] ?? null)
                 ? json_decode($data['reports'], true) ?? []
                 : ($data['reports'] ?? []),
+            customLogic: is_string($data['custom_logic'] ?? null)
+                ? json_decode($data['custom_logic'], true) ?? []
+                : ($data['customLogic'] ?? []),
             createdAt: $data['created_at'] ?? $data['createdAt'] ?? null,
             updatedAt: $data['updated_at'] ?? $data['updatedAt'] ?? null
         );
@@ -68,6 +72,7 @@ class App
             'navConfig' => $this->navConfig,
             'customScreen' => $this->customScreen,
             'reports' => $this->reports,
+            'customLogic' => $this->customLogic,
             'createdAt' => $this->createdAt,
             'updatedAt' => $this->updatedAt,
         ];

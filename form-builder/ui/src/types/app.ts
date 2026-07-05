@@ -1,5 +1,6 @@
 // App types for the Apps feature
 import type { CustomScreen } from './form';
+import type { CustomAppLogicBundle } from './customAppLogic';
 
 export interface AppTheme {
   primaryColor: string;
@@ -55,6 +56,9 @@ export interface App {
   customScreen?: CustomScreen;
   /** Optional saved reports + composed PDF documents shown in the app's Reports section. */
   reports?: AppReportItem[];
+  /** Optional sandboxed QuickJS app-logic (onBeforeSubmit / onConnectorEvent / …). Owner-authored;
+   *  runs client-side to describe safe effects — the backend stays authoritative on submit. */
+  customLogic?: CustomAppLogicBundle;
   createdAt: string;
   updatedAt: string;
 }
@@ -243,6 +247,8 @@ export interface AppRuntimeForm {
   fields: unknown[];
   settings: Record<string, unknown>;
   customScreen?: CustomScreen | null;
+  /** Form-scoped app-logic delivered with the runtime config; runs only for this form. */
+  customLogic?: CustomAppLogicBundle | null;
 }
 
 export interface AppRuntimeConfig {

@@ -1,0 +1,151 @@
+{
+  "formatVersion": 1,
+  "packMeta": {
+    "name": "Field Device Check",
+    "description": "A field-check form that auto-fills from the phone: device model, OS, battery, network and timezone are read from the device connector on screen open. Demonstrates dynamic phone-ability connectors — the same app-logic pattern as any connector, using no hardware.",
+    "version": "1.0.0",
+    "tags": ["demo", "device", "connector", "app-logic", "field"]
+  },
+  "forms": [
+    {
+      "packFormId": "field-check",
+      "title": "Site Check-in",
+      "description": "Auto-filled from the device on open.",
+      "icon": "MapPin",
+      "settings": { "defaultPresentationMode": "classic" },
+      "theme": [],
+      "logicScript": "",
+      "fields": [
+        {
+          "id": "site_name",
+          "type": "short_text",
+          "label": "Site / location name",
+          "required": true,
+          "properties": { "placeholder": "e.g. North Yard" }
+        },
+        {
+          "id": "device_model",
+          "type": "short_text",
+          "label": "Device model",
+          "required": false,
+          "properties": { "placeholder": "Auto-filled from the device" }
+        },
+        {
+          "id": "platform",
+          "type": "short_text",
+          "label": "Platform / OS",
+          "required": false,
+          "properties": { "placeholder": "Auto-filled from the device" }
+        },
+        {
+          "id": "battery_percent",
+          "type": "number",
+          "label": "Battery (%)",
+          "required": false,
+          "properties": { "min": 0, "max": 100 }
+        },
+        {
+          "id": "network_type",
+          "type": "short_text",
+          "label": "Network",
+          "required": false,
+          "properties": { "placeholder": "Auto-filled from the device" }
+        },
+        {
+          "id": "timezone",
+          "type": "short_text",
+          "label": "Timezone",
+          "required": false,
+          "properties": { "placeholder": "Auto-filled from the device" }
+        },
+        {
+          "id": "notes",
+          "type": "long_text",
+          "label": "Notes",
+          "required": false,
+          "properties": { "placeholder": "Anything to report" }
+        }
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "packAppId": "field-device-check",
+      "name": "Field Device Check",
+      "description": "A field-check form that auto-fills from the phone.",
+      "logoUrl": null,
+      "settings": { "landingPage": "dashboard", "icon": "Smartphone" },
+      "theme": { "primaryColor": "#f59e0b" },
+      "navConfig": [
+        { "formId": "@pack:field-check", "label": "Check-in", "icon": "MapPin" }
+      ],
+      "forms": [
+        { "packFormId": "field-check", "displayName": "Check-in", "sortOrder": 0, "isVisible": true, "settings": [] }
+      ],
+      "roles": [
+        {
+          "name": "Field worker",
+          "description": "Submits device-aware site check-ins.",
+          "system": false,
+          "permissions": [
+            { "packFormId": "@pack:field-check", "permission": "submit_responses" },
+            { "packFormId": "@pack:field-check", "permission": "view_own_responses" }
+          ]
+        }
+      ],
+      "customScreen": {
+        "enabled": true,
+        "kind": "dashboard",
+        "dashboard": {
+          "version": 1,
+          "cols": 12,
+          "widgets": [
+            {
+              "id": "k1",
+              "title": "Check-ins",
+              "layout": { "x": 0, "y": 0, "w": 6, "h": 1 },
+              "kind": "report",
+              "spec": { "formId": "@pack:field-check", "viz": "kpi", "measure": { "fn": "count" } }
+            },
+            {
+              "id": "l1",
+              "title": "Recent check-ins",
+              "layout": { "x": 0, "y": 1, "w": 12, "h": 3 },
+              "kind": "list",
+              "list": { "formId": "@pack:field-check", "titleField": "site_name", "subtitleField": "device_model", "limit": 8 }
+            }
+          ]
+        }
+      },
+      "customLogic": {
+        "version": 1,
+        "runtime": "quickjs",
+        "strictPermissions": true,
+        "permissions": [
+          "ui.setValues",
+          "ui.toast",
+          "connector.device.info.read",
+          "connector.device.battery.read",
+          "connector.device.network.read",
+          "connector.device.locale.read"
+        ],
+        "scripts": [
+          {
+            "id": "device-request",
+            "hook": "onScreenEnter",
+            "runtime": "quickjs",
+            "description": "On open, ask the device connector for phone info, battery, network and locale.",
+            "source": "function run(ctx) {\n  return {\n    effects: [\n      { type: 'connector.request', connectorId: 'device', command: 'info.read' },\n      { type: 'connector.request', connectorId: 'device', command: 'battery.read' },\n      { type: 'connector.request', connectorId: 'device', command: 'network.read' },\n      { type: 'connector.request', connectorId: 'device', command: 'locale.read' }\n    ]\n  };\n}"
+          },
+          {
+            "id": "device-map",
+            "hook": "onConnectorEvent",
+            "runtime": "quickjs",
+            "description": "Map each device reading into the form fields as it arrives.",
+            "source": "function run(ctx) {\n  var e = ctx.event; if (!e || !e.result) return {};\n  var r = e.result;\n  if (e.command === 'info.read') return { ui: { setValues: { device_model: r.model || r.platform, platform: (r.platform || '') + ' ' + (r.osVersion || '') } }, toast: { level: 'success', message: 'Device: ' + (r.model || r.platform) } };\n  if (e.command === 'battery.read') return { ui: { setValues: { battery_percent: Math.round((r.level || 0) * 100) } } };\n  if (e.command === 'network.read') return { ui: { setValues: { network_type: r.online ? (r.effectiveType || 'online') : 'offline' } } };\n  if (e.command === 'locale.read') return { ui: { setValues: { timezone: r.timezone } } };\n  return {};\n}"
+          }
+        ]
+      }
+    }
+  ]
+}

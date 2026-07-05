@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Copy, Check, Globe, Smartphone, ExternalLink, CheckCircle2, Package, Download } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
+import { api } from '../../lib/api';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
+import { AppLogicPanel } from '../../components/apps/AppLogicPanel';
 import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
@@ -40,6 +43,28 @@ export function AppDeploySettings() {
     const ok = await updateApp(appId, { settings: { ...app.settings, pwaShortName, pwaThemeColor } });
     setSavingPwa(false);
     if (ok) toast.success('PWA settings saved', 'Install name and theme color updated.');
+  };
+
+  const [exporting, setExporting] = useState(false);
+  const handleExportPackage = async () => {
+    if (!appId || !app || exporting) return;
+    setExporting(true);
+    const res = await api.exportAppSignedPackage(appId);
+    setExporting(false);
+    if (res.error || !res.data) {
+      toast.error('Export failed', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = `${app.slug}.formlogic-app.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+    toast.success('Package exported', 'Signed .formlogic-app downloaded.');
   };
 
   if (!app) {
@@ -209,6 +234,27 @@ export function AppDeploySettings() {
               <li>In Safari: tap the share button and select "Add to Home Screen"</li>
             </ol>
           </div>
+        </div>
+
+        {/* Custom domains */}
+        <CustomDomainsPanel appId={appId!} appSlug={app.slug} />
+
+        {/* App logic (QuickJS) */}
+        <AppLogicPanel appId={appId!} initialLogic={app.customLogic} />
+
+        {/* Application package */}
+        <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Package className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            <h3 className="font-medium text-gray-900 dark:text-white tracking-tight">Application package</h3>
+          </div>
+          <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
+            Export this app (forms, screens, reports, roles, and app logic) as a signed
+            <span className="font-mono"> .formlogic-app</span> package — portable, and verifiable against FormLogic's key.
+          </p>
+          <Button variant="outline" onClick={handleExportPackage} isLoading={exporting} disabled={exporting} leftIcon={<Download className="h-4 w-4" />}>
+            Export signed package
+          </Button>
         </div>
       </div>
     </div>

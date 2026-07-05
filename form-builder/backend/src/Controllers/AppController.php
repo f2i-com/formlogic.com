@@ -179,6 +179,18 @@ class AppController
             }
         }
 
+        // Custom app-logic is sandboxed QuickJS the client runs; the backend stays authoritative on
+        // submit. We still validate its shape and cap its size so nothing abusive can be stored.
+        if (isset($data['customLogic'])) {
+            if (!is_array($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic must be an object'], 400);
+            }
+            $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 400);
+            }
+        }
+
         try {
             $updatedApp = $this->appService->updateApp($args['id'], $data);
             $this->audit($request, 'app.update', 'app', $args['id']);

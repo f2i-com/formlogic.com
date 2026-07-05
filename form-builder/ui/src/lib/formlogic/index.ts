@@ -4,4 +4,5 @@ export {
   calculateValue,
   validateExpression,
   testExpression,
+  runAppLogic,
 } from './engine';

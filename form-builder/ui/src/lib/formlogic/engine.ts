@@ -160,6 +160,24 @@ export async function calculateValue(
 }
 
 /**
+ * Run a custom app-logic hook script inside the QuickJS sandbox.
+ *
+ * `source` is a full script that declares `function run(ctx) { ... }`. It runs in
+ * the SAME empty-global sandbox as every other expression here: no window, no
+ * fetch, no host bindings — it only receives the JSON `ctx` and returns a JSON
+ * result (effects / ui patch / reject / warnings). The trusted host
+ * (appLogicHost) is responsible for permission-checking and applying any effects.
+ * Throws on guest error or budget overrun, exactly like the other evaluators.
+ */
+export async function runAppLogic(
+  source: string,
+  ctx: Record<string, unknown>,
+  budgetMs = DEFAULT_BUDGET_MS
+): Promise<unknown> {
+  return evaluate('applogic', source, ctx, budgetMs);
+}
+
+/**
  * Test an expression and return the result.
  */
 export async function testExpression(

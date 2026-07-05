@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { toast } from '../../stores/toastStore';
 import { AppSectionDashboard } from './AppSectionDashboard';
 
 // Foreground for text/icons on a solid fill of `c`. When the form sets its own theme
@@ -24,7 +25,9 @@ import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
+import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import type { FormField as FormFieldType, CustomScreen } from '../../types/form';
+import type { CustomAppLogicBundle } from '../../types/customAppLogic';
 
 interface FormField {
   id: string;
@@ -832,6 +835,25 @@ export function AppFormView() {
     setErrorFieldId(null);
   }, []);
 
+  // Sandboxed app-logic (QuickJS): connector prefill on open + before/after-submit hooks.
+  // ui.setValues from a hook merges straight into the answers record (one render).
+  const applyLogicValues = useCallback((patch: Record<string, unknown>) => {
+    setAnswers((prev) => ({ ...prev, ...patch }));
+  }, []);
+  const { runScreenEnter, runBeforeSubmit, runAfterSubmit } = useCustomAppLogic({
+    formId,
+    applyValues: applyLogicValues,
+    // The loaded form's own logic bundle (form-scoped scripts run only here).
+    formCustomLogic: (form?.customLogic ?? null) as CustomAppLogicBundle | null,
+  });
+
+  // Fire onScreenEnter when the user opens a form. A script may request connector data
+  // (native/mock), which the host chains into onConnectorEvent to prefill fields. Runs
+  // after the per-form reset effect above, so prefill lands on a clean answers record.
+  useEffect(() => {
+    void runScreenEnter();
+  }, [appSlug, formId, runScreenEnter]);
+
   // Move scroll + keyboard focus to a field's first control (classic-mode error handling),
   // so a keyboard/SR user lands on the offending field instead of staying on Submit.
   const focusField = useCallback((id: string) => {
@@ -856,9 +878,25 @@ export function AppFormView() {
     setError(null);
     try {
       // Merge calculated field values into submission so they're stored with the response
-      const submissionData = { ...answersRef.current, ...calculatedRef.current };
+      let submissionData = { ...answersRef.current, ...calculatedRef.current };
+      // onBeforeSubmit app-logic: may patch values, warn, or reject. Advisory only —
+      // the backend re-validates every submission authoritatively.
+      const before = await runBeforeSubmit(submissionData);
+      if (before.values && Object.keys(before.values).length > 0) {
+        submissionData = { ...submissionData, ...before.values };
+        setAnswers((prev) => ({ ...prev, ...before.values }));
+      }
+      if (before.rejected) {
+        setError(before.message || 'This submission was blocked.');
+        setSubmitting(false);
+        submittingRef.current = false;
+        return;
+      }
+      for (const w of before.warnings) toast.warning(w);
       await createResponse(formId, submissionData);
       setSubmitted(true);
+      // onAfterSubmit: advisory (success toast / follow-up). Fire-and-forget.
+      void runAfterSubmit(submissionData);
     } catch (err) {
       // Mirror the public-form path: a failure only means "not submitted" when we
       // are ONLINE (a real server rejection). When offline, the service worker's
@@ -873,7 +911,7 @@ export function AppFormView() {
     }
     setSubmitting(false);
     submittingRef.current = false;
-  }, [formId, createResponse]);
+  }, [formId, createResponse, runBeforeSubmit, runAfterSubmit]);
 
   const handleNext = useCallback(() => {
     if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {

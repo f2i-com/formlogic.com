@@ -273,7 +273,8 @@ $container->set(PackController::class, function (Container $c) {
     return new PackController(
         $c->get(PackService::class),
         $c->get(AuditService::class),
-        $c->get(\FormLogic\Services\PlanService::class)
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\SigningService::class)
     );
 });
 
@@ -438,6 +439,29 @@ $container->set(AppUserController::class, function (Container $c) {
         $c->get(AppService::class),
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\EmailService::class)
+    );
+});
+
+// Custom domains: owner-gated CRUD + the public host→launch resolver.
+$container->set(\FormLogic\Services\AppDomainService::class, function (Container $c) {
+    return new \FormLogic\Services\AppDomainService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\AppDomainController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppDomainController(
+        $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(AppService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+
+// Signed manifests + package signing (shared Ed25519/HMAC signer).
+$container->set(\FormLogic\Services\SigningService::class, function (Container $c) {
+    return new \FormLogic\Services\SigningService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\AppManifestController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppManifestController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\SigningService::class)
     );
 });
 
@@ -967,9 +991,24 @@ $app->post('/api/public/forms/{id}/reports/run-batch', function ($request, $resp
     return $container->get(\FormLogic\Controllers\FormReportController::class)->runPublicBatch($request, $response, $getArgs($request));
 })->add($publicFormRateLimiter);
 
+// Public: resolve a custom-domain host to its branded launch config (display/install metadata only).
+$app->get('/api/public/launch/by-host', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppDomainController::class)->resolveByHost($request, $response);
+})->add($publicFormRateLimiter);
+
+// Public: signature verification key (so the native runtime / package verifiers can check manifests).
+$app->get('/api/public/signing-key', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppManifestController::class)->signingKey($request, $response);
+});
+
 // Pack management routes (protected)
 $app->post('/api/packs/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->import($request, $response);
+})->add($authRequired);
+
+// Capability review: preview what a pack can do + its trust level before installing.
+$app->post('/api/packs/describe', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->describe($request, $response);
 })->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")
@@ -1290,6 +1329,27 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->get('/{id}/export/download', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppDownload($request, $response, $getArgs($request));
     });
+    // Signed application package (payload + detached signature + capability review).
+    $group->get('/{id}/export/signed', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(PackController::class)->exportAppSigned($request, $response, $getArgs($request));
+    });
+
+    // Custom domains (owner-gated). One app → many domains; each verified via DNS TXT.
+    $group->get('/{id}/domains', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDomainController::class)->index($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/domains', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDomainController::class)->create($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}/domains/{domainId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDomainController::class)->update($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/domains/{domainId}/verify', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDomainController::class)->verify($request, $response, $getArgs($request));
+    });
+    $group->delete('/{id}/domains/{domainId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppDomainController::class)->delete($request, $response, $getArgs($request));
+    });
 
     // App form management
     $group->get('/{id}/forms', function ($request, $response) use ($container, $getArgs) {
@@ -1391,6 +1451,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
     });
 
+    // Signed client app manifest for the native runtime (public metadata only).
+    $group->get('/client-manifest', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\AppManifestController::class)->clientManifest($request, $response, $getArgs($request));
+    });
+
     // App config + forms + permissions (auth required)
     $group->get('', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->getApp($request, $response, $getArgs($request));
@@ -1437,6 +1502,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Response CRUD
     $group->post('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->createResponse($request, $response, $getArgs($request));
+    })->add($cloudWriteGate)->add($appSubmissionRateLimiter)->add($authRequired);
+
+    // Offline sync: flush a batch of queued submissions in one request (idempotent per key).
+    $group->post('/sync/batch', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->syncBatch($request, $response, $getArgs($request));
     })->add($cloudWriteGate)->add($appSubmissionRateLimiter)->add($authRequired);
 
     $group->get('/forms/{formId}/responses', function ($request, $response) use ($container, $getArgs) {

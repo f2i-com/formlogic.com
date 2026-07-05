@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window: local shell + approved FormLogic origins.",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://formlogic.local",
+      "http://api.formlogic.local",
+      "https://formlogic.com",
+      "https://*.formlogic.com"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "deep-link:default"
+  ]
+}

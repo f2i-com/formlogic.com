@@ -192,6 +192,7 @@ CREATE TABLE `apps` (
   `nav_config` json DEFAULT NULL,
   `custom_screen` json DEFAULT NULL,
   `reports` json DEFAULT NULL,
+  `custom_logic` mediumtext COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

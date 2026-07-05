@@ -499,6 +499,12 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE forms ADD COLUMN custom_screen MEDIUMTEXT DEFAULT NULL AFTER logic_prompt");
         }
 
+        // Add custom_logic column to forms (form-scoped sandboxed QuickJS app-logic) if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM forms LIKE 'custom_logic'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE forms ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER custom_screen");
+        }
+
         // Add custom_screen column to apps (the app's custom HOME screen) if it doesn't exist
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_screen'");
         if ($result->rowCount() === 0) {
@@ -509,6 +515,12 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'reports'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE apps ADD COLUMN reports JSON DEFAULT NULL AFTER custom_screen");
+        }
+
+        // Add custom_logic column to apps (sandboxed QuickJS app-logic bundle) if it doesn't exist
+        $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_logic'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE apps ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER reports");
         }
 
         // Add scopes column to mcp_sessions (per-token capability list) if it doesn't exist
@@ -796,5 +808,54 @@ class MySQLConnection
         if ($col && stripos($col['Type'], "'reversed'") === false) {
             $pdo->exec("ALTER TABLE payments MODIFY COLUMN status ENUM('pending','processing','completed','failed','reversed') NOT NULL DEFAULT 'pending'");
         }
+
+        // Custom domains: an app can be launched on the owner's own domain (mine.management).
+        // One app → many domains; normalized_domain is unique so a domain can't be double-claimed.
+        // Verification is DNS-TXT (a per-domain token); landing_config holds the branded launch page.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_domains (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                owner_id VARCHAR(36) NOT NULL,
+                domain VARCHAR(255) NOT NULL,
+                normalized_domain VARCHAR(255) NOT NULL,
+                mode VARCHAR(32) NOT NULL DEFAULT 'launch_page',
+                status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                verification_method VARCHAR(32) NOT NULL DEFAULT 'dns_txt',
+                verification_token VARCHAR(128) NOT NULL,
+                verified_at DATETIME NULL,
+                tls_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                landing_config JSON NULL,
+                last_checked_at DATETIME NULL,
+                last_error TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE INDEX idx_app_domains_norm (normalized_domain),
+                INDEX idx_app_domains_app (app_id),
+                INDEX idx_app_domains_owner (owner_id),
+                INDEX idx_app_domains_status (status),
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Offline-sync idempotency ledger: one row per (app, form, idempotency_key). Makes a replayed
+        // submission (Workbox background-sync / native queue flush / manual retry) return the SAME
+        // response instead of creating a duplicate record.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_submission_idempotency (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                form_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NULL,
+                idempotency_key VARCHAR(128) NOT NULL,
+                response_id VARCHAR(36) NULL,
+                payload_hash VARCHAR(128) NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'completed',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_app_form_key (app_id, form_id, idempotency_key),
+                INDEX idx_idem_app (app_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 }

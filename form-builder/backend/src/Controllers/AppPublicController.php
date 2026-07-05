@@ -132,6 +132,8 @@ class AppPublicController
                     'icon' => $formData['icon'] ?? null,
                     'description' => $formData['description'] ?? null,
                     'customScreen' => $formData['customScreen'] ?? null,
+                    // Form-scoped app-logic (runs only for this form) — owner-authored, sandboxed.
+                    'customLogic' => (!empty($formData['customLogic'])) ? $formData['customLogic'] : null,
                 ];
             }
         }
@@ -429,13 +431,39 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
 
-        $data = $request->getParsedBody();
+        $data = $request->getParsedBody() ?? [];
         $data['ipAddress'] = IpResolver::fromEnvironment()->getClientIp($request);
         $data['userAgent'] = $request->getHeaderLine('User-Agent');
+
+        $result = $this->processSubmission($app, $formId, $data, $userId);
+        return $this->jsonResponse($response, $result['payload'], $result['status']);
+    }
+
+    /**
+     * The full server-authoritative submission pipeline, shared by the single-submit endpoint and the
+     * offline sync-batch endpoint. Returns ['status'=>int, 'payload'=>array] instead of a Response so
+     * the batch caller can collect per-item results. Idempotent: when the caller supplies
+     * data['idempotencyKey'], a replay returns the original response instead of creating a duplicate.
+     *
+     * @param array<string,mixed> $app
+     * @param array<string,mixed> $data
+     * @return array{status:int, payload:array<string,mixed>}
+     */
+    private function processSubmission(array $app, string $formId, array $data, string $userId): array
+    {
+        $key = (isset($data['idempotencyKey']) && is_string($data['idempotencyKey']) && $data['idempotencyKey'] !== '')
+            ? $data['idempotencyKey'] : null;
+        if ($key !== null) {
+            $existing = $this->idempotencyFind($app['id'], $formId, $key);
+            if ($existing !== null) {
+                return ['status' => 200, 'payload' => ['response' => ['id' => $existing], 'idempotent' => true]];
+            }
+        }
 
         // Get form's logic script if any
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
+        $settings = $form['settings'] ?? [];
 
         if ($form) {
             // In an app the APP is the unit of publication: the form is reachable
@@ -448,7 +476,7 @@ class AppPublicController
             // (retired) form is refused; use the form's isClosed setting (below) to
             // stop collecting without archiving.
             if (($form['status'] ?? '') === 'archived') {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'This form is no longer accepting responses.'], 403);
+                return ['status' => 403, 'payload' => ['error' => true, 'message' => 'This form is no longer accepting responses.']];
             }
 
             // Drop answers for non-input/unknown fields (e.g. forged calculated
@@ -463,37 +491,30 @@ class AppPublicController
             $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
             $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
             if (!empty($__fe)) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+                return ['status' => 400, 'payload' => ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe]];
             }
             if ($this->responseService->answersTooLarge($data['answers'])) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Submission is too large.'], 413);
+                return ['status' => 413, 'payload' => ['error' => true, 'message' => 'Submission is too large.']];
             }
 
             // Validate answers against form fields
             $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers'] ?? []);
             if (!empty($validationErrors)) {
-                return $this->jsonResponse($response, [
-                    'error' => true,
-                    'message' => 'Validation failed',
-                    'errors' => $validationErrors,
-                ], 400);
+                return ['status' => 400, 'payload' => ['error' => true, 'message' => 'Validation failed', 'errors' => $validationErrors]];
             }
-        }
 
-        // Check if form is closed
-        if ($form) {
-            $settings = $form['settings'] ?? [];
+            // Check if form is closed
             if (!empty($settings['isClosed'])) {
                 $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
-                return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
             }
 
             // Check quota limit
             if (!empty($settings['quotaLimit'])) {
                 $responseCount = $this->responseService->getResponseCount($formId);
-                if ($responseCount >= (int)$settings['quotaLimit']) {
+                if ($responseCount >= (int) $settings['quotaLimit']) {
                     $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                    return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
                 }
             }
         }
@@ -505,10 +526,10 @@ class AppPublicController
             $quotaLock = null;
             if ($form && !empty($settings['quotaLimit'])) {
                 $quotaLock = $this->responseService->acquireFormLock($formId);
-                if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
+                if ($this->responseService->getResponseCount($formId) >= (int) $settings['quotaLimit']) {
                     $this->responseService->releaseFormLock($quotaLock);
                     $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                    return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
                 }
             }
             try {
@@ -518,13 +539,116 @@ class AppPublicController
             }
 
             if ($result instanceof \FormLogic\Services\ScriptRejection) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => $result->message, 'rejected' => true], 422);
+                return ['status' => 422, 'payload' => ['error' => true, 'message' => $result->message, 'rejected' => true]];
             }
 
-            return $this->jsonResponse($response, ['response' => $result], 201);
+            // Record idempotency so a replay returns this same response instead of duplicating.
+            $respId = is_array($result) ? ($result['id'] ?? null) : null;
+            if ($key !== null && is_string($respId)) {
+                $this->idempotencyRecord($app['id'], $formId, $userId, $key, $respId, $data['answers'] ?? []);
+            }
+
+            return ['status' => 201, 'payload' => ['response' => $result]];
         } catch (\Exception $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to save response'], 500);
+            return ['status' => 500, 'payload' => ['error' => true, 'message' => 'Failed to save response']];
         }
+    }
+
+    /**
+     * Offline sync: submit a batch of queued responses in one request. Each item runs the SAME
+     * server-authoritative pipeline as a single submit and is idempotent by its key.
+     * POST /api/app/{slug}/sync/batch  { items: [{ idempotencyKey, formId, answers }] }
+     */
+    public function syncBatch(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $body = $request->getParsedBody() ?? [];
+        $items = is_array($body['items'] ?? null) ? $body['items'] : [];
+        if (count($items) > 100) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Too many items (max 100 per batch)'], 400);
+        }
+
+        $ip = IpResolver::fromEnvironment()->getClientIp($request);
+        $ua = $request->getHeaderLine('User-Agent');
+        $results = [];
+        foreach ($items as $item) {
+            $key = is_array($item) ? ($item['idempotencyKey'] ?? null) : null;
+            $formId = is_array($item) ? (string) ($item['formId'] ?? '') : '';
+            if ($formId === '' || !$this->verifyFormBelongsToApp($app['id'], $formId)) {
+                $results[] = ['idempotencyKey' => $key, 'success' => false, 'error' => 'Unknown form'];
+                continue;
+            }
+            if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::SUBMIT_RESPONSES, $formId)) {
+                $results[] = ['idempotencyKey' => $key, 'success' => false, 'error' => 'Permission denied'];
+                continue;
+            }
+            $data = [
+                'answers' => (is_array($item) && is_array($item['answers'] ?? null)) ? $item['answers'] : [],
+                'idempotencyKey' => is_string($key) ? $key : null,
+                'ipAddress' => $ip,
+                'userAgent' => $ua,
+            ];
+            $r = $this->processSubmission($app, $formId, $data, $userId);
+            $ok = $r['status'] === 201 || $r['status'] === 200;
+            $results[] = [
+                'idempotencyKey' => $key,
+                'success' => $ok,
+                'responseId' => $ok ? ($r['payload']['response']['id'] ?? null) : null,
+                'error' => $ok ? null : ($r['payload']['message'] ?? 'Failed'),
+            ];
+        }
+
+        return $this->jsonResponse($response, ['results' => $results]);
+    }
+
+    private function idempotencyFind(string $appId, string $formId, string $key): ?string
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT response_id FROM app_submission_idempotency
+             WHERE app_id = :a AND form_id = :f AND idempotency_key = :k AND response_id IS NOT NULL LIMIT 1"
+        );
+        $stmt->execute(['a' => $appId, 'f' => $formId, 'k' => $key]);
+        $id = $stmt->fetchColumn();
+        return $id !== false ? (string) $id : null;
+    }
+
+    /** Best-effort ledger write — never fails a real submission if the ledger insert fails. */
+    private function idempotencyRecord(string $appId, string $formId, string $userId, string $key, string $responseId, array $answers): void
+    {
+        try {
+            $stmt = $this->mysql->prepare(
+                "INSERT INTO app_submission_idempotency (id, app_id, form_id, user_id, idempotency_key, response_id, payload_hash, status, created_at)
+                 VALUES (:id, :a, :f, :u, :k, :r, :h, 'completed', NOW())
+                 ON DUPLICATE KEY UPDATE response_id = VALUES(response_id), status = 'completed'"
+            );
+            $stmt->execute([
+                'id' => $this->uuidV4(),
+                'a' => $appId, 'f' => $formId, 'u' => $userId, 'k' => $key,
+                'r' => $responseId, 'h' => hash('sha256', (string) json_encode($answers)),
+            ]);
+        } catch (\Throwable $e) {
+            // ignore — idempotency is best-effort
+        }
+    }
+
+    private function uuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
     public function listResponses(Request $request, Response $response, array $args): Response

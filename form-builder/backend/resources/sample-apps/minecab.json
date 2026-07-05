@@ -1,0 +1,276 @@
+{
+  "formatVersion": 1,
+  "packMeta": {
+    "name": "MineCab Operator",
+    "description": "Cab pre-starts, vehicle register and fault-aware shift checks. Demonstrates sandboxed app-logic: a mock vehicle connector prefills the pre-start, and a before-submit rule blocks starting a shift on critically low fuel.",
+    "version": "1.0.0",
+    "tags": [
+      "demo",
+      "mining",
+      "fleet",
+      "pre-start",
+      "app-logic"
+    ]
+  },
+  "forms": [
+    {
+      "packFormId": "vehicles",
+      "title": "Vehicle Register",
+      "description": "Vehicles in the fleet and their current state.",
+      "icon": "Truck",
+      "settings": [],
+      "theme": [],
+      "logicScript": "",
+      "fields": [
+        {
+          "id": "vehicle_id",
+          "type": "short_text",
+          "label": "Vehicle ID",
+          "required": true,
+          "properties": { "placeholder": "e.g. TRUCK-044" }
+        },
+        {
+          "id": "fleet_number",
+          "type": "short_text",
+          "label": "Fleet number",
+          "required": true,
+          "properties": { "placeholder": "e.g. F044" }
+        },
+        {
+          "id": "make_model",
+          "type": "short_text",
+          "label": "Make / model",
+          "required": false,
+          "properties": { "placeholder": "e.g. CAT 793F" }
+        },
+        {
+          "id": "status",
+          "type": "dropdown",
+          "label": "Status",
+          "required": true,
+          "properties": {
+            "options": [
+              { "id": "ready", "label": "Ready", "value": "ready" },
+              { "id": "warning", "label": "Warning", "value": "warning" },
+              { "id": "fault", "label": "Fault", "value": "fault" }
+            ],
+            "defaultValue": "ready"
+          }
+        },
+        {
+          "id": "current_engine_hours",
+          "type": "number",
+          "label": "Engine hours",
+          "required": false,
+          "properties": { "min": 0, "step": 0.1 }
+        }
+      ]
+    },
+    {
+      "packFormId": "prestarts",
+      "title": "Pre-start Inspection",
+      "description": "Complete a cab pre-start before starting a shift.",
+      "icon": "ClipboardCheck",
+      "settings": { "defaultPresentationMode": "classic" },
+      "theme": [],
+      "logicScript": "",
+      "fields": [
+        {
+          "id": "vehicle_id",
+          "type": "short_text",
+          "label": "Vehicle ID",
+          "required": true,
+          "properties": { "placeholder": "Auto-filled from the vehicle" }
+        },
+        {
+          "id": "fleet_number",
+          "type": "short_text",
+          "label": "Fleet number",
+          "required": false,
+          "properties": {}
+        },
+        {
+          "id": "operator_id",
+          "type": "short_text",
+          "label": "Operator ID",
+          "required": false,
+          "properties": {}
+        },
+        {
+          "id": "engine_hours",
+          "type": "number",
+          "label": "Engine hours",
+          "required": false,
+          "properties": { "min": 0, "step": 0.1 }
+        },
+        {
+          "id": "fuel_percent",
+          "type": "number",
+          "label": "Fuel level (%)",
+          "required": true,
+          "properties": { "min": 0, "max": 100 }
+        },
+        {
+          "id": "active_fault_codes",
+          "type": "short_text",
+          "label": "Active fault codes",
+          "required": false,
+          "properties": { "placeholder": "None" }
+        },
+        {
+          "id": "tyres_ok",
+          "type": "dropdown",
+          "label": "Tyres OK",
+          "required": true,
+          "properties": {
+            "options": [
+              { "id": "yes", "label": "Yes", "value": "yes" },
+              { "id": "no", "label": "No", "value": "no" }
+            ],
+            "defaultValue": "yes"
+          }
+        },
+        {
+          "id": "brakes_ok",
+          "type": "dropdown",
+          "label": "Brakes OK",
+          "required": true,
+          "properties": {
+            "options": [
+              { "id": "yes", "label": "Yes", "value": "yes" },
+              { "id": "no", "label": "No", "value": "no" }
+            ],
+            "defaultValue": "yes"
+          }
+        },
+        {
+          "id": "result",
+          "type": "dropdown",
+          "label": "Result",
+          "required": true,
+          "properties": {
+            "options": [
+              { "id": "pass", "label": "Pass", "value": "pass" },
+              { "id": "fail", "label": "Fail", "value": "fail" }
+            ],
+            "defaultValue": "pass"
+          }
+        }
+      ]
+    }
+  ],
+  "apps": [
+    {
+      "packAppId": "minecab-operator",
+      "name": "MineCab Operator",
+      "description": "Cab pre-starts, vehicle register and fault-aware shift checks.",
+      "logoUrl": null,
+      "settings": {
+        "landingPage": "dashboard",
+        "icon": "Truck"
+      },
+      "theme": {
+        "primaryColor": "#f59e0b"
+      },
+      "navConfig": [
+        { "formId": "@pack:prestarts", "label": "Pre-starts", "icon": "ClipboardCheck" },
+        { "formId": "@pack:vehicles", "label": "Vehicles", "icon": "Truck" }
+      ],
+      "forms": [
+        { "packFormId": "prestarts", "displayName": "Pre-starts", "sortOrder": 0, "isVisible": true, "settings": [] },
+        { "packFormId": "vehicles", "displayName": "Vehicles", "sortOrder": 1, "isVisible": true, "settings": [] }
+      ],
+      "roles": [
+        {
+          "name": "Operator",
+          "description": "Completes pre-starts for their shift.",
+          "system": false,
+          "permissions": [
+            { "packFormId": "@pack:prestarts", "permission": "submit_responses" },
+            { "packFormId": "@pack:prestarts", "permission": "view_own_responses" },
+            { "packFormId": "@pack:vehicles", "permission": "view_all_responses" }
+          ]
+        }
+      ],
+      "customScreen": {
+        "enabled": true,
+        "kind": "dashboard",
+        "dashboard": {
+          "version": 1,
+          "cols": 12,
+          "widgets": [
+            {
+              "id": "k1",
+              "title": "Pre-starts logged",
+              "layout": { "x": 0, "y": 0, "w": 4, "h": 1 },
+              "kind": "report",
+              "spec": { "formId": "@pack:prestarts", "viz": "kpi", "measure": { "fn": "count" } }
+            },
+            {
+              "id": "k2",
+              "title": "Vehicles",
+              "layout": { "x": 4, "y": 0, "w": 4, "h": 1 },
+              "kind": "report",
+              "spec": { "formId": "@pack:vehicles", "viz": "kpi", "measure": { "fn": "count" } }
+            },
+            {
+              "id": "c1",
+              "title": "Pre-starts by result",
+              "layout": { "x": 0, "y": 1, "w": 6, "h": 3 },
+              "kind": "report",
+              "spec": {
+                "formId": "@pack:prestarts",
+                "viz": "bar",
+                "groupBy": { "field": "result", "bucket": "none" },
+                "measure": { "fn": "count" },
+                "seriesSort": "value",
+                "sort": "desc",
+                "limit": 6
+              }
+            },
+            {
+              "id": "l1",
+              "title": "Recent pre-starts",
+              "layout": { "x": 6, "y": 1, "w": 6, "h": 3 },
+              "kind": "list",
+              "list": { "formId": "@pack:prestarts", "titleField": "vehicle_id", "subtitleField": "result", "limit": 6 }
+            }
+          ]
+        }
+      },
+      "customLogic": {
+        "version": 1,
+        "runtime": "quickjs",
+        "strictPermissions": true,
+        "permissions": [
+          "ui.setValues",
+          "ui.toast",
+          "connector.vehicle.status.read"
+        ],
+        "scripts": [
+          {
+            "id": "prestart-request-vehicle",
+            "hook": "onScreenEnter",
+            "runtime": "quickjs",
+            "description": "When a form opens, ask the vehicle connector for current status.",
+            "source": "function run(ctx) {\n  if (!ctx.meta || ctx.meta.nativeAvailable === false) {\n    // Browser/mock still services this request; no toast needed.\n  }\n  return {\n    effects: [\n      { type: 'connector.request', connectorId: 'vehicle', command: 'status.read' }\n    ]\n  };\n}"
+          },
+          {
+            "id": "prestart-map-vehicle",
+            "hook": "onConnectorEvent",
+            "runtime": "quickjs",
+            "description": "Map vehicle telemetry into the pre-start fields.",
+            "source": "function run(ctx) {\n  var v = ctx.event && ctx.event.vehicleStatus;\n  if (!v) {\n    return { ui: { toast: { level: 'warning', message: 'No vehicle data received.' } } };\n  }\n  return {\n    ui: {\n      setValues: {\n        vehicle_id: v.vehicleId,\n        fleet_number: v.fleetNumber,\n        operator_id: v.operatorId,\n        engine_hours: v.engineHours,\n        fuel_percent: v.fuelPercent,\n        active_fault_codes: (v.faultCodes || []).join(', ')\n      },\n      toast: { level: 'success', message: 'Vehicle ' + (v.fleetNumber || '') + ' loaded' }\n    }\n  };\n}"
+          },
+          {
+            "id": "prestart-before-submit",
+            "hook": "onBeforeSubmit",
+            "runtime": "quickjs",
+            "description": "Block a pre-start on critically low fuel; warn on active faults.",
+            "source": "function run(ctx) {\n  var fuel = Number(ctx.answers.fuel_percent || 0);\n  var faults = String(ctx.answers.active_fault_codes || '');\n  if (fuel > 0 && fuel < 15) {\n    return { reject: true, message: 'Fuel is too low (' + fuel + '%) to start this shift.' };\n  }\n  if (faults.trim()) {\n    return { warnings: ['Active fault codes detected (' + faults + '). Supervisor review recommended.'] };\n  }\n  return { ok: true };\n}"
+          }
+        ]
+      }
+    }
+  ]
+}

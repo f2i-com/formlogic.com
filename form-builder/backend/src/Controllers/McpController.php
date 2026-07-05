@@ -291,6 +291,13 @@ class McpController
                         $settings['hideNav'] = (bool) $args['hideNav'];
                         $upd['settings'] = $settings;
                     }
+                    if (array_key_exists('customLogic', $args) && is_array($args['customLogic'])) {
+                        $bundle = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($args['customLogic']);
+                        if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($bundle)) {
+                            throw new \Exception('customLogic exceeds the 100KB limit');
+                        }
+                        $upd['customLogic'] = $bundle;
+                    }
                     $data = $this->appService->updateApp((string) $args['appId'], $upd);
                     $this->audit($request, 'mcp.update_app', $userId, ['appId' => $args['appId'] ?? null]);
                     break;

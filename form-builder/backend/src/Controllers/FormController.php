@@ -118,6 +118,14 @@ class FormController
                 return 'Custom screen must be 512KB or smaller';
             }
         }
+        if (isset($data['customLogic'])) {
+            if (!is_array($data['customLogic'])) {
+                return 'Custom logic must be an object';
+            }
+            if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
+                return 'Custom logic must be 100KB or smaller';
+            }
+        }
         return null;
     }
 
@@ -334,6 +342,9 @@ class FormController
             return $this->jsonResponse($response, ['error' => true, 'message' => $sizeError], 422);
         }
         $this->sanitizeDashboardScreen($data, $formId);
+        if (isset($data['customLogic']) && is_array($data['customLogic'])) {
+            $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+        }
 
         try {
             // Snapshot current state before updating (non-blocking: version failure should not prevent saving)

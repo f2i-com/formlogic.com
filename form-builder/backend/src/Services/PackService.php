@@ -142,6 +142,9 @@ class PackService
                     'logoUrl' => $packApp['logoUrl'] ?? null,
                     'navConfig' => $navConfig,
                     'customScreen' => $this->resolveCustomScreen($packApp['customScreen'] ?? null, $formIdMap),
+                    // Sandboxed QuickJS app-logic bundle. References fields by their stable ids (not @pack:
+                    // remapped) and is bounded by the client sandbox + permission model at runtime.
+                    'customLogic' => is_array($packApp['customLogic'] ?? null) ? $packApp['customLogic'] : null,
                 ];
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
@@ -434,6 +437,11 @@ class PackService
         ];
         if (!empty($app['customScreen'])) {
             $packApp['customScreen'] = $this->packifyCustomScreen($app['customScreen'], $realToPackKey);
+        }
+        // Custom app-logic round-trips verbatim: it references form fields by their stable string ids
+        // (not @pack: refs), so there is nothing to remap.
+        if (!empty($app['customLogic']) && is_array($app['customLogic'])) {
+            $packApp['customLogic'] = $app['customLogic'];
         }
         // Reports (charts + PDF documents): rewrite real form ids → @pack: refs so they round-trip.
         if (!empty($app['reports']) && is_array($app['reports'])) {
@@ -874,6 +882,13 @@ class PackService
                 $screenJson = json_encode($app['customScreen']);
                 if ($screenJson !== false && strlen($screenJson) > 524288) {
                     throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 512KB limit");
+                }
+            }
+            // Custom app-logic is code (sandboxed at runtime); cap at 100KB like a form's logic script.
+            if (isset($app['customLogic'])) {
+                $logicJson = json_encode($app['customLogic']);
+                if ($logicJson !== false && strlen($logicJson) > 102400) {
+                    throw new \RuntimeException("App '{$app['packAppId']}' custom logic exceeds 100KB limit");
                 }
             }
             foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240, 'reports' => 262144] as $key => $cap) {

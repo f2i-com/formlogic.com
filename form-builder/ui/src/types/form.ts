@@ -152,6 +152,8 @@ export interface Form {
   logicPrompt?: string;
   /** Optional sandboxed custom frontend ({ html, css, js }) over this form's data. */
   customScreen?: CustomScreen;
+  /** Optional form-scoped sandboxed QuickJS app-logic (runs only when this form is open). */
+  customLogic?: import('./customAppLogic').CustomAppLogicBundle;
   icon?: string;
   createdAt: string;
   updatedAt: string;

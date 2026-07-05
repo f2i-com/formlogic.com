@@ -8,7 +8,9 @@ use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\PackService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\PlanService;
+use FormLogic\Services\SigningService;
 use FormLogic\Helpers\IpResolver;
+use FormLogic\Helpers\PackCapabilities;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -19,14 +21,71 @@ class PackController
     private PackService $packService;
     private ?AuditService $auditService;
     private ?PlanService $planService;
+    private ?SigningService $signingService;
     private IpResolver $ipResolver;
 
-    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null)
+    public function __construct(PackService $packService, ?AuditService $auditService = null, ?PlanService $planService = null, ?SigningService $signingService = null)
     {
         $this->packService = $packService;
         $this->auditService = $auditService;
         $this->planService = $planService;
+        $this->signingService = $signingService;
         $this->ipResolver = IpResolver::fromEnvironment();
+    }
+
+    /**
+     * GET /api/apps/{id}/export/signed
+     * Export an app as a SIGNED application package (spec §29.6): the pack payload plus a
+     * detached signature so importers can verify it came from this server unmodified.
+     */
+    public function exportAppSigned(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        try {
+            $pack = $this->packService->exportApp((string) ($args['id'] ?? ''), $userId);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 404);
+        }
+        if (!$this->signingService) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Signing is not available'], 503);
+        }
+        $signed = $this->signingService->sign($pack);
+        // Rename 'payload' -> 'package' to match the application-package envelope (§29.6).
+        return $this->jsonResponse($response, [
+            'package' => $signed['payload'],
+            'signature' => $signed['signature'],
+            'alg' => $signed['alg'],
+            'keyId' => $signed['keyId'],
+            'trust' => 'official',
+            'capabilities' => PackCapabilities::describe($pack),
+        ]);
+    }
+
+    /**
+     * POST /api/packs/describe
+     * Preview a pack's capabilities + trust BEFORE installing (capability review, spec §30.1).
+     * Body: { pack } or a signed { package, signature, alg }.
+     */
+    public function describe(Request $request, Response $response): Response
+    {
+        $body = $request->getParsedBody() ?? [];
+        $pack = is_array($body['pack'] ?? null) ? $body['pack'] : (is_array($body['package'] ?? null) ? $body['package'] : null);
+        if (!is_array($pack)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+        $trust = 'community';
+        if (isset($body['signature'])) {
+            $ok = $this->signingService
+                && $this->signingService->verify(['payload' => $pack, 'signature' => $body['signature'], 'alg' => $body['alg'] ?? '']);
+            $trust = $ok ? 'official' : 'unverified';
+        }
+        return $this->jsonResponse($response, [
+            'trust' => $trust,
+            'capabilities' => PackCapabilities::describe($pack),
+        ]);
     }
 
     /**

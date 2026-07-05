@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>FormLogic Native Runtime</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <!-- Empty state: no app has ever been opened. The runtime holds no app of its own —
+         apps arrive via a formlogic:// link or the app's own domain. -->
+    <main class="placeholder" id="placeholder" hidden>
+      <div class="ph-inner">
+        <div class="mark hero" aria-hidden="true">FL</div>
+        <h1>FormLogic Runtime</h1>
+        <p class="muted" id="ph-status">No app loaded</p>
+        <p class="hint mono muted">
+          Open a FormLogic app from its <b>link</b> or <b>domain</b> — it opens here automatically.
+        </p>
+      </div>
+      <span id="bridge-badge" class="badge" role="status">
+        <span class="dot" aria-hidden="true"></span><span id="bridge-label">checking…</span>
+      </span>
+    </main>
+
+    <!-- Branded loader. Shown on boot and whenever an app is opening/reopening. -->
+    <div id="loading" class="loading">
+      <div class="loading-card">
+        <div class="loader">
+          <div class="loader-ring" aria-hidden="true"></div>
+          <div class="mark big" aria-hidden="true">FL</div>
+        </div>
+        <p id="loading-text" class="loading-text">FormLogic Runtime</p>
+        <p id="loading-sub" class="mono muted loading-sub"></p>
+      </div>
+    </div>
+  </body>
+</html>

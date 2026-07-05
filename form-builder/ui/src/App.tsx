@@ -1,11 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, matchPath } from 'react-router-dom';
+import { isFormLogicMainHost } from './client-runtime/detectEnvironment';
 import { AppShell } from './components/layout/AppShell';
 // Landing stays eager so the unauthenticated marketing page paints immediately;
 // the authed pages below are lazy so unauthenticated visitors don't download the
 // whole dashboard (and its heavy icon/motion deps) before seeing the landing.
 import { Landing } from './pages/Landing';
 import { NotFound } from './pages/NotFound';
+import { OpenInApp } from './pages/OpenInApp';
+import { DeviceCheck } from './pages/DeviceCheck';
 import { LegalPage } from './pages/LegalPage';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { ForgotPassword } from './pages/ForgotPassword';
@@ -62,6 +65,7 @@ const FormAnalytics = lazyWithRetry(() => import('./pages/FormAnalytics'));
 const CustomScreenPlay = lazyWithRetry(() => import('./pages/CustomScreenPlay'));
 const CustomScreenStudio = lazyWithRetry(() => import('./pages/CustomScreenStudio'));
 const AppHomeStudio = lazyWithRetry(() => import('./pages/AppHomeStudio'));
+const DomainLaunchRouter = lazyWithRetry(() => import('./pages/DomainLaunchRouter').then(m => ({ default: m.DomainLaunchRouter })));
 const FormResponse = lazyWithRetry(() => import('./pages/FormResponse'));
 const FormResponses = lazyWithRetry(() => import('./pages/FormResponses'));
 const Login = lazyWithRetry(() => import('./pages/Login').then(m => ({ default: m.Login })));
@@ -258,6 +262,11 @@ function AppRoutes() {
         {/* Legal (public) */}
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
+        {/* Native-runtime App Link fallback: if the app isn't installed to intercept
+            https://…/open/app/:slug, degrade to the web app. */}
+        <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
+        {/* Device connector check (phone abilities) — works in browser + native runtime */}
+        <Route path="/device-check" element={<DeviceCheck />} />
         {/* App runtime - accessible with platform auth */}
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -316,6 +325,7 @@ function AppRoutes() {
         <Route path="/privacy" element={<LegalPage type="privacy" />} />
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/form/:formId" element={<FormResponse />} />
+        <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
         {/* 404 catch-all */}
@@ -382,6 +392,8 @@ function AppRoutes() {
       {/* Public form response route */}
       <Route path="/form/:formId" element={<FormResponse />} />
 
+      {/* Native-runtime App Link fallback (see signed-out block). */}
+      <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
       {/* App runtime (full screen, separate layout) */}
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
@@ -389,6 +401,35 @@ function AppRoutes() {
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
+}
+
+/**
+ * The host to render a custom-domain launch page for, or null on the FormLogic
+ * platform host. `?__flhost=<domain>` is a dev override so the launch surface is
+ * testable on formlogic.local without real DNS.
+ */
+function getLaunchHost(): string | null {
+  try {
+    const override = new URLSearchParams(window.location.search).get('__flhost');
+    if (override) return override.toLowerCase();
+    const host = window.location.host;
+    return isFormLogicMainHost(host) ? null : host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Root gate: on a customer custom domain, the site root shows the branded launch
+ * page; every deeper path (and the whole platform host) renders the normal app.
+ */
+function RootGate() {
+  const location = useLocation();
+  const launchHost = React.useMemo(() => getLaunchHost(), []);
+  if (launchHost && location.pathname === '/') {
+    return <DomainLaunchRouter host={launchHost} />;
+  }
+  return <AppRoutes />;
 }
 
 export default function App() {
@@ -400,7 +441,7 @@ export default function App() {
           <AuthRedirector />
           <RouteErrorBoundary>
             <React.Suspense fallback={<LoadingFallback />}>
-              <AppRoutes />
+              <RootGate />
             </React.Suspense>
           </RouteErrorBoundary>
           <ToastContainer />

@@ -174,8 +174,8 @@ class AppService
         }
         try {
             $stmt = $this->mysql->prepare("
-                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, custom_screen, created_at, updated_at)
-                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :created_at, :updated_at)
+                INSERT INTO apps (id, owner_id, name, slug, description, logo_url, status, settings, theme, nav_config, custom_screen, custom_logic, created_at, updated_at)
+                VALUES (:id, :owner_id, :name, :slug, :description, :logo_url, :status, :settings, :theme, :nav_config, :custom_screen, :custom_logic, :created_at, :updated_at)
             ");
 
             $stmt->execute([
@@ -190,6 +190,7 @@ class AppService
                 'theme' => json_encode($data['theme'] ?? []),
                 'nav_config' => json_encode($data['navConfig'] ?? []),
                 'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
+                'custom_logic' => !empty($data['customLogic']) ? json_encode($data['customLogic']) : null,
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
@@ -288,6 +289,11 @@ class AppService
         if (array_key_exists('reports', $data)) {
             $updates[] = "reports = :reports";
             $params['reports'] = !empty($data['reports']) ? json_encode(array_values($data['reports'])) : null;
+        }
+
+        if (array_key_exists('customLogic', $data)) {
+            $updates[] = "custom_logic = :custom_logic";
+            $params['custom_logic'] = !empty($data['customLogic']) ? json_encode($data['customLogic']) : null;
         }
 
         if (!empty($updates)) {

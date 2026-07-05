@@ -7,6 +7,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
+      // Dev-only escape hatch: VITE_NO_PWA=1 fully disables the SW (no registration, no
+      // caching) so local test builds aren't served stale or intercepted by the SW.
+      disable: process.env.VITE_NO_PWA === '1',
       registerType: 'autoUpdate',
       scope: '/',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],

@@ -1,0 +1,10 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.native_runtime" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Dark background so the cold-start splash + window is never white. -->
+        <item name="android:windowBackground">@color/fl_navy</item>
+        <item name="android:statusBarColor">@color/fl_navy</item>
+        <item name="android:navigationBarColor">@color/fl_navy</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/fl_navy</item>
+    </style>
+</resources>

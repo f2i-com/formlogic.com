@@ -61,6 +61,32 @@ export interface BillingStatus {
   usage: PlanUsage | null;
 }
 
+/** A collision-resistant idempotency key for a submission (crypto UUID when available). */
+export function newIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  } catch { /* ignore */ }
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export interface AppDomain {
+  id: string;
+  appId: string;
+  domain: string;
+  normalizedDomain: string;
+  mode: string;
+  status: 'pending' | 'verifying' | 'active' | 'failed' | 'disabled' | string;
+  verificationMethod: string;
+  verificationToken: string;
+  dns: { type: string; name: string; value: string };
+  verifiedAt: string | null;
+  tlsStatus: string;
+  landingConfig: Record<string, unknown>;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 class ApiClient {
   private baseUrl: string;
   // Track authentication state without storing the token (it's in HttpOnly cookie)
@@ -683,6 +709,28 @@ class ApiClient {
     });
   }
 
+  // Custom domains (owner-gated)
+  async getAppDomains(appId: string): Promise<ApiResponse<{ domains: AppDomain[] }>> {
+    return this.request(`/apps/${appId}/domains`);
+  }
+  async createAppDomain(appId: string, data: { domain: string; mode?: string }): Promise<ApiResponse<{ domain: AppDomain }>> {
+    return this.request(`/apps/${appId}/domains`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateAppDomain(appId: string, domainId: string, data: Record<string, unknown>): Promise<ApiResponse<{ domain: AppDomain }>> {
+    return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async verifyAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ ok: boolean; status: string; message: string; domain: AppDomain | null }>> {
+    return this.request(`/apps/${appId}/domains/${domainId}/verify`, { method: 'POST' });
+  }
+  async deleteAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'DELETE' });
+  }
+
+  /** Export the app as a signed .formlogic-app package (payload + Ed25519 signature + capabilities). */
+  async exportAppSignedPackage(appId: string): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request(`/apps/${appId}/export/signed`);
+  }
+
   // App Form management
   async getAppForms(appId: string): Promise<ApiResponse<{ forms: unknown[] }>> {
     return this.request(`/apps/${appId}/forms`);
@@ -896,9 +944,13 @@ class ApiClient {
       const response = await addDemoRecord(formId, answers);
       return { data: { response } };
     }
+    // Stamp a stable idempotency key so a replayed submission (offline background-sync
+    // or a manual retry after a dropped ack) returns the SAME response instead of
+    // creating a duplicate. The key is part of the body Workbox captures + replays.
+    const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
     return this.request(`/app/${slug}/forms/${formId}/responses`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
     });
   }
 
