@@ -85,6 +85,15 @@ Options -Indexes
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
   RewriteRule ^manifest\.json$ api/public/index.php [QSA,L]
 
+  # OAuth discovery for the MCP connector flow (Claude / ChatGPT custom connectors). The backend serves
+  # these at the domain ROOT: the RFC 9728 protected-resource metadata (both the root form and the
+  # /api/mcp path-suffix form — forward the whole subtree) and the RFC 8414 authorization-server
+  # metadata. Same gating as above: only when the bundled backend exists; in a SPLIT deploy the
+  # condition fails and discovery happens on the API domain instead. (/oauth/authorize needs no rule —
+  # the consent page is an SPA route, so the fallback below already serves it.)
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteRule ^\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server)$ api/public/index.php [QSA,L]
+
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f

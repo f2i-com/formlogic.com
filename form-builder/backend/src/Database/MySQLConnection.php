@@ -804,6 +804,7 @@ class MySQLConnection
                 token_hash VARCHAR(64) NOT NULL,
                 scopes JSON DEFAULT NULL,
                 created_ids JSON DEFAULT NULL,
+                resource VARCHAR(500) DEFAULT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 idle_timeout_seconds INT NOT NULL DEFAULT 1800,
                 last_used_at TIMESTAMP NULL,
@@ -813,6 +814,83 @@ class MySQLConnection
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE INDEX idx_mcp_hash (token_hash),
                 INDEX idx_mcp_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // OAuth audience binding for OAuth-minted MCP access tokens (RFC 8707): the resource
+        // ('<origin>/api/mcp') the token was issued for; NULL for manual flm_ tokens. Guarded ALTER
+        // for installs whose mcp_sessions predates the column (the CREATE above carries it fresh).
+        $result = $pdo->query("SHOW COLUMNS FROM mcp_sessions LIKE 'resource'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_sessions ADD COLUMN resource VARCHAR(500) DEFAULT NULL AFTER created_ids");
+        }
+
+        // ── MCP OAuth 2.1 authorization server (Claude Connectors / ChatGPT / Claude Code) ──
+        // Registered clients: RFC 7591 dynamic registrations (opaque mcpc_ ids, secret stored HASHED)
+        // and cached CIMD documents (client_id = the metadata URL, is_cimd=1, fetched_at = cache time).
+        // The PRIMARY KEY is sha256(client_id) so a long CIMD URL never hits index-length limits.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mcp_oauth_clients (
+                client_id_hash CHAR(64) PRIMARY KEY,
+                client_id VARCHAR(500) NOT NULL,
+                secret_hash VARCHAR(64) NULL,
+                token_endpoint_auth_method VARCHAR(32) NOT NULL DEFAULT 'client_secret_post',
+                client_name VARCHAR(255) NULL,
+                client_uri VARCHAR(500) NULL,
+                redirect_uris JSON NOT NULL,
+                is_cimd TINYINT(1) NOT NULL DEFAULT 0,
+                fetched_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // One-time authorization codes (<=60s TTL, single use enforced via used_at + rowCount),
+        // bound to client + redirect_uri + PKCE challenge + user + scopes + resource (+ optional app
+        // narrowing). Stored HASHED; rows are purged opportunistically after a grace period.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mcp_oauth_codes (
+                id VARCHAR(36) PRIMARY KEY,
+                code_hash CHAR(64) NOT NULL,
+                client_id VARCHAR(500) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                redirect_uri VARCHAR(1000) NOT NULL,
+                scopes JSON NOT NULL,
+                code_challenge VARCHAR(128) NOT NULL,
+                resource VARCHAR(500) NULL,
+                expires_at TIMESTAMP NOT NULL,
+                used_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_oauth_code_hash (code_hash),
+                INDEX idx_oauth_code_user (user_id),
+                INDEX idx_oauth_code_expires (expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Refresh tokens (HASHED, ~30d TTL). family_id chains rotations: public clients rotate on
+        // every use (rotated_at marks the retired token) and REUSE of a rotated token revokes the
+        // whole family (revoked_at) — the OAuth 2.1 stolen-refresh-token defense.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mcp_oauth_refresh_tokens (
+                id VARCHAR(36) PRIMARY KEY,
+                token_hash CHAR(64) NOT NULL,
+                family_id VARCHAR(36) NOT NULL,
+                client_id VARCHAR(500) NOT NULL,
+                user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                scopes JSON NOT NULL,
+                resource VARCHAR(500) NULL,
+                expires_at TIMESTAMP NOT NULL,
+                rotated_at TIMESTAMP NULL,
+                revoked_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE INDEX idx_oauth_rt_hash (token_hash),
+                INDEX idx_oauth_rt_family (family_id),
+                INDEX idx_oauth_rt_user (user_id),
+                INDEX idx_oauth_rt_expires (expires_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
 

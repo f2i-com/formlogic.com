@@ -6,15 +6,112 @@ and edit forms, compose **widget dashboards**, write **custom screens**, and wir
 Bring your own (frontier) model instead of the built-in one.
 
 It works over a **temporary, scoped connection**: a short-lived bearer token with an idle timeout that you
-can revoke at any time.
+can revoke at any time. Claude and ChatGPT connect with **one pasted URL** (OAuth, below); any other MCP
+client can use a [manual token](#manual-tokens-advanced--other-clients).
 
 > Beta. App screens created this way run in the same sandbox as everything else (see [Custom screens](#)).
 
 ---
 
-## Connecting
+## Connecting from Claude / ChatGPT (OAuth)
 
-There are three places to start a connection — all open the same **Connect an AI** dialog:
+The primary path — no token copying. FormLogic is an OAuth 2.1 **protected resource** and
+**authorization server** on the same origin, so MCP clients that support connector auth (Claude
+web/desktop/mobile, Claude Code, ChatGPT) discover everything from the MCP URL alone.
+
+**User steps**
+
+1. Copy your MCP URL — `https://<your-host>/api/mcp` (shown in **Settings → Connect an AI**).
+2. Paste it into your client:
+   - **Claude** (web / desktop / mobile): Settings → **Connectors** → **Add custom connector** → paste the URL.
+   - **Claude Code**: `claude mcp add --transport http formlogic https://<your-host>/api/mcp`, then `/mcp` → authenticate.
+   - **ChatGPT**: Settings → **Connectors** → create a custom (MCP) connector → paste the URL.
+3. Your browser opens FormLogic's consent page (`/oauth/authorize`). Sign in if you aren't already.
+4. Check **who is asking** (the client name and the redirect host are shown — if they aren't the AI you
+   just used, deny), optionally **limit the connection to one app**, and **Approve**.
+5. Back in the AI client the connection completes and the FormLogic tools appear.
+
+Approving mints a normal scoped MCP session under the hood (token prefix `flm_oauth_`), so everything in
+[Scopes](#scopes), [Tools](#tools) and [Security](#security) applies unchanged — same app-scoping, same
+audit trail, revocable like any other token.
+
+> **HTTPS required for hosted clients.** claude.ai and ChatGPT drive the OAuth flow from their servers,
+> so they can only reach a publicly resolvable **https** origin — a production custom connector cannot
+> reach `http://formlogic.local`. Test locally with **MCP Inspector** or **Claude Code** pointed at the
+> LAN address, or expose the dev stack through a tunnel.
+
+### How the flow works (technical appendix)
+
+The discovery chain, starting from nothing but the pasted URL:
+
+1. The client calls `POST /api/mcp` without a token and gets a **401** carrying
+   `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/api/mcp", scope="<default scopes>"`.
+2. It fetches the **protected-resource metadata** (RFC 9728) — served at both the `/api/mcp` path-suffix
+   form and the root form — which names the resource (`<origin>/api/mcp`, exactly the URL you pasted)
+   and its authorization server (`<origin>`).
+3. It fetches the **authorization-server metadata** (RFC 8414) at `/.well-known/oauth-authorization-server`.
+4. It registers as a client (CIMD or DCR, below) and runs the **authorization-code + PKCE (S256)** flow
+   through the consent page and token endpoint.
+
+The origin is derived from the request host with the same upgrade-only scheme rule as the signed app
+manifests (production is always `https`), so the advertised `resource` matches the URL users paste.
+
+**Endpoints**
+
+| Endpoint | Method | Notes |
+|---|---|---|
+| `/.well-known/oauth-protected-resource` (also `…/api/mcp`) | GET | RFC 9728 protected-resource metadata; CORS `*` |
+| `/.well-known/oauth-authorization-server` | GET | RFC 8414 authorization-server metadata; CORS `*` |
+| `/oauth/authorize` | GET | the consent page (an SPA route; requires a signed-in FormLogic session) |
+| `/api/oauth/token` | POST | `application/x-www-form-urlencoded`; grants `authorization_code` + `refresh_token`; CORS `*`, rate-limited |
+| `/api/oauth/register` | POST | RFC 7591 dynamic client registration; JSON, unauthenticated, rate-limited; CORS `*` |
+| `/api/mcp` | POST | the MCP endpoint — `Authorization: Bearer` header only (tokens are never accepted in the query string) |
+
+(`GET /api/oauth/authorize-info` and `POST /api/oauth/approve` are the consent page's same-origin support
+APIs — approve is session-authenticated + CSRF-protected like every other authed POST, and performs the
+final redirect back to the client from the browser.)
+
+**Client registration** — three paths, in spec priority order:
+
+1. **CIMD** (client-ID metadata document — Claude's preferred path): the `client_id` *is* an https URL
+   with a path. The server fetches that JSON document server-side (SSRF-guarded, 5s timeout, 64KB cap,
+   JSON content-type, cached ~5 minutes), requires the document's `client_id` to equal the URL exactly,
+   and takes `redirect_uris` / `client_name` from it.
+2. **DCR** (RFC 7591 — ChatGPT, and the general fallback): `POST /api/oauth/register` → `201` with a
+   `client_id` (plus a `client_secret` — Claude registers as a **confidential** client this way).
+3. **Public clients** (`token_endpoint_auth_method: "none"`) are accepted.
+
+**Redirect URIs** are exact-matched against the client's registered/CIMD list, with one RFC 8252
+exception: `http://localhost:<port>/…` and `http://127.0.0.1:<port>/…` loopback redirects match
+**port-agnostically** (Claude Code). Claude web/desktop/mobile uses
+`https://claude.ai/api/mcp/auth_callback`.
+
+**Tokens**
+
+- **PKCE S256 is mandatory** (OAuth 2.1): authorize requests without a code challenge are rejected, and
+  `plain` is not supported.
+- Authorization codes are **one-time**, expire in ≤60 seconds, and are bound to the client, redirect URI,
+  PKCE challenge, user, scopes, and resource (plus the optional one-app narrowing).
+- **Access tokens** are opaque `flm_oauth_…` bearer tokens — real MCP sessions with an absolute expiry of
+  **3600s**, **audience-bound** to `<origin>/api/mcp` (a token minted for one host is rejected on
+  another), hashed at rest, and subject to the same idle timeout, revocation, and audit as manual tokens.
+- **Refresh tokens** last ~30 days. Public clients get **rotation**: every refresh returns a new refresh
+  token and invalidates the old one, and reuse of a rotated token revokes the whole token family.
+  Confidential clients may keep the same refresh token.
+- Errors follow RFC 6749: JSON `{ "error": "invalid_grant" | "invalid_client" | "invalid_request" |
+  "unsupported_grant_type", "error_description": … }` with status 400 (401 for bad client credentials).
+
+**Scopes and app narrowing** — the OAuth scope model *is* the [token scope model](#scopes); the metadata
+documents additionally advertise `offline_access` for clients that request refresh tokens. The consent
+page's **"Limit to one app"** picker mints an app-scoped session with exactly the semantics described
+under [Scopes](#scopes).
+
+---
+
+## Manual tokens (advanced / other clients)
+
+For MCP clients without OAuth support, generate a bearer token by hand. There are three places to start —
+all open the same **Connect an AI** dialog:
 
 | From | Scope of the token |
 |---|---|
@@ -52,6 +149,9 @@ Add it to your MCP client as a **remote / HTTP MCP server**. The endpoint speaks
 
 Treat the token like a password — it can create and edit your content. The token is stored only as a
 SHA‑256 hash; it can't be recovered after creation (generate a new one if lost).
+
+(OAuth‑minted connections behave the same, except the access token always expires after 1 hour and the
+client refreshes it silently — see [the appendix](#how-the-flow-works-technical-appendix).)
 
 ---
 
@@ -272,7 +372,12 @@ first; documents reference them by the `id` returned from `create_report`.
 - Widget‑dashboard and report specs are sanitized server‑side against the target app/form on save (the
   same `AppReportService` boundary as the UI): out‑of‑scope forms, joins, and field refs are dropped.
 - Every action is audited (`mcp.*`) with the owner's user id.
-- The `/api/mcp` endpoint authenticates with the bearer token only — never a session cookie.
+- The `/api/mcp` endpoint authenticates with the bearer token only — never a session cookie, and never a
+  token in the query string.
+- OAuth‑minted tokens (`flm_oauth_…`) additionally carry an absolute 1‑hour expiry and are
+  **audience‑bound** to the origin they were minted on; refresh tokens are stored hashed and are rotated
+  for public clients (reuse of a rotated token revokes the family). PKCE S256 is required — there is no
+  implicit or password grant.
 
 To turn the **built‑in** AI off entirely and steer everyone to bring‑your‑own‑AI, set `AI_ENABLED=false`
 in the backend `.env`.

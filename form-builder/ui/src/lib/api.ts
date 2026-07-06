@@ -118,6 +118,36 @@ export type AppKind = 'admin' | 'client' | 'staff' | 'public' | 'internal' | 'cu
  *  (owner role untouched; invalid values are ignored server-side). */
 export type AppRolePreset = 'admin-console' | 'client-portal' | 'staff-field-app' | 'public-intake';
 
+/** RFC 6749-style error from the OAuth consent support endpoints ({ error, error_description }
+ *  on the wire) — kept typed (not flattened to one string) so the consent page can follow the
+ *  spec, e.g. NEVER redirect back to the client on invalid_request. */
+export interface OAuthErrorInfo {
+  /** OAuth error code, e.g. 'invalid_request' | 'invalid_client' | 'access_denied'. */
+  error: string;
+  errorDescription?: string;
+}
+
+/** What the /oauth/authorize consent page renders — GET /api/oauth/authorize-info. */
+export interface OAuthAuthorizeInfo {
+  clientName: string;
+  clientUri?: string | null;
+  /** Host of the validated redirect_uri — displayed prominently (anti-phishing). */
+  redirectHost: string;
+  scopes: string[];
+}
+
+export interface OAuthAuthorizeResult {
+  data?: OAuthAuthorizeInfo;
+  oauthError?: OAuthErrorInfo;
+  networkError?: string;
+}
+
+export interface OAuthApproveResult {
+  data?: { redirectTo: string };
+  oauthError?: OAuthErrorInfo;
+  networkError?: string;
+}
+
 /** One row of the app runtime's cross-form activity feed (GET /api/app/{slug}/activity).
  *  Server-side permission filtered: only forms the CALLER can view, newest-first. */
 export interface AppActivityItem {
@@ -961,6 +991,52 @@ class ApiClient {
   }
   async revokeMcpToken(id: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/mcp/tokens/${id}`, { method: 'DELETE' });
+  }
+
+  /**
+   * OAuth 2.1 consent support (external AI connectors: Claude / ChatGPT). Validates the raw
+   * OAuth query params server-side; `params` are passed through VERBATIM under their OAuth
+   * wire names (client_id, redirect_uri, scope, state, code_challenge, …). Non-2xx bodies are
+   * RFC 6749-style { error, error_description }, surfaced as a typed oauthError.
+   */
+  async getOAuthAuthorizeInfo(params: Record<string, string>): Promise<OAuthAuthorizeResult> {
+    const r = await this.requestWithMeta(`/oauth/authorize-info?${new URLSearchParams(params).toString()}`);
+    if (r.networkError) return { networkError: r.networkError };
+    if (r.ok && r.body) return { data: r.body as unknown as OAuthAuthorizeInfo };
+    const b = (r.body || {}) as Record<string, unknown>;
+    return {
+      oauthError: {
+        error: typeof b.error === 'string' ? b.error : 'server_error',
+        errorDescription: typeof b.error_description === 'string'
+          ? b.error_description
+          : (typeof b.message === 'string' ? b.message : undefined),
+      },
+    };
+  }
+
+  /**
+   * Approve the OAuth consent as the signed-in user (session cookie + CSRF, like other authed
+   * POSTs). `params` are the same verbatim OAuth params the consent page received; optional
+   * `appId` narrows the grant to one app. On success the server mints a one-time code and
+   * returns { redirectTo } — the CALLER performs the redirect.
+   */
+  async approveOAuth(params: Record<string, string>, appId?: string): Promise<OAuthApproveResult> {
+    const r = await this.requestWithMeta('/oauth/approve', {
+      method: 'POST',
+      body: JSON.stringify(appId ? { ...params, appId } : { ...params }),
+    });
+    if (r.networkError) return { networkError: r.networkError };
+    const redirectTo = r.body && typeof r.body.redirectTo === 'string' ? r.body.redirectTo : null;
+    if (r.ok && redirectTo) return { data: { redirectTo } };
+    const b = (r.body || {}) as Record<string, unknown>;
+    return {
+      oauthError: {
+        error: typeof b.error === 'string' ? b.error : 'server_error',
+        errorDescription: typeof b.error_description === 'string'
+          ? b.error_description
+          : (typeof b.message === 'string' ? b.message : undefined),
+      },
+    };
   }
 
   async addAppForm(appId: string, formId: string, displayName?: string): Promise<ApiResponse<{ forms: unknown[] }>> {

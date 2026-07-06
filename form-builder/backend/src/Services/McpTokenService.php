@@ -15,6 +15,8 @@ use PDO;
 class McpTokenService
 {
     private const TOKEN_PREFIX = 'flm_';
+    /** OAuth-minted access tokens share the flm_ prefix (validate() accepts them unchanged). */
+    public const OAUTH_TOKEN_PREFIX = 'flm_oauth_';
     private const DEFAULT_TTL = 3600;           // 1h — short by default (paste into an AI, build, done)
     private const DEFAULT_IDLE = 900;           // 15m idle timeout
     private const MAX_TTL = 86400;              // 24h hard ceiling
@@ -73,6 +75,42 @@ class McpTokenService
     }
 
     /**
+     * Mint an OAuth access token (the /api/oauth/token endpoint). Same session row + validation
+     * pipeline as manual tokens — plus AUDIENCE BINDING: the row stores the RFC 8707 resource
+     * ('<origin>/api/mcp') the token was issued for, and McpController rejects it on any other host.
+     * The idle timeout is pinned to the TTL so the ABSOLUTE expiry (default 3600s) is what governs;
+     * OAuth clients renew via the refresh grant, not by sliding an idle window.
+     */
+    public function createOAuth(string $userId, ?string $appId, ?array $scopes, string $resource, int $ttl = 3600): array
+    {
+        $this->purgeExpired();
+        $ttl = max(300, min($ttl, self::MAX_TTL));
+        $scopes = array_values(array_intersect(self::ALL_SCOPES, $scopes ?? self::DEFAULT_SCOPES));
+        if (empty($scopes)) {
+            $scopes = self::DEFAULT_SCOPES;
+        }
+        $id = $this->uuid();
+        $raw = self::OAUTH_TOKEN_PREFIX . bin2hex(random_bytes(24));
+        $expiresAt = date('Y-m-d H:i:s', time() + $ttl);
+        $stmt = $this->db()->prepare("
+            INSERT INTO mcp_sessions (id, user_id, app_id, token_hash, scopes, created_ids, resource, expires_at, idle_timeout_seconds, created_at)
+            VALUES (:id, :user_id, :app_id, :hash, :scopes, NULL, :resource, :expires_at, :idle, :created_at)
+        ");
+        $stmt->execute([
+            'id' => $id,
+            'user_id' => $userId,
+            'app_id' => $appId,
+            'hash' => hash('sha256', $raw),
+            'scopes' => json_encode($scopes),
+            'resource' => $resource,
+            'expires_at' => $expiresAt,
+            'idle' => $ttl,
+            'created_at' => date('Y-m-d H:i:s'),
+        ]);
+        return ['token' => $raw, 'id' => $id, 'appId' => $appId, 'scopes' => $scopes, 'expiresAt' => $expiresAt, 'resource' => $resource];
+    }
+
+    /**
      * Record an app/form a creator token just created, so the token can keep managing it on later calls.
      * No-op for non-creator tokens (created_ids is null). $kind is internal ('apps' | 'forms').
      */
@@ -100,7 +138,7 @@ class McpTokenService
         }
         $hash = hash('sha256', $token);
         $stmt = $this->db()->prepare("
-            SELECT id, user_id, app_id, scopes, created_ids, expires_at, idle_timeout_seconds, last_used_at, revoked_at
+            SELECT id, user_id, app_id, scopes, created_ids, resource, expires_at, idle_timeout_seconds, last_used_at, revoked_at
             FROM mcp_sessions WHERE token_hash = :hash LIMIT 1
         ");
         $stmt->execute(['hash' => $hash]);
@@ -125,7 +163,16 @@ class McpTokenService
             $decoded = json_decode($row['created_ids'], true);
             $created = ['apps' => array_values((array) ($decoded['apps'] ?? [])), 'forms' => array_values((array) ($decoded['forms'] ?? []))];
         }
-        return ['id' => $row['id'], 'userId' => $row['user_id'], 'appId' => $row['app_id'], 'scopes' => $scopes, 'created' => $created];
+        return [
+            'id' => $row['id'],
+            'userId' => $row['user_id'],
+            'appId' => $row['app_id'],
+            'scopes' => $scopes,
+            'created' => $created,
+            // OAuth-minted tokens carry the resource they were issued for (audience binding);
+            // NULL for manual flm_ tokens.
+            'resource' => isset($row['resource']) && is_string($row['resource']) ? $row['resource'] : null,
+        ];
     }
 
     /** Active (non-revoked, non-expired) sessions for a user — for the "Connect an AI" UI. */

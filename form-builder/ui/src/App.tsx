@@ -89,6 +89,11 @@ const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
 const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
 const Docs = lazyWithRetry(() => import('./pages/Docs').then(m => ({ default: m.Docs })));
 
+// OAuth 2.1 consent page for external AI connectors (Claude / ChatGPT paste <origin>/api/mcp;
+// their browser opens this page to approve access). Registered in EVERY router branch: signed-out
+// (it forwards to /login?redirect=… and returns), demo, and authed.
+const OAuthAuthorize = lazyWithRetry(() => import('./pages/OAuthAuthorize').then(m => ({ default: m.OAuthAuthorize })));
+
 /** Error boundary that auto-resets when the user navigates to a different route */
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -216,6 +221,9 @@ const PUBLIC_PATHS = [
   '/privacy',
   '/terms',
   '/app/:appSlug/*',
+  // OAuth consent renders signed-out too (it routes through login and back) — don't bounce
+  // a mid-flow visitor to the landing page on logout/session expiry.
+  '/oauth/authorize',
 ];
 
 function AuthRedirector() {
@@ -252,6 +260,8 @@ function AppRoutes() {
         <Route path="/reset-password" element={<ResetPassword />} />
         {/* App invitation acceptance (prompts sign-in if needed) */}
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        {/* OAuth consent for external AI connectors (sends signed-out visitors through login) */}
+        <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
         {/* Public form response route - accessible without auth */}
         <Route path="/form/:formId" element={<FormResponse />} />
         {/* Pack marketplace (public) */}
@@ -319,6 +329,7 @@ function AppRoutes() {
 
         {/* Public content (same as signed-out) */}
         <Route path="/accept-invite" element={<AcceptInvite />} />
+        <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
         <Route path="/packs" element={<PackGalleryPage />} />
         <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/docs" element={<Docs />} />
@@ -362,6 +373,8 @@ function AppRoutes() {
       <Route path="/signup" element={<Navigate to="/" replace />} />
       {/* App invitation acceptance (logged-in users) */}
       <Route path="/accept-invite" element={<AcceptInvite />} />
+      {/* OAuth consent for external AI connectors (full screen, no shell) */}
+      <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
       {/* Logged-in users shouldn't reach password reset; send them home */}
       <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       <Route path="/reset-password" element={<Navigate to="/" replace />} />

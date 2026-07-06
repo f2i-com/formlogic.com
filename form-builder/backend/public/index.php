@@ -364,6 +364,23 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\AppReportService::class)
     );
 });
+// MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
+// Claude ("Settings → Connectors") / ChatGPT / Claude Code can connect by URL with no manual token.
+$container->set(\FormLogic\Services\McpOAuthService::class, function (Container $c) {
+    return new \FormLogic\Services\McpOAuthService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\McpTokenService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
+$container->set(\FormLogic\Controllers\McpOAuthController::class, function (Container $c) {
+    return new \FormLogic\Controllers\McpOAuthController(
+        $c->get(\FormLogic\Services\McpOAuthService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(AuditService::class),
+        $c->get(LoggerInterface::class)
+    );
+});
 
 // Billing: pay-as-you-go cloud months via PayPal (one-time captures, no subscription).
 $container->set(\FormLogic\Services\PayPalService::class, function () {
@@ -597,6 +614,34 @@ $uploadMax = $settings['settings']['uploads']['maxFileSize'] ?? (10 * 1024 * 102
 $packMax = $settings['settings']['packs']['maxZipSize'] ?? (50 * 1024 * 1024);
 $maxBodySize = max($uploadMax, $packMax) + (16 * 1024 * 1024);
 $app->add(new BodySizeLimitMiddleware($maxBodySize));
+
+// Public MCP-OAuth endpoints (RFC 9728/8414 discovery + token + register) must be readable from ANY
+// origin (Access-Control-Allow-Origin: *) — browser-based MCP clients fetch them cross-origin and
+// they carry no cookie auth (bearer/PKCE only, so a wildcard is safe). Added AFTER the global
+// CorsMiddleware so it runs OUTERMOST: it answers OPTIONS itself and force-overrides the allowlist
+// header on responses. The consent endpoints (authorize-info/approve) are NOT here — they stay under
+// the same-origin cookie+CSRF regime like every other authed route.
+$oauthPublicPaths = [
+    '/.well-known/oauth-protected-resource',
+    '/.well-known/oauth-protected-resource/api/mcp',
+    '/.well-known/oauth-authorization-server',
+    '/api/oauth/token',
+    '/api/oauth/register',
+];
+$app->add(function ($request, $handler) use ($oauthPublicPaths) {
+    if (!in_array($request->getUri()->getPath(), $oauthPublicPaths, true)) {
+        return $handler->handle($request);
+    }
+    $response = strtoupper($request->getMethod()) === 'OPTIONS'
+        ? new \Slim\Psr7\Response(204)
+        : $handler->handle($request);
+    return $response
+        ->withHeader('Access-Control-Allow-Origin', '*')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With')
+        ->withHeader('Access-Control-Max-Age', '3600')
+        ->withoutHeader('Access-Control-Allow-Credentials'); // '*' + credentials is an invalid CORS combo
+});
 
 // Create auth middleware instances
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName);
@@ -1210,6 +1255,44 @@ $app->group('/api/mcp/tokens', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\McpController::class)->revokeToken($request, $response, $getArgs($request));
     });
+})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+
+// ── MCP OAuth 2.1 (paste '<origin>/api/mcp' into Claude/ChatGPT; the 401 from /api/mcp points here) ──
+// Discovery documents (public GETs; the deploy's .htaccess must funnel the two root well-known paths
+// to this front controller the same way it funnels /.well-known/formlogic-app.json). The PRM is
+// served at BOTH RFC 9728 forms: the path-suffix ('.../oauth-protected-resource/api/mcp') and the root.
+$oauthPrmHandler = function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->protectedResourceMetadata($request, $response);
+};
+$app->get('/.well-known/oauth-protected-resource', $oauthPrmHandler);
+$app->get('/.well-known/oauth-protected-resource/api/mcp', $oauthPrmHandler);
+$app->get('/.well-known/oauth-authorization-server', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizationServerMetadata($request, $response);
+});
+
+// RFC 7591 dynamic client registration: public by design (no auth), JSON body, tightly rate-limited.
+// CSRF does not apply (external clients send no auth cookie; the middleware skips cookieless POSTs).
+$oauthRegisterRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_register');
+$app->post('/api/oauth/register', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->register($request, $response);
+})->add($oauthRegisterRateLimiter);
+
+// Token endpoint: application/x-www-form-urlencoded (Slim's addBodyParsingMiddleware() decodes form
+// bodies natively; the controller also parses the raw stream defensively). Public, no CSRF, rate-limited.
+$oauthTokenRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'oauth_token');
+$app->post('/api/oauth/token', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->token($request, $response);
+})->add($oauthTokenRateLimiter);
+
+// Consent support for the SPA /oauth/authorize page: authorize-info validates the request and returns
+// what to display; approve (AUTHED FormLogic user + CSRF like every authed POST) mints the one-time
+// code and returns the redirect for the SPA to perform.
+$oauthInfoRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'oauth_info');
+$app->get('/api/oauth/authorize-info', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizeInfo($request, $response);
+})->add($oauthInfoRateLimiter);
+$app->post('/api/oauth/approve', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->approve($request, $response);
 })->add($authRequired)->add($apiKeyMgmtRateLimiter);
 
 // Billing (pay-as-you-go cloud months via PayPal) — authenticated, own rate-limit bucket.

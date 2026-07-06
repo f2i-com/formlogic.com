@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\McpOAuthService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
@@ -102,8 +103,18 @@ class McpController
         $auth = $request->getHeaderLine('Authorization');
         $token = preg_match('/^Bearer\s+(.+)$/i', $auth, $m) ? trim($m[1]) : '';
         $session = $token !== '' ? $this->tokens->validate($token, $this->ip($request)) : null;
+        // Audience binding (RFC 8707): an OAuth-minted token stores the resource it was issued for;
+        // reject it on any other host so a token for server A can never replay against server B.
+        if ($session !== null && is_string($session['resource'] ?? null) && $session['resource'] !== ''
+            && !McpOAuthService::resourceMatchesRequest($session['resource'], $request)) {
+            $session = null;
+        }
         if (!$session) {
-            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32001, 'message' => 'Unauthorized: invalid or expired MCP token']], 401);
+            // EVERY 401 (missing, malformed, expired, revoked, wrong audience) carries the RFC 9728
+            // WWW-Authenticate challenge — it is what triggers OAuth discovery in MCP clients
+            // (Claude/ChatGPT ignore the header on 200s; the 401 is the discovery moment).
+            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32001, 'message' => 'Unauthorized: invalid or expired MCP token']], 401)
+                ->withHeader('WWW-Authenticate', McpOAuthService::wwwAuthenticateHeader($request));
         }
 
         // Slim's body-parsing middleware already decoded the JSON body; fall back to the raw stream.

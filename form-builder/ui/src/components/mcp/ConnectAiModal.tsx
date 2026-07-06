@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plug, Copy, Loader2, Trash2, ShieldAlert, Sparkles } from 'lucide-react';
+import { Plug, Copy, Loader2, Trash2, ShieldAlert, Sparkles, ChevronDown } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
@@ -14,8 +14,14 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [sessions, setSessions] = useState<Session[]>([]);
   const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<NewToken | null>(null);
+  // The OAuth paste-the-URL path is primary; the manual flm_ token flow lives behind this.
+  const [showManual, setShowManual] = useState(false);
   // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
   const isDemo = useAuthStore((s) => s.user?.isDemo === true);
+
+  // The MCP endpoint on THIS deployment — exactly what users paste into Claude/ChatGPT
+  // (the server derives its OAuth issuer/resource from the same origin).
+  const mcpUrl = `${window.location.origin}/api/mcp`;
 
   // Fetch only inside the async callback (no synchronous setState in the effect body).
   const load = useCallback(() => {
@@ -23,7 +29,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   }, [appId]);
   useEffect(() => { if (isOpen) load(); }, [isOpen, load]);
 
-  const handleClose = () => { setFresh(null); onClose(); };
+  const handleClose = () => { setFresh(null); setShowManual(false); onClose(); };
 
   const generate = async () => {
     setGenerating(true);
@@ -68,50 +74,86 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
           </p>
         )}
 
-        {fresh ? (
-          <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
-            <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
-              <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>Copy this now — the token is shown once. {isDemo ? 'It is read-only, but still treat it like a password.' : 'It can create/edit your content, so treat it like a password.'} Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
-            </div>
-            {isDemo ? (
-              <p className="text-[11px] text-gray-500 dark:text-slate-400">
-                Access: <span className="font-medium text-gray-700 dark:text-slate-300">read-only</span> · the AI can view apps, forms &amp; submitted data — <span className="font-medium">cannot make any changes</span> to this shared demo.
-              </p>
-            ) : (
-              <p className="text-[11px] text-gray-500 dark:text-slate-400">
-                Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
-              </p>
-            )}
-            <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1.5 truncate">{fresh.mcpUrl}</code>
-                <Button variant="outline" size="sm" onClick={() => copy(fresh.mcpUrl, 'URL')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Token (Bearer)</p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1.5 truncate">{fresh.token}</code>
-                <Button variant="outline" size="sm" onClick={() => copy(fresh.token, 'Token')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Client config (add as a remote/HTTP MCP server)</p>
-              <pre className="text-[11px] leading-relaxed bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto"><code>{configJson}</code></pre>
-              <div className="flex justify-end mt-1.5">
-                <Button variant="outline" size="sm" onClick={() => copy(configJson, 'Config')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy config</Button>
-              </div>
+        {/* PRIMARY: paste the MCP URL into a connector-capable client — OAuth handles the rest
+            (the browser opens FormLogic's consent page; no token copying). */}
+        <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
+          <p className="text-sm font-medium text-gray-900 dark:text-white">Add FormLogic to Claude or ChatGPT</p>
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1.5 truncate">{mcpUrl}</code>
+              <Button variant="outline" size="sm" onClick={() => copy(mcpUrl, 'URL')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
             </div>
           </div>
-        ) : (
-          <div className="flex justify-end">
-            <Button onClick={generate} disabled={generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
-              {generating ? 'Generating…' : 'Generate connection'}
-            </Button>
-          </div>
-        )}
+          <ol className="space-y-1.5 text-xs text-gray-600 dark:text-slate-300 list-decimal list-inside">
+            <li><span className="font-medium">Claude:</span> Settings → Connectors → Add custom connector → paste the URL.</li>
+            <li><span className="font-medium">ChatGPT:</span> Settings → Apps &amp; Connectors → Create → paste the URL.</li>
+            <li>Approve access when your browser opens FormLogic{isDemo ? '' : ' — you can limit it to one app there'}.</li>
+          </ol>
+        </div>
+
+        {/* Other MCP clients: the manual flm_ token flow (collapsible) */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowManual((v) => !v)}
+            aria-expanded={showManual}
+            className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 cursor-pointer"
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showManual ? '' : '-rotate-90'}`} />
+            Other MCP clients (manual token)
+          </button>
+
+          {showManual && (
+            <div className="mt-3 space-y-4">
+              {fresh ? (
+                <div className="space-y-3 rounded-xl border border-primary-200 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 p-4">
+                  <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-300">
+                    <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>Copy this now — the token is shown once. {isDemo ? 'It is read-only, but still treat it like a password.' : 'It can create/edit your content, so treat it like a password.'} Idle-expires in {Math.round(fresh.idleTimeout / 60)} min.</span>
+                  </div>
+                  {isDemo ? (
+                    <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">read-only</span> · the AI can view apps, forms &amp; submitted data — <span className="font-medium">cannot make any changes</span> to this shared demo.
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 dark:text-slate-400">
+                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
+                    </p>
+                  )}
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">MCP server URL</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1.5 truncate">{fresh.mcpUrl}</code>
+                      <Button variant="outline" size="sm" onClick={() => copy(fresh.mcpUrl, 'URL')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Token (Bearer)</p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1.5 truncate">{fresh.token}</code>
+                      <Button variant="outline" size="sm" onClick={() => copy(fresh.token, 'Token')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1">Client config (add as a remote/HTTP MCP server)</p>
+                    <pre className="text-[11px] leading-relaxed bg-gray-900 text-gray-100 rounded-lg p-3 overflow-x-auto"><code>{configJson}</code></pre>
+                    <div className="flex justify-end mt-1.5">
+                      <Button variant="outline" size="sm" onClick={() => copy(configJson, 'Config')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy config</Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-gray-500 dark:text-slate-400">For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.</p>
+                  <Button onClick={generate} disabled={generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
+                    {generating ? 'Generating…' : 'Generate connection'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <div>
           <p className="text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">Active connections</p>
