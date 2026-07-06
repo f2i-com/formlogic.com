@@ -766,20 +766,85 @@ fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<String, Str
     resp.text().map_err(|e| format!("reading {url} failed: {e}"))
 }
 
-/// Fetch `{origin}/api/app/{slug}/client-manifest` + `{origin}/api/public/signing-key` and
-/// verify the manifest's detached Ed25519 signature. On success returns the granted caps.
-fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
+/// The lowercased host of an http/https origin string (`scheme://host[:port]`), without the port.
+/// Used to pin a same-origin custom-domain manifest's top-level `domain` field to the origin that
+/// actually served it. Matches PHP AppDomainService::normalizeDomain (lowercase host, no port).
+fn origin_host(origin: &str) -> Option<String> {
+    Url::parse(origin)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+}
 
-    let envelope: Value = serde_json::from_str(&http_get(
-        &client,
-        &format!("{origin}/api/app/{slug}/client-manifest"),
-    )?)
-    .map_err(|e| format!("manifest is not JSON: {e}"))?;
+/// Parse a signed-manifest envelope from raw response text. Returns None when the text is not
+/// JSON or lacks the signed-envelope shape (a `payload` + `signature`) — e.g. a `{error:true}`
+/// 404 body. The well-known probe uses this None as the signal to fall back to the API manifest.
+fn parse_manifest_envelope(text: &str) -> Option<Value> {
+    let envelope: Value = serde_json::from_str(text).ok()?;
+    if envelope.get("payload").is_some() && envelope.get("signature").is_some() {
+        Some(envelope)
+    } else {
+        None
+    }
+}
 
+/// Choose the signed manifest envelope, PREFERRING the same-origin custom-domain manifest at
+/// `{origin}/.well-known/formlogic-app.json`. When that probe fails (404 / unreachable) or does
+/// not parse as a signed envelope, FALL BACK to `{origin}/api/app/{slug}/client-manifest`.
+/// `fetch` is the transport (injected so the selection logic is unit-testable without HTTP); it is
+/// called lazily, so the API fallback is only fetched when the well-known source is unusable.
+fn choose_manifest_envelope<F>(origin: &str, slug: &str, mut fetch: F) -> Result<Value, String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    let well_known_url = format!("{origin}/.well-known/formlogic-app.json");
+    if let Ok(text) = fetch(&well_known_url) {
+        if let Some(envelope) = parse_manifest_envelope(&text) {
+            return Ok(envelope);
+        }
+    }
+    let api_url = format!("{origin}/api/app/{slug}/client-manifest");
+    let text = fetch(&api_url)?;
+    serde_json::from_str(&text).map_err(|e| format!("client manifest is not JSON: {e}"))
+}
+
+/// After the Ed25519 signature checks out, enforce that the signed manifest actually describes the
+/// app+origin we navigated to (spec §25 hardening): a payload `appSlug` (if present) must match the
+/// URL slug, and a top-level `domain` MUST be present and match the current origin host. A mismatch —
+/// or a MISSING domain — is a HARD verification failure: the caller keeps the webview display-only
+/// rather than granting native capabilities from a manifest bound elsewhere. The server binds `domain`
+/// on every route (the custom-domain host, or the platform host for the slug route), so a domain-less
+/// manifest is a replay attempt — a validly-signed manifest served from a foreign origin — and is refused.
+fn check_manifest_identity(payload: &Value, slug: &str, origin_host: Option<&str>) -> Result<(), String> {
+    if let Some(manifest_slug) = payload.get("appSlug").and_then(Value::as_str) {
+        if manifest_slug != slug {
+            return Err(format!(
+                "manifest appSlug \"{manifest_slug}\" does not match navigated slug \"{slug}\""
+            ));
+        }
+    }
+    let domain = payload
+        .get("domain")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| "manifest is missing a signed `domain` origin binding".to_string())?;
+    let host = origin_host.unwrap_or("");
+    if !domain.eq_ignore_ascii_case(host) {
+        return Err(format!(
+            "manifest domain \"{domain}\" does not match current origin host \"{host}\""
+        ));
+    }
+    Ok(())
+}
+
+/// Verify a signed manifest envelope (`payload` + `signature` + `alg`) against the server's public
+/// key, then enforce the appSlug/domain identity match. On success returns the granted native caps.
+fn verify_manifest_envelope(
+    envelope: &Value,
+    public_key: &str,
+    slug: &str,
+    origin_host: Option<&str>,
+) -> Result<VerifiedCaps, String> {
     let payload = envelope.get("payload").ok_or("manifest has no payload")?;
     let signature = envelope
         .get("signature")
@@ -789,6 +854,22 @@ fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
     if alg != "Ed25519" {
         return Err(format!("manifest alg is \"{alg}\", not publicly verifiable"));
     }
+    verify_ed25519(payload, signature, public_key)?;
+    check_manifest_identity(payload, slug, origin_host)?;
+    Ok(extract_caps(payload))
+}
+
+/// Fetch the app's signed client manifest (preferring the same-origin custom-domain manifest at
+/// `/.well-known/formlogic-app.json`, else the slug-addressed `/api/app/{slug}/client-manifest`)
+/// plus `{origin}/api/public/signing-key`, verify the manifest's detached Ed25519 signature, and
+/// enforce that its appSlug/domain match the navigated slug + origin host. Returns the granted caps.
+fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+
+    let envelope = choose_manifest_envelope(origin, slug, |url| http_get(&client, url))?;
 
     let key: Value = serde_json::from_str(&http_get(&client, &format!("{origin}/api/public/signing-key"))?)
         .map_err(|e| format!("signing-key is not JSON: {e}"))?;
@@ -798,17 +879,7 @@ fn fetch_and_verify(origin: &str, slug: &str) -> Result<VerifiedCaps, String> {
         .filter(|s| !s.is_empty())
         .ok_or("server exposes no Ed25519 public key")?;
 
-    verify_ed25519(payload, signature, public_key)?;
-
-    // Optional consistency check: the signed manifest must be for the slug we navigated to.
-    if let Some(manifest_slug) = payload.get("appSlug").and_then(Value::as_str) {
-        if manifest_slug != slug {
-            return Err(format!(
-                "manifest appSlug \"{manifest_slug}\" does not match navigated slug \"{slug}\""
-            ));
-        }
-    }
-    Ok(extract_caps(payload))
+    verify_manifest_envelope(&envelope, public_key, slug, origin_host(origin).as_deref())
 }
 
 /// The deep-link target the runtime was cold-started with (consumed once), so the shell
@@ -1425,6 +1496,148 @@ mod tests {
         // Tampering the payload invalidates the libsodium signature.
         let tampered = json!({ "version": 2, "appSlug": "demo", "native": {} });
         assert!(verify_ed25519(&tampered, sig_b64url, pubkey_b64).is_err());
+    }
+
+    // ---- TASK #2: well-known manifest preference + appSlug/domain identity pinning ----
+
+    #[test]
+    fn origin_host_strips_scheme_and_port() {
+        assert_eq!(origin_host("https://Apps.Example.com").as_deref(), Some("apps.example.com"));
+        assert_eq!(origin_host("http://localhost:8090").as_deref(), Some("localhost"));
+        assert_eq!(origin_host("https://fleet.acme.co:8443/app/x").as_deref(), Some("fleet.acme.co"));
+        assert_eq!(origin_host("not a url"), None);
+    }
+
+    #[test]
+    fn parse_manifest_envelope_gates_on_signed_shape() {
+        // A signed envelope (payload + signature) parses.
+        let env = parse_manifest_envelope(r#"{"alg":"Ed25519","payload":{"appSlug":"demo"},"signature":"abc"}"#);
+        assert!(env.is_some());
+        // A 404 error body / anything lacking payload+signature is rejected (→ fall back).
+        assert!(parse_manifest_envelope(r#"{"error":true,"message":"Not found"}"#).is_none());
+        assert!(parse_manifest_envelope(r#"{"payload":{"appSlug":"demo"}}"#).is_none()); // no signature
+        // Non-JSON is rejected.
+        assert!(parse_manifest_envelope("<html>404</html>").is_none());
+        assert!(parse_manifest_envelope("").is_none());
+    }
+
+    #[test]
+    fn choose_manifest_prefers_well_known_and_skips_api() {
+        // The well-known custom-domain manifest is valid → it is used and the API is NEVER fetched.
+        let mut fetched: Vec<String> = Vec::new();
+        let env = choose_manifest_envelope("https://fleet.acme.co", "demo", |url| {
+            fetched.push(url.to_string());
+            if url.ends_with("/.well-known/formlogic-app.json") {
+                Ok(r#"{"alg":"Ed25519","payload":{"appSlug":"demo","domain":"fleet.acme.co"},"signature":"sig"}"#.to_string())
+            } else {
+                panic!("API manifest must not be fetched when well-known succeeds");
+            }
+        })
+        .expect("well-known envelope selected");
+        assert_eq!(env.pointer("/payload/domain").and_then(Value::as_str), Some("fleet.acme.co"));
+        assert_eq!(fetched, vec!["https://fleet.acme.co/.well-known/formlogic-app.json".to_string()]);
+    }
+
+    #[test]
+    fn choose_manifest_falls_back_when_well_known_missing_or_unparseable() {
+        // (a) well-known 404s (Err) → fall back to the slug-addressed API manifest.
+        let mut fetched: Vec<String> = Vec::new();
+        let env = choose_manifest_envelope("https://app.formlogic.com", "demo", |url| {
+            fetched.push(url.to_string());
+            if url.contains("/.well-known/") {
+                Err("GET returned HTTP 404".to_string())
+            } else {
+                Ok(r#"{"alg":"Ed25519","payload":{"appSlug":"demo"},"signature":"sig"}"#.to_string())
+            }
+        })
+        .expect("API fallback selected");
+        assert_eq!(env.pointer("/payload/appSlug").and_then(Value::as_str), Some("demo"));
+        assert_eq!(
+            fetched,
+            vec![
+                "https://app.formlogic.com/.well-known/formlogic-app.json".to_string(),
+                "https://app.formlogic.com/api/app/demo/client-manifest".to_string(),
+            ]
+        );
+
+        // (b) well-known returns a non-envelope body (e.g. a JSON error) → also falls back.
+        let env2 = choose_manifest_envelope("https://app.formlogic.com", "demo", |url| {
+            if url.contains("/.well-known/") {
+                Ok(r#"{"error":true,"message":"Not found"}"#.to_string())
+            } else {
+                Ok(r#"{"alg":"Ed25519","payload":{"appSlug":"demo"},"signature":"sig"}"#.to_string())
+            }
+        })
+        .expect("API fallback selected on non-envelope well-known body");
+        assert_eq!(env2.pointer("/payload/appSlug").and_then(Value::as_str), Some("demo"));
+
+        // (c) both sources unusable → the API fetch error propagates.
+        let err = choose_manifest_envelope("https://x.example", "demo", |_url| Err("boom".to_string()))
+            .unwrap_err();
+        assert_eq!(err, "boom");
+    }
+
+    #[test]
+    fn check_manifest_identity_enforces_slug_and_domain() {
+        // appSlug must match the navigated slug (when present) — checked alongside the required domain.
+        let slug_bad = json!({ "appSlug": "other", "domain": "demo.example.com" });
+        assert!(check_manifest_identity(&slug_bad, "demo", Some("demo.example.com")).is_err());
+
+        // A signed manifest MUST carry a `domain` matching the origin host (the server binds it on every
+        // route). A matching domain (case-insensitive) grants.
+        let dom_ok = json!({ "appSlug": "demo", "domain": "Fleet.Acme.CO" });
+        assert!(check_manifest_identity(&dom_ok, "demo", Some("fleet.acme.co")).is_ok());
+        // Wrong host → hard failure.
+        let dom_bad = json!({ "appSlug": "demo", "domain": "fleet.acme.co" });
+        assert!(check_manifest_identity(&dom_bad, "demo", Some("evil.example.com")).is_err());
+        // Domain present but no origin host known → failure (cannot pin).
+        assert!(check_manifest_identity(&dom_bad, "demo", None).is_err());
+        // MISSING domain → REJECTED: a validly-signed but domain-less manifest replayed onto a foreign
+        // origin must not verify (the replay attack this pin closes).
+        assert!(check_manifest_identity(&json!({ "appSlug": "demo" }), "demo", Some("demo.example.com")).is_err());
+        // EMPTY domain is treated as missing → also rejected.
+        assert!(check_manifest_identity(&json!({ "appSlug": "demo", "domain": "" }), "demo", Some("x")).is_err());
+    }
+
+    #[test]
+    fn verify_manifest_envelope_signature_then_identity() {
+        use base64::Engine as _;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let pubkey_b64 = base64::engine::general_purpose::STANDARD.encode(signing_key.verifying_key().to_bytes());
+
+        // Build a signed envelope for a custom-domain manifest (slug=demo, domain=fleet.acme.co).
+        let make_envelope = |payload: &Value| -> Value {
+            let msg = php_canonical(payload);
+            let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(signing_key.sign(msg.as_bytes()).to_bytes());
+            json!({ "alg": "Ed25519", "payload": payload, "signature": sig })
+        };
+
+        let payload = json!({
+            "version": 1,
+            "appSlug": "demo",
+            "domain": "fleet.acme.co",
+            "native": { "capabilities": [ { "connector": "vehicle", "commands": ["status.read"] } ] }
+        });
+        let envelope = make_envelope(&payload);
+
+        // Signature valid + slug matches + domain matches origin host → verified, caps granted.
+        let caps = verify_manifest_envelope(&envelope, &pubkey_b64, "demo", Some("fleet.acme.co"))
+            .expect("valid manifest verifies");
+        assert!(caps.grants("vehicle", "status.read"));
+
+        // Same (validly signed) envelope but the navigated slug differs → identity failure.
+        assert!(verify_manifest_envelope(&envelope, &pubkey_b64, "not-demo", Some("fleet.acme.co")).is_err());
+
+        // Same envelope served from the WRONG origin host → domain pin fails even though the
+        // signature is valid (a manifest bound to fleet.acme.co can't authorize evil.example.com).
+        assert!(verify_manifest_envelope(&envelope, &pubkey_b64, "demo", Some("evil.example.com")).is_err());
+
+        // A tampered payload (unsigned change) fails at the signature step, before identity.
+        let tampered = json!({ "version": 1, "appSlug": "demo", "domain": "fleet.acme.co", "native": {} });
+        let bad = json!({ "alg": "Ed25519", "payload": tampered, "signature": envelope["signature"] });
+        assert!(verify_manifest_envelope(&bad, &pubkey_b64, "demo", Some("fleet.acme.co")).is_err());
     }
 
     #[test]

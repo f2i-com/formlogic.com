@@ -180,6 +180,58 @@ function readNativeConfig(domain: AppDomain): NativeConfig {
   return raw && typeof raw === 'object' ? raw : {};
 }
 
+// Inline validation for the native-app editor — mirrors the backend sanitizer (AppDomainService) so the
+// owner sees a clear inline error instead of silently having a value dropped on save.
+const ANDROID_PKG_RE = /^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/;
+const SHA256_FP_RE = /^([0-9A-Fa-f]{2}:){31}[0-9A-Fa-f]{2}$/; // 32 colon-separated hex byte-pairs
+const VERSION_RE = /^\d+(\.\d+)*([-.+][0-9A-Za-z.-]+)?$/;
+
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+type NativeConfigErrors = {
+  packageName?: string;
+  fingerprints?: string;
+  minRuntimeVersion?: string;
+  installUrl?: string;
+};
+
+function FieldError({ msg }: { msg?: string }) {
+  return msg ? <span className="mt-1 block text-[11px] text-red-500 dark:text-red-400">{msg}</span> : null;
+}
+
+function validateNativeConfig(input: {
+  packageName: string;
+  fingerprints: string;
+  minRuntimeVersion: string;
+  installUrl: string;
+}): NativeConfigErrors {
+  const errors: NativeConfigErrors = {};
+  const pkg = input.packageName.trim();
+  if (pkg && !ANDROID_PKG_RE.test(pkg)) {
+    errors.packageName = 'Use a valid Android package name, e.g. com.yourcompany.app';
+  }
+  const fps = input.fingerprints.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  if (fps.some((fp) => !SHA256_FP_RE.test(fp))) {
+    errors.fingerprints = 'Each fingerprint must be 32 colon-separated hex pairs (AB:CD:EF:…).';
+  }
+  const url = input.installUrl.trim();
+  if (url && !isHttpUrl(url)) {
+    errors.installUrl = 'Enter an http(s) URL.';
+  }
+  const ver = input.minRuntimeVersion.trim();
+  if (ver && (ver.length > 32 || !VERSION_RE.test(ver))) {
+    errors.minRuntimeVersion = 'Enter a version like 0.1.0.';
+  }
+  return errors;
+}
+
 /** Per-domain native app / App Links editor — persists into app_domains.native_config. */
 function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain: AppDomain; onSaved: (d: AppDomain) => void }) {
   const [open, setOpen] = useState(false);
@@ -192,7 +244,12 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
   const [showNativeCta, setShowNativeCta] = useState(!!initial.showNativeCta);
   const [saving, setSaving] = useState(false);
 
+  const errors = validateNativeConfig({ packageName, fingerprints, minRuntimeVersion, installUrl });
+  const hasErrors = Object.keys(errors).length > 0;
+
   const save = async () => {
+    // Block saving invalid config so the owner fixes it here rather than having values silently dropped.
+    if (hasErrors) return;
     setSaving(true);
     const sha256CertFingerprints = fingerprints
       .split(/[\n,]/)
@@ -241,8 +298,10 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
                 value={packageName}
                 onChange={(e) => setPackageName(e.target.value)}
                 placeholder="com.yourcompany.app"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500"
+                aria-invalid={!!errors.packageName}
+                className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 ${errors.packageName ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : 'border-gray-300 dark:border-slate-600 focus:ring-primary-500'}`}
               />
+              <FieldError msg={errors.packageName} />
             </label>
             <label className="block min-w-0">
               <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Minimum runtime version</span>
@@ -250,8 +309,10 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
                 value={minRuntimeVersion}
                 onChange={(e) => setMinRuntimeVersion(e.target.value)}
                 placeholder="0.1.0"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500"
+                aria-invalid={!!errors.minRuntimeVersion}
+                className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 ${errors.minRuntimeVersion ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : 'border-gray-300 dark:border-slate-600 focus:ring-primary-500'}`}
               />
+              <FieldError msg={errors.minRuntimeVersion} />
             </label>
           </div>
           <label className="block min-w-0">
@@ -261,9 +322,14 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
               onChange={(e) => setFingerprints(e.target.value)}
               rows={2}
               placeholder={'One per line\nAB:CD:EF:…'}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500 resize-y break-all"
+              aria-invalid={!!errors.fingerprints}
+              className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 resize-y break-all ${errors.fingerprints ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : 'border-gray-300 dark:border-slate-600 focus:ring-primary-500'}`}
             />
-            <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-1">One fingerprint per line (or comma-separated).</span>
+            {errors.fingerprints ? (
+              <FieldError msg={errors.fingerprints} />
+            ) : (
+              <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-1">One fingerprint per line (or comma-separated).</span>
+            )}
           </label>
           <label className="block min-w-0">
             <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Native install URL</span>
@@ -271,8 +337,10 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
               value={installUrl}
               onChange={(e) => setInstallUrl(e.target.value)}
               placeholder="https://play.google.com/store/apps/details?id=…"
-              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500"
+              aria-invalid={!!errors.installUrl}
+              className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs focus:ring-2 ${errors.installUrl ? 'border-red-400 dark:border-red-500 focus:ring-red-500' : 'border-gray-300 dark:border-slate-600 focus:ring-primary-500'}`}
             />
+            <FieldError msg={errors.installUrl} />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
@@ -284,8 +352,9 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
               Require the native runtime
             </label>
           </div>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>Save native settings</Button>
+          <div className="flex items-center justify-end gap-3">
+            {hasErrors && <span className="text-[11px] text-red-500 dark:text-red-400">Fix the highlighted fields to save.</span>}
+            <Button size="sm" onClick={save} isLoading={saving} disabled={saving || hasErrors}>Save native settings</Button>
           </div>
         </div>
       )}

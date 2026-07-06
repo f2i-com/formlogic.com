@@ -235,6 +235,31 @@ class HealthController
             $checks['platform_tables'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }
 
+        // Offline-sync idempotency ledger size — one row per (app, form, idempotency_key). Rows are only
+        // useful until a queued submission can no longer be replayed; stale ones are dead weight. Warn
+        // (non-critical) past a threshold so an operator knows to schedule bin/idempotency-cleanup.php.
+        try {
+            $conn = $this->db->getConnection();
+            $tblStmt = $conn->query('SHOW TABLES LIKE ' . $conn->quote('app_submission_idempotency'));
+            if ($tblStmt && $tblStmt->fetchColumn() !== false) {
+                $threshold = 100000;
+                $countStmt = $conn->query('SELECT COUNT(*) FROM app_submission_idempotency');
+                $rowCount = $countStmt ? (int) $countStmt->fetchColumn() : 0;
+                $checks['idempotency_ledger'] = [
+                    'ok' => true, // non-critical: a large ledger is a maintenance issue, not an outage
+                    'critical' => false,
+                    'detail' => number_format($rowCount) . ' row(s)',
+                ];
+                if ($rowCount > $threshold) {
+                    $checks['idempotency_ledger']['warning'] = 'app_submission_idempotency has ' . number_format($rowCount)
+                        . ' rows (> ' . number_format($threshold) . ') — schedule bin/idempotency-cleanup.php '
+                        . '(prunes rows older than IDEMPOTENCY_RETENTION_DAYS, default 30).';
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks['idempotency_ledger'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
         // Native runtime build config (informational) — the Tauri shell that hosts custom apps.
         $tauriConf = dirname($base) . '/native-runtime/src-tauri/tauri.conf.json';
         $hasNative = is_file($tauriConf);

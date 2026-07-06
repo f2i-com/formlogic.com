@@ -75,7 +75,13 @@ class AppManifestController
             return $guard;
         }
 
-        return $this->jsonResponse($response, $this->signing->sign($this->buildManifest($app, $request)));
+        // Bind the manifest to the platform origin that serves it (the frontend-base host) so the native
+        // runtime can enforce signed-domain == serving-origin. Without this, a validly-signed but
+        // domain-less slug manifest could be replayed onto an attacker origin to grant native caps there.
+        return $this->jsonResponse(
+            $response,
+            $this->signing->sign($this->buildManifest($app, $request, null, $this->platformHost($request)))
+        );
     }
 
     /**
@@ -118,18 +124,45 @@ class AppManifestController
     }
 
     /**
-     * Same-origin base URL (scheme://host) for a VERIFIED custom domain. The scheme is taken from the
-     * request (defaulting to https, since a live custom domain is served over TLS); the host is the
+     * Same-origin base URL (scheme://host) for a VERIFIED custom domain. The scheme is resolved via
+     * requestScheme() (X-Forwarded-Proto first, so a TLS-terminating proxy that forwards http still
+     * yields https links; default https, since a live custom domain is served over TLS). The host is the
      * already-normalized, pre-verified active domain — safe to trust here because the caller gated it
      * through resolveAppSlugByHost. Never derives a platform origin, so it can't leak into emailed links.
      */
     private function customDomainBase(Request $request, string $normalizedDomain): string
     {
-        $scheme = strtolower($request->getUri()->getScheme());
-        if ($scheme !== 'http' && $scheme !== 'https') {
-            $scheme = 'https';
+        return $this->requestScheme($request) . '://' . $normalizedDomain;
+    }
+
+    /**
+     * Resolve the effective request scheme, UPGRADE-ONLY. X-Forwarded-Proto is honored only to CONFIRM
+     * https (a TLS-terminating proxy that forwards http on the wire); a spoofed "X-Forwarded-Proto: http"
+     * can NOT downgrade a signed custom-domain manifest's links to cleartext. Otherwise the real
+     * connection scheme is used; default https. Only ever returns 'http' or 'https'.
+     */
+    private function requestScheme(Request $request): string
+    {
+        $proto = strtolower(trim(explode(',', $request->getHeaderLine('X-Forwarded-Proto'))[0]));
+        if ($proto === 'https') {
+            return 'https';
         }
-        return $scheme . '://' . $normalizedDomain;
+        return strtolower($request->getUri()->getScheme()) === 'http' ? 'http' : 'https';
+    }
+
+    /**
+     * The normalized host of the platform frontend base — binds the slug manifest's `domain` to the
+     * platform origin that serves it, so the native runtime can reject a replay onto another origin.
+     * Empty string on failure (the runtime then refuses the domain-less manifest — fail-closed).
+     */
+    private function platformHost(Request $request): string
+    {
+        try {
+            $host = (string) parse_url(AppUrl::frontendBase($request), PHP_URL_HOST);
+            return $host !== '' ? $this->domains->normalizeDomain($host) : '';
+        } catch (\Throwable $e) {
+            return '';
+        }
     }
 
     /**
@@ -151,7 +184,10 @@ class AppManifestController
     private function buildManifest(array $app, Request $request, ?string $baseOverride = null, ?string $customDomain = null): array
     {
         $slug = (string) ($app['slug'] ?? '');
-        if ($baseOverride !== null) {
+        // A base override is only ever passed for a pre-verified custom domain (clientManifestByHost);
+        // the platform slug route passes null. That presence is the signal for the same-origin forms.
+        $isCustomDomain = $baseOverride !== null;
+        if ($isCustomDomain) {
             $base = rtrim($baseOverride, '/');
         } else {
             $base = null;
@@ -193,7 +229,13 @@ class AppManifestController
             'install' => [
                 'pwa' => [
                     'enabled' => (bool) ($settings['enablePwa'] ?? true),
-                    'manifestUrl' => $base . '/api/app/' . $slug . '/manifest.json',
+                    // Custom-domain manifests point at the dedicated same-origin root PWA manifest
+                    // ({customBase}/manifest.json, served by AppPublicController::manifestByHost), so the
+                    // installing document stays in scope. The platform slug route keeps the API-origin
+                    // per-slug manifest, which AppUrl::frontendBase already resolves to the app origin.
+                    'manifestUrl' => $isCustomDomain
+                        ? ($base . '/manifest.json')
+                        : ($base . '/api/app/' . $slug . '/manifest.json'),
                 ],
                 'android' => [
                     // The generic FormLogic Native Runtime opens any app; App Links verification uses

@@ -33,6 +33,12 @@ class PackController
         $this->ipResolver = IpResolver::fromEnvironment();
     }
 
+    /** Workspace policy: only positively-verified (signed) application packages may be imported. */
+    private function requireVerifiedPackages(): bool
+    {
+        return (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true');
+    }
+
     /**
      * GET /api/apps/{id}/export/signed
      * Export an app as a SIGNED application package (spec §29.6): the pack payload plus a
@@ -192,15 +198,30 @@ class PackController
             ]);
             $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
 
-            // Optional workspace policy: block an unverified package (mirrors PlanService gating in import()).
-            $requireVerified = (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? '') === 'true');
-            if ($requireVerified && $trust === 'unverified') {
+            // A PRESENT-but-INVALID signature is a tamper / key-mismatch signal, not a "community" package —
+            // reject by DEFAULT rather than silently importing it as 'unverified'. An explicit allowUnverified
+            // override lets a user knowingly proceed (its envelope metadata is still skipped below because the
+            // trust stays 'unverified'). Unsigned packages take neither branch and import as 'community'.
+            $allowUnverified = (($body['allowUnverified'] ?? null) === true) || (($body['allowUnverified'] ?? null) === 'true');
+            if ($trust === 'unverified' && !$allowUnverified) {
                 return $this->jsonResponse($response, [
                     'error' => true,
-                    'code' => 'unverified_package',
-                    'message' => 'This workspace only allows verified (signed) application packages.',
-                ], 403);
+                    'code' => 'signature_invalid',
+                    'message' => 'The application package signature did not verify. Re-download it, or set allowUnverified to import it anyway.',
+                ], 400);
             }
+        }
+
+        // Optional workspace policy: only positively-VERIFIED packages (Ed25519 'official' or same-server
+        // HS256 'local-only') may import. This rejects BOTH an unsigned 'community' package and a
+        // present-but-invalid 'unverified' one (allowUnverified can't bypass the workspace policy). The
+        // prior check only blocked 'unverified', so anyone could defeat it by simply omitting the signature.
+        if ($this->requireVerifiedPackages() && !in_array($trust, ['official', 'local-only'], true)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'unverified_package',
+                'message' => 'This workspace only allows verified (signed) application packages.',
+            ], 403);
         }
 
         // Unwrap: an ApplicationPackage carries the Pack under `.pack`; a bare Pack IS the payload.
@@ -316,6 +337,16 @@ class PackController
 
         if (!$packData || !is_array($packData)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
+        }
+
+        // Workspace policy: a flat (unsigned) pack is inherently 'community' — reject it when the workspace
+        // requires verified (signed) packages, so the policy can't be sidestepped via this legacy endpoint.
+        if ($this->requireVerifiedPackages()) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'unverified_package',
+                'message' => 'This workspace only allows verified (signed) application packages. Import a signed application package instead.',
+            ], 403);
         }
 
         // Enforce the form-count quota for the whole pack up front.

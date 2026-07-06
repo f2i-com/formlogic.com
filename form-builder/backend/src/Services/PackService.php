@@ -478,7 +478,10 @@ class PackService
      *   quickjs/customLogic.json — the app's sandboxed QuickJS bundle, if any
      *   assets/*       — inline data-URI assets decoded to real files, if any
      *   launch.json / native.json — launch + native runtime config, if present on the app
-     *   signature.json — a DETACHED signature over pack.json (SigningService), so importers can verify it
+     *   signature.json — a DETACHED signature over the CANONICAL manifest.json (SigningService). The manifest
+     *                    carries a sha256 of EVERY archive entry (manifest.entries), so the single detached
+     *                    signature transitively covers pack.json AND every envelope file — a tampered
+     *                    quickjs/launch/native/asset is detected on import even though it lives outside pack.json.
      * Returns the path to a temp .zip the caller must stream then delete.
      *
      * $signing is passed in (not a constructor dep) so the export/import surface stays additive over the
@@ -495,9 +498,48 @@ class PackService
         $version = (string) ($pack['packMeta']['version'] ?? '1.0.0');
         $slug = $this->slugify((string) ($packApp['packAppId'] ?? $name));
 
-        // Canonical pack JSON (unescaped slashes) — hashed for the manifest and signed detached.
+        // Canonical pack JSON (unescaped slashes) — hashed into the manifest and covered by the signed manifest.
         $packJson = (string) json_encode($pack, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        $contentHash = 'sha256:' . hash('sha256', $packJson);
+
+        // Collect EVERY archive entry (name => bytes) the importer may consume, so the manifest can carry a
+        // sha256 of each and the detached signature (over the manifest) transitively covers all of them. This
+        // closes the gap where a signature over pack.json alone left the envelope files (quickjs/launch/native/
+        // assets) tamperable inside an otherwise "signed" ZIP.
+        $entries = ['pack.json' => $packJson];
+
+        // quickjs/ — the sandboxed app-logic bundle (also embedded in pack.json for the atomic import;
+        // surfaced here as a discrete file for external tooling / capability review).
+        if (!empty($packApp['customLogic']) && is_array($packApp['customLogic'])) {
+            $entries['quickjs/customLogic.json'] = (string) json_encode($packApp['customLogic'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        }
+
+        // launch.json / native.json — only if the app record carries them (per-domain configs live
+        // elsewhere; these are future-proofed and simply omitted when absent).
+        if (is_array($app['launch'] ?? null) && !empty($app['launch'])) {
+            $entries['launch.json'] = (string) json_encode($app['launch'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        }
+        if (is_array($app['native'] ?? null) && !empty($app['native'])) {
+            $entries['native.json'] = (string) json_encode($app['native'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        }
+
+        // assets/ — decode any inline data-URI assets to real files under a safe key.
+        foreach ((is_array($app['assets'] ?? null) ? $app['assets'] : []) as $key => $dataUri) {
+            if (!is_string($key) || !is_string($dataUri) || !PackFileService::isSafeZipEntryName('assets/' . $key)) {
+                continue;
+            }
+            $decoded = $this->decodeDataUri($dataUri);
+            if ($decoded !== null && strlen($decoded) <= PackFileService::MAX_ASSET_BYTES) {
+                $entries['assets/' . $key] = $decoded;
+            }
+        }
+
+        // Per-entry content hashes: the SIGNED manifest binds each archive entry, so a tampered envelope
+        // file is detected on import (its recomputed sha256 will not match the signed hash).
+        $entryHashes = [];
+        foreach ($entries as $entryName => $bytes) {
+            $entryHashes[$entryName] = hash('sha256', $bytes);
+        }
+        $contentHash = 'sha256:' . $entryHashes['pack.json'];
 
         $manifest = [
             'version' => 1,
@@ -507,6 +549,8 @@ class PackService
             'description' => (string) ($pack['packMeta']['description'] ?? ''),
             'packVersion' => $version,
             'contentHash' => $contentHash,
+            // Signed per-entry manifest (Option A): { "pack.json": "<sha256hex>", ... } for every entry above.
+            'entries' => $entryHashes,
             'capabilities' => PackCapabilities::describe($pack),
         ];
 
@@ -518,37 +562,14 @@ class PackService
         }
 
         $zip->addFromString('manifest.json', (string) json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        $zip->addFromString('pack.json', $packJson);
-
-        // quickjs/ — the sandboxed app-logic bundle (also embedded in pack.json for the atomic import;
-        // surfaced here as a discrete file for external tooling / capability review).
-        if (!empty($packApp['customLogic']) && is_array($packApp['customLogic'])) {
-            $zip->addFromString('quickjs/customLogic.json', (string) json_encode($packApp['customLogic'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        foreach ($entries as $entryName => $bytes) {
+            $zip->addFromString($entryName, $bytes);
         }
 
-        // launch.json / native.json — only if the app record carries them (per-domain configs live
-        // elsewhere; these are future-proofed and simply omitted when absent).
-        if (is_array($app['launch'] ?? null) && !empty($app['launch'])) {
-            $zip->addFromString('launch.json', (string) json_encode($app['launch'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        }
-        if (is_array($app['native'] ?? null) && !empty($app['native'])) {
-            $zip->addFromString('native.json', (string) json_encode($app['native'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        }
-
-        // assets/ — decode any inline data-URI assets to real files under a safe key.
-        foreach ((is_array($app['assets'] ?? null) ? $app['assets'] : []) as $key => $dataUri) {
-            if (!is_string($key) || !is_string($dataUri) || !PackFileService::isSafeZipEntryName('assets/' . $key)) {
-                continue;
-            }
-            $decoded = $this->decodeDataUri($dataUri);
-            if ($decoded !== null && strlen($decoded) <= PackFileService::MAX_ASSET_BYTES) {
-                $zip->addFromString('assets/' . $key, $decoded);
-            }
-        }
-
-        // Detached signature over the pack payload (verifiable against this server's public key).
+        // Detached signature over the CANONICAL manifest (which binds every entry via its sha256). A verifier
+        // can therefore trust manifest.entries and, through it, every file the importer consumes.
         if ($signing !== null) {
-            $signed = $signing->sign($pack);
+            $signed = $signing->sign($manifest);
             $zip->addFromString('signature.json', (string) json_encode([
                 'signature' => $signed['signature'],
                 'alg' => $signed['alg'],
@@ -563,10 +584,13 @@ class PackService
 
     /**
      * Import a .formlogic-app ARCHIVE (the inverse of exportApplicationPackage). Opens the ZIP, validates
-     * EVERY entry with the shared PackFileService zip-slip + zip-bomb guard, verifies signature.json when
-     * present (rejecting a tampered archive), reads pack.json, and delegates to the existing ATOMIC
-     * importPack() — so remapping / rollback / quota are unchanged. customLogic rides inside pack.json, so
-     * the discrete quickjs/ + assets/ + launch/native entries are validated-but-informational here.
+     * EVERY entry with the shared PackFileService zip-slip + zip-bomb guard, then — when signature.json is
+     * present — verifies the detached signature over the CANONICAL manifest.json and enforces the manifest's
+     * per-entry sha256 hashes for pack.json AND every envelope file the importer will consume (quickjs/
+     * customLogic.json, launch.json, native.json, assets/*). A tampered file, or an applicable envelope file
+     * that is PRESENT but NOT listed in the signed manifest (an unsigned extra), is rejected. Only after the
+     * covered entries verify does it delegate to the ATOMIC importPack() (remapping / rollback / quota
+     * unchanged) and apply the (now signature-covered) envelope metadata.
      *
      * @return array importPack() result plus 'trust' (official|local-only|community).
      */
@@ -596,16 +620,28 @@ class PackService
                 throw new \RuntimeException('pack.json is not valid JSON');
             }
 
-            // 3. Detached signature: verify over the pack payload; reject on failure (tamper).
+            // 3. Detached signature over the CANONICAL manifest.json (which binds every entry via a per-entry
+            //    sha256). When present it MUST verify; then each entry the importer consumes must match its
+            //    signed hash — so a tampered envelope file (quickjs/launch/native/asset) is rejected even
+            //    though it lives outside pack.json. $signatureCovers stays null for an unsigned (community)
+            //    archive, and is the covered-entry set for a signed one (drives the "unsigned extra" check).
             $trust = 'community';
+            $signatureCovers = null;
             $sigRaw = $zip->getFromName('signature.json');
             if ($sigRaw !== false) {
                 $sig = json_decode($sigRaw, true);
                 if (!is_array($sig) || !isset($sig['signature'], $sig['alg'])) {
                     throw new \RuntimeException('signature.json is malformed');
                 }
+
+                $manifestRaw = $zip->getFromName('manifest.json');
+                $manifest = is_string($manifestRaw) ? json_decode($manifestRaw, true) : null;
+                if (!is_array($manifest)) {
+                    throw new \RuntimeException('Application package signature verification failed: manifest.json is missing or invalid');
+                }
+
                 $ok = $signing !== null && $signing->verify([
-                    'payload' => $pack,
+                    'payload' => $manifest,
                     'signature' => (string) $sig['signature'],
                     'alg' => (string) $sig['alg'],
                 ]);
@@ -615,13 +651,30 @@ class PackService
                 // Only reached when the signature verified: Ed25519 => official, HS256 => local-only.
                 // Same classifier as describe + the JSON import path (single source of truth).
                 $trust = self::classifyTrust(true, true, (string) $sig['alg']);
+
+                // The signed manifest carries a sha256 of every covered entry. Enforce it for pack.json AND
+                // every envelope file — recompute + require an exact match; reject any mismatch (tamper).
+                $entryHashes = is_array($manifest['entries'] ?? null) ? $manifest['entries'] : [];
+                if (empty($entryHashes) || !isset($entryHashes['pack.json'])) {
+                    throw new \RuntimeException('Application package signature verification failed: the signed manifest does not cover pack.json');
+                }
+                $signatureCovers = $this->verifyEntryHashes($zip, $entryHashes);
             }
 
             // 4. Envelope metadata that lives OUTSIDE pack.json (discrete archive entries). Read it INSIDE
             //    the zip-slip-guarded block so every entry name was already validated by assertSafeArchive.
-            $envelope = $this->readArchiveEnvelope($zip);
+            //    For a signed archive, only entries covered by the verified manifest are honored — a present-
+            //    but-unlisted applicable file is an unsigned extra and is rejected.
+            $envelope = $this->readArchiveEnvelope($zip, $signatureCovers);
         } finally {
             $zip->close();
+        }
+
+        // Workspace policy (pre-commit): reject an unverified/community archive BEFORE the atomic import, so
+        // a failed policy check never leaves a committed import behind. Positively-verified (signed) only.
+        if ((($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true')
+            && !in_array($trust, ['official', 'local-only'], true)) {
+            throw new \RuntimeException('This workspace only allows verified (signed) application packages.');
         }
 
         // 5. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
@@ -643,15 +696,25 @@ class PackService
      * data: URI; other assets are noted so the caller can warn). Every entry name was already validated
      * by PackFileService::assertSafeArchive before this runs, so reads here are within the zip-slip guard.
      *
+     * @param array<string,bool>|null $signatureCovers For a SIGNED archive, the set of entry names the
+     *        verified manifest covers (from verifyEntryHashes). An applicable envelope/asset file that is
+     *        PRESENT but NOT in this set is an unsigned extra (tamper) and is rejected. null => unsigned
+     *        (community) archive, so no coverage constraint applies.
      * @return array{customLogic?:array, launch?:array, native?:array, logo?:string, assets?:array<string,bool>}
      */
-    private function readArchiveEnvelope(\ZipArchive $zip): array
+    private function readArchiveEnvelope(\ZipArchive $zip, ?array $signatureCovers = null): array
     {
+        $signed = $signatureCovers !== null;
         $envelope = [];
         foreach (['customLogic' => 'quickjs/customLogic.json', 'launch' => 'launch.json', 'native' => 'native.json'] as $key => $entry) {
             $raw = $zip->getFromName($entry);
             if ($raw === false) {
                 continue;
+            }
+            // A signed archive may only carry envelope files hashed into the verified manifest; an
+            // unlisted-but-present applicable file is an unsigned extra injected into a signed ZIP.
+            if ($signed && !isset($signatureCovers[$entry])) {
+                throw new \RuntimeException('Application package signature verification failed: unsigned "' . $entry . '" not covered by the signed manifest');
             }
             $decoded = json_decode($raw, true);
             if (is_array($decoded) && !empty($decoded)) {
@@ -671,6 +734,11 @@ class PackService
             if ($assetKey === '') {
                 continue;
             }
+            // An asset present in a signed archive but not covered by the verified manifest is an unsigned
+            // extra — reject rather than consume it (matches the envelope-file rule above).
+            if ($signed && !isset($signatureCovers[$name])) {
+                throw new \RuntimeException('Application package signature verification failed: unsigned asset "' . $name . '" not covered by the signed manifest');
+            }
             $assets[$assetKey] = true;
             if (!isset($envelope['logo']) && preg_match('/^logo\.(png|jpe?g|gif|webp|svg)$/i', $assetKey, $m)) {
                 $raw = $zip->getFromName($name);
@@ -685,6 +753,41 @@ class PackService
             $envelope['assets'] = $assets;
         }
         return $envelope;
+    }
+
+    /**
+     * Enforce a SIGNED manifest's per-entry sha256 hashes. For every entry the manifest claims to cover,
+     * recompute the archive member's sha256 and require an exact match; reject on any mismatch (a tampered
+     * file) or a covered entry that is missing from the archive. The manifest itself was already verified
+     * by the detached signature, so its hashes are trusted — this binds every consumed file to that
+     * signature. Returns the covered-entry set (name => true) so readArchiveEnvelope can reject any
+     * applicable envelope/asset file that is present but NOT covered (an unsigned extra).
+     *
+     * @param array<string,mixed> $entryHashes manifest.entries { entryName => sha256hex }
+     * @return array<string,bool> covered entry names
+     */
+    private function verifyEntryHashes(\ZipArchive $zip, array $entryHashes): array
+    {
+        $covered = [];
+        foreach ($entryHashes as $entryName => $expected) {
+            if (!is_string($entryName) || $entryName === '' || !is_string($expected) || $expected === '') {
+                throw new \RuntimeException('Application package signature verification failed: the signed manifest has a malformed entry hash');
+            }
+            // Defense in depth: a covered name must itself be a safe zip path (assertSafeArchive validated the
+            // ARCHIVE's own entry names, but manifest.entries is attacker-influenced input parsed separately).
+            if (!PackFileService::isSafeZipEntryName($entryName)) {
+                throw new \RuntimeException('Application package signature verification failed: the signed manifest lists an unsafe entry name');
+            }
+            $bytes = $zip->getFromName($entryName);
+            if ($bytes === false) {
+                throw new \RuntimeException('Application package signature verification failed: covered entry "' . $entryName . '" is missing from the archive');
+            }
+            if (!hash_equals(strtolower($expected), hash('sha256', $bytes))) {
+                throw new \RuntimeException('Application package signature verification failed: entry "' . $entryName . '" does not match its signed hash');
+            }
+            $covered[$entryName] = true;
+        }
+        return $covered;
     }
 
     /**
@@ -714,8 +817,10 @@ class PackService
      *   - logo/logoUrl → saved to apps.logo_url when the app has none (data: URIs are size-guarded).
      *   - launch/native→ no app-level target yet (they live per-domain on app_domains) → WARNING.
      *   - other assets → no storage target yet → WARNING.
-     * The envelope was covered by the same signature the caller already verified, so this is safe to apply;
-     * it is still sanitized/guarded defensively (never trust asset paths or oversized logic).
+     * For the ZIP path the envelope is now genuinely signature-covered (each entry's sha256 is bound by the
+     * signed manifest and hash-checked in importApplicationPackage); for the JSON path the envelope is part of
+     * the one signed `package` object. Either way it is still sanitized/guarded defensively here (never trust
+     * asset paths or oversized logic).
      *
      * @param array $envelope The signed envelope (bare Pack => no envelope keys => no-op) or ApplicationPackage.
      * @param array $apps      importPack() result 'apps' ([{id,name}, ...]).

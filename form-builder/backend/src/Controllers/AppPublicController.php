@@ -638,11 +638,19 @@ class AppPublicController
             $key = is_array($item) ? ($item['idempotencyKey'] ?? null) : null;
             $formId = is_array($item) ? (string) ($item['formId'] ?? '') : '';
             if ($formId === '' || !$this->verifyFormBelongsToApp($app['id'], $formId)) {
-                $results[] = ['idempotencyKey' => $key, 'success' => false, 'error' => 'Unknown form'];
+                $results[] = [
+                    'idempotencyKey' => $key, 'success' => false, 'responseId' => null,
+                    'error' => 'Unknown form', 'status' => 404,
+                    'conflict' => false, 'processing' => false, 'idempotent' => false,
+                ];
                 continue;
             }
             if (!$this->appUserService->hasPermission($app['id'], $userId, AppPermissions::SUBMIT_RESPONSES, $formId)) {
-                $results[] = ['idempotencyKey' => $key, 'success' => false, 'error' => 'Permission denied'];
+                $results[] = [
+                    'idempotencyKey' => $key, 'success' => false, 'responseId' => null,
+                    'error' => 'Permission denied', 'status' => 403,
+                    'conflict' => false, 'processing' => false, 'idempotent' => false,
+                ];
                 continue;
             }
             $data = [
@@ -652,12 +660,24 @@ class AppPublicController
                 'userAgent' => $ua,
             ];
             $r = $this->processSubmission($app, $formId, $data, $userId);
-            $ok = $r['status'] === 201 || $r['status'] === 200;
+            $status = (int) $r['status'];
+            $payload = is_array($r['payload'] ?? null) ? $r['payload'] : [];
+            // 200 = idempotent replay of an already-persisted response; 201 = freshly created. Both mean
+            // the server holds this submission, so the client queue can drop the item.
+            $ok = $status === 201 || $status === 200;
+            // Surface processSubmission's idempotency distinctions verbatim so the native offline queue
+            // can act on them precisely (see nativeOfflineQueue.flushNativeQueue): ACK success/idempotent,
+            // terminally FAIL a `conflict` (a reused key with a different body — never succeeds on retry),
+            // and KEEP a `processing` item (an in-flight duplicate a later flush should retry, not fail).
             $results[] = [
                 'idempotencyKey' => $key,
                 'success' => $ok,
-                'responseId' => $ok ? ($r['payload']['response']['id'] ?? null) : null,
-                'error' => $ok ? null : ($r['payload']['message'] ?? 'Failed'),
+                'responseId' => $ok ? ($payload['response']['id'] ?? null) : null,
+                'error' => $ok ? null : ($payload['message'] ?? 'Failed'),
+                'status' => $status,
+                'conflict' => ($payload['conflict'] ?? false) === true,
+                'processing' => ($payload['processing'] ?? false) === true,
+                'idempotent' => ($payload['idempotent'] ?? false) === true,
             ];
         }
 
@@ -1251,11 +1271,10 @@ class AppPublicController
      */
     private function sameOriginBase(Request $request, string $host): string
     {
-        $proto = trim(explode(',', $request->getHeaderLine('X-Forwarded-Proto'))[0]);
-        $scheme = $proto !== '' ? strtolower($proto) : ($request->getUri()->getScheme() ?: 'https');
-        if ($scheme !== 'http' && $scheme !== 'https') {
-            $scheme = 'https';
-        }
+        // Upgrade-only: X-Forwarded-Proto is honored only to CONFIRM https (a proxy forwarding http on the
+        // wire); a spoofed "X-Forwarded-Proto: http" must not downgrade a same-origin manifest to cleartext.
+        $proto = strtolower(trim(explode(',', $request->getHeaderLine('X-Forwarded-Proto'))[0]));
+        $scheme = $proto === 'https' ? 'https' : (strtolower($request->getUri()->getScheme()) === 'http' ? 'http' : 'https');
         return $scheme . '://' . $host;
     }
 

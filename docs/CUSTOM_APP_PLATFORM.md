@@ -120,25 +120,44 @@ import { useConnector, useSubmitResponse, ConnectorStatus, PermissionGate } from
 ### Hooks
 
 `useCurrentApp`, `useCurrentUser`, `useRole`, `usePermissions`, `useForms`, `useForm`,
-`useResponses`, `useSubmitResponse`, `useConnector`, `useConnectors`, `useToast`,
-`useAppNavigation`, `useRuntimeEnvironment`, `useOfflineQueue`.
+`useResponses`, `useResponse`, `useSubmitResponse`, `useConnector`, `useConnectors`,
+`useConnectorStatus`, `useConnectorPermission`, `useToast`, `useAppNavigation`,
+`useRuntimeEnvironment`, `useNativeRuntime`, `useOfflineQueue`, `useSettings`, `useAppSettings`,
+`useAppTheme`, `useAppManifest`.
 
 - Permission-respecting: `useSubmitResponse` rejects without submit permission; `useResponses`
-  resolves to `[]` when the user can't view (the store swallows a 403).
+  resolves to `[]` when the user can't view (the store swallows a 403); `useResponse(form, id)`
+  fetches a single response with the same gate.
 - `useConnector('vehicle').request('status.read')` uses the native bridge when present, else the mock.
-- `useRuntimeEnvironment()` returns `{ hostMode: 'platform'|'custom-domain'|'native', nativeAvailable }`.
+  `useConnectorStatus(id)` fetches a connector's live status; `useConnectorPermission(id, command)`
+  reports whether the app is allowed to run that command.
+- `useRuntimeEnvironment()` returns `{ hostMode: 'platform'|'custom-domain'|'native', nativeAvailable }`;
+  `useNativeRuntime()` exposes native availability + `runtime.getInfo()` + the environment.
+- `useSettings` / `useAppSettings` read app + runtime settings; `useAppTheme` returns the resolved
+  theme tokens; `useAppManifest` fetches the app's signed client manifest.
 
 ### Components
 
-`ConnectorStatus`, `SyncStatus`, `PermissionGate`, `ResponseList`, `EmptyState` — theme-aware,
-compose the hooks. Example:
+`ConnectorStatus`, `SyncStatus`, `PermissionGate`, `ConnectorPermissionGate`, `ResponseList`,
+`ResponseDetail`, `FormView`, `EmptyState`, `AppButton`, `SubmitButton`, `NativeRequiredNotice`,
+`OfflineQueuePanel` — theme-aware, compose the hooks. Example:
 
 ```tsx
 <PermissionGate permission="submit_responses" form="prestarts">
   <button onClick={startPrestart}>Start pre-start</button>
 </PermissionGate>
 <ResponseList form="faults" limit={5} titleField="fault_code" />
+<ResponseDetail form="faults" id={faultId} />
 ```
+
+- `AppButton` — a button styled with the app's primary accent; `SubmitButton` — an `AppButton`
+  wired to a form via `useSubmitResponse` (async submit + busy state).
+- `ResponseDetail` — one response's answers as label/value rows; `FormView` — a lightweight card
+  that opens a form in the app runtime.
+- `ConnectorPermissionGate` — renders children only when the connector command is granted;
+  `NativeRequiredNotice` — a notice when a screen needs the native runtime and it isn't present.
+- `OfflineQueuePanel` — pending/failed offline-queue counts + a "Sync now" that flushes both the
+  browser and native queues.
 
 ### Relationship to the sandboxed screen SDK
 
@@ -158,8 +177,9 @@ React in the trusted shell — would require **signed-package trust *and* an iso
 out of scope until both exist.
 
 ### Deferred
-`<FormView>`, `<ResponseDetail>`, `<AppButton>`; an npm-published `@formlogic/sdk`; SDK version
-negotiation in the client manifest.
+An npm-published `@formlogic/sdk`; SDK version negotiation in the client manifest.
+(`FormView`/`ResponseDetail`/`AppButton` — previously listed here — are now implemented; see
+[Components](#components).)
 
 ---
 
@@ -437,6 +457,26 @@ DNS to add: `TXT  _formlogic.<domain>  =  fl-domain-verification=<token>`.
 - `launch_page` — the site root shows a branded launch page (logo/name + Open app + install CTAs).
 - `runtime_direct` — the root goes straight into the app runtime.
 
+`AppDomainService::MODES` also lists `website_plus_app`, `native_required`, and `redirect` as
+*accepted* strings (so a stored value round-trips), but only `launch_page` / `runtime_direct` are
+rendered by `RootGate`. The others are reserved for later.
+
+#### "Requires the native runtime" — the MVP mechanism (decision)
+
+There is **no separate `native_required` domain mode in the MVP**. A `native_required` string exists
+in `MODES` (forward-compat, never emitted by the UI), but the shipped mechanism for "this app is
+meant to run in the FormLogic Native Runtime" is a **`launch_page` domain with
+`native_config.requireNativeRuntime = true`** — a per-domain flag on the domain's native config
+(`AppDomainController` saves it; `AppDomainService::sanitizeNativeConfig` normalizes it; the public
+launch config surfaces the native section). When set, `AppLaunchPage` makes the **Open in native
+runtime** CTA the *primary* way in (`requireNative` in `AppLaunchPage.tsx`) instead of the web
+"Open app" button. This keeps the launch page as the single, brandable entry point (with graceful
+web fallback if the runtime isn't installed) rather than forking a whole new mode + UI. A dedicated
+`native_required` mode (e.g. a hard block that refuses the web app entirely) is intentionally
+deferred until there's a product need to *forbid* web access, not just *prefer* the native runtime.
+`CustomDomainsPanel` therefore exposes the `requireNativeRuntime` toggle, not a mode selector for
+`native_required`.
+
 ### How it renders (frontend, Option A)
 
 The same SPA loads on every domain. `RootGate` in `App.tsx` checks the host: on a customer domain's
@@ -470,9 +510,11 @@ timeout**. `probeTls()` in `AppDomainService` is the reference call site — it 
 before opening the TLS handshake; any new fetch path must do the same.
 
 ### Deferred
-`website_plus_app` / `native_required` / `redirect` modes; automatic TLS *provisioning* (status is
-measured, but certificate issuance is external). The per-domain landing-page editor UI is now
-implemented (`CustomDomainsPanel`).
+`website_plus_app` / `redirect` modes; automatic TLS *provisioning* (status is measured, but
+certificate issuance is external). A separate `native_required` **mode** is intentionally NOT built —
+the per-domain `native_config.requireNativeRuntime` flag on a `launch_page` domain is the MVP
+mechanism (see [the decision above](#requires-the-native-runtime--the-mvp-mechanism-decision)). The
+per-domain landing-page editor UI is now implemented (`CustomDomainsPanel`).
 
 ---
 

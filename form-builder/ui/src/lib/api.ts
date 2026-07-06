@@ -1053,7 +1053,20 @@ class ApiClient {
   async syncBatch(
     slug: string,
     items: Array<{ idempotencyKey: string; formId: string; answers: Record<string, unknown> }>
-  ): Promise<ApiResponse<{ results: Array<{ idempotencyKey: string | null; success: boolean; responseId: string | null; error: string | null }> }>> {
+  ): Promise<ApiResponse<{ results: Array<{
+    idempotencyKey: string | null;
+    success: boolean;
+    responseId: string | null;
+    error: string | null;
+    /** HTTP-ish status of the per-item submission (200 idempotent replay, 201 created, 409 conflict/processing, …). Optional: older servers omit it. */
+    status?: number;
+    /** Reused idempotency key with a DIFFERENT body — a permanent failure that never succeeds on retry (terminal-fail). */
+    conflict?: boolean;
+    /** An in-flight duplicate is being handled server-side — keep the item queued and retry on a later flush (do NOT fail). */
+    processing?: boolean;
+    /** Idempotent replay: the server already holds this exact submission — ack it (do NOT re-queue). */
+    idempotent?: boolean;
+  }> }>> {
     return this.request(`/app/${slug}/sync/batch`, {
       method: 'POST',
       body: JSON.stringify({ items }),

@@ -160,8 +160,65 @@ from ~120 MB → ~19 MB so it fits the emulator.
 
 ## Bridge contract
 
-`window.FormLogicNative` = `{ available, runtime.getInfo(), connectors.{list,status,request,subscribe}, sync.{enqueueSubmission,flush,getQueue} }`.
-Matches the TS `FormLogicNativeBridge` type consumed by `nativeConnectorClient.ts`.
+`window.FormLogicNative` = `{ available, runtime.{getInfo,openExternal,ready?}, connectors.{list,status,request,subscribe}, sync.{enqueueSubmission,getQueue,flush,ack?,fail?} }`.
+Matches the TS `FormLogicNativeBridge` type in `connectors/connectorTypes.ts`, consumed by
+`nativeConnectorClient.ts` (connectors) and `nativeOfflineQueue.ts` (sync). `ack`/`fail` are optional
+so a web caller feature-detects them (older runtimes predate them).
+
+## Offline sync queue — flush / ack / fail contract
+
+The native side **persists** queued submissions (JSON file in the app data dir, atomic temp-file +
+rename write, so they survive a process restart) but **never POSTs to the server itself** — the
+WebView holds the session cookie, so the web layer does the HTTP and the Rust side is a durable store.
+The loop (`nativeOfflineQueue.ts` `flushNativeQueue()` drives it; `lib.rs` `PersistentSyncQueue`
+implements it):
+
+1. **`enqueueSubmission(item)`** — the runtime store appends `{ appSlug, formId, idempotencyKey,
+   answers }` (an id / `createdAt` / `status:"pending"` are filled in if absent) and persists. Returns
+   `{ id }`.
+2. **`flush()`** — returns pending items **grouped by appSlug**: `{ pending: [{ appSlug, items[] }] }`.
+   It **increments each returned item's `attempts`** (this counts as a delivery attempt) but **removes
+   nothing** — so a failed POST can never silently drop data.
+3. The web layer POSTs each group to **`/api/app/{slug}/sync/batch`** (session cookie attached),
+   which replays through the idempotency ledger and returns **per-item results keyed by
+   `idempotencyKey`** (`{ results: [{ idempotencyKey, success, error }] }`).
+4. **`ack(ids)`** — the web layer maps the *successful* results back to queue-item ids and acks them;
+   the runtime **removes** those rows and returns `{ acked, remaining }`.
+5. **`fail(ids, error)`** — the *unsuccessful* ids are failed; the runtime **keeps** them (retryable),
+   records `lastError`, and promotes an item to terminal **`status:"failed"`** once `attempts` exceeds
+   `MAX_SYNC_ATTEMPTS` (5) so a poison item stops being retried forever. Returns `{ failed }`.
+
+Notes:
+- An item whose `answers` can't be resolved at flush time is **not** delivered as an empty submission
+  (that would ack it and bind its idempotency key to an empty response); the web layer `fail()`s it
+  and leaves it queued for a later flush that carries the answers.
+- A whole-batch transport error `fail()`s every delivered item (still retryable) — nothing is acked.
+- `getQueue()` returns the full queue (including terminal `failed` items) so the UI can show
+  pending vs failed counts (`OfflineQueuePanel` / `nativeQueueCounts()`).
+- Reconnect auto-flushes: the web layer registers an `online` listener that calls `flushNativeQueue()`.
+- Every `sync_*` command is gated by `require_verified_origin` — the queue is inaccessible from an
+  unverified page.
+
+## Manifest routes: slug endpoint vs. custom-domain `/.well-known/formlogic-app.json`
+
+The **signed client manifest** is served at two routes that return a **byte-identical** signed
+envelope (the same payload rebuilt by slug, so the same Ed25519 signature verifies either way):
+
+- **Slug endpoint** `GET /api/app/{slug}/client-manifest` — the canonical route. This is what the
+  **native runtime fetches** (`fetch_and_verify()` in `lib.rs`: it navigates to an app, resolves the
+  slug, and GETs `{origin}/api/app/{slug}/client-manifest` + `{origin}/api/public/signing-key`). It
+  works on the platform host **and** on a custom domain (both same-origin once the window is on the
+  app).
+- **Custom-domain root** `GET /.well-known/formlogic-app.json` — a **discovery** path at the *domain
+  root* so a browser / OS can find an app's manifest from a custom domain **without knowing the slug**.
+  The backend resolves the request **Host** to its connected + active domain of a *published* app
+  (`AppDomainService::resolveAppSlugByHost`, the same gate as `resolveLaunchConfig`) and returns the
+  same signed manifest. It **404s on a platform host** (there's no domain→app mapping there — use the
+  slug route). See [[CUSTOM_APP_PLATFORM#custom-domain-root-endpoints]].
+
+So: the runtime uses the **slug** route in practice (it already knows the slug it navigated to); the
+`.well-known` route exists for root-level discovery on a customer domain and is a convenience alias,
+not a second trust path — both are verified identically against `/api/public/signing-key`.
 
 ## Security
 Only signed FormLogic apps on approved origins get bridge access: a remote-IPC origin allowlist PLUS

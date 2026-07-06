@@ -177,15 +177,26 @@ class AppDomainService
             $params['mode'] = $data['mode'];
         }
         if (array_key_exists('landingConfig', $data)) {
+            // Sanitize on write: cap text lengths, require http(s)/data:image logos + http(s)/email-ish
+            // links (rejecting javascript: & other schemes), normalize booleans. Invalid values are dropped.
+            $clean = is_array($data['landingConfig'] ?? null) ? $this->sanitizeLandingConfig($data['landingConfig']) : [];
             $updates[] = 'landing_config = :landing';
-            $params['landing'] = !empty($data['landingConfig']) ? json_encode($data['landingConfig']) : null;
+            $params['landing'] = !empty($clean) ? json_encode($clean) : null;
         }
         // Additional per-domain config (native app / PWA / security). security_config is stored + returned
         // ONLY through this owner-scoped admin path — resolveLaunchConfig (public) never surfaces it.
         foreach (['nativeConfig' => 'native_config', 'pwaConfig' => 'pwa_config', 'securityConfig' => 'security_config'] as $key => $col) {
             if (array_key_exists($key, $data)) {
+                // Native config is validated field-by-field (package pattern / hex fingerprints / http(s)
+                // install URL / capped version). pwa/security are opaque admin blobs — stored as-is.
+                if ($key === 'nativeConfig') {
+                    $clean = is_array($data[$key] ?? null) ? $this->sanitizeNativeConfig($data[$key]) : [];
+                    $value = !empty($clean) ? json_encode($clean) : null;
+                } else {
+                    $value = !empty($data[$key]) ? json_encode($data[$key]) : null;
+                }
                 $updates[] = "$col = :$col";
-                $params[$col] = !empty($data[$key]) ? json_encode($data[$key]) : null;
+                $params[$col] = $value;
             }
         }
         if (!empty($updates)) {
@@ -321,7 +332,10 @@ class AppDomainService
 
         $theme = $this->decodeJson($row['app_theme']);
         $settings = $this->decodeJson($row['app_settings']);
-        $landing = $this->decodeJson($row['landing_config']);
+        // Re-sanitize on READ (defense in depth): a legacy row written before updateDomain's sanitizer (or
+        // by any other writer) must not leak a javascript:/non-http(s) privacyUrl/termsUrl/logoUrl to the
+        // public launch page — AppLaunchPage renders these straight into href/src. Mirrors publicNativeSection.
+        $landing = $this->sanitizeLandingConfig($this->decodeJson($row['landing_config']));
 
         // Defaults + owner-authored landing overrides (display metadata only).
         $config = [
@@ -338,6 +352,11 @@ class AppDomainService
             'termsUrl' => $landing['termsUrl'] ?? null,
         ];
 
+        // Public-safe native section derived from the domain's native_config. This surfaces ONLY the
+        // install/handoff metadata the launch page needs (packageName / install URL / CTA flags) — never
+        // sha256CertFingerprints and NEVER security_config (which stays on the owner-scoped admin path).
+        $native = $this->publicNativeSection($this->decodeJson($row['native_config'] ?? null));
+
         return [
             'app' => [
                 'slug' => $row['app_slug'],
@@ -351,6 +370,7 @@ class AppDomainService
                 'mode' => $row['mode'],
             ],
             'landing' => $config,
+            'native' => $native,
         ];
     }
 
@@ -481,6 +501,210 @@ class AppDomainService
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],
         ];
+    }
+
+    // ---- config sanitization / public projection ------------------------------------
+
+    /**
+     * Sanitize owner-authored launch-page config before it is persisted. Text is length-capped; the logo
+     * must be an http(s) URL or a size-capped data:image; privacy/terms links must be http(s) and the
+     * support address email-ish (javascript: and every other scheme is REJECTED); booleans are normalized.
+     * Invalid values are DROPPED (omitted) rather than stored.
+     *
+     * @param array<string,mixed> $cfg
+     * @return array<string,mixed>
+     */
+    public function sanitizeLandingConfig(array $cfg): array
+    {
+        $out = [];
+        if (($v = $this->capString($cfg['headline'] ?? null, 120)) !== null) {
+            $out['headline'] = $v;
+        }
+        if (($v = $this->capString($cfg['subheadline'] ?? null, 200)) !== null) {
+            $out['subheadline'] = $v;
+        }
+        if (($v = $this->capString($cfg['description'] ?? null, 1000)) !== null) {
+            $out['description'] = $v;
+        }
+        if (($v = $this->sanitizeLogoUrl($cfg['logoUrl'] ?? null)) !== null) {
+            $out['logoUrl'] = $v;
+        }
+        if (($v = $this->sanitizeHttpUrl($cfg['privacyUrl'] ?? null)) !== null) {
+            $out['privacyUrl'] = $v;
+        }
+        if (($v = $this->sanitizeHttpUrl($cfg['termsUrl'] ?? null)) !== null) {
+            $out['termsUrl'] = $v;
+        }
+        if (($v = $this->sanitizeEmail($cfg['supportEmail'] ?? null)) !== null) {
+            $out['supportEmail'] = $v;
+        }
+        foreach (['showOpenWebApp', 'showInstallPwa', 'showInstallNative', 'showPoweredBy'] as $b) {
+            if (array_key_exists($b, $cfg)) {
+                $out[$b] = $this->toBool($cfg[$b]);
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Sanitize native-runtime config before persistence: the package name must match an Android/Java
+     * package pattern, each certificate fingerprint must be colon-separated SHA-256 hex, the install URL
+     * must be http(s) (NEVER javascript:/market:/intent:), the version string is length-capped, and the
+     * flags are normalized to booleans. Invalid values are dropped.
+     *
+     * @param array<string,mixed> $cfg
+     * @return array<string,mixed>
+     */
+    public function sanitizeNativeConfig(array $cfg): array
+    {
+        $out = [];
+        if (($v = $this->sanitizeAndroidPackage($cfg['packageName'] ?? null)) !== null) {
+            $out['packageName'] = $v;
+        }
+        $fps = [];
+        if (is_array($cfg['sha256CertFingerprints'] ?? null)) {
+            foreach ($cfg['sha256CertFingerprints'] as $fp) {
+                if (($clean = $this->sanitizeCertFingerprint($fp)) !== null) {
+                    $fps[] = $clean;
+                }
+            }
+        }
+        if (!empty($fps)) {
+            $out['sha256CertFingerprints'] = array_values(array_unique($fps));
+        }
+        if (($v = $this->capString($cfg['minRuntimeVersion'] ?? null, 32)) !== null) {
+            $out['minRuntimeVersion'] = $v;
+        }
+        if (($v = $this->sanitizeHttpUrl($cfg['installUrl'] ?? null)) !== null) {
+            $out['installUrl'] = $v;
+        }
+        foreach (['requireNativeRuntime', 'showNativeCta'] as $b) {
+            if (array_key_exists($b, $cfg)) {
+                $out[$b] = $this->toBool($cfg[$b]);
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Project a stored native_config blob to the PUBLIC-safe section returned by resolveLaunchConfig. Only
+     * install/handoff metadata is exposed — packageName, minRuntimeVersion, installUrl, and the CTA flags.
+     * sha256CertFingerprints are intentionally OMITTED here and security_config is never even read. Values
+     * are re-validated (defense in depth) so a legacy/unsanitized row can't leak a bad install URL.
+     *
+     * @param array<string,mixed> $nc
+     * @return array<string,mixed>
+     */
+    public function publicNativeSection(array $nc): array
+    {
+        $packageName = $this->sanitizeAndroidPackage($nc['packageName'] ?? null);
+        $installUrl = $this->sanitizeHttpUrl($nc['installUrl'] ?? null);
+        $minRuntimeVersion = $this->capString($nc['minRuntimeVersion'] ?? null, 32);
+        $requireNativeRuntime = !empty($nc['requireNativeRuntime']);
+        $showNativeCta = !empty($nc['showNativeCta']);
+        return [
+            'enabled' => $packageName !== null || $installUrl !== null || $requireNativeRuntime || $showNativeCta,
+            'packageName' => $packageName,
+            'minRuntimeVersion' => $minRuntimeVersion,
+            'installUrl' => $installUrl,
+            'requireNativeRuntime' => $requireNativeRuntime,
+            'showNativeCta' => $showNativeCta,
+        ];
+    }
+
+    /** Trim + length-cap a string field; null when not a usable string. */
+    private function capString($value, int $max): ?string
+    {
+        if (!is_string($value) && !is_numeric($value)) {
+            return null;
+        }
+        $s = trim((string) $value);
+        if ($s === '') {
+            return null;
+        }
+        return mb_substr($s, 0, $max);
+    }
+
+    /** An http(s) URL only (rejects javascript:/data:/etc.), length-capped; null when invalid. */
+    private function sanitizeHttpUrl($value, int $maxLen = 2048): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = trim($value);
+        if ($s === '' || strlen($s) > $maxLen) {
+            return null;
+        }
+        $scheme = strtolower((string) parse_url($s, PHP_URL_SCHEME));
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return null;
+        }
+        return filter_var($s, FILTER_VALIDATE_URL) !== false ? $s : null;
+    }
+
+    /** An http(s) URL or a size-capped data:image; null when invalid. */
+    private function sanitizeLogoUrl($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = trim($value);
+        if ($s === '') {
+            return null;
+        }
+        if (stripos($s, 'data:image/') === 0) {
+            // Cap so we don't persist a huge base64 blob in the JSON column.
+            return strlen($s) <= 200000 ? $s : null;
+        }
+        return $this->sanitizeHttpUrl($s);
+    }
+
+    /** An email-ish address (rejects javascript: and other non-email input); null when invalid. */
+    private function sanitizeEmail($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = trim($value);
+        if ($s === '' || strlen($s) > 254) {
+            return null;
+        }
+        return filter_var($s, FILTER_VALIDATE_EMAIL) !== false ? $s : null;
+    }
+
+    /** An Android/Java package name: dot-separated segments, each starting with a letter, ≥2 segments. */
+    private function sanitizeAndroidPackage($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = trim($value);
+        if ($s === '' || strlen($s) > 255) {
+            return null;
+        }
+        return preg_match('/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/', $s) ? $s : null;
+    }
+
+    /** A colon-separated SHA-256 certificate fingerprint (32 hex byte-pairs), upper-cased; null when invalid. */
+    private function sanitizeCertFingerprint($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = strtoupper(trim($value));
+        return preg_match('/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/', $s) ? $s : null;
+    }
+
+    /** Normalize a config flag to a real boolean (accepts JSON bools + common truthy strings). */
+    private function toBool($value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_string($value)) {
+            return in_array(strtolower(trim($value)), ['1', 'true', 'yes', 'on'], true);
+        }
+        return (bool) $value;
     }
 
     private function decodeJson($value): array

@@ -28,6 +28,16 @@ export interface LaunchConfig {
     privacyUrl?: string | null;
     termsUrl?: string | null;
   };
+  // Public-safe native-runtime metadata for this domain (never security config). Optional so an older
+  // backend that doesn't emit it still type-checks; the launch page treats a missing section as "off".
+  native?: {
+    enabled: boolean;
+    packageName?: string | null;
+    minRuntimeVersion?: string | null;
+    installUrl?: string | null;
+    requireNativeRuntime: boolean;
+    showNativeCta: boolean;
+  };
 }
 
 const API_BASE = (import.meta.env.VITE_API_URL as string) || '/api';

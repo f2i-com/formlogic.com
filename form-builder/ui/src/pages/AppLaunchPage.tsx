@@ -14,7 +14,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export function AppLaunchPage({ config }: { config: LaunchConfig }) {
-  const { app, landing } = config;
+  const { app, landing, native } = config;
   const accent = app.theme.primaryColor || '#6366f1';
   const onAccent = useMemo(() => (accent.startsWith('#') ? readableForegroundColor(accent) : '#fff'), [accent]);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -45,8 +45,43 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
+  // Point the browser's install manifest at THIS domain's app manifest. `/manifest.json` is served
+  // per-Host by the backend, so "Install app" installs the custom-domain app — not the default platform
+  // manifest. Create the <link rel="manifest"> if it's missing; restore the previous href (or remove a
+  // link we created) on unmount. Mirrors the title/theme-color effect above.
+  useEffect(() => {
+    let link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const created = !link;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'manifest';
+      document.head.appendChild(link);
+    }
+    const prevHref = created ? null : link.getAttribute('href');
+    link.setAttribute('href', '/manifest.json');
+    return () => {
+      if (!link) return;
+      if (created) {
+        link.parentNode?.removeChild(link);
+      } else if (prevHref !== null) {
+        link.setAttribute('href', prevHref);
+      } else {
+        link.removeAttribute('href');
+      }
+    };
+  }, []);
+
   const openUrl = `/app/${app.slug}`;
   const monogram = (app.name || '?').trim().charAt(0).toUpperCase();
+
+  // Native-runtime affordances, from the public-safe native section of the launch config.
+  const requireNative = !!native?.requireNativeRuntime;
+  // Show the native CTA when the launch page opts in, when the domain flags it, or when the app REQUIRES
+  // the runtime (in which case it becomes the primary way in).
+  const showNativeCta = landing.showInstallNative || !!native?.showNativeCta || requireNative;
+  // Prefer the domain's own install URL (store listing / white-label build); fall back to the platform
+  // download page only when the domain didn't set one.
+  const nativeInstallUrl = native?.installUrl || 'https://formlogic.com/download';
 
   async function install() {
     if (!installPrompt) return;
@@ -118,13 +153,15 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
         {/* Capability chips */}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
           <Chip>Web app</Chip>
-          {landing.showInstallPwa && <Chip>Installable</Chip>}
-          {landing.showInstallNative && <Chip>Native ready</Chip>}
+          {landing.showInstallPwa && !requireNative && <Chip>Installable</Chip>}
+          {showNativeCta && <Chip>Native ready</Chip>}
         </div>
 
         {/* Actions */}
         <div className="mt-9 flex w-full flex-col gap-3">
-          {landing.showOpenWebApp && (
+          {/* When the app REQUIRES the native runtime, demote the web app: hide the primary "Open app"
+              button (and the PWA install) and steer to the runtime instead. */}
+          {landing.showOpenWebApp && !requireNative && (
             <a
               href={openUrl}
               className="inline-flex h-12 w-full items-center justify-center rounded-xl px-6 text-sm font-semibold shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -133,7 +170,7 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
               Open app
             </a>
           )}
-          {landing.showInstallPwa && installPrompt && (
+          {landing.showInstallPwa && installPrompt && !requireNative && (
             <button
               type="button"
               onClick={install}
@@ -142,27 +179,44 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
               Install app
             </button>
           )}
-          {landing.showInstallNative && (
+          {showNativeCta && (
             <button
               type="button"
               onClick={openInNativeRuntime}
-              className="inline-flex h-12 w-full items-center justify-center rounded-xl border border-gray-200 px-6 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-900"
+              className={
+                requireNative
+                  ? 'inline-flex h-12 w-full items-center justify-center rounded-xl px-6 text-sm font-semibold shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2'
+                  : 'inline-flex h-12 w-full items-center justify-center rounded-xl border border-gray-200 px-6 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-50 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-900'
+              }
+              style={requireNative ? { background: accent, color: onAccent, ['--tw-ring-color' as string]: accent } : undefined}
             >
-              Open in native runtime
+              Open in the app
             </button>
           )}
 
+          {/* This app is configured to require the native runtime — make that explicit and give a way in. */}
+          {requireNative && (
+            <p className="text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+              This app opens in the FormLogic app.{' '}
+              <a href={nativeInstallUrl} target="_blank" rel="noreferrer" className="font-medium underline hover:no-underline">
+                Get the app
+              </a>
+            </p>
+          )}
+
           {/* Fallback: the `formlogic://` handoff didn't take, so the native runtime isn't installed.
-              Offer a clear way to get it — and to continue in the browser — instead of a dead button. */}
-          {landing.showInstallNative && nativeMissing && (
+              Offer a clear way to get it — and (unless the app requires it) to continue in the browser. */}
+          {showNativeCta && nativeMissing && (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-left dark:border-slate-700 dark:bg-slate-900">
               <p className="text-sm font-medium text-gray-800 dark:text-slate-100">Don't have the app yet?</p>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
-                Nothing on this device opened the native runtime. Install it, or keep going in your browser.
+                {requireNative
+                  ? 'Nothing on this device opened the FormLogic app. Install it to continue.'
+                  : 'Nothing on this device opened the native runtime. Install it, or keep going in your browser.'}
               </p>
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <a
-                  href="https://formlogic.com/download"
+                  href={nativeInstallUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex h-10 flex-1 items-center justify-center rounded-lg px-4 text-sm font-semibold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -170,12 +224,14 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
                 >
                   Get the FormLogic app
                 </a>
-                <a
-                  href={openUrl}
-                  className="inline-flex h-10 flex-1 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-100 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  Continue in browser
-                </a>
+                {!requireNative && (
+                  <a
+                    href={openUrl}
+                    className="inline-flex h-10 flex-1 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-100 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    Continue in browser
+                  </a>
+                )}
               </div>
             </div>
           )}

@@ -78,7 +78,9 @@ class AppManifestControllerTest extends TestCase
         $manifest = $this->build('https://mine.example.com', 'mine.example.com');
 
         $this->assertSame('https://mine.example.com/app/demo', $manifest['source']['url']);
-        $this->assertSame('https://mine.example.com/api/app/demo/manifest.json', $manifest['install']['pwa']['manifestUrl']);
+        // Custom-domain PWA manifestUrl points at the same-origin root manifest (hardening #6), NOT the
+        // API-origin per-slug manifest — so the installing document stays in scope on the custom domain.
+        $this->assertSame('https://mine.example.com/manifest.json', $manifest['install']['pwa']['manifestUrl']);
         $this->assertSame('https://mine.example.com/.well-known/assetlinks.json', $manifest['install']['android']['assetLinks']);
         $this->assertSame('https://mine.example.com/app/demo', $manifest['install']['android']['openUrl']);
         $this->assertSame('mine.example.com', $manifest['domain']);

@@ -111,11 +111,18 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
       continue;
     }
 
-    // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids.
-    const byKey = new Map<string, { success: boolean; error: string | null }>();
+    // Map the server's per-item results (keyed by idempotencyKey) back to queue-item ids, preserving
+    // the idempotency distinctions so ack / fail / keep can be decided precisely (see syncBatch).
+    const byKey = new Map<string, { success: boolean; idempotent: boolean; conflict: boolean; processing: boolean; error: string | null }>();
     for (const r of res.data.results ?? []) {
       if (r && typeof r.idempotencyKey === 'string') {
-        byKey.set(r.idempotencyKey, { success: r.success === true, error: r.error ?? null });
+        byKey.set(r.idempotencyKey, {
+          success: r.success === true,
+          idempotent: r.idempotent === true,
+          conflict: r.conflict === true,
+          processing: r.processing === true,
+          error: r.error ?? null,
+        });
       }
     }
     const ackIds: string[] = [];
@@ -123,12 +130,23 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
     let failError = 'Sync failed';
     for (const it of payloadItems) {
       const r = byKey.get(it.idempotencyKey);
-      if (r?.success) {
+      // ACK a fresh success OR an idempotent replay — in both cases the server already holds this exact
+      // submission, so the item can be removed from the queue.
+      if (r?.success || r?.idempotent) {
         ackIds.push(it.id);
-      } else {
-        failIds.push(it.id);
-        if (r?.error) failError = r.error;
+        continue;
       }
+      // KEEP a `processing` item: an in-flight duplicate is being handled server-side. Leave it queued
+      // untouched (no ack, no fail) so the next flush retries it — recording a failure would burn an
+      // attempt toward the native terminal-failure cap for something that just needs a retry.
+      if (r?.processing) {
+        continue;
+      }
+      // FAIL everything else. A `conflict` (reused key + different body) never succeeds on retry, so
+      // exhausting the native attempt cap correctly terminals it; validation/quota rejections and
+      // missing per-item results stay retryable until that cap promotes a poison item to "failed".
+      failIds.push(it.id);
+      if (r?.error) failError = r.error;
     }
     if (ackIds.length && sync.ack) {
       try { await sync.ack(ackIds); } catch { /* ignore — items remain for the next flush */ }

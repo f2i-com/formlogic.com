@@ -893,8 +893,21 @@ class MySQLConnection
                 status VARCHAR(32) NOT NULL DEFAULT 'completed',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY uniq_app_form_key (app_id, form_id, idempotency_key),
-                INDEX idx_idem_app (app_id)
+                INDEX idx_idem_app (app_id),
+                INDEX idx_idem_created (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Retention index for existing installs (the CREATE TABLE above already carries it on a fresh DB):
+        // the idempotency ledger grows one row per submission and is pruned by created_at (bin/idempotency-cleanup.php),
+        // so ensure the created_at index exists for a cheap range DELETE + the HealthController row-count check.
+        try {
+            $hasIdemIdx = $pdo->query("SHOW INDEX FROM app_submission_idempotency WHERE Key_name = 'idx_idem_created'")->rowCount() > 0;
+            if (!$hasIdemIdx) {
+                $pdo->exec("ALTER TABLE app_submission_idempotency ADD INDEX idx_idem_created (created_at)");
+            }
+        } catch (\Throwable $e) {
+            // Table not present yet on some ordering — the CREATE TABLE above includes the index.
+        }
     }
 }
