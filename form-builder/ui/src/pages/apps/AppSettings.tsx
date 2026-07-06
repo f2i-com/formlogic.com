@@ -1,6 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Check, Settings, Palette, LayoutGrid, Users, Shield, Rocket, Link2, MonitorPlay, Plug, Download, Trash2, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -14,8 +14,8 @@ import { IconPicker } from '../../components/ui/IconPicker';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { cn } from '../../lib/utils';
 import { hexContrast, contrastLevel, readableForegroundColor } from '../../lib/color';
-import type { App, AppRole, AppForm } from '../../types/app';
-import { DEFAULT_APP_THEME } from '../../types/app';
+import type { App, AppRole, AppForm, AppKind } from '../../types/app';
+import { DEFAULT_APP_THEME, KIND_LABELS } from '../../types/app';
 
 const tabs = [
   { label: 'General', value: 'general', icon: Settings },
@@ -304,6 +304,21 @@ export function AppSettings() {
                 <p className="text-xs text-gray-400 dark:text-slate-500 min-w-0">Shown on the app card and tiles when there's no logo.</p>
               </div>
             </div>
+            <div>
+              <label htmlFor="app-kind" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">App type</label>
+              <select
+                id="app-kind"
+                value={(app.settings?.appKind as string) || ''}
+                onChange={(e) => updateSetting('appKind', e.target.value || undefined)}
+                className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+              >
+                <option value="">Not set</option>
+                {(Object.keys(KIND_LABELS) as AppKind[]).map((k) => (
+                  <option key={k} value={k}>{KIND_LABELS[k]}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">Used for dashboard templates and labels — apps of any type can share the same forms.</p>
+            </div>
 
             {/* Membership */}
             <div className="pt-2 border-t border-gray-100 dark:border-slate-800 space-y-4">
@@ -473,6 +488,7 @@ export function AppSettings() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
               { label: 'Forms', desc: 'Add, remove, and reorder forms', icon: LayoutGrid, path: 'forms' },
+              { label: 'Companion app', desc: 'A second app — e.g. an admin console — over these same forms and data', icon: Layers, path: 'forms' },
               { label: 'Users', desc: 'Manage users and invitations', icon: Users, path: 'users' },
               { label: 'Roles', desc: 'Configure roles and permissions', icon: Shield, path: 'roles' },
               { label: 'Relations', desc: 'Define links between forms', icon: Link2, path: 'relations' },
@@ -480,7 +496,7 @@ export function AppSettings() {
               { label: 'Deploy', desc: 'Share link and PWA settings', icon: Rocket, path: 'deploy' },
             ].map((item) => (
               <button
-                key={item.path}
+                key={item.label}
                 onClick={() => navGuarded(`/apps/${appId}/${item.path}`)}
                 className="flex items-start gap-3.5 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
               >

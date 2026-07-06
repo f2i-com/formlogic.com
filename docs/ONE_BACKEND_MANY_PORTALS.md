@@ -57,7 +57,8 @@ that's just two roles in two apps over one form.
 
 ## The fastest split: a companion app
 
-**Settings → Manage → "Create companion app"** (or
+**Settings → Manage → Forms → "Create a companion app"** (the Manage tab's
+"Companion app" card jumps straight there; or
 `POST /api/apps/{id}/companion`) clones the *window*, not the data: the new
 app gets every form attached (same `form_id`s — hidden ones included), the
 theme and nav for continuity, its own fresh slug/roles/members, and optional

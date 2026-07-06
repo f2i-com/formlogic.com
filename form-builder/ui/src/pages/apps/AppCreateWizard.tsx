@@ -271,6 +271,8 @@ export function AppCreateWizard() {
         copyDashboard: effCopyDashboard,
         copyReports: effCopyReports,
         copyLogic: effCopyLogic,
+        // Companions default to appKind 'admin' server-side — pair that with the matching role preset.
+        rolePreset: 'admin-console',
       });
       const newApp = result.data?.app;
       if (result.error || !newApp?.id) {

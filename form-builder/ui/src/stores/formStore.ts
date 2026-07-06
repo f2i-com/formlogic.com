@@ -164,33 +164,58 @@ const defaultTheme: FormTheme = {
   borderRadius: 'medium',
 };
 
-// Debounce helper for auto-save
-const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+// Debounce helper for auto-save. The pending saveFn is kept alongside the timer so
+// flushDebouncedSave can run it EARLY (preview must see the just-edited copy).
+const debounceTimers: Record<string, { timer: ReturnType<typeof setTimeout>; saveFn: () => unknown }> = {};
 
 function debouncedSave(formId: string, saveFn: () => void, delay = 1000) {
   if (debounceTimers[formId]) {
-    clearTimeout(debounceTimers[formId]);
+    clearTimeout(debounceTimers[formId].timer);
   }
-  debounceTimers[formId] = setTimeout(() => {
+  const timer = setTimeout(() => {
     // Drop the handle before running so `debounceTimers[key]` reflects reality: a
     // subsequent edit then correctly registers a fresh in-flight save instead of
     // assuming one is already pending.
     delete debounceTimers[formId];
     saveFn();
   }, delay);
+  debounceTimers[formId] = { timer, saveFn };
 }
 
 function clearDebounceTimer(formId: string) {
   if (debounceTimers[formId]) {
-    clearTimeout(debounceTimers[formId]);
+    clearTimeout(debounceTimers[formId].timer);
     delete debounceTimers[formId];
   }
 }
 
 export function clearAllDebounceTimers() {
   for (const formId of Object.keys(debounceTimers)) {
-    clearTimeout(debounceTimers[formId]);
+    clearTimeout(debounceTimers[formId].timer);
     delete debounceTimers[formId];
+  }
+}
+
+/**
+ * Run any pending debounced saves for a form NOW and wait for them to reach the server.
+ * No-op when nothing is pending. Used by the preview flow: builder edits sync via a 1s
+ * debounce, so Ctrl+P right after an edit would otherwise preview the pre-edit server
+ * copy. The saveFns handle (and toast) their own failures, so this never rejects.
+ */
+export async function flushDebouncedSave(formId: string): Promise<void> {
+  const pending: Promise<unknown>[] = [];
+  // Same explicit key set deleteForm clears — the debounce keys are `${formId}-${part}`.
+  for (const part of ['fields', 'settings', 'theme', 'meta']) {
+    const key = `${formId}-${part}`;
+    const entry = debounceTimers[key];
+    if (entry) {
+      clearTimeout(entry.timer);
+      delete debounceTimers[key];
+      pending.push(Promise.resolve().then(entry.saveFn).catch(() => {}));
+    }
+  }
+  if (pending.length > 0) {
+    await Promise.all(pending);
   }
 }
 

@@ -2,8 +2,8 @@
 
 FormLogic ships an **MCP server** (Model Context Protocol, over HTTP) so you can point your *own* AI —
 Claude Desktop, Claude Code, Cursor, or anything that speaks MCP — at a FormLogic app and have it build
-and edit forms, write **custom screens**, and wire everything together. Bring your own (frontier) model
-instead of the built-in one.
+and edit forms, compose **widget dashboards**, write **custom screens**, and wire everything together.
+Bring your own (frontier) model instead of the built-in one.
 
 It works over a **temporary, scoped connection**: a short-lived bearer token with an idle timeout that you
 can revoke at any time.
@@ -76,8 +76,8 @@ You can hand the link to any MCP-capable AI and just say *"build me an app"* —
 FormLogic in advance:
 
 - The **`initialize`** response carries an `instructions` string (the MCP client feeds it to the model) with
-  the whole workflow: `create_app` → `create_app_form` → `set_app_home` → publish, the field types, and the
-  custom-screen SDK.
+  the whole workflow: `create_app` → `create_app_form` → `set_app_home` (widget dashboard) → publish, the
+  field types, the dashboard widget shapes, and the custom-screen SDK.
 - **`get_started`** is the first tool listed and returns a full guide with a worked example. It needs no
   scope, so an AI can always read it before acting.
 
@@ -90,10 +90,10 @@ FormLogic in advance:
 | `create_form` | forms:write | Create a form (fields, onSubmit script, custom screen, status) |
 | `update_form` | forms:write | Update a form |
 | `list_apps` | apps:read | List your apps (only the scoped one, if app‑scoped) |
-| `create_app` | apps:write | Create an app (rejected for app‑scoped tokens) |
-| `update_app` | apps:write | Rename, set description, change the **slug**, or publish |
+| `create_app` | apps:write | Create an app — optional `description` + `appKind` audience tag (rejected for app‑scoped tokens) |
+| `update_app` | apps:write | Rename, set description, change the **slug**, publish (`status: "published"`) / unpublish (`"draft"`) |
 | `add_form_to_app` | apps:write | Attach a form to an app |
-| `set_app_home` | screens:write | Set the app's custom **home** screen |
+| `set_app_home` | screens:write | Set the app's **home** screen — a widget **dashboard** (preferred) or a custom code screen |
 | `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_responses` | responses:read | List a form's responses (off by default) |
@@ -101,21 +101,61 @@ FormLogic in advance:
 Everything goes through the same services + ownership checks as the rest of the API, so an MCP token can
 only ever touch the owner's resources (and, when app‑scoped, only that app).
 
-### Custom screens via MCP
+### Widget dashboards via MCP (the primary home screen)
 
-`create_form`/`update_form` accept a `customScreen` (`{ enabled, html, css, js }`) — a sandboxed UI over the
-form that talks to the backend through the injected `FormLogic` SDK (`submit` / `records` / `currentUser` /
-`context` / `toast`). `set_app_home` does the same for an app's landing page, with an app‑scoped SDK
-(`submit(formId, …)` / `records(formId)` / `navigate(formId)`). See [docs/API.md](API.md) for the data model.
+A dashboard is **data, not code**: a grid of widgets the host renders natively (theming, drill‑down and
+auto‑refresh come free). `set_app_home` accepts it as the `customScreen`:
+
+```json
+{
+  "appId": "<appId>",
+  "customScreen": {
+    "kind": "dashboard",
+    "dashboard": {
+      "cols": 12,
+      "widgets": [
+        { "kind": "report", "layout": { "x": 0, "y": 0, "w": 4, "h": 2 }, "title": "Open jobs",
+          "spec": { "formId": "<formId>", "viz": "kpi", "measure": { "fn": "count" } } },
+        { "kind": "actions", "layout": { "x": 0, "y": 2, "w": 12, "h": 1 } },
+        { "kind": "list", "layout": { "x": 0, "y": 3, "w": 6, "h": 3 },
+          "list": { "formId": "<formId>", "limit": 8, "titleField": "title" } }
+      ]
+    }
+  }
+}
+```
+
+- `dashboard` = `{ cols?: 12, widgets: […] (max 60), showRangePicker?, refreshInterval?: 30|60|300 }`.
+- Every widget: `{ kind, layout: {x,y,w,h}, title? }`. Kinds: **report** (an inline chart/KPI/table —
+  `spec` is exactly the `create_report` spec shape), **list** (recent records:
+  `{ formId, limit?≤25, titleField?, subtitleField?, metaField? }`), **text** (`{ body }`), **actions**
+  (new‑record buttons, no config), **activity** (a latest‑records feed, no config).
+- Saves run through the same sanitizer as the app UI (`AppReportService`): a widget whose `formId`,
+  joins, or field refs point outside the app is **dropped**, layout is clamped — use the real form ids.
+- **Form section dashboards**: a form can carry its own dashboard on its section screen —
+  `update_form { formId, customScreen: { kind: "dashboard", dashboard } }` *after* creating the form
+  (its specs may reference that form and the forms its `linked_record` fields target). The same
+  sanitizer runs on this path too (also when a dashboard is passed directly to
+  `create_form`/`create_app_form`).
+
+### Custom code screens via MCP
+
+`create_form`/`update_form` accept a `customScreen` (`{ enabled, html, css, js/ts/files }`) — a sandboxed UI
+over the form that talks to the backend through the injected `FormLogic` SDK (`submit` / `records` /
+`currentUser` / `context` / `toast`). `set_app_home` does the same for an app's landing page, with an
+app‑scoped SDK (`submit(formId, …)` / `records(formId)` / `navigate(formId)`). See [docs/API.md](API.md)
+for the data model.
 
 A good build flow for "hand a blank app to an AI":
 
-1. `update_app` — name the app (and optionally set its slug).
-2. `create_form` — create each form with its fields.
-3. `add_form_to_app` — attach each form.
-4. `update_form` / `set_app_home` — add custom screens.
+1. `update_app` — name the app (and optionally set its slug). Or `create_app { name, description?, appKind? }`
+   for account‑wide/creator tokens — `appKind` tags the audience: `admin` | `client` | `staff` | `public` |
+   `internal` | `custom` (invalid values are rejected with the list of valid kinds).
+2. `create_app_form` — create each form with its fields (creates **and** attaches in one call).
+3. `set_app_home` — give the app a **widget dashboard** home (or a custom code screen).
+4. (optional) `update_form` — add `logicScript` automation and/or form **section dashboards**.
 5. (optional) `create_report` / `create_document` — add charts, KPIs, and PDF report pages (forms must exist first).
-6. `update_app` — `status: "published"`.
+6. `update_app` — `status: "published"` (`"draft"` unpublishes).
 
 ### Reports & PDF documents
 
@@ -229,6 +269,8 @@ first; documents reference them by the `id` returned from `create_report`.
   tool over MCP.
 - App‑scoped tokens are enforced on every call.
 - Per‑call size caps (fields 500KB, script 100KB, custom screen 512KB) and a JSON‑RPC batch cap (20).
+- Widget‑dashboard and report specs are sanitized server‑side against the target app/form on save (the
+  same `AppReportService` boundary as the UI): out‑of‑scope forms, joins, and field refs are dropped.
 - Every action is audited (`mcp.*`) with the owner's user id.
 - The `/api/mcp` endpoint authenticates with the bearer token only — never a session cookie.
 

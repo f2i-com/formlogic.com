@@ -243,6 +243,8 @@ export function AppFormManager() {
       copyDashboard: companionCopyDashboard,
       copyReports: companionCopyReports,
       copyLogic: companionCopyLogic,
+      // Companions default to appKind 'admin' server-side — pair that with the matching role preset.
+      rolePreset: 'admin-console',
     });
     const newApp = result.data?.app as { id?: string; name?: string } | undefined;
     if (result.error || !newApp?.id) {

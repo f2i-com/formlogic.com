@@ -1,53 +1,33 @@
-# FormLogic
+# FormLogic — Developer Setup
 
-FormLogic is a self-hostable business app platform. Install ready-made business apps, customise forms and dashboards, collect linked records, generate reports and PDFs, and let your AI extend apps over MCP.
+This is the developer guide for installing, running, testing, and deploying FormLogic. For what FormLogic *is* — the product story, feature tour, marketplace catalog, and screenshots — see the **[root README](../README.md)**.
 
-## Overview
+Everything lives in this directory:
 
-FormLogic combines a Typeform-style form builder with a full business apps platform and a marketplace of 28 ready-made vertical apps — each a real, working system (forms, roles, linked records, a no-code widget dashboard, demo data, and reports). Install a vertical app in one click and customise it instead of starting from scratch. Forms support conditional logic, calculated fields, and custom validation powered by a sandboxed JavaScript (QuickJS) runtime. Multiple forms compose into deployable applications with user management, roles, and permissions, and each app gets a no-code Reports section for charts and exportable PDFs.
+- `backend/` — PHP 8.1 / Slim 4 API
+- `ui/` — React 19 + TypeScript + Vite SPA
+- `native-runtime/` — Tauri v2 desktop/mobile shell (optional; has its own [README](native-runtime/README.md))
+- `install.php` / `install.sh` — assisted installers
 
-A **Live Demo** (no signup required) has the full marketplace pre-installed (34 installable demo apps across the 28 catalog packs), so you can explore a working business app — and the whole platform — before running your own instance. See the [root README](../README.md#app-marketplace) for the full app catalog, screenshots, and architecture.
-
-### Key Capabilities
-
-- **App Marketplace** -- 28 ready-made vertical business apps, each a complete working system (forms, roles, linked records, a configurable widget dashboard, demo data). Install in one click, customise, or export as a portable `.json`. Verticals span trades & field service, hospitality & food, beauty/health/fitness, retail & operations, compliance, bookings & education, billing, and finance — see the [full catalog in the root README](../README.md#app-marketplace).
-- **Configurable Dashboards** -- Every app screen (home + per-form sections) is a no-code, drag-and-drop grid of recharts widgets — KPIs, bar/line/area/pie/donut charts, record lists, activity feeds — with the query and chart type editable inline like a report.
-- **Reports & PDFs** -- Each app has a no-code Reports section: bar, line, area, pie, donut, KPI, and table charts with grouping, measures, filters, and cross-form (linked-record) joins. Compose charts and text into exportable PDF documents.
-- **Form Builder** -- Drag-and-drop editor with 20+ field types, live preview, theme customization
-- **Scripting Engine** -- Real JavaScript, sandboxed with QuickJS, for conditional logic, validation, calculated fields, and post-submission (`onSubmit`) scripts — one engine and prelude shared by the browser and the server
-- **Business Apps** -- Compose forms into multi-form applications with navigation, RBAC, and linked records
-- **Build with AI / MCP** -- Generate forms and apps from a prompt, or connect an external AI (Claude, Cursor…) over MCP to build and edit apps — including forms, screens, and reports — for you
-- **Compliance Modules** -- Built-in `compliance` and `finance` script modules for Reg BI checks, suitability scoring, AML flags, AUM fee calculations, and more
-- **Pack System** -- Every app is a portable pack (forms + apps + screens + scripts + reports); import/export as a single `.json` — reports included
-- **Response Management** -- View, edit, export (CSV/JSON/SQLite), and bulk-import responses
-- **Analytics** -- Per-form response charts, completion rates, average times, field breakdowns
-- **Webhooks** -- Trigger HTTP callbacks on form submissions with delivery tracking
-- **Versioning** -- Form version history with restore capability
-- **Audit Trail** -- Immutable, hash-chained audit log with integrity verification
-- **AI Generation** -- Generate forms from text prompts, documents, or images (requires AI provider config)
-- **PWA Support** -- Offline-capable progressive web app with service worker
-
----
-
-## Quick Start
-
-### Prerequisites
+## Prerequisites
 
 | Requirement | Version | Check |
 |-------------|---------|-------|
 | PHP | 8.1+ | `php -v` |
-| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl | `php -m` |
+| PHP extensions | pdo_mysql, pdo_sqlite, mbstring, json, openssl, fileinfo | `php -m` |
 | Composer | any | `composer --version` |
 | MySQL | 8.0+ | `mysql --version` |
 | Node.js | 20.19+ / 22.12+ (Vite 7) | `node -v` |
 | npm | any | `npm -v` |
 | Git | any | `git --version` |
 
-### Option 1: Web Install Wizard (Windows / WAMP / XAMPP)
+Node.js is a **build-time** dependency only. The server-side script sandbox is a vendored static QuickJS binary — no Node.js on the server.
 
-If you're using WAMP, XAMPP, or any PHP web server, serve the repo from your web root and
-open the install wizard in your browser (the URL must include the `/form-builder/`
-segment, since that's where `install.php` lives):
+## Install
+
+### Option 1: Web install wizard (Windows / WAMP / XAMPP)
+
+Serve the repo from your web root and open the wizard in a browser (the URL must include the `/form-builder/` segment, since that's where `install.php` lives):
 
 ```
 http://localhost/<your-folder>/form-builder/install.php
@@ -59,156 +39,117 @@ For the default checkout under your web root that's:
 http://localhost/formlogic-app/form-builder/install.php
 ```
 
-The wizard will guide you through:
-1. Checking system requirements (PHP version, extensions, Node.js)
-2. Configuring your MySQL database connection
-3. Setting application options (CORS, etc.)
-4. Creating config files, database, and security keys
+The wizard checks requirements, tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding. **Delete `install.php` when done.**
 
-After the wizard completes, follow the on-screen instructions to install dependencies and start the servers. **Delete `install.php` when done.**
-
-### Option 2: Automated Install (Linux / macOS / Git Bash)
+### Option 2: Install script (Linux / macOS / Git Bash)
 
 ```bash
+cd form-builder
 chmod +x install.sh
 ./install.sh
 ```
 
-The install script will:
-1. Verify all prerequisites are installed
-2. Install PHP dependencies via Composer
-3. Create `backend/.env` with auto-generated JWT secret and audit HMAC key
-4. Create the MySQL database and import the schema (if DB_PASSWORD is set)
-5. Install frontend npm dependencies
-6. Create `ui/.env` with the API URL
-7. Make the vendored `qjs` sandbox binary executable (it's committed under `backend/bin/qjs/`)
-8. Build the frontend for production
+The script verifies prerequisites, runs `composer install`, creates `backend/.env` with generated `JWT_SECRET` + `AUDIT_HMAC_KEY`, creates the MySQL database and imports the schema (when a DB password is provided), runs `npm install`, creates `ui/.env`, makes the vendored `qjs` binary executable, and builds the frontend. Afterwards, set your database password in `backend/.env` if you skipped it.
 
-After the script completes, update `backend/.env` with your database password, then start the servers.
+### Option 3: Manual setup
 
-### Option 3: Manual Setup
-
-#### 1. Clone the repository
+#### 1. Clone
 
 ```bash
 git clone git@github.com:izuc/formlogic-app.git
 cd formlogic-app/form-builder
 ```
 
-#### 2. Set up the backend
+#### 2. Backend
 
 ```bash
 cd backend
-
-# Install PHP dependencies
 composer install
-
-# Create environment config
 cp .env.example .env
 ```
 
 Edit `backend/.env` and set at minimum:
 
 ```ini
-# Your MySQL password
 DB_PASSWORD=your_password_here
 
-# These are auto-generated by install.sh, but for manual setup generate them:
-#   php -r "echo bin2hex(random_bytes(32));"
+# Generate each with: php -r "echo bin2hex(random_bytes(32));"
 JWT_SECRET=your_generated_secret_here
+AUDIT_HMAC_KEY=your_generated_key_here
 ```
 
-Create the required storage directories:
+Create the storage directories:
 
 ```bash
 mkdir -p storage/forms storage/packs storage/uploads logs
 ```
 
-#### 3. Set up the database
+#### 3. Database
 
-**Option A: Auto-create** -- The app automatically creates all tables on the first request. Just create an empty database:
+**Option A: auto-create** — the app creates all tables on the first request; just create an empty database:
 
 ```bash
 mysql -u root -p -e "CREATE DATABASE formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
-**Option B: Import schema** -- Import the full schema directly:
+**Option B: import the schema** directly:
 
 ```bash
 mysql -u root -p formlogic < database/schema.sql
 ```
 
-#### 4. Set up the frontend
+#### 4. Frontend
 
 ```bash
 cd ../ui
-
-# Install dependencies
 npm install
-
-# Create environment config
 cp .env.example .env
 ```
 
-The default `ui/.env` points to `http://localhost:8080/api` for development. For production (same-domain), change it to `/api`.
+The default `ui/.env` points at `http://localhost:8080/api` for development. For same-domain production, change it to `/api`.
 
-#### 5. FormLogic runtime (no extra steps)
+#### 5. Scripting runtime — nothing to do
 
-FormLogic expressions and `onSubmit` scripts run inside a **QuickJS** sandbox on
-both sides, using one shared standard-library prelude
-(`ui/src/lib/formlogic/prelude.js`):
+Form expressions and `onSubmit` scripts run in a **QuickJS** sandbox on both sides, sharing one standard-library prelude (`ui/src/lib/formlogic/prelude.js`):
 
-- **Browser:** `quickjs-emscripten` (installed by `npm install` above) runs the
-  engine in a Web Worker. The prelude is bundled automatically.
-- **Backend:** the PHP API shells out to a vendored static `qjs` binary
-  (committed under `backend/bin/qjs/`, selected per-OS) — **no Node.js required
-  on the server**. `npm run build` runs a `prebuild` step that syncs the prelude
-  into `backend/resources/formlogic-prelude.js`.
+- **Browser:** `quickjs-emscripten` (pulled by `npm install`) runs the engine in a Web Worker; the prelude is bundled automatically.
+- **Server:** the PHP API shells out to a vendored static `qjs` binary committed under `backend/bin/qjs/` (selected per-OS). `npm run build` runs a `prebuild` step that syncs the prelude into `backend/resources/formlogic-prelude.js`.
 
-There is nothing to download. On Linux, ensure the binary is executable
-(`chmod +x backend/bin/qjs/qjs-linux-x86_64`); `install.sh` does this for you.
+On Linux/macOS ensure the binary is executable (`chmod +x backend/bin/qjs/qjs-linux-x86_64`); `install.sh` does this for you.
 
-### Running the App
+## Running
 
-#### Development (two terminals)
+### Development (two terminals)
 
 ```bash
-# Terminal 1: Backend API server
+# Terminal 1: backend API
 cd backend
 composer start
-# API available at http://localhost:8080/api
+# API at http://localhost:8080/api
 
-# Terminal 2: Frontend dev server (hot reload)
+# Terminal 2: frontend dev server (hot reload)
 cd ui
 npm run dev
-# App available at http://localhost:5173
+# App at http://localhost:5173
 ```
 
-Open http://localhost:5173 in your browser. Create an account to get started.
+Open http://localhost:5173 and create an account.
 
-#### Production
+### Production
 
-Build the frontend and serve both from your web server:
+Build the frontend, then serve two directories from your web server:
 
 ```bash
 cd ui
-npm run build
-# Output: ui/dist/ (static files)
+npm run build     # output: ui/dist/
 ```
 
-Configure your web server (Apache/Nginx) to:
-- Serve `ui/dist/` as the document root
-- Proxy `/api/*` requests to `backend/public/index.php`
-- Or serve `backend/public/` at a subdomain (e.g., `api.example.com`)
+- Serve `ui/dist/` as the document root (SPA fallback to `index.html`)
+- Route `/api/*` to `backend/public/index.php`
 
-> **Production must be HTTPS.** Auth uses `Secure` cookies in production, so they will not be sent
-> over plain HTTP and login will fail. Terminate TLS either directly (as below) or at a reverse
-> proxy / load balancer, and 301-redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md).
+> **Production must be HTTPS.** Auth uses `Secure` cookies in production, so login fails over plain HTTP. Terminate TLS directly or at a reverse proxy (which must send `X-Forwarded-Proto: https`), and redirect port 80 → 443. See [DEPLOYMENT.md](../DEPLOYMENT.md) for the full launch checklist.
 >
-> **Only expose two directories:** serve `ui/dist` (static SPA) and `backend/public` under `/api`.
-> **Never** let the web server reach `backend/storage` (per-form SQLite response DBs + uploads),
-> `backend/logs`, or any `.env` — those hold your data and secrets. The configs below keep the
-> document roots inside `ui/dist` / `backend/public` so the rest of the repo is not web-reachable.
+> **Only expose two directories:** `ui/dist` and `backend/public`. **Never** let the web server reach `backend/storage` (per-form SQLite response DBs + uploads), `backend/logs`, or any `.env` — those hold your data and secrets.
 
 <details>
 <summary><strong>Example Apache VirtualHost (HTTPS)</strong></summary>
@@ -289,13 +230,11 @@ server {
 }
 ```
 
-Behind a TLS-terminating reverse proxy or load balancer instead? Keep the server blocks on HTTP
-internally but ensure the proxy sets `X-Forwarded-Proto: https` so the app treats the request as
-secure (and still issues `Secure` cookies).
+Behind a TLS-terminating reverse proxy or load balancer instead? Keep the server blocks on HTTP internally but ensure the proxy sets `X-Forwarded-Proto: https` so the app treats the request as secure (and still issues `Secure` cookies).
 
 </details>
 
-For production, also update `backend/.env`:
+For production also update `backend/.env`:
 
 ```ini
 APP_ENV=production
@@ -304,23 +243,48 @@ CORS_ORIGIN=https://formlogic.example.com
 COOKIE_DOMAIN=.example.com
 ```
 
-And `ui/.env`:
+And `ui/.env`, then rebuild (`cd ui && npm run build`):
 
 ```ini
 VITE_API_URL=/api
 ```
 
-Then rebuild the frontend: `cd ui && npm run build`
+> **One domain, no separate API host.** With `VITE_API_URL=/api` the SPA calls the backend on the **same origin**, so a single domain serves both — route `/api` to PHP and serve `ui/dist` for everything else. No second domain and no CORS config are needed. Only set a separate `VITE_API_URL` + `CORS_ORIGIN` if you deliberately host the API on its own domain.
 
-> **One domain, no separate API host.** With `VITE_API_URL=/api` the SPA calls the backend on the
-> **same origin**, so you can serve the UI and API from a single domain — just route `/api` to the PHP
-> backend (e.g. an nginx `location /api { … }`) and serve the built `ui/dist` for everything else. No
-> second domain and no CORS config are needed. Only set a separate `VITE_API_URL` + `CORS_ORIGIN` if you
-> deliberately host the API on its own domain.
+Custom app domains (running an app on a customer's own domain) additionally use three root-level paths — `/.well-known/formlogic-app.json`, `/manifest.json`, `/.well-known/assetlinks.json` — which the shipped `ui/public/.htaccess` already routes to the API on single-domain Apache deploys. See [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#custom-domains--app-launch).
 
----
+## Tests and checks
 
-## Tech Stack
+### Backend (PHPUnit)
+
+```bash
+cd backend
+composer test          # runs phpunit (unit + integration suites, tests/)
+php -l path/to/File.php   # quick syntax check on a single file
+```
+
+### Frontend
+
+```bash
+cd ui
+npm run test           # vitest run (unit tests, single pass)
+npm run test:unit      # vitest in watch mode
+npm run lint           # eslint
+npm run build          # tsc -b + vite build (type-checks everything)
+```
+
+### End-to-end (Playwright)
+
+E2E tests run against a **live deployment** — no dev server is started for you:
+
+```bash
+cd ui
+E2E_BASE_URL=http://your-local-host npm run test:e2e
+```
+
+The default `E2E_BASE_URL` is `http://formlogic.local` (see `ui/playwright.config.ts`). Tests use the system-installed Chrome (`channel: 'chrome'`), so no Playwright browser download is needed.
+
+## Tech stack
 
 ### Frontend
 
@@ -331,6 +295,7 @@ Then rebuild the frontend: `cd ui && npm run build`
 | Styling | Tailwind CSS 4 |
 | State | Zustand 5 (persisted stores) |
 | Routing | React Router 7 |
+| Charts | recharts (widget dashboards + reports) |
 | Drag & Drop | @dnd-kit |
 | Animation | Framer Motion |
 | Icons | Lucide React |
@@ -342,120 +307,83 @@ Then rebuild the frontend: `cd ui && npm run build`
 | Layer | Technology |
 |-------|-----------|
 | Framework | PHP 8.1+ / Slim 4 |
-| Auth | HttpOnly cookie sessions (JWT-signed) |
+| Auth | HttpOnly cookie sessions (JWT-signed) + scoped API keys + ephemeral MCP tokens |
 | Database | MySQL (global metadata) + SQLite (per-form responses) |
 | Logging | Monolog |
 | DI | PHP-DI |
 | Scripting (server) | QuickJS (vendored static `qjs` binary, no Node.js) |
+| Signing | Ed25519 via libsodium (packages + client manifests) |
 
-### Scripting Engine
+### Scripting engine
 
-FormLogic runs user expressions and `onSubmit` scripts as real JavaScript inside a
-**QuickJS** sandbox, using one engine and one shared standard-library prelude on both
-sides (so client and server results match by construction):
+FormLogic runs user expressions and `onSubmit` scripts as real JavaScript inside a **QuickJS** sandbox, using one engine and one shared standard-library prelude on both sides (so client and server results match by construction):
 
-- **Browser** -- [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten)
-  runs in a dedicated Web Worker for real-time validation, conditional logic, and
-  calculated fields, with memory/stack/interrupt limits and a terminate watchdog.
-- **Server** -- a vendored static [`qjs`](https://github.com/quickjs-ng/quickjs)
-  binary (under `backend/bin/qjs/`, selected per-OS) invoked by `QuickJsRunner` via
-  `proc_open` — **no Node.js required**. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils`
-  calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning
-  guards on the trusted side.
+- **Browser** — [`quickjs-emscripten`](https://github.com/justjake/quickjs-emscripten) runs in a dedicated Web Worker for real-time validation, conditional logic, and calculated fields, with memory/stack/interrupt limits and a terminate watchdog.
+- **Server** — a vendored static [`qjs`](https://github.com/quickjs-ng/quickjs) binary (under `backend/bin/qjs/`, selected per-OS) invoked by `QuickJsRunner` via `proc_open`. `onSubmit` `ctx.db`/`ctx.http`/`ctx.utils` calls are handled in PHP over a synchronous RPC, keeping the SSRF/DNS-pinning guards on the trusted side.
 
-The shared prelude (`ui/src/lib/formlogic/prelude.js`, synced into the backend at
-build time) provides built-in modules for validation, formatting, compliance,
-finance, and safety. Untrusted code runs with an empty global and zero host
-bindings; runaway scripts are killed by the watchdog.
+Untrusted code runs with an empty global and zero host bindings; runaway scripts are killed by the watchdog. The same sandbox also runs app-level and form-level **custom logic** in the app runtime (effect + permission model — see [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#app-logic-quickjs)).
 
----
+**Edit the prelude only at `ui/src/lib/formlogic/prelude.js`** — the build's `prebuild` step (`npm run sync:prelude`) syncs it into `backend/resources/`.
 
-## Project Structure
+## Project structure
 
 ```
-form-builder/                     # (under the repo root, e.g. formlogic-app/form-builder/)
-├── install.php                   # Browser install wizard (delete after install)
-├── install.sh                    # CLI install script (macOS / Linux)
+form-builder/
+├── install.php                    # Browser install wizard (delete after install)
+├── install.sh                     # CLI install script (Linux / macOS / Git Bash)
 ├── backend/
-│   ├── public/index.php          # Routes, DI container, middleware
-│   ├── config/settings.php       # Environment config
-│   ├── database/schema.sql       # MySQL schema export
-│   ├── bin/qjs/                  # Vendored static qjs binary (server-side sandbox)
-│   ├── resources/                # Prelude synced here by the build prebuild step
-│   ├── .env.example              # Backend environment template
+│   ├── public/index.php           # All routes, DI container, middleware wiring
+│   ├── config/settings.php        # Environment config
+│   ├── database/schema.sql        # MySQL schema export (+ migrate.php)
+│   ├── bin/qjs/                   # Vendored static qjs binaries (server-side sandbox)
+│   ├── resources/                 # Synced prelude + bundled sample apps
+│   ├── scripts/                   # provision-demo.php (demo account seeder)
+│   ├── .env.example               # Annotated backend environment template
+│   ├── tests/                     # PHPUnit (Unit/ + Integration/)
 │   └── src/
-│       ├── Controllers/           # Auth, Form, Response, App, AI, Pack, Webhook, File, ApiKey
-│       ├── Services/              # FormLogicRuntime, AuditService, PackService, WebhookService...
-│       ├── Middleware/            # Auth, CORS, CSRF, RateLimit, Security, BodySize, ApiKey
-│       ├── Models/                # User, Form, App, Webhook...
+│       ├── Controllers/           # Auth, Form, Response, App, AppDomain, AppManifest, Pack, AI, Mcp, Billing, ...
+│       ├── Services/              # FormLogicRuntime, PackService, SigningService, AppDomainService, ReportService, ...
+│       ├── Middleware/            # Auth, ApiKey, CORS, CSRF, RateLimit, SecurityHeaders, BodySize, DemoReadOnly, CloudWriteGate
+│       ├── Models/                # User, Form, App, AppRole, AppUser, AppUserGroup
 │       ├── Database/              # MySQLConnection + SQLiteConnection
 │       ├── Constants/             # AppPermissions
-│       └── Helpers/               # IpResolver
+│       └── Helpers/               # IpResolver, IpSafety, AppUrl, CustomLogicSanitizer, PackCapabilities, RecordLabel
 │
 ├── ui/
 │   ├── .env.example               # Frontend environment template
+│   ├── e2e/                       # Playwright specs (run against a live deploy)
+│   ├── scripts/                   # sync-prelude, emit-marketplace, screenshot/QA tooling
 │   └── src/
-│       ├── pages/                 # 11 pages + 9 app admin pages
+│       ├── pages/                 # Top-level pages + pages/apps/ (app admin)
 │       ├── components/
-│       │   ├── app-runtime/       # Business app runtime (data tables, form views, auth guards)
-│       │   ├── builder/           # Form builder (field palette, script editor, AI generator...)
+│       │   ├── app-runtime/       # App runtime (form views, widget dashboards, data tables)
+│       │   ├── apps/              # App management panels (domains, logic, deploy)
+│       │   ├── builder/           # Form builder (field palette, script editor, AI generator)
 │       │   ├── layout/            # App shell, sidebar, header, mobile nav
-│       │   └── ui/                # Shared UI components (buttons, modals, toasts...)
-│       ├── stores/                # Zustand stores (auth, form, app, response, runtime, ui, ...)
-│       ├── hooks/                 # Custom hooks (keyboard shortcuts, NIGO, online status)
-│       ├── lib/
-│       │   └── formlogic/         # QuickJS engine wrapper (Web Worker) + shared prelude
-│       ├── types/                 # TypeScript interfaces (form, app)
-│       └── data/
-│           ├── formTemplates.ts   # Built-in form templates
-│           └── packs/             # Pre-built pack bundles
+│       │   └── ui/                # Shared UI components
+│       ├── stores/                # Zustand stores (auth, form, app, response, runtime, ...)
+│       ├── client-runtime/        # App-logic host, effects/permissions, connectors
+│       ├── sdk/                   # FormLogic SDK (permission-aware hooks + components)
+│       ├── application-package/   # .formlogic package types + validator
+│       ├── lib/formlogic/         # QuickJS engine wrapper (Web Worker) + shared prelude
+│       ├── types/                 # TypeScript interfaces (form, app, custom logic)
+│       └── data/packs/            # The 28 marketplace pack bundles
 │
-└── README.md
+├── native-runtime/                # Tauri v2 shell (Rust) — see its README
+└── README.md                      # This file
 ```
 
----
+## Architecture notes
 
-## Architecture
+- **Dual database** — MySQL holds users, forms (metadata + field definitions), apps, roles, permissions, audit log, webhooks, and response metadata; each form's response data lives in its **own SQLite file**, which isolates forms and makes per-form export trivial.
+- **One backend, many portals** — a form can be attached to many apps (`app_forms` many-to-many) and every app reads/writes the same records; member payloads are filtered server-side by role. See [docs/ONE_BACKEND_MANY_PORTALS.md](../docs/ONE_BACKEND_MANY_PORTALS.md).
+- **Auth** — HttpOnly cookies with JWT-signed tokens; CSRF via double-submit cookie, validated on state-changing requests.
+- **Storage modes** — forms can live in browser localStorage (no account) or sync to the backend; the preference persists.
+- **Scripting** — conditional visibility, custom validation, calculated fields, and a server-authoritative `onSubmit` script that can read the record (`ctx.answers` / `ctx.db.getField`), write derived fields (`ctx.db.setField`), set tags/status, or reject. Scripts run **synchronously** (don't `await` `ctx.http`/`ctx.db`). `hidden` fields are the natural home for computed output.
 
-### Dual Database Strategy
+## Environment variables
 
-- **MySQL** -- Users, forms (metadata + field definitions), apps, roles, permissions, audit log, webhooks, response metadata, analytics aggregates
-- **SQLite** (one file per form) -- Response data, computed fields, tags, script logs. Provides data isolation between forms and enables easy per-form export.
-
-### Authentication
-
-Session-based auth using HttpOnly cookies with JWT-signed tokens. The CSRF token is set as a readable cookie and validated on state-changing requests.
-
-### Storage Modes
-
-Forms can be stored in two modes:
-- **Local** -- Forms persist in browser localStorage (no account required)
-- **Cloud** -- Forms sync to the backend API (requires authentication)
-
-### Business Apps Platform
-
-Forms can be composed into deployable business applications:
-
-1. **Create an app** -- Name, description, theme, slug
-2. **Add forms** -- Select which forms appear in the app's navigation
-3. **Define roles** -- Create roles with granular per-form permissions (submit, view own, view all, edit, delete, export)
-4. **Invite users** -- Users accept invitations and are assigned roles
-5. **Deploy** -- Apps are accessible at `/app/{slug}` with their own auth guard, theme, and navigation
-
-Linked record fields allow cross-form references within an app.
-
-### FormLogic Scripting
-
-The scripting engine supports:
-- **Conditional visibility** -- Show/hide fields based on expressions (`age >= 18 && country === "US"`)
-- **Custom validation** -- Validate fields with expressions that return error messages
-- **Calculated fields** -- Compute values from other fields (`price * quantity * (1 + tax_rate)`)
-- **Post-submission scripts** -- An `onSubmit` script runs after submission to read the record (`ctx.answers` / `ctx.db.getField`), compute and write derived fields (`ctx.db.setField`), set tags/status, or reject. Scripts run **synchronously** (don't `await` `ctx.http`/`ctx.db`).
-- **Hidden fields** -- A `hidden` field stores a default, computed, or script-set value never shown to respondents, saved with the response and included in exports — the natural home for `onSubmit`/calculated output.
-
----
-
-## Environment Variables
+The authoritative, fully annotated list is **`backend/.env.example`** (mail/SMTP, PayPal billing, beta mode, cloud plan limits, trusted proxies, support email, and more). The core ones:
 
 ### Backend (`backend/.env`)
 
@@ -468,75 +396,39 @@ The scripting engine supports:
 | `DB_DATABASE` | `formlogic` | MySQL database name |
 | `DB_USERNAME` | `formlogic` | MySQL user |
 | `DB_PASSWORD` | | MySQL password (**required in production**) |
+| `SQLITE_STORAGE_PATH` | `storage/forms` | Per-form SQLite directory (relative to `backend/`) |
 | `JWT_SECRET` | | JWT signing secret, min 32 chars (**required in production**) |
-| `AUDIT_HMAC_KEY` | | HMAC key for audit-log integrity, min 32 chars (**required in production**) |
 | `JWT_EXPIRY` | `86400` | Token lifetime in seconds (24h) |
+| `AUDIT_HMAC_KEY` | | HMAC key for audit-log integrity (**required in production**) |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
 | `CORS_ALLOWED_ORIGINS` | | Additional CORS origins (comma-separated) |
 | `COOKIE_DOMAIN` | | Cookie domain (empty = current domain) |
 | `UPLOAD_MAX_FILE_SIZE` | `10485760` | Max upload size in bytes (10MB) |
-| `OPENAI_API_KEY` | | API key for AI form generation (OpenAI-compatible; optional) |
-| `OPENAI_API_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL (optional) |
-| `OPENAI_MODEL` | `gpt-4o` | Text model for AI generation (optional) |
-| `OPENAI_VISION_MODEL` | `gpt-4o` | Vision model for image/document generation (optional) |
+| `AI_BASE_URL` | | OpenAI-compatible API base URL — OpenAI, Azure, or a local server (LM Studio / Ollama / vLLM) |
+| `AI_API_KEY` | | API key; optional — leave blank for a keyless local server |
+| `AI_MODEL` | `gpt-4o` | Text model for AI generation |
+| `AI_VISION_MODEL` | `gpt-4o` | Vision model for image/document extraction (defaults to `AI_MODEL`) |
+| `AI_ENABLED` | `true` | Set `false` to disable the built-in AI entirely (steers users to bring their own AI via MCP) |
+| `REQUIRE_VERIFIED_PACKAGES` | `false` | Require a verified signature on every package/pack import |
+
+Legacy `OPENAI_API_KEY` / `OPENAI_API_URL` / `OPENAI_MODEL` names are still honored as fallbacks for the `AI_*` variables.
 
 ### Frontend (`ui/.env`)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VITE_API_URL` | `http://localhost:8080/api` | Backend API URL (dev default; use `/api` for same-domain production) |
+| `VITE_PUBLIC_DOMAIN` | `formlogic.com` | Domain shown in landing-page mockups + sales contact (baked in at build time) |
 
----
+## API overview
 
-## API Reference
+Three ways in, all documented elsewhere:
 
-### Auth
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/auth/register` | No | Create account |
-| POST | `/api/auth/login` | No | Login |
-| POST | `/api/auth/logout` | No | Logout |
-| GET | `/api/auth/me` | Yes | Current user |
-| PUT | `/api/auth/me` | Yes | Update profile |
+- **Internal API** (`/api/...`) — cookie-authenticated; everything the SPA does: auth, forms, responses, apps (incl. companion apps, form relations, custom domains, signed exports), app runtime (incl. `sync/batch` offline sync, activity, reports), packs/marketplace, billing. Routes are all declared in `backend/public/index.php`.
+- **External REST API** (`/api/v1/...`) — API-key authenticated (`Authorization: Bearer flk_…`, scoped keys created in Settings → API keys). Submissions run the full pipeline including the `onSubmit` script. Full reference: **[docs/API.md](../docs/API.md)**.
+- **MCP server** (`POST /api/mcp`) — short-lived scoped tokens for external AI clients (Claude, Cursor, …) to build and edit apps. Setup + tool list: **[docs/MCP.md](../docs/MCP.md)**.
 
-### Forms
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/forms` | Yes | List forms |
-| POST | `/api/forms` | Yes | Create form |
-| GET | `/api/forms/{id}` | Yes | Get form |
-| PUT | `/api/forms/{id}` | Yes | Update form |
-| DELETE | `/api/forms/{id}` | Yes | Delete form |
-| POST | `/api/forms/{id}/duplicate` | Yes | Duplicate form |
-
-### Responses
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| POST | `/api/forms/{id}/responses` | No | Submit response (public) |
-| GET | `/api/forms/{id}/responses` | Yes | List responses |
-| POST | `/api/forms/{id}/responses/import` | Yes | CSV bulk import |
-| GET | `/api/forms/{id}/responses/export` | Yes | Export CSV |
-| GET | `/api/forms/{id}/analytics` | Yes | Form analytics |
-
-### Apps
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/apps` | Yes | List apps |
-| POST | `/api/apps` | Yes | Create app |
-| PUT | `/api/apps/{id}` | Yes | Update app |
-| DELETE | `/api/apps/{id}` | Yes | Delete app |
-| POST | `/api/packs/import` | Yes | Import pack bundle |
-
-### App Runtime
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/api/app/{slug}` | Yes | App config + forms + permissions |
-| POST | `/api/app/{slug}/forms/{id}/responses` | Yes | Submit within app |
-| GET | `/api/app/{slug}/forms/{id}/responses` | Yes | List within app |
-
----
-
-## Field Types
+## Field types
 
 | Type | Description |
 |------|-------------|
@@ -564,40 +456,30 @@ The scripting engine supports:
 | `welcome_screen` | Form intro screen |
 | `thank_you` | Form completion screen |
 
----
-
 ## Security
 
 - **HttpOnly cookies** for session tokens (not accessible to JavaScript)
-- **CSRF protection** with double-submit cookie pattern
-- **Rate limiting** on auth endpoints (10/min), form mutations (20/min), and submissions (30/min)
+- **CSRF protection** with the double-submit cookie pattern
+- **Rate limiting** per endpoint class: auth 10/min, form mutations 20/min, submissions 30/min, public form views 60/min, external API + MCP 120/min
 - **Security headers** (X-Content-Type-Options, X-Frame-Options, CSP, etc.)
 - **Input validation** with type checking and constraint enforcement
-- **SSRF protection** on webhooks with DNS resolution checks and private IP blocking
-- **Sandboxed scripting** -- user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, or filesystem access (field expressions also have no network; `onSubmit` scripts additionally get a server-brokered, SSRF-guarded `ctx.http` for external API calls)
-- **Hash-chained audit log** with HMAC-SHA256 integrity verification
-- **Body size limits** on uploads
-- **User-Agent sanitization** to prevent stored XSS
-
----
+- **SSRF protection** on webhooks, `ctx.http`, and domain probes — DNS resolution checks and private/reserved IP blocking, re-resolved per request
+- **Sandboxed scripting** — user scripts run in an isolated QuickJS sandbox with instruction-count, wall-clock, memory, and call-depth limits, and no `eval`, DOM, or filesystem access
+- **Signed packages & manifests** — Ed25519 signatures over `.formlogic` exports and client manifests; tampered archives are rejected on import
+- **Hash-chained audit log** with HMAC-SHA256 integrity verification (`GET /api/admin/audit/verify`)
+- **Body size limits** on uploads; **User-Agent sanitization** against stored XSS
 
 ## Troubleshooting
 
 ### "SECURITY ERROR: JWT_SECRET must be set" on first request
-Your `APP_ENV` is set to `production` but `JWT_SECRET` is empty. Either:
-- Set `APP_ENV=development` in `backend/.env` for local development, or
-- Generate a secret: `php -r "echo bin2hex(random_bytes(32));"` and set `JWT_SECRET` in `.env`
+`APP_ENV` is `production` but `JWT_SECRET` is empty. Either set `APP_ENV=development` in `backend/.env` for local development, or generate a secret (`php -r "echo bin2hex(random_bytes(32));"`) and set it.
 
-### CORS errors in browser console
-Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g., `http://localhost:5173` for dev).
+### CORS errors in the browser console
+Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g. `http://localhost:5173` for dev).
 
 ### Scripting (form logic / validation / calculations) not running
-- **Browser:** make sure `npm install` completed in `ui/` — it pulls `quickjs-emscripten`
-  (the WASM engine), which Vite bundles automatically. There's no separate download step.
-- **Server:** ensure the vendored `qjs` binary exists under `backend/bin/qjs/` for your OS
-  (it's committed in the repo). On macOS/Linux it must be executable
-  (`chmod +x backend/bin/qjs/qjs-linux-x86_64`; `install.sh` does this). The prelude is
-  synced to `backend/resources/` by the `prebuild` step of `npm run build`.
+- **Browser:** make sure `npm install` completed in `ui/` — it pulls `quickjs-emscripten` (the WASM engine). There is no separate download step.
+- **Server:** ensure the vendored `qjs` binary exists under `backend/bin/qjs/` for your OS (it's committed in the repo). On macOS/Linux it must be executable (`chmod +x backend/bin/qjs/qjs-linux-x86_64`; `install.sh` does this). The prelude is synced to `backend/resources/` by the `prebuild` step of `npm run build`.
 
 ### MySQL connection refused
 - Verify MySQL is running: `mysql -u root -p -e "SELECT 1"`
@@ -605,21 +487,19 @@ Update `CORS_ORIGIN` in `backend/.env` to match your frontend URL (e.g., `http:/
 - Ensure the database exists: `mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS formlogic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"`
 
 ### PHP extensions missing
-Check with `php -m` and install missing extensions. On Ubuntu/Debian:
+Check with `php -m`. On Ubuntu/Debian:
 ```bash
 sudo apt install php8.1-mysql php8.1-sqlite3 php8.1-mbstring php8.1-xml
 ```
 
----
+### AI generation not working
+Set `AI_BASE_URL` (and `AI_API_KEY` if your provider needs one) in `backend/.env` — any OpenAI-compatible endpoint works, including keyless local servers. Check `GET /api/ai/status`. Note that in production an API key is never sent over plain `http://` (keyless local servers are fine).
 
-## Scripting Runtime (upstream)
+## Upstream scripting runtime
 
-The scripting engine is **QuickJS** on both sides, running the same JavaScript from one
-shared prelude:
-
-- **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** -- QuickJS compiled to WASM, used in the browser (vendored via npm)
-- **[quickjs-ng](https://github.com/quickjs-ng/quickjs)** -- source of the vendored static `qjs` binary used on the server
+- **[quickjs-emscripten](https://github.com/justjake/quickjs-emscripten)** — QuickJS compiled to WASM, used in the browser (via npm)
+- **[quickjs-ng](https://github.com/quickjs-ng/quickjs)** — source of the vendored static `qjs` binary used on the server
 
 ## License
 
-Proprietary. All rights reserved.
+Proprietary, source-available. Free to self-host and modify for your own use; selling or offering it as a paid/hosted service requires a commercial agreement. See [LICENSE](../LICENSE).

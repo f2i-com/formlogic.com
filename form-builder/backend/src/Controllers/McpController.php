@@ -213,7 +213,7 @@ class McpController
                     break;
                 case 'create_form':
                     $this->validateFormInput($args);
-                    $data = $this->formService->createForm(array_merge($this->formInput($args), ['userId' => $userId]));
+                    $data = $this->createFormSanitized($args, $userId);
                     // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
                     if ($scopedApp !== null && !empty($data['id'])) {
                         $this->appService->addFormToApp($scopedApp, (string) $data['id']);
@@ -238,7 +238,7 @@ class McpController
                     $this->assertAppScope($session, $target);
                     $this->ownApp($target, $userId);
                     $this->validateFormInput($args);
-                    $form = $this->formService->createForm(array_merge($this->formInput($args), ['userId' => $userId]));
+                    $form = $this->createFormSanitized($args, $userId);
                     $this->appService->addFormToApp($target, (string) $form['id'], $args['displayName'] ?? null);
                     if ($creatorMode && !empty($form['id'])) {
                         $session['created']['forms'][] = (string) $form['id'];
@@ -252,7 +252,11 @@ class McpController
                     $this->assertFormInScope($session, (string) ($args['formId'] ?? ''));
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     $this->validateFormInput($args);
-                    $data = $this->formService->updateForm((string) $args['formId'], $this->formInput($args));
+                    $input = $this->formInput($args);
+                    if (is_array($input['customScreen'] ?? null)) {
+                        $input['customScreen'] = $this->sanitizeSectionScreen($input['customScreen'], (string) $args['formId']);
+                    }
+                    $data = $this->formService->updateForm((string) $args['formId'], $input);
                     $this->audit($request, 'mcp.update_form', $userId, ['formId' => $args['formId'] ?? null]);
                     break;
                 case 'list_apps':
@@ -269,7 +273,16 @@ class McpController
                     if ($scopedApp !== null) {
                         throw new \Exception('This token is scoped to one app and cannot create new apps');
                     }
-                    $data = $this->appService->createApp(['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null], $userId);
+                    $input = ['name' => (string) ($args['name'] ?? 'Untitled App'), 'description' => $args['description'] ?? null];
+                    // Optional settings.appKind audience tag. The service would silently drop an invalid
+                    // value; over MCP a clear error is more useful to the AI, so validate here.
+                    if (isset($args['appKind'])) {
+                        if (!is_string($args['appKind']) || !in_array($args['appKind'], AppService::APP_KINDS, true)) {
+                            throw new \Exception('appKind must be one of: ' . implode(', ', AppService::APP_KINDS));
+                        }
+                        $input['appKind'] = $args['appKind'];
+                    }
+                    $data = $this->appService->createApp($input, $userId);
                     // Creator token: confine future access to this newly-created app.
                     if ($creatorMode && !empty($data['id'])) {
                         $session['created']['apps'][] = (string) $data['id'];
@@ -312,8 +325,12 @@ class McpController
                     $this->assertAppScope($session, (string) ($args['appId'] ?? ''));
                     $this->ownApp((string) ($args['appId'] ?? ''), $userId);
                     $cs = is_array($args['customScreen'] ?? null) ? $args['customScreen'] : [];
-                    if (strlen((string) json_encode($cs)) > 524288) {
-                        throw new \Exception('Custom screen exceeds the 512KB limit');
+                    $this->validateCustomScreen($cs);
+                    // A widget dashboard is data, not code — sanitize its specs against this app so no
+                    // widget can query a form/field outside it (the same save boundary as the UI's
+                    // AppController::update path).
+                    if (($cs['kind'] ?? '') === 'dashboard' && is_array($cs['dashboard'] ?? null) && $this->reportValidator !== null) {
+                        $cs['dashboard'] = $this->reportValidator->sanitizeDashboardForApp($cs['dashboard'], (string) $args['appId']);
                     }
                     $data = $this->appService->updateApp((string) $args['appId'], ['customScreen' => $cs]);
                     $this->audit($request, 'mcp.set_app_home', $userId, ['appId' => $args['appId'] ?? null]);
@@ -498,15 +515,60 @@ class McpController
             if (!is_array($args['customScreen'])) {
                 throw new \Exception('customScreen must be an object');
             }
-            $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard'];
-            $unknown = array_diff(array_keys($args['customScreen']), $allowed);
-            if (!empty($unknown)) {
-                throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown));
-            }
-            if (strlen((string) json_encode($args['customScreen'])) > 524288) {
-                throw new \Exception('customScreen exceeds the 512KB limit');
-            }
+            $this->validateCustomScreen($args['customScreen']);
         }
+    }
+
+    /** Shared customScreen shape check (form section screens AND the app home): key whitelist + size cap. */
+    private function validateCustomScreen(array $cs): void
+    {
+        $allowed = ['enabled', 'html', 'css', 'js', 'ts', 'files', 'entry', 'publicRecords', 'publicRecordFields', 'kind', 'dashboard'];
+        $unknown = array_diff(array_keys($cs), $allowed);
+        if (!empty($unknown)) {
+            throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown) . ' (a widget dashboard is { kind:"dashboard", dashboard:{ cols, widgets } })');
+        }
+        if (strlen((string) json_encode($cs)) > 524288) {
+            throw new \Exception('customScreen exceeds the 512KB limit');
+        }
+    }
+
+    /**
+     * Mirror FormController::sanitizeDashboardScreen for the MCP path: a section-screen widget
+     * dashboard (customScreen.kind === 'dashboard') is sanitized against the form's own fields
+     * (+ its linked_record target forms) before it persists, so no widget can query outside them.
+     */
+    private function sanitizeSectionScreen(array $screen, string $formId): array
+    {
+        if (($screen['kind'] ?? '') === 'dashboard' && is_array($screen['dashboard'] ?? null) && $this->reportValidator !== null) {
+            $screen['dashboard'] = $this->reportValidator->sanitizeDashboard(
+                $screen['dashboard'],
+                $this->reportValidator->formFieldMap($formId)
+            );
+        }
+        return $screen;
+    }
+
+    /**
+     * Create a form for create_form / create_app_form. When the customScreen is a widget DASHBOARD its
+     * specs must be sanitized against the form's REAL stored fields — which don't exist until the form
+     * does — so the screen is held back from the insert and attached right after (create → sanitize →
+     * patch): an unsanitized dashboard never persists. Code screens pass straight through (sandboxed).
+     */
+    private function createFormSanitized(array $args, string $userId): array
+    {
+        $input = array_merge($this->formInput($args), ['userId' => $userId]);
+        $screen = null;
+        if (is_array($input['customScreen'] ?? null) && ($input['customScreen']['kind'] ?? '') === 'dashboard') {
+            $screen = $input['customScreen'];
+            unset($input['customScreen']);
+        }
+        $form = $this->formService->createForm($input);
+        if ($screen !== null && !empty($form['id'])) {
+            $form = $this->formService->updateForm((string) $form['id'], [
+                'customScreen' => $this->sanitizeSectionScreen($screen, (string) $form['id']),
+            ]) ?? $form;
+        }
+        return $form;
     }
 
     private function ownForm(string $formId, string $userId): array
@@ -549,7 +611,7 @@ class McpController
     private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
-        $screen = ['type' => 'object', 'description' => 'Custom screen — a sandboxed full frontend. Provide EITHER `ts` (a single TypeScript/JS file) OR `files` (a multi-file project: an array of { path, content } with .ts/.tsx/.css files + an index.html shell and relative imports between files). Either is compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast).'];
+        $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/JS file) OR `files` (a multi-file project: an array of { path, content } with .ts/.tsx/.css files + an index.html shell and relative imports between files). Either is compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
         $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
         $scopes = $session['scopes'] ?? [];
         $scopedApp = $session['appId'] ?? null;
@@ -560,10 +622,10 @@ class McpController
             ['name' => 'update_form', 'scope' => 'forms:write', 'description' => 'Update a form (any of fields, logicScript, customScreen, title, status).', 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'title' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string']], ['formId'])],
             ['name' => 'create_app_form', 'scope' => 'forms:write', 'description' => "PREFERRED for building an app: create a form AND attach it to an app in one call (no orphan form). appId defaults to the token's app when app-scoped; required for account-wide tokens. Same fields as create_form + displayName.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'displayName' => ['type' => 'string'], 'title' => ['type' => 'string'], 'description' => ['type' => 'string'], 'fields' => ['type' => 'array', 'items' => $field], 'logicScript' => ['type' => 'string'], 'customScreen' => $screen, 'status' => ['type' => 'string', 'enum' => ['draft', 'published']]], ['title'])],
             ['name' => 'list_apps', 'scope' => 'apps:read', 'description' => "List the owner's apps (only the scoped app when app-scoped).", 'inputSchema' => $obj([])],
-            ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms).', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string']], ['name'])],
+            ['name' => 'create_app', 'scope' => 'apps:write', 'description' => 'Create an app (container for forms). Optional appKind tags the audience the app serves.', 'inputSchema' => $obj(['name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'appKind' => ['type' => 'string', 'enum' => AppService::APP_KINDS, 'description' => 'Optional audience tag: admin console, client portal, staff field app, public intake, internal, or custom.']], ['name'])],
             ['name' => 'update_app', 'scope' => 'apps:write', 'description' => 'Update an app: rename, set description, change the URL slug, publish (status: draft|published|archived), or hide the sidebar/menu (hideNav: true for a self-contained custom-home app).', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'slug' => ['type' => 'string', 'description' => 'URL slug: lowercase letters, digits, hyphens.'], 'status' => ['type' => 'string', 'enum' => ['draft', 'published', 'archived']], 'hideNav' => ['type' => 'boolean', 'description' => 'Render the app full-screen without the sidebar/menu.']], ['appId'])],
             ['name' => 'add_form_to_app', 'scope' => 'apps:write', 'description' => 'Attach a form to an app.', 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'formId' => ['type' => 'string'], 'displayName' => ['type' => 'string']], ['appId', 'formId'])],
-            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's custom frontend — a full sandboxed app (HTML/CSS/TypeScript) over the app's forms. The SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
+            ['name' => 'set_app_home', 'scope' => 'screens:write', 'description' => "Set the app's home screen. PREFERRED: a no-code widget DASHBOARD ({ kind:'dashboard', dashboard:{ cols, widgets } } — charts/KPIs/lists the host renders natively; report widgets take the same spec as create_report). ALTERNATIVE: a full sandboxed CODE frontend (HTML/CSS/TypeScript) over the app's forms — its SDK spans all the app's forms: submit(formId,answers)/records(formId)/navigate(formId)/context()/forms()/currentUser(). Build a whole app here; you don't need a screen per form.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'customScreen' => $screen], ['appId', 'customScreen'])],
             ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
             ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
@@ -588,15 +650,15 @@ class McpController
     private function serverInstructions(): string
     {
         return <<<'TXT'
-FormLogic builds self-hosted apps made of FORMS (fields + data), optional backend onSubmit SCRIPTS, and optional CUSTOM SCREENS (a sandboxed HTML/CSS/TypeScript frontend over the data). This MCP server creates and edits all of it. Call the get_started tool for a full guide with a worked example.
+FormLogic builds self-hosted apps made of FORMS (fields + data), optional backend onSubmit SCRIPTS, no-code widget DASHBOARDS (charts/KPIs/record lists over the data), and optional CUSTOM CODE SCREENS (a sandboxed HTML/CSS/TypeScript frontend). This MCP server creates and edits all of it. Call the get_started tool for a full guide with a worked example.
 
 Build an app from scratch:
-1. create_app { name } — a container for forms. (Skip if your token is already scoped to one app; then create_app is hidden.)
+1. create_app { name, description?, appKind? } — a container for forms. appKind tags the audience: admin|client|staff|public|internal|custom. (Skip if your token is already scoped to one app; then create_app is hidden.)
 2. create_app_form { title, fields } — create a form AND attach it to the app in one call. Repeat per form. Fields: [{ id, type, label, required, properties? }]. Common types: short_text, long_text, email, number, dropdown / multiple_choice (properties.options: [{id,label,value}]), checkbox, date, rating, scale, file_upload, hidden, statement, linked_record (properties.targetFormId = another form's id, to relate records).
 3. (optional) update_form { formId, logicScript } — a QuickJS "function onSubmit(ctx) {…}" server-side script.
-4. (optional) set_app_home { appId, customScreen } — a full custom frontend over the app's forms. customScreen = { enabled:true, files:[{path,content}] } (a multi-file TypeScript project: index.html shell + index.ts entry + more, relative imports) OR { enabled:true, ts, html, css } (single file). Compiled/bundled automatically. Inside it, window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v). ALWAYS escapeHtml() record data before innerHTML.
+4. (recommended) set_app_home { appId, customScreen: { kind:"dashboard", dashboard:{ cols:12, widgets:[…] } } } — a no-code widget DASHBOARD home screen, the primary kind. Widgets: { kind:"report", layout:{x,y,w,h}, title?, spec } (spec = the same shape as create_report), { kind:"list", layout, list:{formId,limit?,titleField?,subtitleField?,metaField?} }, { kind:"text", layout, text:{body} }, { kind:"actions", layout } (new-record buttons), { kind:"activity", layout } (latest records). ALTERNATIVE: a full CODE frontend { enabled:true, files:[{path,content}] } or { enabled:true, ts, html, css }, compiled/bundled automatically; inside it window.FormLogic is the SDK: context(), forms(), submit(formId,answers), records(formId,{limit}), currentUser(), navigate(formId), toast.success/error, escapeHtml(v) — ALWAYS escapeHtml() record data before innerHTML.
 5. (optional) create_report { appId, name, spec } — add charts/KPIs/tables to the app's Reports section (bar|line|area|pie|donut|kpi|table). Then create_document { appId, name, blocks } to combine several charts + text into an exportable PDF report page.
-6. update_app { appId, status:"published" } — publish. Optional: slug, hideNav (full-screen, no menu).
+6. update_app { appId, status:"published" } — publish (status:"draft" unpublishes). Optional: slug, hideNav (full-screen, no menu).
 
 First inspect existing content with list_apps / list_forms / get_form. Your token is temporary and cannot read submissions unless explicitly granted. Prefer create_app_form over create_form + add_form_to_app.
 TXT;
@@ -608,16 +670,16 @@ TXT;
         return <<<'TXT'
 # Building a FormLogic app over MCP
 
-FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + optionally a CUSTOM SCREEN (a sandboxed HTML/CSS/TypeScript frontend that reads/writes the forms' data). You build all of this with the tools below.
+FormLogic apps = an APP (container) + one or more FORMS (each a set of fields, backed by its own database) + optionally a backend onSubmit SCRIPT per form + a HOME SCREEN (preferably a no-code widget DASHBOARD; alternatively a sandboxed HTML/CSS/TypeScript CODE screen that reads/writes the forms' data). You build all of this with the tools below.
 
 ## Recommended workflow
 1. list_apps / list_forms — see what already exists (only if editing).
-2. create_app { name, description? } — unless your token is already app-scoped.
+2. create_app { name, description?, appKind? } — unless your token is already app-scoped. appKind (optional) tags the audience: admin | client | staff | public | internal | custom.
 3. For each form: create_app_form { title, fields, displayName? } — creates the form and attaches it to the app in one call.
 4. Optionally update_form { formId, logicScript } to add server-side automation.
-5. Optionally set_app_home { appId, customScreen } to add a custom frontend.
+5. set_app_home { appId, customScreen } — give the app a home screen. PREFER a widget dashboard (see "Widget dashboards" below); a custom CODE frontend is the advanced alternative.
 6. Optionally create_report / create_document to add analytics (see "Reports" below).
-7. update_app { appId, status: "published" } to publish (optionally slug, hideNav).
+7. update_app { appId, status: "published" } to publish (status: "draft" unpublishes; optionally slug, hideNav).
 
 ## Fields
 A field: { "id": "email", "type": "email", "label": "Email", "required": true, "properties": {} }
@@ -628,7 +690,19 @@ Types: short_text, long_text, email, number, phone, url, date, time, dropdown, m
 ## onSubmit script (optional)
 logicScript is JavaScript: "function onSubmit(ctx) { /* ctx.answers, ctx.setField, ctx.reject, ctx.setStatus, ctx.addTag */ }". Runs server-side on every submission (sandboxed QuickJS).
 
-## Custom screen (optional but powerful)
+## Widget dashboards (the primary home screen)
+A dashboard is DATA, not code: a grid of widgets the host renders natively (theming, drill-down, auto-refresh come free). Set it with set_app_home { appId, customScreen: { kind:"dashboard", dashboard } }.
+dashboard = { cols?: 12, widgets: [ … up to 60 ], showRangePicker?: bool, refreshInterval?: 30|60|300 (seconds) }.
+Every widget has { kind, layout:{x,y,w,h}, title? } (grid units; w up to cols, h up to 12). Kinds:
+- report — an inline chart/KPI/table: { kind:"report", layout, title?, spec } where spec is EXACTLY the create_report spec shape ({ formId, viz, groupBy?, measure?, joins?, filters?, … }).
+- list — recent records: { kind:"list", layout, title?, list:{ formId, limit? (max 25), titleField?, subtitleField?, metaField? } } (the *Field values are field ids on that form).
+- text — a note: { kind:"text", layout, text:{ body } }.
+- actions — new-record buttons for the app's forms (no extra config; app home only).
+- activity — a latest-records feed across the app's forms (no extra config; app home only).
+Widget specs are validated on save against the app's forms: a widget whose formId / joins / field refs point outside the app is DROPPED, so use the REAL form ids you created.
+FORM SECTION dashboards: a form can carry its own dashboard, shown on its section screen inside the app — update_form { formId, customScreen: { kind:"dashboard", dashboard } } AFTER creating the form (its widget specs may reference that form and the forms its linked_record fields target).
+
+## Custom CODE screen (advanced alternative to a dashboard)
 A sandboxed frontend over the app's forms. Two shapes:
 - Single file: customScreen = { enabled:true, html:"<div id='app'></div>", css:"…", ts:"…TypeScript…" }
 - Multi-file: customScreen = { enabled:true, files:[ {"path":"index.html","content":"<div id='app'></div>"}, {"path":"index.ts","content":"import { render } from './ui';"}, {"path":"ui.ts","content":"export function render(){…}"} , {"path":"styles.css","content":"…"} ] }
@@ -654,18 +728,24 @@ Give the app a Reports section — no custom screen needed.
   - Examples: { formId:"<job>", viz:"bar", groupBy:{field:"status"}, measure:{fn:"count"} }; revenue over time { formId:"<invoice>", viz:"line", groupBy:{field:"__submitted_at",bucket:"month"}, measure:{fn:"sum",field:"total"} }; cross-form { formId:"<job>", viz:"bar", joins:[{via:"customer",formId:"<customer>",type:"left"}], groupBy:{field:"<customer>::customer_type"}, measure:{fn:"sum",field:"estimated_value"} }.
 - create_document { appId, name, blocks } builds an exportable PDF report page. blocks in order: { kind:"text", title?, body } or { kind:"report", reportId, caption? } (reportId = an id returned by create_report). Create the charts first, then the document.
 
-## Worked example — a "Tasks" app
-1. create_app { "name": "Tasks" }  -> returns { id }
+## Worked example — a "Tasks" app with a dashboard home
+1. create_app { "name": "Tasks", "appKind": "internal" }  -> returns { id }
 2. create_app_form { "title": "Task", "fields": [
      { "id":"title", "type":"short_text", "label":"Title", "required":true },
-     { "id":"done", "type":"checkbox", "label":"Done", "required":false }
+     { "id":"status", "type":"dropdown", "label":"Status", "required":false,
+       "properties": { "options": [ {"id":"open","label":"Open","value":"open"}, {"id":"done","label":"Done","value":"done"} ] } }
    ] }  -> returns { form:{ id }, appId }
-3. set_app_home { "appId":"<id>", "customScreen": { "enabled":true,
-     "files":[
-       {"path":"index.html","content":"<div id=\"app\"></div>"},
-       {"path":"index.ts","content":"const el=document.getElementById('app')!;\nasync function load(){const ctx=await FormLogic.context();const f=ctx.forms[0].formId;const rows=await FormLogic.records(f,{limit:100});el.innerHTML='<h1>Tasks ('+rows.length+')</h1>'+rows.map(r=>'<div>'+FormLogic.escapeHtml(r.answers.title)+'</div>').join('');}\nload();"}
-     ] } }
-4. update_app { "appId":"<id>", "status":"published" }
+3. set_app_home { "appId":"<appId>", "customScreen": { "kind":"dashboard", "dashboard": { "cols":12, "widgets":[
+     { "kind":"report", "layout":{"x":0,"y":0,"w":4,"h":2}, "title":"Open tasks",
+       "spec": { "formId":"<formId>", "viz":"kpi", "measure":{"fn":"count"}, "filters":[{"field":"status","op":"eq","value":"open"}] } },
+     { "kind":"report", "layout":{"x":4,"y":0,"w":8,"h":3}, "title":"Tasks by status",
+       "spec": { "formId":"<formId>", "viz":"bar", "groupBy":{"field":"status"}, "measure":{"fn":"count"} } },
+     { "kind":"actions", "layout":{"x":0,"y":3,"w":12,"h":1}, "title":"Quick actions" },
+     { "kind":"list", "layout":{"x":0,"y":4,"w":12,"h":3}, "title":"Latest tasks",
+       "list": { "formId":"<formId>", "limit":8, "titleField":"title", "subtitleField":"status" } }
+   ] } } }
+4. update_app { "appId":"<appId>", "status":"published" }
+(For a custom CODE home instead, pass customScreen = { "enabled":true, "files":[ {"path":"index.html","content":"<div id=\"app\"></div>"}, {"path":"index.ts","content":"…window.FormLogic SDK code…"} ] }.)
 
 Notes: tools return their result as JSON text; a failed call returns isError:true with a message. Your token is temporary (idle-expires) and, by default, cannot read submissions.
 TXT;

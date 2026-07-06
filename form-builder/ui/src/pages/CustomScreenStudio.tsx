@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
 import { readUploadedScreenFiles } from '../components/custom-screen/screenFileUpload';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
@@ -49,7 +50,10 @@ export default function CustomScreenStudio() {
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const [screenLoaded, setScreenLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [compileError, setCompileError] = useState<string | null>(null);
   // The AI "Describe the screen" panel is opt-in (default: just the editor), separate from AI_ENABLED.
   const [showAi, setShowAi] = useState(false);
@@ -63,11 +67,18 @@ export default function CustomScreenStudio() {
   useEffect(() => {
     if (!formId) return;
     let cancelled = false;
+    // No synchronous state reset here — initial state is already clean, and the
+    // "Try again" click handler resets loadError/screenLoaded before bumping loadAttempt.
     api.getForm(formId).then((res) => {
       if (cancelled) return;
       setScreenLoaded(true);
       const form = res.data?.form;
-      if (!form) return;
+      if (res.error || !form) {
+        // A failed load must NOT fall through to the start screen — "Start blank" + Save
+        // from there would overwrite a real saved screen.
+        setLoadError(typeof res.error === 'string' ? res.error : 'Could not load this form.');
+        return;
+      }
       setTitle(form.title || '');
       setFields((form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
       const cs = form.customScreen;
@@ -78,7 +89,15 @@ export default function CustomScreenStudio() {
       }
     });
     return () => { cancelled = true; };
-  }, [formId]);
+  }, [formId, loadAttempt]);
+
+  // Guard page navigation/refresh while there are unsaved editor changes (mirrors DashboardBuilder).
+  useEffect(() => {
+    if (!dirty || typeof window === 'undefined') return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   const hasScreen = files.some((f) => f.content.trim());
 
@@ -136,7 +155,7 @@ export default function CustomScreenStudio() {
     const toSave: CustomScreen = { ...meta, enabled: true, files, js: r.js, html: r.html, css: r.css };
     const res = await api.updateForm(formId, { customScreen: toSave });
     setSaving(false);
-    if (res.error) { toast.error('Could not save the screen.'); return; }
+    if (res.error) { toast.error('Could not save the screen.', typeof res.error === 'string' ? res.error : undefined); return; }
     setCompileError(null);
     setDirty(false);
     toast.success('Custom screen saved.');
@@ -146,7 +165,7 @@ export default function CustomScreenStudio() {
     <div className="h-dvh flex flex-col bg-gray-50 dark:bg-slate-950">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <button onClick={() => navigate(-1)} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
+        <button onClick={() => { if (dirty) setConfirmLeave(true); else navigate(-1); }} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div className="min-w-0">
@@ -259,8 +278,13 @@ export default function CustomScreenStudio() {
             <div className="flex-1 flex items-center justify-center">
               <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
             </div>
+          ) : loadError ? (
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16 text-center px-4">
+              <p className="text-sm text-gray-600 dark:text-slate-300">{loadError}</p>
+              <Button variant="outline" size="sm" onClick={() => { setLoadError(null); setScreenLoaded(false); setLoadAttempt((n) => n + 1); }}>Try again</Button>
+            </div>
           ) : files.length === 0 ? (
-            /* Empty state: nothing saved yet — pick an explicit starting point. */
+            /* Empty state: load succeeded but nothing saved yet — pick an explicit starting point. */
             <div className="flex-1 min-h-0 overflow-y-auto">
               <div className="max-w-xl mx-auto px-6 py-12 text-center">
                 <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
@@ -352,6 +376,18 @@ export default function CustomScreenStudio() {
           </div>
         )}
       </div>
+
+      {/* Unsaved-changes guard for the header Back exit (mirrors DashboardBuilder). */}
+      <ConfirmDialog
+        isOpen={confirmLeave}
+        onClose={() => setConfirmLeave(false)}
+        onConfirm={() => { setConfirmLeave(false); navigate(-1); }}
+        title="Discard unsaved changes?"
+        message="This screen has unsaved changes. Leaving will discard them."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        variant="danger"
+      />
     </div>
   );
 }
