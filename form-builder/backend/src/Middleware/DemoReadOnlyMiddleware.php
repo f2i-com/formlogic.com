@@ -38,7 +38,21 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
         // Entries ending in '*' match by path prefix; entries starting with '*' match by suffix.
         // The MCP token endpoints are allowed so the demo can mint/revoke a read-only "Connect an AI"
         // link; '*/reports/run' is a read-only SELECT that just happens to POST its query spec.
-        $this->allow = $allow ?: ['/api/demo/start', '/api/auth/logout', '/api/mcp/tokens*', '*/reports/run', '*/reports/run-batch'];
+        // The four public auth routes are the ESCAPE HATCHES from a demo session: a visitor still
+        // carrying the shared demo cookie must be able to sign up / sign in / reset a password —
+        // none of these mutate demo data (register creates a NEW account, login switches accounts).
+        // Without them, submitting the signup form from inside the demo 403s with "demo is read-only".
+        $this->allow = $allow ?: [
+            '/api/demo/start',
+            '/api/auth/logout',
+            '/api/auth/register',
+            '/api/auth/login',
+            '/api/auth/forgot-password',
+            '/api/auth/reset-password',
+            '/api/mcp/tokens*',
+            '*/reports/run',
+            '*/reports/run-batch',
+        ];
     }
 
     public function process(Request $request, RequestHandler $handler): Response
