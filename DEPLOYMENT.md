@@ -3,6 +3,8 @@
 This guide covers the production launch checklist, backups, the webhook worker, and the
 health/diagnostics endpoint. For first-time setup see the installer in
 [`form-builder/install.php`](form-builder/README.md) or the manual steps in the README.
+**Upgrading an existing install to a new release?** Follow [docs/UPGRADING.md](docs/UPGRADING.md) —
+back up, replace files (keep `api/.env` + `api/storage/`), then run the `api/bin/upgrade.php` migration CLI.
 
 > FormLogic runs the same codebase self-hosted (no limits) or as a hosted multi-tenant
 > service (with plan limits). The hosted-only bits below are clearly marked.

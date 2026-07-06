@@ -253,6 +253,11 @@ VITE_API_URL=/api
 
 Custom app domains (running an app on a customer's own domain) additionally use three root-level paths — `/.well-known/formlogic-app.json`, `/manifest.json`, `/.well-known/assetlinks.json` — which the shipped `ui/public/.htaccess` already routes to the API on single-domain Apache deploys. See [docs/CUSTOM_APP_PLATFORM.md](../docs/CUSTOM_APP_PLATFORM.md#custom-domains--app-launch).
 
+### Distributable zip (packaged release)
+
+`node scripts/package-dist.mjs` (from the repo root) builds a ready-to-upload release zip in the single-domain layout: the built UI at the zip root, the production-filtered backend under `api/`, plus `INSTALL.txt`, `UPGRADE.txt`, and `VERSION` — output at `dist-package/formlogic-<version>.zip` (flags: `--skip-ui-build`, `--no-install`, `--out <dir>`, `--keep-staging`).
+The [package workflow](../.github/workflows/package.yml) runs the same script on every `v*` tag — attaching the zip to the GitHub release — and on demand via *Run workflow*.
+
 ## Tests and checks
 
 ### Backend (PHPUnit)

@@ -1,0 +1,67 @@
+name: Package (distributable zip)
+
+# Builds the single-domain release zip (built UI at the zip root, production-filtered backend
+# under api/, INSTALL.txt/UPGRADE.txt/VERSION) via scripts/package-dist.mjs — the SAME script
+# devs run locally. Runs on every v* tag (and attaches the zip to the GitHub release) and on
+# demand from the Actions tab (artifact only).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  # Needed to create/upload assets on the GitHub release for tag builds.
+  contents: write
+
+jobs:
+  package:
+    name: Build distributable zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Mirrors ci.yml: PHP 8.3 for the staged `composer install --no-dev`.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_mysql, mbstring, curl, gd, zip
+          coverage: none
+
+      # Mirrors ci.yml: Node 20 for the UI build.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: form-builder/ui/package-lock.json
+
+      # npm ci + npm run build + backend staging + composer --no-dev + zip, all in one script.
+      # Version comes from the tag (vX.Y.Z -> X.Y.Z) or falls back to <short-sha>-<date>.
+      - name: Build the distributable zip
+        run: node scripts/package-dist.mjs
+
+      # Always keep the zip as a workflow artifact (this is the only output for
+      # workflow_dispatch runs on untagged commits).
+      - name: Upload zip as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: formlogic-dist
+          path: dist-package/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # Tag builds additionally attach the zip to the GitHub release for that tag,
+      # creating the release if it doesn't exist yet (gh is preinstalled on the runner).
+      - name: Attach zip to the GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist-package/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist-package/*.zip --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "FormLogic $GITHUB_REF_NAME" --generate-notes
+          fi
