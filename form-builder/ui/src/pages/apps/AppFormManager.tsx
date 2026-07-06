@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag } from 'lucide-react';
+import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { Header } from '../../components/layout/Header';
@@ -31,7 +31,7 @@ export function AppFormManager() {
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
-  const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }> } | null>(null);
+  const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }>; sharedWith: string[] } | null>(null);
   // Cache loaded form definitions so we can check for linked_record references
   const loadedFormsRef = useRef<Record<string, Form>>({});
   // Guards against out-of-order loadForms resolving (e.g. rapid appId changes)
@@ -110,33 +110,60 @@ export function AppFormManager() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
-  // Forms that aren't standalone: they belong to ANOTHER app, or came from a pack installation.
-  // The "available" list only offers truly single, self-created forms — a form should live in one
-  // place, and pack forms are managed through their pack.
-  const [nonStandaloneFormIds, setNonStandaloneFormIds] = useState<Set<string>>(new Set());
+  // Forms installed by a pack are excluded from the picker (they're managed through their
+  // pack). Forms that belong to OTHER apps ARE offered — attaching one SHARES the form and
+  // its existing responses between the apps (both apps read and write the same data), which
+  // is how you run e.g. a client app and an admin app over the same backend.
+  const [packFormIds, setPackFormIds] = useState<Set<string>>(new Set());
+  // formId → names of OTHER apps that already include it (drives the "in <app>" /
+  // "Shared" badges and the remove-confirm copy).
+  const [formAppUsage, setFormAppUsage] = useState<Record<string, string[]>>({});
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [appsRes, packsRes] = await Promise.all([api.getApps(), api.getInstalledPacks()]);
-      const apps = (appsRes.data?.apps ?? []) as Array<{ id: string }>;
-      const memberships = await Promise.all(
-        apps.filter((a) => a.id !== appId).map((a) => api.getAppForms(a.id))
-      );
+      const [usage, packsRes] = await Promise.all([
+        useAppStore.getState().fetchFormAppUsage(appId),
+        api.getInstalledPacks(),
+      ]);
       if (cancelled) return;
       const ids = new Set<string>();
-      memberships.forEach((m) => ((m.data?.forms ?? []) as Array<{ formId: string }>).forEach((f) => ids.add(f.formId)));
       (packsRes.data?.installations ?? []).forEach((inst) => (inst.formIds ?? []).forEach((id) => ids.add(id)));
-      setNonStandaloneFormIds(ids);
+      setPackFormIds(ids);
+      setFormAppUsage(usage);
     })();
     return () => { cancelled = true; };
   }, [appId]);
 
+  // Other apps a form is attached to. Prefers the server's (optional) `sharedWith` on the
+  // listForms rows; falls back to the client-computed usage map when it's absent.
+  const getSharedApps = (af: AppForm): string[] => {
+    const raw = (af as AppForm & { sharedWith?: unknown }).sharedWith;
+    if (Array.isArray(raw)) {
+      const names = raw
+        .map((entry) => {
+          if (typeof entry === 'string') return entry;
+          if (entry && typeof entry === 'object') {
+            const o = entry as Record<string, unknown>;
+            return String(o.name ?? o.appName ?? o.title ?? '');
+          }
+          return '';
+        })
+        .filter(Boolean);
+      if (names.length > 0) return names;
+      return []; // Server says "not shared" — trust it over the fallback.
+    }
+    return formAppUsage[af.formId] ?? [];
+  };
+
   const includedFormIds = appForms.map((f) => f.formId);
-  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !nonStandaloneFormIds.has(f.id));
+  const availableForms = allForms.filter((f) => !includedFormIds.includes(f.id) && !packFormIds.has(f.id));
 
   const handleAdd = async (formId: string) => {
     if (!appId) return;
     setBusyFormId(formId);
+    // The store toasts on failure (e.g. the duplicate-attach guard when the form was
+    // already added in another tab); reloading either way converges both lists to
+    // server truth — an already-attached form simply shows up under "Included".
     await addFormToApp(appId, formId);
     await loadForms();
     setBusyFormId(null);
@@ -163,7 +190,8 @@ export function AppFormManager() {
 
     // Always confirm — removing a form from an app is a meaningful action even
     // when nothing links to it (it stops collecting in the app + can lose relations).
-    setRemoveConfirm({ formId, formName, affectedFields });
+    const af = appForms.find((f) => f.formId === formId);
+    setRemoveConfirm({ formId, formName, affectedFields, sharedWith: af ? getSharedApps(af) : [] });
   };
 
   const handleRemoveConfirmed = async (formId: string) => {
@@ -241,24 +269,36 @@ export function AppFormManager() {
         {/* Available forms */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
           <h3 className="font-medium text-gray-900 dark:text-white mb-3 tracking-tight">Available forms</h3>
-          <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2 mb-3">Standalone forms not yet part of any app.</p>
+          <p className="text-xs text-gray-400 dark:text-slate-500 -mt-2 mb-3">Your forms not yet in this app. Adding a form that another app already uses shares it — both apps read and write the same data.</p>
           {availableForms.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">
-              {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No standalone forms to add — all your forms already belong to an app.'}
+              {allForms.length === 0 ? 'No forms created yet. Create forms first.' : 'No forms to add — all your forms are already in this app or managed by a pack.'}
             </p>
           ) : (
             <div className="space-y-2">
-              {availableForms.map((form) => (
-                <div key={form.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
-                  <div>
+              {availableForms.map((form) => {
+                const usedBy = formAppUsage[form.id] ?? [];
+                return (
+                <div key={form.id} className="flex items-center justify-between gap-2 p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 flex-1">
                     <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
-                    <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm" className="ml-2 capitalize">{form.status}</Badge>
+                    <Badge variant={form.status === 'published' ? 'success' : 'default'} size="sm" className="capitalize">{form.status}</Badge>
+                    {usedBy.length > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                        title={`Already used by ${usedBy.join(', ')}. Adding it here shares the form and its existing responses — both apps read and write the same data.`}
+                      >
+                        <Share2 className="h-3 w-3" />
+                        {usedBy.length === 1 ? `in ${usedBy[0]}` : `in ${usedBy.length} other apps`}
+                      </span>
+                    )}
                   </div>
-                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="p-1.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors cursor-pointer">
+                  <button onClick={() => handleAdd(form.id)} disabled={busyFormId === form.id} aria-label={`Add ${form.title}`} className="flex-shrink-0 p-1.5 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 text-primary-600 dark:text-primary-400 disabled:opacity-50 transition-colors cursor-pointer">
                     {busyFormId === form.id ? <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" /> : <Plus className="h-4 w-4" />}
                   </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -270,7 +310,9 @@ export function AppFormManager() {
             <p className="text-sm text-gray-400 dark:text-slate-400 py-4 text-center">No forms included yet</p>
           ) : (
             <div className="space-y-2">
-              {appForms.map((af, index) => (
+              {appForms.map((af, index) => {
+                const sharedApps = getSharedApps(af);
+                return (
                 <div key={af.formId} className="p-3 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-gray-50 dark:bg-slate-800/50">
                   <div className="flex flex-wrap items-center gap-2">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -319,10 +361,20 @@ export function AppFormManager() {
                   </button>
                   </div>
                   </div>
-                  {/* Relation badges */}
-                  {relationBadges[af.formId]?.length > 0 && (
+                  {/* Shared-data + relation badges */}
+                  {(sharedApps.length > 0 || relationBadges[af.formId]?.length > 0) && (
                     <div className="flex flex-wrap gap-1 mt-2">
-                      {relationBadges[af.formId].map((badge, i) => (
+                      {sharedApps.length > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                          title={`This form and its responses are shared with ${sharedApps.join(', ')} — the apps read and write the same data.`}
+                        >
+                          <Share2 className="h-3 w-3" />
+                          <span className="font-medium">Shared</span>
+                          <span className="opacity-60">· also in {sharedApps.length <= 2 ? sharedApps.join(' & ') : `${sharedApps.length} other apps`}</span>
+                        </span>
+                      )}
+                      {relationBadges[af.formId]?.map((badge, i) => (
                         <span
                           key={i}
                           className={cn(
@@ -345,7 +397,8 @@ export function AppFormManager() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -361,8 +414,10 @@ export function AppFormManager() {
         title={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Linked record dependencies' : 'Remove form from app?'}
         message={removeConfirm
           ? (removeConfirm.affectedFields.length > 0
-              ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\nAre you sure you want to remove this form?`
-              : `Remove "${removeConfirm.formName}" from this app? It will stop appearing in the app. The form and its responses are kept.`)
+              ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\n${removeConfirm.sharedWith.length > 0 ? `The form and its data stay in ${removeConfirm.sharedWith.join(', ')} — nothing is deleted.\n\n` : ''}Are you sure you want to remove this form?`
+              : (removeConfirm.sharedWith.length > 0
+                  ? `Remove "${removeConfirm.formName}" from this app? It will stop appearing here, but the form and all of its responses stay in ${removeConfirm.sharedWith.join(', ')} — nothing is deleted.`
+                  : `Remove "${removeConfirm.formName}" from this app? It will stop appearing in the app. The form and its responses are kept.`))
           : ''}
         confirmLabel={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Remove anyway' : 'Remove'}
         variant="danger"

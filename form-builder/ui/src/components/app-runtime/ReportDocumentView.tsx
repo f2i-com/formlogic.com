@@ -60,7 +60,7 @@ export function ReportDocumentView({ doc, reports, resultsById, print = false, l
                 {missing ? (
                   <p className={`py-6 text-center text-sm ${muted}`}>This report was removed.</p>
                 ) : res ? (
-                  <ReportResultView result={res} print={print} primaryColor={primaryColor} />
+                  <ReportResultView result={res} spec={rep.spec} print={print} primaryColor={primaryColor} />
                 ) : loading ? (
                   <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
                 ) : (

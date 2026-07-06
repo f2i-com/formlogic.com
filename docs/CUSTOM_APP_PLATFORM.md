@@ -21,6 +21,8 @@ desktop/mobile shell in [[NATIVE_RUNTIME_TAURI]].
 - [Client Manifest](#client-manifest)
 - [Marketplace](#marketplace)
 - [Custom Domains & App Launch](#custom-domains--app-launch)
+- [Multi-App over Shared Forms](#multi-app-over-shared-forms)
+- [Per-App Customization & Custom Code](#per-app-customization--custom-code)
 - [MineCab Reference App](#minecab-reference-app)
 
 ---
@@ -612,6 +614,101 @@ certificate issuance is external). A separate `native_required` **mode** is inte
 the per-domain `native_config.requireNativeRuntime` flag on a `launch_page` domain is the MVP
 mechanism (see [the decision above](#requires-the-native-runtime--the-mvp-mechanism-decision)). The
 per-domain landing-page editor UI is now implemented (`CustomDomainsPanel`).
+
+---
+
+## Multi-App over Shared Forms
+
+Status: **supported** (API + MCP; the backend + runtime are shared-form aware end-to-end).
+
+One dataset, several products: e.g. a **client app** (customers submit requests) and an **admin
+app** (staff triage them) over the *same* forms. Responses live **per form** — each form has its own
+SQLite database (`Database\SQLiteConnection::getFormDatabase`) and a response row carries no app id —
+so every app a form is attached to reads and writes the **same records**.
+
+### Recipe
+
+1. Create the forms once (a form belongs to a user, not an app).
+2. Create the second app, then attach the same forms:
+   `POST /api/apps/{id}/forms { formId }` (`AppController::addForm` — the caller must own **both**
+   the app and the form), or the MCP tool `add_form_to_app`. `app_forms` is unique on
+   `(app_id, form_id)`: a form attaches once per app, to any number of apps.
+3. Give each app its own roles + members — e.g. clients get `submit_responses`
+   (+ `view_own_responses`) in the client app; staff get `view_all_responses` / `edit_responses` /
+   `export_responses` in the admin app. Permissions are `app_role_permissions` rows keyed by role
+   **and form** (`Constants\AppPermissions::FORM_LEVEL`), so the same form can be submit-only in one
+   app and full-CRUD in another.
+
+> UI caveat: the **Manage forms** picker (`pages/apps/AppFormManager.tsx`) deliberately offers only
+> *standalone* forms — forms already in another app (or installed by a pack) are filtered from its
+> "available" list — so today a cross-app attach is done via the API/MCP, not that picker.
+
+### Per-app vs shared
+
+Each attached app keeps its **own**:
+
+- Identity/branding — `apps` row: name, slug, description, `logo_url`, `theme`, `settings`, `nav_config`.
+- Members + roles + per-form permissions — `app_users` / `app_roles` / `app_role_permissions` are all per-app.
+- The shared form's in-app presentation — the `app_forms` row: `display_name`, `sort_order`, `is_visible`, `settings`.
+- Home dashboard / custom home screen (`apps.custom_screen`) and saved reports + PDF documents (`apps.reports`).
+- App-level customLogic (`apps.custom_logic`) — see [App Logic (QuickJS)](#app-logic-quickjs).
+- Custom domains (`app_domains`), signed client manifest, and PWA manifest — see
+  [Custom Domains & App Launch](#custom-domains--app-launch) and [Client Manifest](#client-manifest).
+- Offline idempotency — the sync ledger is keyed `(app, form, idempotency_key)`.
+
+**Shared**, because it lives on the *form*:
+
+- Fields, validation, and the form's own theme.
+- Form-level customLogic (`forms.custom_logic`) — runs in **every** app the form is open in.
+- The server-side onSubmit **`logicScript`** — the submission pipeline
+  (`AppPublicController::runSubmissionPipeline`) runs it whichever app submitted, so data rules
+  cannot differ per app.
+- The form's section screen / section dashboard (`forms.custom_screen`) — the spec is shared;
+  its queries execute in whichever app renders it, under that app's permissions.
+- Webhooks, form versions, per-form analytics, and `response_links`.
+
+### Lifecycle notes
+
+- Removing a form from one app (`AppService::removeFormFromApp`) leaves the records intact and keeps
+  `response_links` while any *other* app still contains the form; deleting a whole app applies the
+  same guard (`deleteApp` purges links only for forms in no other app).
+- App-scoped uploaded files resolve access through *any* app that contains the form and in which the
+  user is an active member (`AppService::activeAppIdsContainingForm`).
+
+---
+
+## Per-App Customization & Custom Code
+
+Every custom-code surface on the platform, in one map. Details live in the linked sections; the
+multi-app column nuance (what travels with a shared form) is in
+[Multi-App over Shared Forms](#multi-app-over-shared-forms).
+
+| surface | where it runs | trust model | typical use |
+|---|---|---|---|
+| App-level customLogic (`apps.custom_logic`) | client — QuickJS WASM sandbox in the app runtime | untrusted script describes *effects*; host applies them after permission checks; backend re-validates every submit | connector prefill, submit gates, toasts/navigation app-wide ([App Logic](#app-logic-quickjs)) |
+| Form-level customLogic (`forms.custom_logic`) | same sandbox, only while its form is open | same effect/permission model | per-form logic that travels with the form into every app |
+| onSubmit `logicScript` (`forms.logic_script`) | **server** — sandboxed `qjs` in the submission pipeline | trusted + authoritative — the one surface a client cannot bypass | validation, computed/hidden fields, rejecting bad data (test via `POST /api/forms/{formId}/script/test`) |
+| Code screens (`custom_screen`, kind `code`) | opaque-origin **iframe**; data via the postMessage SDK bridge | untrusted — the iframe **is** the boundary | arbitrary / AI-generated UI: app home + form section screens; portable in packs |
+| Dashboard screens (kind `dashboard`) | host React — recharts widget grid | no author code runs — declarative spec only | no-code KPIs/charts for app home + section screens |
+| SDK screens (kind `sdk`) | host React tree (`SdkScreenRuntime`) | trusted — **first-party registry only** ([trust note](#trust-boundary-host-rendered-react-is-first-party-only)) | screens FormLogic ships in the runtime |
+| FormLogic SDK (`ui/src/sdk`) | host React, imported by first-party code | trusted, permission-aware library | building host-rendered screens/components ([SDK](#formlogic-sdk)) |
+| Connectors (device / vehicle / local_http + native bridge) | trusted web layer, or Rust in the native runtime | host code; every command gated by `connector.<id>.<command>` | device/vehicle/local-bridge data into app logic ([Connectors](#connectors)) |
+
+### Choosing a surface
+
+- **A data rule that must hold** → the onSubmit `logicScript` (server-authoritative; client logic is UX only).
+- **App behavior** (prefill, gate, toast, navigate) → app-level customLogic; move it to form level
+  when it should travel with the form across apps.
+- **UI** — no code needed → a `dashboard` screen; arbitrary/untrusted code → a `code` screen;
+  first-party runtime UI → an `sdk` screen built on the SDK
+  (portability rules: [Screen/UI portability](#screenui-portability-rules)).
+- **Hardware / device data** → a connector + an app-logic script mapping `ctx.event.result` in
+  `onConnectorEvent` — a "custom connector" is just an app-logic script emitting
+  `connector.request` effects.
+
+Editors: app logic in **Deploy & share → App logic (QuickJS)** (`AppLogicPanel`); screens in the
+Studio (`/forms/:id/screen/edit`, `/apps/:id/home/edit`); the onSubmit script in the builder's
+ScriptEditor (with a server-side Test run).
 
 ---
 

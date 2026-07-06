@@ -271,7 +271,7 @@ function ChartsPanel({ reports, appName, isOwner, onNew, onEdit, onDelete }: {
         ) : err ? (
           <p className="py-16 text-center text-sm text-red-500">{err}</p>
         ) : result ? (
-          <ReportResultView result={result} />
+          <ReportResultView result={result} spec={selected?.spec} />
         ) : null}
       </div>
     </div>

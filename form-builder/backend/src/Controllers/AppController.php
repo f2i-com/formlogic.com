@@ -233,6 +233,20 @@ class AppController
         }
 
         $forms = $this->appService->getAppForms($args['id']);
+
+        // Cross-app visibility: the same form can back multiple apps (shared
+        // response data), so tell the UI which OTHER apps of this owner each form
+        // is also attached to. One owner-scoped query for the whole list.
+        $userId = $request->getAttribute('userId');
+        $appsByForm = $this->appService->getAppsForForms(array_column($forms, 'formId'), $userId);
+        foreach ($forms as &$f) {
+            $f['sharedWith'] = array_values(array_filter(
+                $appsByForm[$f['formId']] ?? [],
+                static fn (array $a): bool => $a['id'] !== $args['id']
+            ));
+        }
+        unset($f);
+
         return $this->jsonResponse($response, ['forms' => $forms]);
     }
 

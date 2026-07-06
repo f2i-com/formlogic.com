@@ -154,7 +154,7 @@ export function WidgetView(p: WidgetViewProps) {
         {p.reportLoading && p.reportResult === undefined ? (
           <div className="h-full flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300 dark:text-slate-600" /></div>
         ) : p.reportResult ? (
-          <ReportResultView result={p.reportResult} primaryColor={p.primaryColor} fill />
+          <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill />
         ) : (
           <p className="h-full flex items-center justify-center text-center text-sm text-gray-400 dark:text-slate-500">Couldn&apos;t load this widget.</p>
         )}

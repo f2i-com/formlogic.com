@@ -530,6 +530,25 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER reports");
         }
 
+        // Unique (app_id, form_id) on app_forms — present in the CREATE TABLE but
+        // older installs predate it, allowing the same form to be attached to the
+        // same app twice. Dedupe first (keep the lowest-sort_order row, id as
+        // tie-break) so the ALTER cannot fail on existing duplicate attachments.
+        $hasAppFormIdx = $pdo->query("SHOW INDEX FROM app_forms WHERE Key_name = 'unique_app_form'")->rowCount() > 0;
+        if (!$hasAppFormIdx) {
+            $pdo->exec("
+                DELETE af FROM app_forms af
+                JOIN app_forms keep
+                  ON keep.app_id = af.app_id
+                 AND keep.form_id = af.form_id
+                 AND (
+                     COALESCE(keep.sort_order, 0) < COALESCE(af.sort_order, 0)
+                     OR (COALESCE(keep.sort_order, 0) = COALESCE(af.sort_order, 0) AND keep.id < af.id)
+                 )
+            ");
+            $pdo->exec("ALTER TABLE app_forms ADD UNIQUE KEY unique_app_form (app_id, form_id)");
+        }
+
         // Per-domain config columns (native app / PWA / security) for existing installs. On a brand-new
         // DB app_domains may not exist yet (created further below WITH these columns), so guard + ignore.
         try {

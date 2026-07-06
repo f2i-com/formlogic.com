@@ -95,6 +95,15 @@ export function isReportDocument(item: AppReportItem): item is AppReportDocument
 
 export type ReportViz = 'table' | 'bar' | 'line' | 'area' | 'pie' | 'donut' | 'kpi';
 
+/** Named accent for a chart, resolved to light/dark-appropriate hues at render time ('primary' = app colour). */
+export type ReportAccent = 'primary' | 'blue' | 'green' | 'amber' | 'red' | 'violet' | 'teal';
+
+/** Number formatting applied to KPI values, axis ticks, tooltips and data labels. */
+export type ReportNumberFormat = 'plain' | 'compact' | 'currency' | 'percent';
+
+/** Client-side re-order of the returned series (absent = server order: chronological for date buckets, else value desc). */
+export type ReportSeriesOrder = 'value_desc' | 'value_asc' | 'label_asc' | 'label_desc';
+
 export interface AppReportSpec {
   formId: string;
   viz: ReportViz;
@@ -112,6 +121,24 @@ export interface AppReportSpec {
   /** Filter grouped results by the aggregate value. */
   having?: { op: string; value: string | number };
   limit?: number;
+  // ── Presentation (all optional; absent = the default look, so old specs render unchanged) ──
+  /** Chart accent colour; unset/'primary' uses the app colour. */
+  color?: ReportAccent;
+  /** Value formatting; unset = plain locale numbers. */
+  format?: ReportNumberFormat;
+  /** Fixed decimal places 0–2 (unset = 0 for integers, up to 2 otherwise). */
+  decimals?: number;
+  /** Short strings (≤8 chars) wrapped around every formatted value, e.g. "€" / "kg". */
+  prefix?: string;
+  suffix?: string;
+  /** Value labels on marks. Bars default ON (legacy look); line/area default OFF. */
+  showDataLabels?: boolean;
+  /** Draws a labeled dashed reference line on bar/line/area; a progress-vs-target bar under a KPI. */
+  target?: number;
+  /** Bar charts only: false = vertical columns (unset/true = the default horizontal bars). */
+  horizontal?: boolean;
+  /** Client-side series re-sort (covers orders the server can't produce, e.g. label Z→A). */
+  seriesOrder?: ReportSeriesOrder;
 }
 
 export interface AppReportResult {

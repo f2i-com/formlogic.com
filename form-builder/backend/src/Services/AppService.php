@@ -319,7 +319,18 @@ class AppService
             // Purge inverse linked_record links for this app's forms before the
             // cascade removes app_forms — response_links is keyed by form_id (not
             // app_id), so it would otherwise leave stale inverse-lookup rows.
-            $formStmt = $this->mysql->prepare("SELECT form_id FROM app_forms WHERE app_id = :app_id");
+            // ONLY for forms that exist in no OTHER app: forms can be shared across
+            // apps (the whole point of multi-app-over-shared-forms), so an
+            // unconditional purge would wipe the inverse lookups still needed by
+            // the surviving apps (mirrors the guard in removeFormFromApp).
+            $formStmt = $this->mysql->prepare(
+                "SELECT af.form_id FROM app_forms af
+                 WHERE af.app_id = :app_id
+                   AND NOT EXISTS (
+                       SELECT 1 FROM app_forms other
+                       WHERE other.form_id = af.form_id AND other.app_id != af.app_id
+                   )"
+            );
             $formStmt->execute(['app_id' => $appId]);
             $formIds = $formStmt->fetchAll(\PDO::FETCH_COLUMN);
             if (!empty($formIds)) {
@@ -401,8 +412,54 @@ class AppService
         return $bundles;
     }
 
+    /**
+     * Which of the owner's apps contain each of these forms? One owner-scoped query —
+     * powers the "also in app X" cross-app visibility in the builder when the same
+     * form backs multiple apps (e.g. a client app + an admin app over the same
+     * stored data — responses live in per-form SQLite, so apps sharing a form_id
+     * naturally share its response rows).
+     *
+     * @param string[] $formIds
+     * @return array<string, array<int, array{id:string, name:string, slug:string}>> map of formId => apps containing it
+     */
+    public function getAppsForForms(array $formIds, string $ownerId): array
+    {
+        $formIds = array_values(array_unique(array_filter($formIds, 'is_string')));
+        if (empty($formIds)) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+        $stmt = $this->mysql->prepare(
+            "SELECT af.form_id, a.id, a.name, a.slug
+             FROM app_forms af
+             JOIN apps a ON a.id = af.app_id
+             WHERE a.owner_id = ? AND af.form_id IN ($placeholders)
+             ORDER BY a.name ASC"
+        );
+        $stmt->execute([$ownerId, ...$formIds]);
+
+        $map = [];
+        while ($row = $stmt->fetch()) {
+            $map[$row['form_id']][] = [
+                'id' => $row['id'],
+                'name' => $row['name'],
+                'slug' => $row['slug'],
+            ];
+        }
+        return $map;
+    }
+
     public function addFormToApp(string $appId, string $formId, ?string $displayName = null): array
     {
+        // Friendly duplicate guard — the same form CAN back multiple apps (shared
+        // data), but attaching it twice to the SAME app is always a mistake. The
+        // UNIQUE(app_id, form_id) index is the authoritative backstop; the catch
+        // below maps a concurrent-insert race to the same friendly error.
+        if ($this->formBelongsToApp($appId, $formId)) {
+            throw new \RuntimeException('This form is already in this app');
+        }
+
         // Get current max sort order
         $stmt = $this->mysql->prepare("SELECT MAX(sort_order) as max_order FROM app_forms WHERE app_id = :app_id");
         $stmt->execute(['app_id' => $appId]);
@@ -420,13 +477,21 @@ class AppService
             INSERT INTO app_forms (id, app_id, form_id, display_name, sort_order, is_visible, settings)
             VALUES (:id, :app_id, :form_id, :display_name, :sort_order, 1, '{}')
         ");
-        $stmt->execute([
-            'id' => $id,
-            'app_id' => $appId,
-            'form_id' => $formId,
-            'display_name' => $displayName,
-            'sort_order' => $sortOrder,
-        ]);
+        try {
+            $stmt->execute([
+                'id' => $id,
+                'app_id' => $appId,
+                'form_id' => $formId,
+                'display_name' => $displayName,
+                'sort_order' => $sortOrder,
+            ]);
+        } catch (\PDOException $e) {
+            // 1062 = ER_DUP_ENTRY: lost a race with a concurrent attach of the same pair.
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                throw new \RuntimeException('This form is already in this app');
+            }
+            throw $e;
+        }
 
         return $this->getAppForms($appId);
     }

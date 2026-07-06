@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Plus, Trash2, Settings2, GripVertical, Save, Loader2,
-  BarChart3, Hash, Table2, List as ListIcon, Type, Zap, Activity,
+  BarChart3, LineChart, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -84,8 +84,8 @@ function defaultSpec(form: AppRuntimeForm | undefined, viz: AppReportSpec['viz']
 type Preset = { key: string; label: string; Icon: typeof BarChart3; kind: DashboardWidgetKind; viz?: AppReportSpec['viz']; w: number; h: number; appOnly?: boolean };
 const PRESETS: Preset[] = [
   { key: 'bar', label: 'Bar chart', Icon: BarChart3, kind: 'report', viz: 'bar', w: 6, h: 3 },
-  { key: 'line', label: 'Line / trend', Icon: BarChart3, kind: 'report', viz: 'line', w: 6, h: 3 },
-  { key: 'pie', label: 'Pie / donut', Icon: BarChart3, kind: 'report', viz: 'donut', w: 4, h: 3 },
+  { key: 'line', label: 'Line / trend', Icon: LineChart, kind: 'report', viz: 'line', w: 6, h: 3 },
+  { key: 'pie', label: 'Pie / donut', Icon: PieChart, kind: 'report', viz: 'donut', w: 4, h: 3 },
   { key: 'kpi', label: 'Number (KPI)', Icon: Hash, kind: 'report', viz: 'kpi', w: 3, h: 1 },
   { key: 'table', label: 'Table', Icon: Table2, kind: 'report', viz: 'table', w: 6, h: 3 },
   { key: 'list', label: 'Record list', Icon: ListIcon, kind: 'list', w: 4, h: 3 },
@@ -255,7 +255,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
             </>
           )}
         </div>
-        <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize</p>
+        <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize · double-click a widget to edit it</p>
         <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button>
@@ -270,17 +270,24 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
         <div ref={canvasRef} className="relative w-full" style={{ height: canvasHeight }} onClick={() => setSelectedId(null)}>
           {containerW > 0 && widgets.map((w) => {
             const selected = selectedId === w.id;
+            const configurable = w.kind !== 'actions' && w.kind !== 'activity';
             return (
-              <div key={w.id} style={frameStyle(w)} className="min-w-0 min-h-0" onClick={(e) => { e.stopPropagation(); setSelectedId(w.id); }}>
+              <div
+                key={w.id}
+                style={frameStyle(w)}
+                className="min-w-0 min-h-0"
+                onClick={(e) => { e.stopPropagation(); setSelectedId(w.id); }}
+                onDoubleClick={(e) => { e.stopPropagation(); if (configurable) setConfigId(w.id); }}
+              >
                 <div className={`group relative h-full w-full rounded-2xl transition-shadow ${selected ? 'ring-2 app-ring-primary' : 'ring-1 ring-transparent hover:ring-gray-200 dark:hover:ring-slate-700'}`}>
                   {/* Editing chrome */}
                   <div className="absolute -top-2.5 right-2 z-10 flex items-center gap-1 opacity-0 group-hover:opacity-100 [.ring-2_&]:opacity-100 transition-opacity">
                     <button type="button" title="Move" onPointerDown={(e) => startInteraction('move', w, e)} className="touch-none h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-gray-800 dark:hover:text-white cursor-grab active:cursor-grabbing">
                       <GripVertical className="h-3.5 w-3.5" />
                     </button>
-                    {w.kind !== 'actions' && w.kind !== 'activity' && (
-                      <button type="button" title="Configure" onClick={(e) => { e.stopPropagation(); setConfigId(w.id); }} className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-gray-800 dark:hover:text-white cursor-pointer">
-                        <Settings2 className="h-3.5 w-3.5" />
+                    {configurable && (
+                      <button type="button" title={w.kind === 'report' ? 'Edit report' : 'Edit widget'} onClick={(e) => { e.stopPropagation(); setConfigId(w.id); }} className="h-6 inline-flex items-center gap-1 rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm px-2 text-[11px] font-medium text-gray-600 dark:text-slate-300 hover:text-gray-900 dark:hover:text-white cursor-pointer">
+                        <Settings2 className="h-3.5 w-3.5" /> Edit
                       </button>
                     )}
                     <button type="button" title="Delete" onClick={(e) => { e.stopPropagation(); removeWidget(w.id); }} className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-red-500 cursor-pointer">

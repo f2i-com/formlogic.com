@@ -22,6 +22,10 @@ interface AppState {
 
   // Form management
   fetchAppForms: (appId: string) => Promise<AppForm[]>;
+  /** formId → names of OTHER apps (excluding excludeAppId) that include it. Attaching one of
+   *  these forms SHARES it — both apps read and write the same responses. Best-effort: apps
+   *  whose form list fails to load are omitted (the info is decorative badges/copy). */
+  fetchFormAppUsage: (excludeAppId?: string) => Promise<Record<string, string[]>>;
   addFormToApp: (appId: string, formId: string, displayName?: string) => Promise<boolean>;
   removeFormFromApp: (appId: string, formId: string) => Promise<void>;
   updateAppForm: (appId: string, formId: string, data: Partial<AppForm>) => Promise<void>;
@@ -140,6 +144,28 @@ export const useAppStore = create<AppState>()(
           toast.error('Load failed', 'Could not load app forms.');
         }
         return (result.data?.forms ?? []) as AppForm[];
+      },
+
+      fetchFormAppUsage: async (excludeAppId) => {
+        try {
+          // Always ask the server (the persisted `apps` slice can be stale) so the
+          // "in <app>" badges reflect reality.
+          const appsRes = await api.getApps();
+          const others = ((appsRes.data?.apps ?? []) as App[]).filter((a) => a.id !== excludeAppId);
+          const results = await Promise.allSettled(others.map((a) => api.getAppForms(a.id)));
+          const usage: Record<string, string[]> = {};
+          results.forEach((res, i) => {
+            if (res.status !== 'fulfilled' || res.value.error) return;
+            ((res.value.data?.forms ?? []) as AppForm[]).forEach((f) => {
+              if (!usage[f.formId]) usage[f.formId] = [];
+              if (!usage[f.formId].includes(others[i].name)) usage[f.formId].push(others[i].name);
+            });
+          });
+          return usage;
+        } catch {
+          // Decorative info — never block the picker on it.
+          return {};
+        }
       },
 
       addFormToApp: async (appId, formId, displayName) => {

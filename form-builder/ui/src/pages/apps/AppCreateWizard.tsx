@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { toast } from '../../stores/toastStore';
@@ -25,6 +25,17 @@ export function AppCreateWizard() {
     refreshForms();
   }, [refreshForms]);
   const [isCreating, setIsCreating] = useState(false);
+
+  // formId → names of apps that already include the form. Picking one of these
+  // SHARES it — the new app and the existing one(s) read and write the same data.
+  const [formAppUsage, setFormAppUsage] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    useAppStore.getState().fetchFormAppUsage().then((usage) => {
+      if (!cancelled) setFormAppUsage(usage);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Restore an in-progress draft (saved when the user bounced to the form builder
   // via "Create a Form") via lazy initializers — no setState-on-mount.
@@ -140,7 +151,7 @@ export function AppCreateWizard() {
 
         {step === 1 && (
           <div>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later.</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later. Picking a form that's already in another app shares it — both apps read and write the same data.</p>
             {forms.length === 0 ? (
               <div className="text-center py-8">
                 <FileText className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
@@ -179,8 +190,19 @@ export function AppCreateWizard() {
                       onChange={() => toggleForm(form.id)}
                       className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     />
-                    <div>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
+                        {(formAppUsage[form.id]?.length ?? 0) > 0 && (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                            title={`Already used by ${formAppUsage[form.id].join(', ')}. Adding it here shares the form and its existing responses — both apps read and write the same data.`}
+                          >
+                            <Share2 className="h-3 w-3" />
+                            {formAppUsage[form.id].length === 1 ? `in ${formAppUsage[form.id][0]}` : `in ${formAppUsage[form.id].length} apps`}
+                          </span>
+                        )}
+                      </div>
                       {form.description && <p className="text-xs text-gray-500 dark:text-slate-400">{form.description}</p>}
                     </div>
                     <span className={cn('ml-auto text-xs px-2 py-0.5 rounded-full', form.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400')}>
@@ -211,9 +233,12 @@ export function AppCreateWizard() {
                   {selectedFormIds.map((id) => {
                     const form = forms.find((f) => f.id === id);
                     return form ? (
-                      <li key={id} className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                      <li key={id} className="text-sm text-gray-600 dark:text-slate-300 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />
                         {form.title}
+                        {(formAppUsage[id]?.length ?? 0) > 0 && (
+                          <span className="text-xs text-violet-600 dark:text-violet-400" title="Both apps read and write the same data.">shared with {formAppUsage[id].join(', ')}</span>
+                        )}
                       </li>
                     ) : null;
                   })}

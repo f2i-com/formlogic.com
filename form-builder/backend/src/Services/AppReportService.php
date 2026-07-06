@@ -21,6 +21,11 @@ class AppReportService
     private const AGG = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'];
     private const BUCKETS = ['none', 'day', 'month', 'year'];
     private const PSEUDO = ['__submitted_at', '__status'];
+    // Presentation-only spec options (rendered client-side; never touch the query).
+    private const ACCENT_COLORS = ['primary', 'blue', 'green', 'amber', 'red', 'violet', 'teal'];
+    private const NUM_FORMATS = ['plain', 'compact', 'currency', 'percent'];
+    private const SERIES_ORDERS = ['value_desc', 'value_asc', 'label_asc', 'label_desc'];
+    private const AFFIX_MAX = 8;
     private const NAME_MAX = 200;
     private const DESC_MAX = 1000;
     private const TEXT_TITLE_MAX = 200;
@@ -195,6 +200,28 @@ class AppReportService
         }
         if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
 
+        return $this->cleanPresentation($spec, $clean);
+    }
+
+    /**
+     * Whitelist the OPTIONAL presentation fields (color/format/decimals/prefix/suffix/showDataLabels/
+     * target/horizontal/seriesOrder): enum-validated, clamped, booleans strict — so saves keep them but
+     * hostile values can never persist. Presentation-only: safe on both the app and the public path.
+     */
+    private function cleanPresentation(array $spec, array $clean): array
+    {
+        if (in_array($spec['color'] ?? null, self::ACCENT_COLORS, true)) { $clean['color'] = (string) $spec['color']; }
+        if (in_array($spec['format'] ?? null, self::NUM_FORMATS, true)) { $clean['format'] = (string) $spec['format']; }
+        if (isset($spec['decimals']) && is_numeric($spec['decimals'])) { $clean['decimals'] = max(0, min((int) $spec['decimals'], 2)); }
+        foreach (['prefix', 'suffix'] as $k) {
+            // is_scalar guard: an array/object here would warn on the (string) cast inside clamp().
+            $v = is_scalar($spec[$k] ?? null) ? $this->clamp($spec[$k], self::AFFIX_MAX) : null;
+            if ($v !== null) { $clean[$k] = $v; }
+        }
+        if (is_bool($spec['showDataLabels'] ?? null)) { $clean['showDataLabels'] = $spec['showDataLabels']; }
+        if (isset($spec['target']) && is_numeric($spec['target']) && is_finite((float) $spec['target'])) { $clean['target'] = $spec['target'] + 0; }
+        if (is_bool($spec['horizontal'] ?? null)) { $clean['horizontal'] = $spec['horizontal']; }
+        if (in_array($spec['seriesOrder'] ?? null, self::SERIES_ORDERS, true)) { $clean['seriesOrder'] = (string) $spec['seriesOrder']; }
         return $clean;
     }
 
@@ -381,6 +408,6 @@ class AppReportService
 
         if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
 
-        return ['ok' => true, 'error' => null, 'spec' => $clean];
+        return ['ok' => true, 'error' => null, 'spec' => $this->cleanPresentation($spec, $clean)];
     }
 }
