@@ -12,6 +12,63 @@ use PDO;
 
 class AppService
 {
+    /**
+     * Valid values for the OPTIONAL settings.appKind metadata tag (what audience the app serves).
+     * Stored inside apps.settings — no dedicated column. Absent = untyped (UI treats as custom).
+     */
+    public const APP_KINDS = ['admin', 'client', 'staff', 'public', 'internal', 'custom'];
+
+    /**
+     * Optional createApp role presets: default permission grants for the NON-owner system roles
+     * (Admin/Member). The Owner role always gets every permission regardless; an unknown preset is
+     * ignored (Admin/Member stay grant-less, the original behavior). Grants are app-level
+     * (form_id NULL) so they cover forms attached later — same mechanics as grantAllPermissions.
+     * Only permissions that exist in AppPermissions are used.
+     */
+    private const ROLE_PRESETS = [
+        // Back-office console: members review everyone's records.
+        'admin-console' => [
+            'Admin' => [
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
+                AppPermissions::EDIT_RESPONSES, AppPermissions::DELETE_RESPONSES,
+                AppPermissions::EXPORT_RESPONSES,
+            ],
+            'Member' => [
+                AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
+                AppPermissions::EDIT_RESPONSES, AppPermissions::EXPORT_RESPONSES,
+            ],
+        ],
+        // Client portal: members submit + see only their OWN records.
+        'client-portal' => [
+            'Admin' => [
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
+                AppPermissions::EDIT_RESPONSES, AppPermissions::EXPORT_RESPONSES,
+            ],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES],
+        ],
+        // Field/staff app: staff submit on the go + see their own submissions.
+        'staff-field-app' => [
+            'Admin' => [
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
+                AppPermissions::SUBMIT_RESPONSES, AppPermissions::EDIT_RESPONSES,
+                AppPermissions::EXPORT_RESPONSES,
+            ],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES],
+        ],
+        // Public intake: members only submit — they never see stored records.
+        'public-intake' => [
+            'Admin' => [
+                AppPermissions::MANAGE_USERS, AppPermissions::VIEW_ANALYTICS,
+                AppPermissions::VIEW_ALL_RESPONSES, AppPermissions::VIEW_OWN_RESPONSES,
+                AppPermissions::EXPORT_RESPONSES,
+            ],
+            'Member' => [AppPermissions::SUBMIT_RESPONSES],
+        ],
+    ];
+
     private PDO $mysql;
     private FormService $formService;
 
@@ -19,6 +76,19 @@ class AppService
     {
         $this->mysql = $mysql->getConnection();
         $this->formService = $formService;
+    }
+
+    /**
+     * Sanitize an app settings payload before persisting: settings.appKind must be one of
+     * APP_KINDS or it is dropped (server-authoritative; an invalid value never persists).
+     * Applied on every settings write — createApp, updateApp, companion creation.
+     */
+    private function sanitizeAppSettings(array $settings): array
+    {
+        if (array_key_exists('appKind', $settings) && !in_array($settings['appKind'], self::APP_KINDS, true)) {
+            unset($settings['appKind']);
+        }
+        return $settings;
     }
 
     public function getAllApps(string $userId): array
@@ -195,6 +265,21 @@ class AppService
         $now = date('Y-m-d H:i:s');
         $slug = $this->generateSlug($data['name'] ?? 'untitled');
 
+        // settings.appKind: optional audience tag. Accept the API's top-level `appKind`
+        // shorthand (it stores at settings.appKind — no dedicated column), then sanitize:
+        // an invalid value is dropped, never persisted.
+        $settings = is_array($data['settings'] ?? null) ? $data['settings'] : [];
+        if (isset($data['appKind']) && !array_key_exists('appKind', $settings)) {
+            $settings['appKind'] = $data['appKind'];
+        }
+        $settings = $this->sanitizeAppSettings($settings);
+
+        // Optional role preset: tunes the DEFAULT grants of the non-owner system roles
+        // (see ROLE_PRESETS). Invalid/absent preset → Admin/Member start grant-less,
+        // exactly as before. The Owner role is untouched (always all permissions).
+        $preset = $data['rolePreset'] ?? null;
+        $presetGrants = is_string($preset) ? (self::ROLE_PRESETS[$preset] ?? null) : null;
+
         // Atomic setup: the app row, its three system roles, the owner membership
         // and the owner permission grants must all succeed together. A partial
         // failure used to leave an unmanageable app (no owner app_user / no perms).
@@ -217,7 +302,7 @@ class AppService
                 'description' => $data['description'] ?? null,
                 'logo_url' => $data['logoUrl'] ?? null,
                 'status' => $data['status'] ?? 'draft',
-                'settings' => json_encode($data['settings'] ?? []),
+                'settings' => json_encode($settings),
                 'theme' => json_encode($data['theme'] ?? []),
                 'nav_config' => json_encode($data['navConfig'] ?? []),
                 'custom_screen' => !empty($data['customScreen']) ? json_encode($data['customScreen']) : null,
@@ -228,14 +313,20 @@ class AppService
 
             // Create default system roles
             $ownerRoleId = $this->createSystemRole($id, 'Owner', 'Full access to the app', 0);
-            $this->createSystemRole($id, 'Admin', 'Administrative access', 1);
-            $this->createSystemRole($id, 'Member', 'Standard member access', 2);
+            $adminRoleId = $this->createSystemRole($id, 'Admin', 'Administrative access', 1);
+            $memberRoleId = $this->createSystemRole($id, 'Member', 'Standard member access', 2);
 
             // Add creator as Owner
             $this->addAppUser($id, $ownerId, $ownerRoleId, 'active');
 
             // Grant all permissions to Owner role
             $this->grantAllPermissions($ownerRoleId);
+
+            // Role preset (optional): seed the non-owner system roles' default grants.
+            if ($presetGrants !== null) {
+                $this->grantPermissions($adminRoleId, $presetGrants['Admin']);
+                $this->grantPermissions($memberRoleId, $presetGrants['Member']);
+            }
 
             // Attach the requested forms inside the SAME transaction — any failure
             // (a concurrently deleted form, an FK error) rolls the whole app back.
@@ -279,7 +370,14 @@ class AppService
      * slug, status (the companion always starts as a draft) — createApp seeds fresh
      * system roles + the owner membership + owner permission grants.
      *
-     * @param array{copyDashboard?: bool, copyReports?: bool, copyLogic?: bool} $options
+     * Metadata options:
+     *  - appKind: settings.appKind for the NEW app — defaults to 'admin' (a companion is
+     *    typically the admin console over the source's data); an invalid value falls back
+     *    to the default rather than persisting.
+     *  - rolePreset: passed through to createApp (adjusts only the new app's default
+     *    Admin/Member grants); absent/invalid = unchanged companion behavior.
+     *
+     * @param array{copyDashboard?: bool, copyReports?: bool, copyLogic?: bool, appKind?: ?string, rolePreset?: ?string} $options
      */
     public function createCompanionApp(string $sourceAppId, string $ownerId, ?string $name = null, array $options = []): array
     {
@@ -302,7 +400,19 @@ class AppService
             // source's nav (order/icons/labels) is valid as-is — always carry it.
             'navConfig' => $source['navConfig'] ?? [],
             'status' => 'draft',
+            // A companion defaults to the 'admin' kind (it is typically the admin
+            // console over the source's data) unless the caller supplied a VALID one.
+            'settings' => [
+                'appKind' => (isset($options['appKind']) && in_array($options['appKind'], self::APP_KINDS, true))
+                    ? $options['appKind'] : 'admin',
+            ],
         ];
+
+        // Optional role preset for the new app's default Admin/Member grants
+        // (createApp validates it; absent/invalid = unchanged behavior).
+        if (isset($options['rolePreset']) && is_string($options['rolePreset'])) {
+            $createData['rolePreset'] = $options['rolePreset'];
+        }
 
         // Widget dashboards are data (report specs over shared form ids) — safe to
         // copy verbatim. Anything else (a sandboxed CODE screen) is never copied.
@@ -417,7 +527,10 @@ class AppService
 
         if (isset($data['settings'])) {
             $updates[] = "settings = :settings";
-            $params['settings'] = json_encode($data['settings']);
+            // Same write-time gate as createApp: an invalid settings.appKind is dropped.
+            $params['settings'] = json_encode(
+                is_array($data['settings']) ? $this->sanitizeAppSettings($data['settings']) : []
+            );
         }
 
         if (isset($data['theme'])) {
@@ -559,6 +672,98 @@ class AppService
             }
         }
         return $bundles;
+    }
+
+    /**
+     * linked_record relationship map for an app's forms. Per attached form:
+     *  - outgoingLinks: the form's linked_record fields (whatever they target — a target
+     *    outside the app still resolves a name);
+     *  - incomingLinks: the inverse, WITHIN the app's form set — links whose target is this
+     *    form. Same entry shape; here fieldId/fieldLabel describe the linking field on the
+     *    OTHER form and targetFormId/targetFormName identify that other (source) form.
+     *
+     * Names come from ONE batched form lookup (getFormsByIds) — no per-form queries. In-app
+     * forms use their app displayName; out-of-app targets use the form's own title.
+     *
+     * @return array<int, array{formId:string, displayName:string,
+     *   outgoingLinks:array<int,array{fieldId:string, fieldLabel:string, targetFormId:string, targetFormName:string, allowMultiple:bool}>,
+     *   incomingLinks:array<int,array{fieldId:string, fieldLabel:string, targetFormId:string, targetFormName:string, allowMultiple:bool}>}>
+     */
+    public function getFormRelations(string $appId): array
+    {
+        $appForms = $this->getAppForms($appId);
+        $displayNames = [];
+        foreach ($appForms as $af) {
+            if (!empty($af['formId'])) {
+                $displayNames[$af['formId']] = (string) $af['displayName'];
+            }
+        }
+
+        // One batched lookup for the app's own forms (their linked_record fields).
+        $formsById = $this->formService->getFormsByIds(array_keys($displayNames));
+
+        // First pass: outgoing links; collect out-of-app targets for the name lookup.
+        $outgoing = [];
+        $externalTargetIds = [];
+        foreach ($displayNames as $fid => $_name) {
+            $outgoing[$fid] = [];
+            foreach (($formsById[$fid]['fields'] ?? []) as $field) {
+                if (!is_array($field) || ($field['type'] ?? '') !== 'linked_record') {
+                    continue;
+                }
+                $tid = (string) ($field['properties']['targetFormId'] ?? '');
+                if ($tid === '') {
+                    continue;
+                }
+                $outgoing[$fid][] = [
+                    'fieldId' => (string) ($field['id'] ?? ''),
+                    'fieldLabel' => (string) ($field['label'] ?? ''),
+                    'targetFormId' => $tid,
+                    'targetFormName' => '', // resolved below
+                    'allowMultiple' => ($field['properties']['allowMultiple'] ?? false) === true,
+                ];
+                if (!isset($displayNames[$tid])) {
+                    $externalTargetIds[$tid] = true;
+                }
+            }
+        }
+
+        // One batched lookup for targets OUTSIDE the app (rare) — title stands in for a display name.
+        $externalNames = [];
+        foreach ($this->formService->getFormsByIds(array_keys($externalTargetIds)) as $tid => $tform) {
+            $externalNames[$tid] = (string) ($tform['title'] ?? '');
+        }
+
+        // Resolve outgoing target names + build the in-app inverse (incoming) index.
+        $incoming = array_fill_keys(array_keys($outgoing), []);
+        foreach ($outgoing as $sourceId => &$links) {
+            foreach ($links as &$link) {
+                $tid = $link['targetFormId'];
+                $link['targetFormName'] = $displayNames[$tid] ?? ($externalNames[$tid] ?? '');
+                if (isset($incoming[$tid])) {
+                    $incoming[$tid][] = [
+                        'fieldId' => $link['fieldId'],
+                        'fieldLabel' => $link['fieldLabel'],
+                        'targetFormId' => $sourceId,
+                        'targetFormName' => $displayNames[$sourceId],
+                        'allowMultiple' => $link['allowMultiple'],
+                    ];
+                }
+            }
+            unset($link);
+        }
+        unset($links);
+
+        $out = [];
+        foreach ($displayNames as $fid => $name) {
+            $out[] = [
+                'formId' => $fid,
+                'displayName' => $name,
+                'outgoingLinks' => $outgoing[$fid],
+                'incomingLinks' => $incoming[$fid],
+            ];
+        }
+        return $out;
     }
 
     /**
@@ -911,16 +1116,19 @@ class AppService
 
     private function grantAllPermissions(string $roleId): void
     {
-        $allPerms = AppPermissions::ALL;
+        $this->grantPermissions($roleId, AppPermissions::ALL);
+    }
 
-        foreach ($allPerms as $perm) {
-            $id = $this->generateUuid();
-            $stmt = $this->mysql->prepare("
-                INSERT INTO app_role_permissions (id, role_id, form_id, permission)
-                VALUES (:id, :role_id, NULL, :permission)
-            ");
+    /** Grant a set of app-level (form_id NULL — covers every form, incl. later attaches) permissions to a role. */
+    private function grantPermissions(string $roleId, array $permissions): void
+    {
+        $stmt = $this->mysql->prepare("
+            INSERT INTO app_role_permissions (id, role_id, form_id, permission)
+            VALUES (:id, :role_id, NULL, :permission)
+        ");
+        foreach ($permissions as $perm) {
             $stmt->execute([
-                'id' => $id,
+                'id' => $this->generateUuid(),
                 'role_id' => $roleId,
                 'permission' => $perm,
             ]);

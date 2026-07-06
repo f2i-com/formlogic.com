@@ -355,6 +355,105 @@ class AppPublicController
         return $this->jsonResponse($response, ['permissions' => $permissions]);
     }
 
+    /**
+     * GET /api/app/{slug}/activity?limit=N — the most recent submissions across every form the
+     * CALLER can view, newest-first (an app-wide activity feed). Server-side permission
+     * filtering: a form contributes rows only if it passes the SAME runtime-config gate as
+     * getApp (visible + memberCanSeeForm) AND the caller holds a view permission on it —
+     * view_all → everyone's rows, view_own → only the caller's (a submit-only member must
+     * never see other members' records). Per-form reads are capped at the requested limit
+     * (newest-first in SQL), so a big app never scans whole response stores.
+     */
+    public function activity(Request $request, Response $response, array $args): Response
+    {
+        $slug = $args['slug'];
+        if (!$this->validateSlug($slug)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($slug);
+        if (!$app || $app['status'] !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $appUser = $this->appUserService->getAppUser($app['id'], $userId);
+        if (!$appUser || $appUser['status'] !== 'active') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not a member of this app'], 403);
+        }
+
+        $limit = max(1, min((int) ($request->getQueryParams()['limit'] ?? 8), 25));
+
+        // Accessible forms: the runtime-config gate + a view permission (scope per form).
+        $permissions = $this->appUserService->getUserPermissions($app['id'], $userId);
+        $accessible = []; // formId => ['displayName' => string, 'scope' => 'all'|'own']
+        foreach ($this->appService->getAppForms($app['id']) as $form) {
+            $formId = $form['formId'];
+            if (!$form['isVisible'] || !$this->memberCanSeeForm($permissions, $formId)) {
+                continue;
+            }
+            $canViewAll = $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_ALL_RESPONSES, $formId);
+            $canViewOwn = $canViewAll
+                || $this->appUserService->hasPermission($app['id'], $userId, AppPermissions::VIEW_OWN_RESPONSES, $formId);
+            if (!$canViewOwn) {
+                continue; // submit-only: no record visibility
+            }
+            $accessible[$formId] = [
+                'displayName' => (string) $form['displayName'],
+                'scope' => $canViewAll ? 'all' : 'own',
+            ];
+        }
+
+        // ONE batched MySQL read for the field definitions used to label records.
+        $formsById = $this->formService->getFormsByIds(array_keys($accessible));
+
+        $activity = [];
+        foreach ($accessible as $formId => $meta) {
+            // Newest ~limit rows per form (SQL-ordered submitted_at DESC), merged + re-sliced below.
+            $rows = $this->appResponseService->getResponses($formId, $meta['scope'], $userId, ['limit' => $limit]);
+            $fields = is_array($formsById[$formId]['fields'] ?? null) ? $formsById[$formId]['fields'] : [];
+            foreach ($rows as $row) {
+                $recordId = (string) ($row['id'] ?? '');
+                $answers = is_array($row['answers'] ?? null) ? $row['answers'] : [];
+                $activity[] = [
+                    'formId' => $formId,
+                    'formName' => $meta['displayName'],
+                    'recordId' => $recordId,
+                    'title' => $this->recordLabel($fields, $answers, $recordId),
+                    'submittedAt' => (string) ($row['submittedAt'] ?? ''),
+                ];
+            }
+        }
+
+        // Global newest-first across all accessible forms ('Y-m-d H:i:s' sorts lexicographically).
+        usort($activity, static fn (array $a, array $b): int => strcmp($b['submittedAt'], $a['submittedAt']));
+
+        return $this->jsonResponse($response, ['activity' => array_slice($activity, 0, $limit)]);
+    }
+
+    /**
+     * Best-effort human label for a record — the same default the linked-record lookup uses:
+     * the first two non-empty text-ish answers joined with " - ", else "Record <id-prefix>".
+     */
+    private function recordLabel(array $fields, array $answers, string $responseId): string
+    {
+        $parts = [];
+        foreach ($fields as $field) {
+            if (count($parts) >= 2) {
+                break;
+            }
+            if (!is_array($field) || !in_array($field['type'] ?? '', ['short_text', 'long_text', 'email', 'phone', 'number', 'url'], true)) {
+                continue;
+            }
+            $val = $answers[$field['id'] ?? ''] ?? null;
+            if ($val !== null && $val !== '') {
+                $parts[] = is_array($val) ? implode(', ', $val) : (string) $val;
+            }
+        }
+        return implode(' - ', $parts) ?: ('Record ' . substr($responseId, 0, 8));
+    }
+
     public function getForm(Request $request, Response $response, array $args): Response
     {
         $slug = $args['slug'];

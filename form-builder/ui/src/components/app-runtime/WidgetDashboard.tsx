@@ -114,7 +114,32 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     // `range` is a dep on purpose: a manual range change already refetches, so restart the countdown.
   }, [refreshSecs, range]);
 
-  const data = useWidgetData(effectiveWidgets, props, refreshTick);
+  // App scope: the Activity widget uses ONE server call (GET /app/{slug}/activity — permission
+  // filtering + newest-first ordering happen server-side) instead of deriving the feed from the
+  // first viewable forms client-side. Demo apps keep the client-side path: their records live
+  // partly in this browser's IndexedDB overlay, which only fetchRecent can see. A host-provided
+  // fetchActivity always wins.
+  const propsFetchActivity = props.fetchActivity;
+  const fetchActivity = useMemo(() => {
+    if (propsFetchActivity) return propsFetchActivity;
+    if (scope !== 'app' || !appSlug || api.isDemoMode()) return undefined;
+    return async (limit: number): Promise<ActivityRow[]> => {
+      const res = await api.getAppActivity(appSlug, limit);
+      // Throw on failure so a background refresh keeps the last good rows (keep-stale-on-fail).
+      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Failed to load activity');
+      return (res.data.activity ?? []).map((a) => ({
+        id: a.recordId,
+        answers: {},
+        submittedAt: a.submittedAt,
+        formId: a.formId,
+        formName: a.formName,
+        icon: forms.find((f) => f.formId === a.formId)?.icon,
+        title: a.title,
+      }));
+    };
+  }, [propsFetchActivity, scope, appSlug, forms]);
+
+  const data = useWidgetData(effectiveWidgets, { ...props, fetchActivity }, refreshTick);
 
   // Owners/builders get failed-widget error details + Retry (T14). The store call is safe outside
   // the app runtime too: with no config loaded isOwner() is simply false.

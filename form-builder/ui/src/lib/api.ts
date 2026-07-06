@@ -3,7 +3,7 @@
  */
 
 import type { Form } from '../types/form';
-import type { App, AppForm, AppFormUsageApp, AppListItem, FormAppContext } from '../types/app';
+import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, FormAppContext } from '../types/app';
 import { logger } from './logger';
 import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
 
@@ -108,6 +108,44 @@ export interface AppDomain {
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** OPTIONAL app archetype stored at app.settings.appKind (absent = untyped, treat as 'custom' in UI).
+ *  The server drops invalid values when settings are saved (createApp/updateApp/companion). */
+export type AppKind = 'admin' | 'client' | 'staff' | 'public' | 'internal' | 'custom';
+
+/** OPTIONAL createApp preset that tunes ONLY the new app's default system-role permissions
+ *  (owner role untouched; invalid values are ignored server-side). */
+export type AppRolePreset = 'admin-console' | 'client-portal' | 'staff-field-app' | 'public-intake';
+
+/** One row of the app runtime's cross-form activity feed (GET /api/app/{slug}/activity).
+ *  Server-side permission filtered: only forms the CALLER can view, newest-first. */
+export interface AppActivityItem {
+  formId: string;
+  formName: string;
+  recordId: string;
+  title: string;
+  submittedAt: string;
+}
+
+/** One linked_record relation endpoint (GET /api/apps/{id}/forms/relations). In `outgoingLinks`
+ *  the target* fields name the form the field points AT; in `incomingLinks` they name the OTHER
+ *  form (the one whose field links here). */
+export interface AppFormRelationLink {
+  fieldId: string;
+  fieldLabel: string;
+  targetFormId: string;
+  targetFormName: string;
+  allowMultiple: boolean;
+}
+
+/** A form's linked_record relations within an app (owner-scoped) — powers the Manage-forms
+ *  relation badges + remove-form dependency warning without fetching every full form. */
+export interface AppFormRelations {
+  formId: string;
+  displayName: string;
+  outgoingLinks: AppFormRelationLink[];
+  incomingLinks: AppFormRelationLink[];
 }
 
 class ApiClient {
@@ -765,8 +803,18 @@ class ApiClient {
    * Create an app. Optional `formIds` (each form must be owned by the caller) attach forms
    * ATOMICALLY inside one server transaction — any invalid form rolls the whole create back
    * (400, no app row, no attachments), replacing the old create-then-attach loop.
+   *
+   * Optional `settings.appKind` tags the app's archetype (server drops invalid values);
+   * optional `rolePreset` tunes ONLY the new app's default system-role permissions
+   * (owner role untouched; invalid presets ignored server-side).
    */
-  async createApp(data: Partial<App> & { formIds?: string[] }): Promise<ApiResponse<{ app: App }>> {
+  async createApp(
+    data: Partial<Omit<App, 'settings'>> & {
+      settings?: Partial<AppSettings> & { appKind?: AppKind };
+      formIds?: string[];
+      rolePreset?: AppRolePreset;
+    }
+  ): Promise<ApiResponse<{ app: App }>> {
     return this.request('/apps', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -797,16 +845,29 @@ class ApiClient {
    * every widget valid), copyReports its saved reports, copyLogic its app-LEVEL custom
    * logic. Theme + nav always copy; members, roles, domains, slug and status never do.
    * Flags are sent only when explicitly set, so the server's defaults govern otherwise.
+   *
+   * Optional `appKind` overrides the companion's default settings.appKind ('admin' when
+   * absent); optional `rolePreset` tunes the new app's default system-role permissions.
+   * Both are sent only when set, so companion behavior is unchanged otherwise.
    */
   async createCompanionApp(
     appId: string,
-    opts?: { name?: string; copyDashboard?: boolean; copyReports?: boolean; copyLogic?: boolean }
+    opts?: {
+      name?: string;
+      copyDashboard?: boolean;
+      copyReports?: boolean;
+      copyLogic?: boolean;
+      appKind?: AppKind;
+      rolePreset?: AppRolePreset;
+    }
   ): Promise<ApiResponse<{ app: App }>> {
     const body: Record<string, unknown> = {};
     if (opts?.name) body.name = opts.name;
     if (typeof opts?.copyDashboard === 'boolean') body.copyDashboard = opts.copyDashboard;
     if (typeof opts?.copyReports === 'boolean') body.copyReports = opts.copyReports;
     if (typeof opts?.copyLogic === 'boolean') body.copyLogic = opts.copyLogic;
+    if (opts?.appKind) body.appKind = opts.appKind;
+    if (opts?.rolePreset) body.rolePreset = opts.rolePreset;
     return this.request(`/apps/${appId}/companion`, {
       method: 'POST',
       body: JSON.stringify(body),
@@ -880,6 +941,15 @@ class ApiClient {
   // App Form management
   async getAppForms(appId: string): Promise<ApiResponse<{ forms: AppForm[] }>> {
     return this.request(`/apps/${appId}/forms`);
+  }
+
+  /**
+   * All linked_record relations between an app's forms in ONE round trip (owner-scoped) —
+   * replaces the per-form getForm fan-out that Manage-forms used for relation badges and
+   * the remove-form dependency warning.
+   */
+  async getAppFormRelations(appId: string): Promise<ApiResponse<{ forms: AppFormRelations[] }>> {
+    return this.request(`/apps/${appId}/forms/relations`);
   }
 
   // MCP: ephemeral tokens that let an external AI drive the API via the MCP server.
@@ -1048,6 +1118,15 @@ class ApiClient {
 
   async getAppMyPermissions(slug: string): Promise<ApiResponse<{ permissions: unknown }>> {
     return this.request(`/app/${slug}/my-permissions`);
+  }
+
+  /**
+   * Cross-form recent-activity feed for the app runtime's Activity widget: newest records
+   * across ALL forms the caller can view (permission filtering is server-side), in one call.
+   * `limit` is clamped 1..25 server-side (default 8).
+   */
+  async getAppActivity(slug: string, limit?: number): Promise<ApiResponse<{ activity: AppActivityItem[] }>> {
+    return this.request(`/app/${slug}/activity${limit ? `?limit=${limit}` : ''}`);
   }
 
   async getAppMembership(slug: string): Promise<ApiResponse<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean }>> {

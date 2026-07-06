@@ -16,6 +16,7 @@ import { FormCardSkeleton } from '../../components/ui/Skeleton';
 import { api } from '../../lib/api';
 import type { PackInstallation } from '../../lib/api';
 import { cn, formatRelativeTime } from '../../lib/utils';
+import { KIND_LABELS } from '../../types/app';
 import type { App } from '../../types/app';
 
 const APPS_PAGE = 9;
@@ -192,6 +193,8 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
   // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
   // on pack-provisioned apps — the "0 forms" bug).
   const formCount = app.formCount ?? app.navConfig?.length ?? 0;
+  // Optional portal type (T29): unknown/absent values render nothing (server data is untrusted).
+  const kindLabel = app.settings?.appKind ? KIND_LABELS[app.settings.appKind] : undefined;
   return (
     <div
       role="button"
@@ -248,13 +251,20 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             </div>
           </div>
         </div>
-        <Badge
-          variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
-          size="sm"
-          className="capitalize flex-shrink-0"
-        >
-          {app.status}
-        </Badge>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {kindLabel && (
+            <Badge variant="default" size="sm" className="whitespace-nowrap" title="App type">
+              {kindLabel}
+            </Badge>
+          )}
+          <Badge
+            variant={app.status === 'published' ? 'success' : app.status === 'draft' ? 'warning' : 'default'}
+            size="sm"
+            className="capitalize"
+          >
+            {app.status}
+          </Badge>
+        </div>
       </div>
 
       {app.description && (

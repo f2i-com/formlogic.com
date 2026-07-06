@@ -13,6 +13,20 @@ export interface AppTheme {
   headerColor?: string;
 }
 
+/** OPTIONAL portal-type metadata stored at settings.appKind. Server-validated on save
+ *  (createApp/updateApp/companion drop invalid values); absent = untyped (treat as custom in UI). */
+export type AppKind = 'admin' | 'client' | 'staff' | 'public' | 'internal' | 'custom';
+
+/** Human labels for each app kind (shared by the wizard, app cards and dashboard templates). */
+export const KIND_LABELS: Record<AppKind, string> = {
+  admin: 'Admin console',
+  client: 'Client portal',
+  staff: 'Staff app',
+  public: 'Public intake',
+  internal: 'Internal tool',
+  custom: 'Custom',
+};
+
 export interface AppSettings {
   allowSelfRegistration: boolean;
   requireApproval: boolean;
@@ -27,6 +41,8 @@ export interface AppSettings {
   pwaThemeColor?: string;
   /** Render the app runtime full-screen without the sidebar/menu (self-contained custom-home apps). */
   hideNav?: boolean;
+  /** Optional portal type ('admin console' / 'client portal' / …) — see AppKind. */
+  appKind?: AppKind;
 }
 
 export interface AppNavItem {

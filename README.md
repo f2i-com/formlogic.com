@@ -294,6 +294,8 @@ Forms can be composed into deployable business applications:
 
 Linked record fields allow cross-form references within an app (e.g., a "Transfer Form" linking to a "Client Onboarding" record).
 
+Several apps can share the same forms — e.g. a client portal and an admin console reading and writing the same records. See **[docs/ONE_BACKEND_MANY_PORTALS.md](docs/ONE_BACKEND_MANY_PORTALS.md)** for the model.
+
 ### FormLogic Scripting
 
 Scripts and expressions are plain JavaScript, evaluated in the QuickJS sandbox described above. The engine supports:

@@ -10,8 +10,8 @@ import { Badge } from '../../components/ui/Badge';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
+import type { AppFormRelations } from '../../lib/api';
 import type { AppForm } from '../../types/app';
-import type { Form, FormField } from '../../types/form';
 
 interface RelationBadge {
   type: 'outgoing' | 'incoming';
@@ -33,8 +33,9 @@ export function AppFormManager() {
   const [editNameValue, setEditNameValue] = useState('');
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
   const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }>; sharedWith: string[] } | null>(null);
-  // Cache loaded form definitions so we can check for linked_record references
-  const loadedFormsRef = useRef<Record<string, Form>>({});
+  // Cache the app's linked_record relations (one round trip) so we can check for
+  // references when a form is removed (incomingLinks = fields elsewhere targeting it).
+  const relationsRef = useRef<Record<string, AppFormRelations>>({});
   // Guards against out-of-order loadForms resolving (e.g. rapid appId changes)
   const loadTokenRef = useRef(0);
 
@@ -44,7 +45,12 @@ export function AppFormManager() {
     setLoading(true);
     // Use the API directly so a fetch FAILURE is distinguishable from "no forms"
     // (the store helper returns [] either way), letting us show error + retry.
-    const result = await api.getAppForms(appId);
+    // Relations come from ONE owner-scoped call (replaces the old per-form getForm
+    // fan-out); if it fails the badges/warnings just degrade to empty.
+    const [result, relResult] = await Promise.all([
+      api.getAppForms(appId),
+      api.getAppFormRelations(appId),
+    ]);
     if (loadTokenRef.current !== token) return;
     if (result.error) {
       setLoadError(typeof result.error === 'string' ? result.error : 'Could not load the app’s forms.');
@@ -55,50 +61,40 @@ export function AppFormManager() {
     const forms = (result.data?.forms ?? []) as AppForm[];
     setAppForms(forms);
 
-    // Build relation badges from linked_record fields
+    // Build relation badges from the relations payload. Prefer the app's display names
+    // (nameMap) over the server-resolved form titles, matching the old behaviour.
     const nameMap: Record<string, string> = {};
     forms.forEach((f) => { nameMap[f.formId] = f.displayName; });
 
-    const results = await Promise.allSettled(forms.map((af) => api.getForm(af.formId)));
     const badges: Record<string, RelationBadge[]> = {};
-
-    // Cache loaded form definitions for referential integrity checks
-    const formDefsCache: Record<string, Form> = {};
-    results.forEach((result, idx) => {
-      if (result.status !== 'fulfilled' || !result.value.data?.form) return;
-      const form = result.value.data!.form as Form;
-      const formId = forms[idx].formId;
-      formDefsCache[formId] = form;
-
-      form.fields
-        .filter((f: FormField) => f.type === 'linked_record' && f.properties.targetFormId)
-        .forEach((field: FormField) => {
-          const targetId = field.properties.targetFormId!;
-          const multi = !!field.properties.allowMultiple;
-          // Outgoing badge on source form
-          if (!badges[formId]) badges[formId] = [];
-          badges[formId].push({
-            type: 'outgoing',
-            formName: nameMap[targetId] || allForms.find((af2) => af2.id === targetId)?.title || 'Removed form',
-            fieldLabel: field.label,
-            allowMultiple: multi,
-          });
-          // Incoming badge only when the target form is actually in this app
-          if (nameMap[targetId]) {
-            if (!badges[targetId]) badges[targetId] = [];
-            badges[targetId].push({
-              type: 'incoming',
-              formName: nameMap[formId] || form.title,
-              fieldLabel: field.label,
-              allowMultiple: multi,
-            });
-          }
+    const relationsCache: Record<string, AppFormRelations> = {};
+    for (const rel of relResult.data?.forms ?? []) {
+      relationsCache[rel.formId] = rel;
+      for (const link of rel.outgoingLinks ?? []) {
+        // Outgoing badge on the source form ("<field> → <target form>").
+        if (!badges[rel.formId]) badges[rel.formId] = [];
+        badges[rel.formId].push({
+          type: 'outgoing',
+          formName: nameMap[link.targetFormId] || link.targetFormName || allForms.find((af2) => af2.id === link.targetFormId)?.title || 'Removed form',
+          fieldLabel: link.fieldLabel,
+          allowMultiple: !!link.allowMultiple,
         });
-    });
+      }
+      for (const link of rel.incomingLinks ?? []) {
+        // Incoming badge ("<source form> links here via <field>") — the link's target*
+        // fields name the OTHER form (the one whose linked_record field points here).
+        if (!badges[rel.formId]) badges[rel.formId] = [];
+        badges[rel.formId].push({
+          type: 'incoming',
+          formName: nameMap[link.targetFormId] || link.targetFormName || 'Removed form',
+          fieldLabel: link.fieldLabel,
+          allowMultiple: !!link.allowMultiple,
+        });
+      }
+    }
 
-    if (loadTokenRef.current !== token) return;
     setRelationBadges(badges);
-    loadedFormsRef.current = formDefsCache;
+    relationsRef.current = relationsCache;
     setLoading(false);
   };
 
@@ -171,23 +167,18 @@ export function AppFormManager() {
   };
 
   const handleRemoveRequest = (formId: string) => {
-    // Check if any other forms have linked_record fields targeting this form
+    // Check if any other forms have linked_record fields targeting this form —
+    // exactly this form's incomingLinks from the app relations payload.
     const nameMap: Record<string, string> = {};
     appForms.forEach((f) => { nameMap[f.formId] = f.displayName; });
     const formName = nameMap[formId] || formId;
 
-    const affectedFields: Array<{ formName: string; fieldLabel: string }> = [];
-    for (const [otherFormId, formDef] of Object.entries(loadedFormsRef.current)) {
-      if (otherFormId === formId) continue;
-      for (const field of formDef.fields) {
-        if (field.type === 'linked_record' && field.properties.targetFormId === formId) {
-          affectedFields.push({
-            formName: nameMap[otherFormId] || formDef.title,
-            fieldLabel: field.label,
-          });
-        }
-      }
-    }
+    const affectedFields: Array<{ formName: string; fieldLabel: string }> = (relationsRef.current[formId]?.incomingLinks ?? [])
+      .filter((link) => link.targetFormId !== formId)
+      .map((link) => ({
+        formName: nameMap[link.targetFormId] || link.targetFormName || 'Unknown form',
+        fieldLabel: link.fieldLabel,
+      }));
 
     // Always confirm — removing a form from an app is a meaningful action even
     // when nothing links to it (it stops collecting in the app + can lose relations).

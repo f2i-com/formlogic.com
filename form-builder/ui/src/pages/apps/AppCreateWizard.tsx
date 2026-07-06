@@ -12,10 +12,32 @@ import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
-import type { App, AppFormUsageApp } from '../../types/app';
+import { DEFAULT_APP_SETTINGS, KIND_LABELS } from '../../types/app';
+import type { App, AppFormUsageApp, AppKind } from '../../types/app';
 
 /** How the new app starts: brand new, over existing forms, or as a companion of another app. */
 type WizardMode = 'fresh' | 'existing' | 'companion';
+
+/** Server-side role-preset names — tune the NEW app's default system-role permissions. */
+type RolePreset = 'admin-console' | 'client-portal' | 'staff-field-app' | 'public-intake';
+
+/** Kind → role preset. internal/custom send no preset (the server's stock defaults apply). */
+const KIND_ROLE_PRESET: Partial<Record<AppKind, RolePreset>> = {
+  admin: 'admin-console',
+  client: 'client-portal',
+  staff: 'staff-field-app',
+  public: 'public-intake',
+};
+
+/** One-line description per kind for the optional "What kind of app?" selector (T8). */
+const KIND_OPTIONS: Array<{ kind: AppKind; desc: string }> = [
+  { kind: 'admin', desc: 'See and manage everything across the app’s forms.' },
+  { kind: 'client', desc: 'Customers submit requests and track their own.' },
+  { kind: 'staff', desc: 'A day-to-day work app for your team.' },
+  { kind: 'public', desc: 'A public-facing intake point — submit and go.' },
+  { kind: 'internal', desc: 'A general-purpose tool for your own team.' },
+  { kind: 'custom', desc: 'Anything else — no assumptions made.' },
+];
 
 const stepsForMode = (mode: WizardMode | null): string[] => {
   if (mode === 'companion') return ['Get started', 'Source app', 'Companion details', 'Review'];
@@ -84,7 +106,7 @@ export function AppCreateWizard() {
 
   // Restore an in-progress draft (saved when the user bounced to the form builder
   // via "Create a Form") via lazy initializers — no setState-on-mount.
-  const [draft] = useState<{ name?: string; description?: string; selectedFormIds?: string[]; mode?: string }>(() => {
+  const [draft] = useState<{ name?: string; description?: string; selectedFormIds?: string[]; mode?: string; appKind?: string }>(() => {
     try { return JSON.parse(sessionStorage.getItem('appWizardDraft') || '{}'); } catch { return {}; }
   });
   const [mode, setMode] = useState<WizardMode | null>(() =>
@@ -100,6 +122,11 @@ export function AppCreateWizard() {
   const [description, setDescription] = useState<string>(typeof draft.description === 'string' ? draft.description : '');
   const [selectedFormIds, setSelectedFormIds] = useState<string[]>(Array.isArray(draft.selectedFormIds) ? draft.selectedFormIds : []);
   const [nameError, setNameError] = useState<string | null>(null);
+  // Optional portal type (T8): null = untyped (the default; nothing is sent). Companion apps
+  // don't use this — the server types them 'admin' itself.
+  const [appKind, setAppKind] = useState<AppKind | null>(() =>
+    typeof draft.appKind === 'string' && draft.appKind in KIND_LABELS ? (draft.appKind as AppKind) : null
+  );
 
   // ── Companion path state ──────────────────────────────────────────────────
   const [sourceAppId, setSourceAppId] = useState<string | null>(null);
@@ -208,11 +235,19 @@ export function AppCreateWizard() {
       // ONE atomic request: the server creates the app and attaches every form inside a
       // single transaction — any invalid form rolls the WHOLE create back (no partial app,
       // unlike the old create-then-attach loop that could leave forms missing).
-      const app = await createApp({
+      // Optional kind (T8): settings.appKind is server-validated; the matching rolePreset
+      // tunes the new app's default system-role permissions (internal/custom send none).
+      // The payload rides through the store to api.createApp verbatim — a typed variable
+      // (not a fresh literal) so the extra rolePreset key passes the store's signature.
+      const rolePreset = appKind ? KIND_ROLE_PRESET[appKind] : undefined;
+      const payload: Partial<App> & { formIds?: string[]; rolePreset?: RolePreset } = {
         name,
         description: description || undefined,
         ...(formIds.length > 0 ? { formIds } : {}),
-      });
+        ...(appKind ? { settings: { ...DEFAULT_APP_SETTINGS, appKind } } : {}),
+        ...(rolePreset ? { rolePreset } : {}),
+      };
+      const app = await createApp(payload);
       if (app) {
         try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
         navigate(`/apps/${app.id}/settings`);
@@ -370,6 +405,36 @@ export function AppCreateWizard() {
               placeholder="What does this app do?"
               rows={3}
             />
+
+            {/* Optional portal type (T8) — quiet, never a blocker. Click a selected card to unpick it. */}
+            <div>
+              <p className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                What kind of app is this? <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
+              </p>
+              <p className="text-xs text-gray-400 dark:text-slate-400 mt-0.5 mb-2">
+                Tunes the new app's starting role permissions and suggests a matching dashboard layout. Everything stays editable later.
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {KIND_OPTIONS.map(({ kind: k, desc }) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={appKind === k}
+                    onClick={() => setAppKind(appKind === k ? null : k)}
+                    className={cn(
+                      'rounded-xl border p-2.5 text-left transition-colors cursor-pointer',
+                      appKind === k
+                        ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
+                        : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                    )}
+                  >
+                    <span className="block text-sm font-medium text-gray-900 dark:text-white">{KIND_LABELS[k]}</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400 mt-0.5">{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {mode === 'fresh' && (
               <p className="text-xs text-gray-400 dark:text-slate-400">You'll add forms after the app is created — build new ones or attach existing forms any time.</p>
             )}
@@ -389,7 +454,7 @@ export function AppCreateWizard() {
                   variant="outline"
                   onClick={async () => {
                     // Stash the wizard draft so it's restored when the user returns.
-                    try { sessionStorage.setItem('appWizardDraft', JSON.stringify({ name, description, selectedFormIds, mode })); } catch { /* ignore */ }
+                    try { sessionStorage.setItem('appWizardDraft', JSON.stringify({ name, description, selectedFormIds, mode, appKind: appKind ?? undefined })); } catch { /* ignore */ }
                     const form = await createForm('Untitled Form');
                     if (!form) return;
                     setActiveForm(form.id);
@@ -514,6 +579,11 @@ export function AppCreateWizard() {
               autoFocus
             />
 
+            {/* Fixed kind hint — the server types companions as 'admin' itself; nothing is sent. */}
+            <p className="text-xs text-gray-400 dark:text-slate-400">
+              Companions start typed as an <span className="font-medium text-gray-500 dark:text-slate-300">{KIND_LABELS.admin}</span> — a manage-everything view over the shared forms.
+            </p>
+
             {/* What's shared */}
             <div className="p-3 rounded-xl bg-violet-50 dark:bg-violet-500/10 border border-violet-100 dark:border-violet-500/20">
               <p className="text-xs font-medium text-violet-700 dark:text-violet-300 flex items-center gap-1.5 mb-1">
@@ -632,6 +702,12 @@ export function AppCreateWizard() {
               </div>
             ) : (
               <p className="text-sm text-gray-400 dark:text-slate-400">No forms yet — you'll build or attach them after the app is created.</p>
+            )}
+            {appKind && (
+              <p className="text-sm text-gray-600 dark:text-slate-300">
+                App type: <span className="font-medium text-gray-900 dark:text-white">{KIND_LABELS[appKind]}</span>
+                {KIND_ROLE_PRESET[appKind] ? ' — starting role permissions tuned to match.' : ''}
+              </p>
             )}
             <p className="text-xs text-gray-400 dark:text-slate-400">Default roles (Owner, Admin, Member) will be created automatically.</p>
           </div>

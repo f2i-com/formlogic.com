@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
+import { usePublicConfig } from '../../hooks/usePublicConfig';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { PasswordInput } from '../ui/PasswordInput';
@@ -14,6 +16,8 @@ interface AppRuntimeAuthGuardProps {
 export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const { config, isLoading, error, appSlug, initialize } = useAppRuntimeStore();
   const { user, login, isLoading: authLoading } = useAuthStore();
+  const location = useLocation();
+  const { supportEmail } = usePublicConfig();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -131,7 +135,22 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
               </Button>
             </form>
 
-            <p className="mt-6 text-center text-sm text-gray-500 dark:text-slate-500">
+            {/* New-user path: sign up, then land right back at this app (Signup already honours
+                ?redirect=<relative path>). Whether they can actually JOIN is only knowable
+                after auth (the membership probe), so the copy promises the return trip — the
+                post-signup screen then offers Join, Awaiting-approval, or Invitation-required. */}
+            <p className="mt-6 text-center text-sm text-gray-500 dark:text-slate-400">
+              New here?{' '}
+              <Link
+                to={`/signup?redirect=${encodeURIComponent(`${location.pathname}${location.search}`)}`}
+                className="font-medium text-primary-600 dark:text-primary-400 hover:text-primary-500 dark:hover:text-primary-300 transition-colors"
+              >
+                Create an account
+              </Link>
+              {' '}&mdash; you'll come back to this app after signing up.
+            </p>
+
+            <p className="mt-4 text-center text-sm text-gray-500 dark:text-slate-500">
               <a href="/" className="text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">
                 &larr; Back to home
               </a>
@@ -192,6 +211,30 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
               <Button onClick={handleJoin} isLoading={joining}>Join app</Button>
               <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
             </div>
+          </div>
+        </div>
+      );
+    }
+
+    // A true non-member (no membership row) on an app WITHOUT self-registration: joining needs
+    // an invitation. Say so explicitly (with the configured support address) instead of falling
+    // through to the generic Access-Denied screen. Other statuses (e.g. a suspended member)
+    // keep today's generic fall-through below.
+    if (membershipInfo.status === 'none') {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-4">
+          <div className="text-center max-w-md mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-8 shadow-lg shadow-gray-900/[0.04] dark:shadow-black/20">
+            <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
+              <Mail className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2 text-gray-900 dark:text-white tracking-tight">Invitation required</h2>
+            <p className="text-gray-500 dark:text-slate-400 mb-6">
+              {membershipInfo.appName} doesn't allow self-registration. Ask the app's administrator to send an invite to your email
+              {' '}({user.email}), or contact{' '}
+              <a href={`mailto:${supportEmail}`} className="text-primary-600 dark:text-primary-400 hover:underline">{supportEmail}</a>
+              {' '}if you're not sure who runs this app.
+            </p>
+            <a href="/" className="text-sm text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white">Go to Home</a>
           </div>
         </div>
       );

@@ -26,6 +26,13 @@ export interface WidgetDataDeps {
   runReport: (spec: AppReportSpec) => Promise<AppReportResult | null>;
   runBatch?: (specs: AppReportSpec[]) => Promise<(AppReportResult | null)[]>;
   fetchRecent?: (formId: string, limit: number) => Promise<WidgetRecord[]>;
+  /** ONE server call for the cross-form activity feed (GET /api/app/{slug}/activity —
+   *  permission filtering + newest-first ordering are server-side). When provided, the
+   *  activity built-in uses it instead of deriving the feed client-side from the first
+   *  viewable forms. Absent (demo mode, form/public scope, the builder canvas) keeps the
+   *  client-side fetchRecent derivation. Must THROW on failure so a background refresh
+   *  can keep the last good rows. */
+  fetchActivity?: (limit: number) => Promise<ActivityRow[]>;
   forms: WidgetDataForm[];
   canViewForm?: (formId: string) => boolean;
 }
@@ -98,7 +105,7 @@ const errorMessage = (e: unknown): string | undefined => (e instanceof Error && 
  * auto-refresh without flicker or a skeleton flash.
  */
 export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, refreshToken = 0): WidgetData {
-  const { runReport, runBatch, fetchRecent, forms, canViewForm } = deps;
+  const { runReport, runBatch, fetchRecent, fetchActivity, forms, canViewForm } = deps;
 
   // ── Report widgets: one batched round ──────────────────────────────────────
   const specEntries = useMemo(
@@ -255,7 +262,28 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const lastActivityKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!hasActivity || !fetchRecent) { setActivity([]); lastActivityKey.current = null; return; }
+    if (!hasActivity) { setActivity([]); lastActivityKey.current = null; return; }
+    // Server-side feed: one permission-filtered, newest-first call replaces the per-form
+    // client derivation. Same background semantics: a token bump with the same inputs
+    // refetches quietly, and a FAILED background refetch keeps the last good rows.
+    if (fetchActivity) {
+      const key = '@server';
+      const background = refreshToken > 0 && lastActivityKey.current === key;
+      lastActivityKey.current = key;
+      let cancelled = false;
+      (async () => {
+        try {
+          const rows = await fetchActivity(8);
+          if (!cancelled) setActivity(rows.filter((r) => r.id).slice(0, 8));
+        } catch {
+          // Foreground failure mirrors today's drop-on-error (empty feed);
+          // background failure keeps whatever is currently shown.
+          if (!cancelled && !background) setActivity([]);
+        }
+      })();
+      return () => { cancelled = true; };
+    }
+    if (!fetchRecent) { setActivity([]); lastActivityKey.current = null; return; }
     const viewable = forms.filter((f) => (canViewForm ? canViewForm(f.formId) : true)).slice(0, 6);
     // A token bump with the same content inputs is a background refresh; anything else (forms or
     // widgets changed) keeps today's foreground replace.

@@ -43,12 +43,14 @@ class AppReportService
     /** [formId => [fieldId => fieldDef]] for the forms that belong to this app. */
     private function appFormFields(string $appId): array
     {
-        $map = [];
+        // ONE batched MySQL lookup for all the app's form rows (getFormsByIds preserves the
+        // app_forms sort order, so the map keys come out exactly as the per-form loop did).
+        $formIds = [];
         foreach ($this->appService->getAppForms($appId) as $af) {
-            $fid = $af['formId'] ?? null;
-            if (!$fid) { continue; }
-            $form = $this->formService->getForm($fid);
-            if (!$form) { continue; }
+            if (!empty($af['formId'])) { $formIds[] = $af['formId']; }
+        }
+        $map = [];
+        foreach ($this->formService->getFormsByIds($formIds) as $fid => $form) {
             $byId = [];
             foreach (($form['fields'] ?? []) as $f) {
                 if (!empty($f['id'])) { $byId[$f['id']] = $f; }
@@ -276,18 +278,20 @@ class AppReportService
         }
         $map[$formId] = $byId;
         // Include linked target forms so joins/joined-field refs validate for form-scoped dashboards.
+        // Targets resolve via ONE batched lookup (input order preserved = the old first-seen order).
+        $targetIds = [];
         foreach (($form['fields'] ?? []) as $f) {
             if (($f['type'] ?? '') === 'linked_record' && !empty($f['properties']['targetFormId'])) {
                 $tid = (string) $f['properties']['targetFormId'];
-                if (isset($map[$tid])) { continue; }
-                $tform = $this->formService->getForm($tid);
-                if (!$tform) { continue; }
-                $tById = [];
-                foreach (($tform['fields'] ?? []) as $tf) {
-                    if (!empty($tf['id'])) { $tById[$tf['id']] = $tf; }
-                }
-                $map[$tid] = $tById;
+                if (!isset($map[$tid])) { $targetIds[] = $tid; }
             }
+        }
+        foreach ($this->formService->getFormsByIds($targetIds) as $tid => $tform) {
+            $tById = [];
+            foreach (($tform['fields'] ?? []) as $tf) {
+                if (!empty($tf['id'])) { $tById[$tf['id']] = $tf; }
+            }
+            $map[$tid] = $tById;
         }
         return $map;
     }

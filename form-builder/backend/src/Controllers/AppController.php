@@ -287,6 +287,10 @@ class AppController
             'copyDashboard' => is_array($data) && !empty($data['copyDashboard']),
             'copyReports' => is_array($data) && !empty($data['copyReports']),
             'copyLogic' => is_array($data) && !empty($data['copyLogic']),
+            // Optional metadata: the service validates both (invalid appKind → the
+            // 'admin' companion default; invalid rolePreset → ignored).
+            'appKind' => (is_array($data) && isset($data['appKind']) && is_string($data['appKind'])) ? $data['appKind'] : null,
+            'rolePreset' => (is_array($data) && isset($data['rolePreset']) && is_string($data['rolePreset'])) ? $data['rolePreset'] : null,
         ];
 
         $userId = $request->getAttribute('userId');
@@ -331,6 +335,22 @@ class AppController
         unset($f);
 
         return $this->jsonResponse($response, ['forms' => $forms]);
+    }
+
+    /**
+     * GET /api/apps/{id}/forms/relations — owner-scoped linked_record relationship map of
+     * the app's forms (outgoing = each form's linked_record fields, incoming = the in-app
+     * inverse; target names batch-resolved, incl. targets outside the app). Powers the
+     * builder's relations/architecture view.
+     */
+    public function formRelations(Request $request, Response $response, array $args): Response
+    {
+        $app = $this->authorizeAppOwnership($request, $args['id']);
+        if (!$app) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        return $this->jsonResponse($response, ['forms' => $this->appService->getFormRelations($args['id'])]);
     }
 
     public function addForm(Request $request, Response $response, array $args): Response

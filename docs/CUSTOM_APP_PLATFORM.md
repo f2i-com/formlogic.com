@@ -619,7 +619,9 @@ per-domain landing-page editor UI is now implemented (`CustomDomainsPanel`).
 
 ## Multi-App over Shared Forms
 
-Status: **supported** (API + MCP; the backend + runtime are shared-form aware end-to-end).
+Status: **supported** (API + MCP + builder UI; the backend + runtime are shared-form aware end-to-end).
+The mental model — one shared data backend, many portal apps — is summarized in
+[ONE_BACKEND_MANY_PORTALS.md](ONE_BACKEND_MANY_PORTALS.md).
 
 One dataset, several products: e.g. a **client app** (customers submit requests) and an **admin
 app** (staff triage them) over the *same* forms. Responses live **per form** — each form has its own
@@ -639,9 +641,12 @@ so every app a form is attached to reads and writes the **same records**.
    **and form** (`Constants\AppPermissions::FORM_LEVEL`), so the same form can be submit-only in one
    app and full-CRUD in another.
 
-> UI caveat: the **Manage forms** picker (`pages/apps/AppFormManager.tsx`) deliberately offers only
-> *standalone* forms — forms already in another app (or installed by a pack) are filtered from its
-> "available" list — so today a cross-app attach is done via the API/MCP, not that picker.
+> UI: the **Manage forms** picker (`pages/apps/AppFormManager.tsx`) and the create wizard
+> (`pages/apps/AppCreateWizard.tsx`) both offer forms that already belong to other apps, marked
+> with a **Shared** badge — attaching one shares the form and its existing responses (both apps
+> read and write the same data). Only *pack-installed* forms are excluded from the picker (they're
+> managed through their pack). The one-click **companion app** (`POST /api/apps/{id}/companion`)
+> is the fastest way to split off e.g. an admin console over all of an app's forms.
 
 ### Per-app vs shared
 

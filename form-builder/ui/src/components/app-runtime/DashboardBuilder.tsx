@@ -13,10 +13,15 @@ import {
   useWidgetData, GRID_ROW, GRID_GAP, DEFAULT_COLS,
   type WidgetDataDeps, type WidgetDataForm,
 } from './widgetData';
+import {
+  buildDashboardTemplate, fieldsOf, firstFieldOf, firstDateRef, firstChoiceRef,
+  CHOICE_TYPES, DATE_TYPES, NUMERIC_TYPES,
+} from './dashboardTemplates';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
-import type { AppReport, AppReportSpec, AppRuntimeForm, DashboardScreen, DashboardWidget, DashboardWidgetKind } from '../../types/app';
+import { KIND_LABELS } from '../../types/app';
+import type { AppKind, AppReport, AppReportSpec, AppRuntimeForm, DashboardScreen, DashboardWidget, DashboardWidgetKind } from '../../types/app';
 import type { CustomScreen } from '../../types/form';
 
 const uid = () => 'w_' + Math.random().toString(36).slice(2, 10);
@@ -64,14 +69,8 @@ function resolveDrag(base: DashboardWidget[], movingId: string, orig: Layout): D
   return gravityResolve(base, movingId);
 }
 
-const LAYOUT_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
-const CHOICE_TYPES = new Set(['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio']);
-const DATE_TYPES = new Set(['date', 'datetime']);
-const NUMERIC_TYPES = new Set(['number', 'rating', 'scale']);
-
-type BuilderField = { id: string; label?: string; type: string };
-
-const fieldsOf = (form?: AppRuntimeForm): BuilderField[] => ((form?.fields ?? []) as BuilderField[]).filter((f) => !LAYOUT_TYPES.has(f.type));
+// Field-type sets + fieldsOf/first*Ref live in ./dashboardTemplates (shared with the
+// kind-template builder so gallery prefills and templates never drift).
 
 /** Pick a sensible default group-by ref for a new chart: first choice/date field, else status. */
 function defaultGroupRef(form?: AppRuntimeForm): { field: string; isDate: boolean } {
@@ -92,11 +91,6 @@ function defaultSpec(form: AppRuntimeForm | undefined, viz: AppReportSpec['viz']
 // Each preset prefills a sensible spec from the target form's fields (first date-ish field or
 // __submitted_at for trends, first choice field for breakdowns, first number field for sums), so a
 // freshly added widget shows real data immediately. Everything remains editable afterwards.
-
-const firstFieldOf = (form: AppRuntimeForm | undefined, types: Set<string>): BuilderField | undefined =>
-  fieldsOf(form).find((f) => types.has(f.type));
-const firstDateRef = (form?: AppRuntimeForm) => firstFieldOf(form, DATE_TYPES)?.id ?? '__submitted_at';
-const firstChoiceRef = (form?: AppRuntimeForm) => firstFieldOf(form, CHOICE_TYPES)?.id ?? '__status';
 
 type GalleryPreset = {
   key: string;
@@ -206,6 +200,10 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   // app runtime, so the store is populated; falls back to undefined harmlessly elsewhere.
   const currentAppId = useAppRuntimeStore((s) => s.config?.app.id);
   const activeFormId = useAppRuntimeStore((s) => s.activeFormId);
+  // The app's optional portal type (settings.appKind) picks which starter template the empty
+  // state leads with. Defensive `in` check: server data could carry an unknown value.
+  const storeKind = useAppRuntimeStore((s) => s.config?.app.settings?.appKind);
+  const appKind: AppKind | undefined = storeKind && storeKind in KIND_LABELS ? storeKind : undefined;
 
   // ── Add-widget target form (T13) ────────────────────────────────────────────
   // Presets prefill their specs/lists from ONE selected form. Default = the most relevant form:
@@ -310,6 +308,18 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     setSelectedId(w.id);
     // Report + list + text widgets open their config immediately so they're never left blank.
     if (preset.kind === 'report' || preset.kind === 'list' || preset.kind === 'text') setConfigId(w.id);
+  };
+
+  /**
+   * Populate the DRAFT with a kind-specific starter layout (T30). Only ever offered while the
+   * canvas is empty, so nothing is overwritten; the result flows through the normal dirty-tracking
+   * + Save → server-sanitize path — nothing auto-saves.
+   */
+  const applyTemplate = (k: AppKind) => {
+    const ws = buildDashboardTemplate(k, builderForms, scope);
+    if (ws.length === 0) { setAddOpen(true); return; } // nothing to build from — fall back to the gallery
+    setWidgets(ws);
+    setSelectedId(null);
   };
 
   const removeWidget = (id: string) => {
@@ -449,9 +459,35 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           })}
 
           {widgets.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-gray-400 dark:text-slate-500 pointer-events-none">
-              <Plus className="h-8 w-8 mb-2" />
-              <p className="text-sm">Add your first widget to build this dashboard.</p>
+            // Empty state (T30): lead with the app's own kind when it has one, else offer the three
+            // generic starters. "Build from blank" is the classic add-widget gallery. Data templates
+            // need at least one form, so with none attached only the blank path shows.
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
+              <div className="flex flex-col items-center gap-2 text-gray-400 dark:text-slate-500">
+                <Plus className="h-8 w-8" />
+                <p className="text-sm max-w-sm">This dashboard is empty — start from a ready-made layout, or build it widget by widget.</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {builderForms.length > 0 && (appKind ? (
+                  <Button size="sm" onClick={() => applyTemplate(appKind)}>
+                    Start with the {KIND_LABELS[appKind]} template
+                  </Button>
+                ) : (
+                  (['admin', 'client', 'staff'] as const).map((k) => (
+                    <Button key={k} size="sm" variant="outline" onClick={() => applyTemplate(k)}>
+                      {KIND_LABELS[k]} template
+                    </Button>
+                  ))
+                ))}
+                <Button
+                  size="sm"
+                  variant={builderForms.length > 0 ? 'ghost' : 'primary'}
+                  onClick={() => setAddOpen(true)}
+                  leftIcon={builderForms.length > 0 ? undefined : <Plus className="h-4 w-4" />}
+                >
+                  Build from blank
+                </Button>
+              </div>
             </div>
           )}
         </div>

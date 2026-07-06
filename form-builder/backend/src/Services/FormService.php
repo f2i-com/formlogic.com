@@ -204,6 +204,48 @@ class FormService
     }
 
     /**
+     * Batch getForm(): ONE MySQL IN-clause query for all the form rows (instead of one query per
+     * form), then the usual per-form field load (fields live in each form's own SQLite database, so
+     * they cannot be batched further). Each entry is built through the exact same
+     * Form::fromArray → getFormFields → toArray path as getForm(), so per-form output is identical.
+     *
+     * @param string[] $formIds
+     * @return array<string, array<string,mixed>> map of formId => form (missing ids are absent),
+     *         ordered to match the (de-duplicated) input order.
+     */
+    public function getFormsByIds(array $formIds): array
+    {
+        $formIds = array_values(array_unique(array_filter($formIds, static fn ($id) => is_string($id) && $id !== '')));
+        if (empty($formIds)) {
+            return [];
+        }
+
+        $rowsById = [];
+        foreach (array_chunk($formIds, 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $stmt = $this->mysql->prepare("SELECT * FROM forms WHERE id IN ($placeholders)");
+            $stmt->execute($chunk);
+            while ($row = $stmt->fetch()) {
+                $rowsById[$row['id']] = $row;
+            }
+        }
+
+        // Emit in input order (SQL IN gives no order guarantee) so callers that iterate the
+        // map — e.g. field-map builders — behave exactly like the per-form getForm loop did.
+        $map = [];
+        foreach ($formIds as $fid) {
+            if (!isset($rowsById[$fid])) {
+                continue;
+            }
+            $form = Form::fromArray($rowsById[$fid]);
+            $form->fields = $this->getFormFields($fid);
+            $form->fieldCount = count($form->fields);
+            $map[$fid] = $form->toArray();
+        }
+        return $map;
+    }
+
+    /**
      * Create a new form (or update if it already exists - for sync support)
      */
     public function createForm(array $data): array

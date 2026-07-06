@@ -1403,6 +1403,11 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->get('/{id}/forms', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->listForms($request, $response, $getArgs($request));
     });
+    // linked_record relationship map (outgoing/incoming per form) — owner-scoped. Static
+    // segment, so it can never collide with the /{id}/forms/{formId} routes.
+    $group->get('/{id}/forms/relations', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppController::class)->formRelations($request, $response, $getArgs($request));
+    });
     $group->post('/{id}/forms', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->addForm($request, $response, $getArgs($request));
     });
@@ -1512,6 +1517,11 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // User permissions
     $group->get('/my-permissions', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->getMyPermissions($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // Recent submissions across every form the member can VIEW (app-wide activity feed).
+    $group->get('/activity', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(AppPublicController::class)->activity($request, $response, $getArgs($request));
     })->add($authRequired);
 
     // Membership status + self-registration (does NOT require membership)
