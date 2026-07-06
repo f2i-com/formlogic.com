@@ -22,5 +22,13 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: canonical-JSON signature verification (#12) must keep manifest key order
+# byte-for-byte with PHP SigningService::canonical (json_encode preserves array order).
+serde_json = { version = "1", features = ["preserve_order"] }
+# Signed client-manifest verification (#12): detached Ed25519 over canonical JSON + base64.
+ed25519-dalek = { version = "2", features = ["signature"] }
+base64 = "0.22"
+# Blocking HTTP to fetch the app's signed manifest + the server's public key. native-tls uses
+# Windows SChannel on the desktop target (no aws-lc-rs/nasm build step that rustls-tls needs).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
 

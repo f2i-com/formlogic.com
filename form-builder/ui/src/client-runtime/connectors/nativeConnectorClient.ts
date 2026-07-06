@@ -14,6 +14,7 @@ import type {
   ConnectorStatusInfo,
   ConnectorSummary,
 } from './connectorTypes';
+import { FALLBACKABLE_CODES, parseConnectorError } from './connectorTypes';
 import { mockVehicleConnector } from './vehicleConnector';
 import { createLocalHttpConnector } from './localHttpConnector';
 import { deviceConnector } from './deviceConnector';
@@ -93,8 +94,12 @@ class DefaultConnectorClient implements ConnectorClient {
       // unavailable (non-approved origin), so fall back to a browser connector.
       try {
         return await bridge.connectors.status(connectorId);
-      } catch {
-        /* fall through to the browser connector */
+      } catch (e) {
+        // Same policy as request(): only mask an absent/unreachable native side. A capability denial
+        // or a real failure must surface, not be papered over with a browser connector's status.
+        const parsed = parseConnectorError(e);
+        if (parsed !== null && !FALLBACKABLE_CODES.has(parsed.code)) throw e;
+        /* else fall through to the browser connector */
       }
     }
     const connector = BROWSER_CONNECTORS[connectorId];
@@ -118,15 +123,15 @@ class DefaultConnectorClient implements ConnectorClient {
       try {
         return await bridge.connectors.request(connectorId, command, payload);
       } catch (e) {
-        // The native bridge is present but the call failed (e.g. denied on a non-approved
-        // origin, or no such native connector). Fall back to a browser connector if we have
-        // one. NOTE: today the only bridge connector is a mock, so this fallback is
-        // demo-safe. When a REAL device connector lands, this should distinguish
-        // "IPC/origin unavailable" from a genuine per-request failure so it doesn't mask
-        // real errors with mock data.
+        // The native bridge is present but the call failed. Fall back to a browser connector ONLY when
+        // the native side is absent/unreachable (IPC dead, or the connector isn't provided natively —
+        // FALLBACKABLE_CODES), or for a legacy runtime that sends no error code. NEVER mask a capability
+        // denial or a genuine per-request failure from a REAL connector with mock data (spec §41).
         const fallback = BROWSER_CONNECTORS[connectorId];
-        if (!fallback) throw e;
-        return fallback.request(command, payload);
+        const parsed = parseConnectorError(e);
+        const mayFallback = parsed === null || FALLBACKABLE_CODES.has(parsed.code);
+        if (fallback && mayFallback) return fallback.request(command, payload);
+        throw e;
       }
     }
     const connector = BROWSER_CONNECTORS[connectorId];

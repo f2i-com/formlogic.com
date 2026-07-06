@@ -22,6 +22,14 @@ export {
   useAppNavigation,
   useRuntimeEnvironment,
   useOfflineQueue,
+  useSettings,
+  useAppSettings,
+  useAppTheme,
+  useResponse,
+  useConnectorStatus,
+  useConnectorPermission,
+  useNativeRuntime,
+  useAppManifest,
 } from './hooks';
 export type {
   SdkUser,
@@ -32,9 +40,26 @@ export type {
   SdkResponseRow,
   SdkOfflineQueue,
   UseResponsesResult,
+  SdkConnectorPermission,
+  SdkNativeRuntime,
+  SdkManifest,
+  UseAppManifestResult,
 } from './hooks';
 
-export { ConnectorStatus, SyncStatus, PermissionGate, EmptyState, ResponseList } from './components';
+export {
+  ConnectorStatus,
+  SyncStatus,
+  PermissionGate,
+  EmptyState,
+  ResponseList,
+  AppButton,
+  SubmitButton,
+  ResponseDetail,
+  FormView,
+  ConnectorPermissionGate,
+  NativeRequiredNotice,
+  OfflineQueuePanel,
+} from './components';
 
 export type { RuntimeEnvironment } from '../client-runtime/detectEnvironment';
 export type {

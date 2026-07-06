@@ -4,7 +4,7 @@
 // add, verify it, and open/remove it. Verification is server-side (real DNS in
 // production; a dev shortcut on non-production hosts so the flow is testable locally).
 import { useEffect, useState } from 'react';
-import { Globe2, Plus, Trash2, RefreshCw, ExternalLink, Copy, Check } from 'lucide-react';
+import { Globe2, Plus, Trash2, RefreshCw, ExternalLink, Copy, Check, ChevronDown, ChevronRight, Sliders } from 'lucide-react';
 import { api, type AppDomain } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -26,6 +26,115 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${map[status] ?? map.pending}`}>
       {label}
     </span>
+  );
+}
+
+// The owner-authored launch-page fields (mirror AppDomainService::resolveLaunchConfig defaults).
+type LandingConfig = {
+  headline?: string;
+  subheadline?: string;
+  description?: string;
+  logoUrl?: string;
+  showOpenWebApp?: boolean;
+  showInstallPwa?: boolean;
+  showInstallNative?: boolean;
+  showPoweredBy?: boolean;
+  supportEmail?: string;
+  privacyUrl?: string;
+  termsUrl?: string;
+};
+
+const LANDING_TEXT_FIELDS: { key: keyof LandingConfig; label: string; placeholder: string }[] = [
+  { key: 'headline', label: 'Headline', placeholder: 'Shown big on the launch page' },
+  { key: 'subheadline', label: 'Subheadline', placeholder: 'One line under the headline' },
+  { key: 'logoUrl', label: 'Logo URL', placeholder: 'https://…/logo.png' },
+  { key: 'supportEmail', label: 'Support email', placeholder: 'help@yourcompany.com' },
+  { key: 'privacyUrl', label: 'Privacy URL', placeholder: 'https://…/privacy' },
+  { key: 'termsUrl', label: 'Terms URL', placeholder: 'https://…/terms' },
+];
+
+const LANDING_TOGGLES: { key: keyof LandingConfig; label: string; fallback: boolean }[] = [
+  { key: 'showOpenWebApp', label: 'Show “Open web app”', fallback: true },
+  { key: 'showInstallPwa', label: 'Show “Install app” (PWA)', fallback: true },
+  { key: 'showInstallNative', label: 'Show “Get the native app”', fallback: false },
+  { key: 'showPoweredBy', label: 'Show “Powered by FormLogic”', fallback: true },
+];
+
+/** Per-domain launch-page editor — persists into app_domains.landing_config (backend already round-trips it). */
+function LaunchPageEditor({ appId, domain, onSaved }: { appId: string; domain: AppDomain; onSaved: (d: AppDomain) => void }) {
+  const [open, setOpen] = useState(false);
+  const [cfg, setCfg] = useState<LandingConfig>(() => (domain.landingConfig ?? {}) as LandingConfig);
+  const [saving, setSaving] = useState(false);
+  const set = (patch: Partial<LandingConfig>) => setCfg((c) => ({ ...c, ...patch }));
+
+  const save = async () => {
+    setSaving(true);
+    const res = await api.updateAppDomain(appId, domain.id, { landingConfig: cfg });
+    setSaving(false);
+    if (res.error) {
+      toast.error('Could not save launch page', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
+    if (res.data?.domain) {
+      onSaved(res.data.domain);
+      toast.success('Launch page saved');
+    }
+  };
+
+  return (
+    <div className="mt-3 border-t border-gray-100 dark:border-slate-700/60 pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        <Sliders className="h-3.5 w-3.5" /> Customize launch page
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {LANDING_TEXT_FIELDS.map((f) => (
+              <label key={f.key} className="block min-w-0">
+                <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">{f.label}</span>
+                <input
+                  value={(cfg[f.key] as string) ?? ''}
+                  onChange={(e) => set({ [f.key]: e.target.value } as Partial<LandingConfig>)}
+                  placeholder={f.placeholder}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500"
+                />
+              </label>
+            ))}
+          </div>
+          <label className="block">
+            <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Description</span>
+            <textarea
+              value={cfg.description ?? ''}
+              onChange={(e) => set({ description: e.target.value })}
+              rows={2}
+              placeholder="A sentence shown on the launch page."
+              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500 resize-y"
+            />
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {LANDING_TOGGLES.map((t) => (
+              <label key={t.key} className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={(cfg[t.key] as boolean) ?? t.fallback}
+                  onChange={(e) => set({ [t.key]: e.target.checked } as Partial<LandingConfig>)}
+                  className="rounded"
+                />
+                {t.label}
+              </label>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>Save launch page</Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -144,6 +253,14 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-mono text-sm font-medium text-gray-900 dark:text-white truncate">{d.domain}</span>
                   <StatusBadge status={d.status} />
+                  {d.status === 'active' && d.tlsStatus && (
+                    <span
+                      className={`text-[11px] font-medium ${d.tlsStatus === 'active' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+                      title="HTTPS/TLS status measured at verification"
+                    >
+                      HTTPS {d.tlsStatus === 'active' ? '✓' : d.tlsStatus}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5">
                   {d.status !== 'active' && (
@@ -182,6 +299,12 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
                   )}
                 </div>
               )}
+
+              <LaunchPageEditor
+                appId={appId}
+                domain={d}
+                onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
+              />
             </li>
           ))}
         </ul>

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\IpSafety;
 use PDO;
 
 /**
@@ -179,6 +180,14 @@ class AppDomainService
             $updates[] = 'landing_config = :landing';
             $params['landing'] = !empty($data['landingConfig']) ? json_encode($data['landingConfig']) : null;
         }
+        // Additional per-domain config (native app / PWA / security). security_config is stored + returned
+        // ONLY through this owner-scoped admin path — resolveLaunchConfig (public) never surfaces it.
+        foreach (['nativeConfig' => 'native_config', 'pwaConfig' => 'pwa_config', 'securityConfig' => 'security_config'] as $key => $col) {
+            if (array_key_exists($key, $data)) {
+                $updates[] = "$col = :$col";
+                $params[$col] = !empty($data[$key]) ? json_encode($data[$key]) : null;
+            }
+        }
         if (!empty($updates)) {
             $sql = 'UPDATE app_domains SET ' . implode(', ', $updates) . ' WHERE id = :id';
             $this->mysql->prepare($sql)->execute($params);
@@ -219,10 +228,18 @@ class AppDomainService
         }
 
         if ($verified) {
+            // Ownership is proven (DNS TXT). Separately MEASURE TLS instead of assuming it — the old
+            // code hard-coded tls_status='active'. Dev-override (local, no real DNS/routing) is marked
+            // 'external' since there is nothing real to probe. The probe is SSRF-guarded: it will not
+            // connect to a host that resolves to a private/reserved IP.
+            $tls = $allowDevOverride ? 'external' : $this->probeTls($domain);
             $this->mysql->prepare(
-                "UPDATE app_domains SET status = 'active', verified_at = NOW(), tls_status = 'active', last_checked_at = NOW(), last_error = NULL WHERE id = :id"
-            )->execute(['id' => $domainId]);
-            return ['ok' => true, 'status' => 'active', 'message' => 'Domain verified.', 'domain' => $this->getDomain($domainId, $ownerId)];
+                "UPDATE app_domains SET status = 'active', verified_at = NOW(), tls_status = :tls, last_checked_at = NOW(), last_error = NULL WHERE id = :id"
+            )->execute(['id' => $domainId, 'tls' => $tls]);
+            $message = $tls === 'active'
+                ? 'Domain verified — HTTPS is live.'
+                : 'Ownership verified. HTTPS not confirmed yet (DNS routing / certificate may still be provisioning).';
+            return ['ok' => true, 'status' => 'active', 'message' => $message, 'domain' => $this->getDomain($domainId, $ownerId)];
         }
 
         $this->mysql->prepare(
@@ -297,6 +314,41 @@ class AppDomainService
         ];
     }
 
+    /**
+     * Lean host→app gate for the domain-root manifest / asset-link routes. Applies the SAME gate as
+     * resolveLaunchConfig (domain status='active' AND app status='published') but returns only the
+     * app's identity plus the MATCHED domain's decoded native_config (a white-label Android build's
+     * packageName + fingerprints). Public-safe — never form schemas, fields, reports, or scripts.
+     * Returns null when the host isn't a connected+active domain of a published app.
+     *
+     * @return array{id:string, slug:string, name:string, status:string, nativeConfig:array<string,mixed>}|null
+     */
+    public function resolveAppSlugByHost(string $host): ?array
+    {
+        $domain = $this->normalizeDomain($host);
+        if ($domain === '') {
+            return null;
+        }
+        $stmt = $this->mysql->prepare(
+            "SELECT a.id AS app_id, a.slug AS app_slug, a.name AS app_name, a.status AS app_status,
+                    d.native_config AS native_config
+             FROM app_domains d JOIN apps a ON a.id = d.app_id
+             WHERE d.normalized_domain = :d AND d.status = 'active' LIMIT 1"
+        );
+        $stmt->execute(['d' => $domain]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row || ($row['app_status'] ?? '') !== 'published') {
+            return null;
+        }
+        return [
+            'id' => (string) $row['app_id'],
+            'slug' => (string) $row['app_slug'],
+            'name' => (string) $row['app_name'],
+            'status' => (string) $row['app_status'],
+            'nativeConfig' => $this->decodeJson($row['native_config'] ?? null),
+        ];
+    }
+
     // ---- helpers --------------------------------------------------------------------
 
     /** @return array<string,mixed>|false */
@@ -328,6 +380,40 @@ class AppDomainService
         return false;
     }
 
+    /**
+     * Measure the domain's live TLS status: 'active' when a valid HTTPS handshake succeeds for this
+     * host, 'pending' when :443 isn't reachable / the certificate isn't valid yet, 'external' when the
+     * host can't be safely probed. SSRF-guarded — never connects to a host resolving to a private IP.
+     */
+    private function probeTls(string $domain): string
+    {
+        $err = null;
+        if (!IpSafety::resolvesToPublicHost($domain, $err)) {
+            return 'external';
+        }
+        $ctx = stream_context_create(['ssl' => [
+            'verify_peer' => true,
+            'verify_peer_name' => true,
+            'SNI_enabled' => true,
+            'peer_name' => $domain,
+        ]]);
+        $errno = 0;
+        $errstr = '';
+        $client = @stream_socket_client(
+            'ssl://' . $domain . ':443',
+            $errno,
+            $errstr,
+            5,
+            STREAM_CLIENT_CONNECT,
+            $ctx
+        );
+        if ($client === false) {
+            return 'pending';
+        }
+        fclose($client);
+        return 'active';
+    }
+
     /** Admin-facing shape (includes the verification token + DNS instructions). */
     private function toAdminArray(array $row): array
     {
@@ -348,6 +434,9 @@ class AppDomainService
             'verifiedAt' => $row['verified_at'],
             'tlsStatus' => $row['tls_status'],
             'landingConfig' => $this->decodeJson($row['landing_config']),
+            'nativeConfig' => $this->decodeJson($row['native_config'] ?? null),
+            'pwaConfig' => $this->decodeJson($row['pwa_config'] ?? null),
+            'securityConfig' => $this->decodeJson($row['security_config'] ?? null),
             'lastError' => $row['last_error'],
             'createdAt' => $row['created_at'],
             'updatedAt' => $row['updated_at'],

@@ -93,6 +93,25 @@ Wiring:
 Test on the emulator: `adb shell am start -a android.intent.action.VIEW -d "formlogic://open?url=http%3A%2F%2Flocalhost%3A8090%2Fapp%2F<slug>"`
 opens the runtime straight into that app (verified cold **and** warm on the x86_64 emulator).
 
+### App-Links hosts are compile-time (per-tenant / custom-domain limit)
+
+Tauri v2's deep-link plugin bakes the verified **https App-Links hosts into the binary at build
+time** (`tauri.conf.json > plugins.deep-link.mobile[].host` → the generated Android intent filters +
+`assetStatements`). The generic FormLogic Native Runtime therefore App-Link-verifies **only** the
+hosts compiled into it (`formlogic.com` and whatever else is listed there) — it **cannot** verify an
+arbitrary customer domain at runtime. So a **verified** per-tenant Android App Link (a normal
+`https://mine.management/…` link the OS opens straight into the app) requires a **per-white-label
+build** of the runtime with that host baked into `tauri.conf.json`. Custom domains that aren't
+compiled in still open the app via the **`formlogic://open?url=…` custom scheme** — no host
+verification needed. That's what the launch page's *Open in native runtime* button fires, and it's
+the guaranteed fallback (if nothing claims the scheme the page shows a "Get the app" prompt rather
+than silently staying on web). The **dynamic** `/.well-known/assetlinks.json` (served by the backend
+at the domain root; see [[CUSTOM_APP_PLATFORM#custom-domains--app-launch]]) can advertise a
+white-label build's `packageName` + fingerprints per custom domain via `app_domains.native_config`,
+which is what supports those per-tenant builds when they exist — it does **not** make the generic
+runtime verify uncompiled hosts. Runtime-configurable App-Links host verification is not something
+Tauri v2 exposes; we deliberately do not attempt it.
+
 ## Loading experience (no white flash, no console flash)
 
 Opening an app shows a branded FL spinner and nothing else — never the console UI, never a
@@ -145,9 +164,17 @@ from ~120 MB → ~19 MB so it fits the emulator.
 Matches the TS `FormLogicNativeBridge` type consumed by `nativeConnectorClient.ts`.
 
 ## Security
-Only signed FormLogic apps on approved origins get bridge access (remote IPC allowlist +, later,
-signed [[CUSTOM_APP_PLATFORM#client-manifest]] verification). Arbitrary PWAs can render but not touch connectors.
+Only signed FormLogic apps on approved origins get bridge access: a remote-IPC origin allowlist PLUS
+per-app **signed client-manifest verification**. On each page load the runtime fetches
+`/api/app/{slug}/client-manifest` + `/api/public/signing-key`, verifies the detached Ed25519 signature
+over the PHP-canonical payload, and only then exposes `connectors`/`sync` for the connector commands the
+manifest grants — unverified origin → `origin_denied`, ungranted command → `capability_denied`, and the
+webview otherwise stays display-only. Arbitrary PWAs can render but not touch connectors. Connector
+errors are typed (`{code,message}`) so the web client never masks a capability denial with mock data.
 
 ## Deferred
-Signed-manifest verification before enabling the bridge, real device connectors, packaged offline
-app bundles, iOS build + Universal Links (the assetlinks/App-Links pattern ports directly).
+Real device connectors (beyond the mock vehicle); iOS build + Universal Links (the assetlinks/App-Links
+pattern ports directly); and — per §25 — verified per-tenant Android App Links (Tauri bakes deep-link
+hosts at compile time, so custom domains fall back to the `formlogic://` scheme). The offline sync queue
+is now **persistent** (survives restart) and flushes via the WebView (design (a), so the queued POST
+carries the session cookie); native attachment upload inside a batch is still deferred.

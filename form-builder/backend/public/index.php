@@ -461,7 +461,8 @@ $container->set(\FormLogic\Services\SigningService::class, function (Container $
 $container->set(\FormLogic\Controllers\AppManifestController::class, function (Container $c) {
     return new \FormLogic\Controllers\AppManifestController(
         $c->get(AppService::class),
-        $c->get(\FormLogic\Services\SigningService::class)
+        $c->get(\FormLogic\Services\SigningService::class),
+        $c->get(\FormLogic\Services\AppDomainService::class)
     );
 });
 
@@ -473,7 +474,8 @@ $container->set(AppPublicController::class, function (Container $c) {
         $c->get(FormService::class),
         $c->get(ResponseService::class),
         $c->get(MySQLConnection::class),
-        $c->get(SQLiteConnection::class)
+        $c->get(SQLiteConnection::class),
+        $c->get(\FormLogic\Services\AppDomainService::class)
     );
 });
 
@@ -1001,6 +1003,25 @@ $app->get('/api/public/signing-key', function ($request, $response) use ($contai
     return $container->get(\FormLogic\Controllers\AppManifestController::class)->signingKey($request, $response);
 });
 
+// ---- Custom-domain launch endpoints served at the domain ROOT (not under /api) ----------------
+// These are UNREACHABLE at the root unless the deploy's .htaccess funnels the three paths to this
+// front controller (rules added to ui/public/.htaccess + ui/dist/.htaccess). Each resolves the
+// request Host (only trusted because it's gated to an ACTIVE app_domains row of a PUBLISHED app):
+//   /.well-known/formlogic-app.json — signed client manifest (native runtime discovery); 404 off-domain
+//   /manifest.json                  — same-origin PWA manifest for the custom domain;    404 off-domain
+//   /.well-known/assetlinks.json    — Android App Links statements (defaults to the platform runtime)
+$app->get('/.well-known/formlogic-app.json', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppManifestController::class)->clientManifestByHost($request, $response);
+})->add($publicFormRateLimiter);
+
+$app->get('/manifest.json', function ($request, $response) use ($container) {
+    return $container->get(AppPublicController::class)->manifestByHost($request, $response);
+})->add($publicFormRateLimiter);
+
+$app->get('/.well-known/assetlinks.json', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppDomainController::class)->assetLinks($request, $response);
+})->add($publicFormRateLimiter);
+
 // Pack management routes (protected)
 $app->post('/api/packs/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->import($request, $response);
@@ -1009,6 +1030,12 @@ $app->post('/api/packs/import', function ($request, $response) use ($container) 
 // Capability review: preview what a pack can do + its trust level before installing.
 $app->post('/api/packs/describe', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->describe($request, $response);
+})->add($authRequired);
+
+// Application Package import: multipart .formlogic-app ZIP archive OR a signed JSON envelope.
+// The server verifies the signature and stamps trust (client-supplied trust is never used).
+$app->post('/api/application-packages/import', function ($request, $response) use ($container) {
+    return $container->get(PackController::class)->importSigned($request, $response);
 })->add($authRequired);
 
 // Bundled sample apps ("Try a sample app")
@@ -1332,6 +1359,10 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     // Signed application package (payload + detached signature + capability review).
     $group->get('/{id}/export/signed', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppSigned($request, $response, $getArgs($request));
+    });
+    // Full .formlogic-app ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
+    $group->get('/{id}/export/package', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(PackController::class)->exportAppArchive($request, $response, $getArgs($request));
     });
 
     // Custom domains (owner-gated). One app → many domains; each verified via DNS TXT.

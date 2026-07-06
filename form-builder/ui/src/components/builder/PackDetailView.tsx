@@ -13,13 +13,15 @@ import {
   ChevronRight,
   Loader2,
   CheckCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
-import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../../lib/api';
+import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../../lib/api';
 import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
 import { PackScreenshots } from './PackScreenshots';
+import { TrustBadge, CapabilityReview } from './TrustBadge';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -37,6 +39,9 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
+  // Pre-install capability review: the downloaded pack + its server-computed trust/capabilities,
+  // held so the user can review what will be installed BEFORE committing.
+  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
 
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
@@ -120,40 +125,14 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     }
   }, [slug]);
 
-  const handleInstall = useCallback(async () => {
-    if (!pack || installing) return;
+  // Import the already-downloaded pack (shared by the direct + consent-confirmed paths).
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string) => {
     setInstalling(true);
     try {
-      const dlResult = await api.downloadPack(slug);
-      if (!dlResult.data?.pack) {
-        toast.error('Failed to download pack data');
-        return;
-      }
-      // Same trust gate as the upload/import flow: consent before installing a pack that carries code
-      // (custom code screens and/or server-side onSubmit scripts). Official packs (published under the
-      // FormLogic account) get a lighter notice; community packs get a stronger confirmation.
-      const dl = dlResult.data.pack;
-      const hasScreen = packHasCodeScreen(dl);
-      const hasScript = packHasLogicScript(dl);
-      if (hasScreen || hasScript) {
-        const bits: string[] = [];
-        if (hasScreen) bits.push('custom code screens (sandboxed HTML/CSS/JS)');
-        if (hasScript) bits.push('backend logic scripts that run on your server when a form is submitted');
-        const what = bits.join(' and ');
-        const official = pack.official === true; // server-computed; the display name is spoofable
-        const msg = official
-          ? `This pack includes ${what}. They run sandboxed with access only to data you're permitted to see. Install it?`
-          : `⚠ This community pack includes ${what}. Sandboxed code can still read data you're allowed to see, and backend scripts run on your server. Only install packs from sources you trust.\n\nInstall anyway?`;
-        if (!window.confirm(msg)) {
-          return; // finally{} clears the installing flag
-        }
-      }
-      const importResult = await api.importPack(dl, {
-        catalogId: dlResult.data.catalogId,
-        versionId: dlResult.data.versionId,
-      });
+      const importResult = await api.importPack(dl, { catalogId, versionId });
       if (importResult.data) {
         setInstalled(true);
+        setConsent(null);
         toast.success(
           'Pack installed',
           `Imported ${importResult.data.forms.length} form(s) and ${importResult.data.apps.length} app(s).`
@@ -168,7 +147,37 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
     } finally {
       setInstalling(false);
     }
-  }, [pack, slug, installing, refreshForms, fetchApps, onInstalled]);
+  }, [refreshForms, fetchApps, onInstalled]);
+
+  const handleInstall = useCallback(async () => {
+    if (!pack || installing) return;
+    setInstalling(true);
+    try {
+      const dlResult = await api.downloadPack(slug);
+      if (!dlResult.data?.pack) {
+        toast.error('Failed to download pack data');
+        setInstalling(false);
+        return;
+      }
+      const dl = dlResult.data.pack;
+      // Capability review: ask the server what this pack can do + its trust level (spec §30.1).
+      const review = (await api.describePack({ pack: dl })).data ?? null;
+      const caps = review?.capabilities;
+      // Show the consent panel when the pack carries code OR declares connectors/permissions —
+      // so the reviewer sees the full capability surface BEFORE committing. Plain no-code packs install directly.
+      const needsReview = packHasCodeScreen(dl) || packHasLogicScript(dl)
+        || (!!caps && (caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic));
+      if (needsReview) {
+        setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
+        setInstalling(false); // wait for the user to confirm from the panel
+        return;
+      }
+      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId);
+    } catch (err) {
+      toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+      setInstalling(false);
+    }
+  }, [pack, slug, installing, doImport]);
 
   const handleSubmitRating = useCallback(async () => {
     if (!ratingInput || submittingRating) return;
@@ -252,6 +261,8 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
             {pack.latestVersion && (
               <Badge variant="default" size="sm">v{pack.latestVersion}</Badge>
             )}
+            {/* Server-computed trust level (spec §30.1) — never derived on the client. */}
+            <TrustBadge trust={pack.trustLevel || (pack.official ? 'official' : 'community')} />
           </div>
         </div>
       </div>
@@ -284,20 +295,39 @@ export function PackDetailView({ slug, onBack, onInstalled, installedCatalogIds 
         </div>
       </div>
 
-      {/* Install button */}
-      <div>
-        {installed ? (
-          <Button variant="outline" disabled>
-            <CheckCircle className="h-4 w-4 mr-1.5 text-green-500" />
-            Installed
-          </Button>
-        ) : (
-          <Button variant="primary" onClick={handleInstall} isLoading={installing}>
-            {!installing && <Package className="h-4 w-4 mr-1.5" />}
-            {installing ? 'Installing...' : 'Install Pack'}
-          </Button>
-        )}
-      </div>
+      {/* Install button + pre-install capability review */}
+      {consent ? (
+        <div className="space-y-3 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-3">
+          <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200">
+            <ShieldAlert className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <span>Review what this package can do before installing. {(packHasCodeScreen(consent.dl) || packHasLogicScript(consent.dl)) && 'It includes code (custom screens and/or backend scripts) that runs with access to data you are permitted to see.'}</span>
+          </div>
+          {consent.review && (
+            <CapabilityReview caps={consent.review.capabilities} trust={consent.review.trust} />
+          )}
+          <div className="flex items-center gap-2">
+            <Button variant="primary" size="sm" onClick={() => doImport(consent.dl, consent.catalogId, consent.versionId)} isLoading={installing}>
+              {!installing && <Package className="h-4 w-4 mr-1.5" />}
+              {installing ? 'Installing...' : 'Install anyway'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setConsent(null)} disabled={installing}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {installed ? (
+            <Button variant="outline" disabled>
+              <CheckCircle className="h-4 w-4 mr-1.5 text-green-500" />
+              Installed
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={handleInstall} isLoading={installing}>
+              {!installing && <Package className="h-4 w-4 mr-1.5" />}
+              {installing ? 'Installing...' : 'Install Pack'}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Description */}
       {pack.description && (

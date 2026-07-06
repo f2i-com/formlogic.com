@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
+import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { AppDashboardHome } from './AppDashboardHome';
 import { safeAppNavTarget } from '../../lib/screenNav';
 
@@ -15,6 +16,15 @@ export function AppHomeScreen() {
   const cs = config?.app?.customScreen;
 
   if (!config) return null;
+
+  // A host-rendered SDK (React) screen from the trusted registry takes over the home when configured.
+  if (cs?.enabled && cs.kind === 'sdk' && cs.sdkScreen?.screenId) {
+    return (
+      <div className="h-full min-h-[60vh]">
+        <SdkScreenRuntime screenId={cs.sdkScreen.screenId} params={cs.sdkScreen.params} />
+      </div>
+    );
+  }
 
   // A sandboxed code home screen (edited in the Studio) takes over; everything else is a dashboard.
   const isCodeScreen = cs?.enabled && cs.kind !== 'dashboard' && (cs.html || cs.js || cs.ts || cs.files?.length);

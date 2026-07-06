@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
+import { enqueueSubmission } from '../client-runtime/offlineQueue';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
 import type { AppRuntimeConfig, AppRuntimeForm, AppUserPermissions, AppReportItem, AppReportSpec, AppReportResult, DashboardScreen } from '../types/app';
@@ -188,6 +189,13 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       createResponse: async (formId, answers) => {
         const slug = get().appSlug;
         if (!slug) throw new Error('App not initialized');
+        // Offline: queue the submission instead of losing it. It flushes to the same idempotent create
+        // endpoint on reconnect (the server's payload-hash ledger dedupes the replay), and we return an
+        // optimistic response so the UI can proceed to its thank-you/next state.
+        if (!api.isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine === false) {
+          const q = await enqueueSubmission({ appSlug: slug, formId, answers });
+          return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
+        }
         const result = await api.createAppResponse(slug, formId, { answers });
         if (result.error) throw new Error(result.error);
         if (!result.data?.response) throw new Error('Submission failed: no response was returned.');

@@ -27,6 +27,7 @@ import type {
 import {
   collectGrants,
   effectRequiredPermission,
+  isDefaultSafeEffect,
   isPermissionGranted,
 } from './appLogicPermissions';
 import {
@@ -105,6 +106,12 @@ async function runHookInternal(
   const scripts = enabledScriptsForHook(bundle, hook);
   if (scripts.length === 0) return outcome;
 
+  // Permission mode (spec §33). Strict (the default — absent or true) requires an explicit grant for
+  // EVERY effect. Non-strict (strictPermissions === false) lets a documented default-safe set
+  // (ui.setValues / ui.toast) through without a grant; connector.*, storage, response writes and
+  // navigation still require one. This is the one place bundle.strictPermissions is consulted.
+  const strict = bundle.strictPermissions !== false;
+
   for (const script of scripts) {
     // Build a fresh JSON ctx per script. `values` carries forward what earlier
     // scripts set, so a chain sees a consistent view.
@@ -149,7 +156,8 @@ async function runHookInternal(
 
     for (const effect of resultEffects(result)) {
       const required = effectRequiredPermission(effect);
-      if (required && !isPermissionGranted(required, grants)) {
+      const relaxed = !strict && isDefaultSafeEffect(effect);
+      if (required && !relaxed && !isPermissionGranted(required, grants)) {
         outcome.deniedPermissions.push(required);
         logger.warn(`[app-logic] ${script.id}: effect '${effect.type}' denied (needs ${required})`);
         continue;

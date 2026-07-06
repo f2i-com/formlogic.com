@@ -719,6 +719,10 @@ class ApiClient {
   async updateAppDomain(appId: string, domainId: string, data: Record<string, unknown>): Promise<ApiResponse<{ domain: AppDomain }>> {
     return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'PUT', body: JSON.stringify(data) });
   }
+  /** The app's signed client manifest ({payload, signature, alg, keyId}). Public for a published app. */
+  async getClientManifest(slug: string): Promise<ApiResponse<{ payload: Record<string, unknown>; signature: string; alg: string; keyId: string }>> {
+    return this.request(`/app/${slug}/client-manifest`, { method: 'GET' });
+  }
   async verifyAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ ok: boolean; status: string; message: string; domain: AppDomain | null }>> {
     return this.request(`/apps/${appId}/domains/${domainId}/verify`, { method: 'POST' });
   }
@@ -1179,6 +1183,64 @@ class ApiClient {
     });
   }
 
+  /** Preview a pack's capabilities + server-computed trust BEFORE installing (capability review). */
+  async describePack(body: { pack?: unknown; package?: unknown; signature?: string; alg?: string }): Promise<ApiResponse<PackDescribeResult>> {
+    return this.request('/packs/describe', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  /** Download a whole app as a full .formlogic-app ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
+  async exportAppPackageArchive(appId: string, filename = 'application'): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/apps/${appId}/export/package`, { credentials: 'include' });
+    if (!response.ok) {
+      if (response.status === 401) this.handleUnauthorized();
+      let message = 'Failed to export application package';
+      try { const error = await response.json(); message = error.message || message; } catch { /* non-JSON response */ }
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${filename}.formlogic-app`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  }
+
+  /** Import a .formlogic-app ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust. */
+  async importApplicationPackage(file: File): Promise<ApiResponse<ApplicationPackageImportResult>> {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const fetchHeaders: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) fetchHeaders['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(`${this.baseUrl}/application-packages/import`, {
+        method: 'POST',
+        body: formData,
+        headers: fetchHeaders,
+        credentials: 'include',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized();
+        return { error: data.message || 'Failed to import application package' };
+      }
+      return { data };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /**
+   * Import a signed Application Package ENVELOPE (JSON). The whole envelope is sent so the SERVER verifies
+   * the signature and stamps trust — a client-side trust claim is never trusted.
+   */
+  async importSignedPackage(envelope: Record<string, unknown>): Promise<ApiResponse<ApplicationPackageImportResult>> {
+    return this.request('/application-packages/import', { method: 'POST', body: JSON.stringify(envelope) });
+  }
+
   /** Export a whole app (forms + screens + scripts + roles) as a self-contained pack. */
   async exportApp(appId: string): Promise<ApiResponse<{ pack: PackData }>> {
     return this.request(`/apps/${appId}/export`);
@@ -1617,6 +1679,32 @@ interface PackImportResult {
   apps: Array<{ id: string; name: string }>;
 }
 
+/** Server-derived capability summary for a pack / application package (capability review, spec §30.1). */
+interface PackCapabilitySummary {
+  forms: number;
+  apps: number;
+  hasScreens: boolean;
+  hasCustomLogic: boolean;
+  logicScripts: number;
+  connectors: string[];
+  permissions: string[];
+}
+
+interface PackDescribeResult {
+  /** official | verified | local-only | community | unverified — computed server-side, never trusted from a client. */
+  trust: string;
+  capabilities: PackCapabilitySummary;
+}
+
+/** Result of importing a full Application Package (archive or signed envelope) — importPack + a trust stamp. */
+interface ApplicationPackageImportResult {
+  success: boolean;
+  trust: string;
+  installationId: string;
+  forms: Array<{ id: string; title: string }>;
+  apps: Array<{ id: string; name: string }>;
+}
+
 interface PackInstallation {
   id: string;
   packId: string;
@@ -1645,6 +1733,10 @@ interface CatalogPack {
   screenshots: PackScreenshot[];
   tags: string[];
   category: string | null;
+  /** Marketplace artifact type (spec §30). Only 'application_package' has a runtime install target today. */
+  itemType?: string;
+  /** Server-derived trust level: official | verified | community | private. Never from client input. */
+  trustLevel?: string;
   visibility: string;
   status: string;
   downloadCount: number;
@@ -1780,4 +1872,4 @@ export function resolveFileUrl(url?: string | null): string {
 }
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };

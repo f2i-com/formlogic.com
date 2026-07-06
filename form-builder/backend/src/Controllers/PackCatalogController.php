@@ -50,6 +50,14 @@ class PackCatalogController
         if (!empty($params['tag'])) {
             $filters['tag'] = $params['tag'];
         }
+        // Marketplace facets (spec §30): artifact type + trust level. The service validates the values
+        // against its fixed enums, so an unknown value is simply ignored.
+        if (!empty($params['itemType'])) {
+            $filters['itemType'] = $params['itemType'];
+        }
+        if (!empty($params['trustLevel'])) {
+            $filters['trustLevel'] = $params['trustLevel'];
+        }
 
         $sort = $params['sort'] ?? 'popular';
         $page = max(1, (int)($params['page'] ?? 1));
@@ -143,6 +151,9 @@ class PackCatalogController
             'icon' => $body['icon'] ?? null,
             'tags' => $tags,
             'category' => $body['category'] ?? null,
+            // itemType is validated against the fixed enum in the service; trust_level is NOT accepted
+            // from the client — it is derived server-side at publish time.
+            'itemType' => $body['itemType'] ?? null,
             'visibility' => $visibility,
             'version' => $body['version'] ?? '1.0.0',
             'changelog' => $body['changelog'] ?? 'Initial release',

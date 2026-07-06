@@ -73,6 +73,18 @@ Options -Indexes
   # the Slim router simply 404s anything that isn't a real API route.
   RewriteRule ^api/ api/public/index.php [QSA,L]
 
+  # Custom-domain launch endpoints served by the backend at the domain ROOT. Map three top-level
+  # paths to the API front controller so the backend can answer them per-Host (signed client
+  # manifest, same-origin PWA manifest, dynamic Android App Links). Gated on the bundled backend
+  # existing: in a SPLIT deploy (API on another domain, no ./api here) the condition fails and these
+  # rules are skipped, so the static .well-known/assetlinks.json below still serves as the default.
+  # Placed BEFORE the SPA fallback (and before the !-f rule) so the dynamic assetlinks route wins
+  # over the shipped static file.
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteRule ^\.well-known/(formlogic-app|assetlinks)\.json$ api/public/index.php [QSA,L]
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteRule ^manifest\.json$ api/public/index.php [QSA,L]
+
   # SPA: serve real files (assets, index.html, service worker) as-is...
   RewriteRule ^index\.html$ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f

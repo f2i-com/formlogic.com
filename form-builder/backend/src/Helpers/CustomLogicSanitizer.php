@@ -78,10 +78,11 @@ class CustomLogicSanitizer
         return $result;
     }
 
-    /** True when the JSON-encoded bundle is within the size cap. */
+    /** True when the JSON-encoded bundle is within the size cap. A bundle that cannot be encoded
+     *  (e.g. invalid UTF-8) is treated as over cap — it can never be stored/round-tripped safely. */
     public static function withinSizeCap(array $bundle): bool
     {
         $json = json_encode($bundle);
-        return $json === false || strlen($json) <= self::MAX_BUNDLE_BYTES;
+        return $json !== false && strlen($json) <= self::MAX_BUNDLE_BYTES;
     }
 }

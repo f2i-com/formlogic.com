@@ -38,8 +38,12 @@ app it navigates to — so app-logic / SDK screens call the same API in-browser 
     PWA, and the native runtime. See `docs/CUSTOM_APP_PLATFORM.md#connectors`.
   - **`vehicle`** — a Rust mock returning realistic telemetry (same shape as the browser mock), so
     QuickJS `onConnectorEvent` mapping is identical everywhere.
-- **Offline sync queue** — flushes to the same idempotent `POST /api/app/{slug}/sync/batch` endpoint
-  the browser uses.
+- **Offline sync queue** — **persisted to disk** (`sync-queue.json` in the app data dir) so queued
+  submissions survive a restart. The native side does **not** POST: `sync.flush()` returns the
+  pending items grouped by `appSlug` to the WebView (which holds the session cookie); the WebView
+  POSTs them to the idempotent `POST /api/app/{slug}/sync/batch`, then calls `sync.ack(ids)` for the
+  ones the server accepted (removed) and `sync.fail(ids, error)` for the rest (kept, with
+  incremented `attempts` + `lastError`). Nothing is silently dropped.
 
 ## Deep links — "open in app" without typing a URL
 
@@ -65,8 +69,10 @@ adb shell am start -a android.intent.action.VIEW \
 ```
 src/                     shell frontend: branded loader + "no app loaded" placeholder (main.ts, index.html, styles.css)
 src-tauri/
-  src/lib.rs             Rust commands (runtime_info, connector_*, sync_*, pending_deep_link) + mock vehicle
-                         connector + bridge init-script (window.FormLogicNative + destination loading overlay)
+  src/lib.rs             Rust commands (runtime_info, connector_* [typed errors], sync_* [persisted queue:
+                         enqueue/get_queue/flush/ack/fail], pending_deep_link) + mock vehicle connector +
+                         signed client-manifest Ed25519 verification (canonical-JSON reproduction, per-origin
+                         capability gating) + bridge init-script (window.FormLogicNative + loading overlay)
                          + deep-link handling (open/warm/cold, scheme validation)
   tauri.conf.json        withGlobalTauri; window built in setup() to carry the init script; deep-link plugin config
   capabilities/          IPC grants incl. remote.urls for approved FormLogic origins + deep-link:default
@@ -140,13 +146,30 @@ release `.so` + package `assemble<Abi>Release`, then verify with
 - **Device connector**: returns real phone data in the runtime (device info, network, battery, …)
   via the `/device-check` page.
 - **Loading**: navy FL splash → FL spinner → app, no white flash and no shell flash.
-- `cargo test`: connector telemetry shape + command routing + deep-link target parsing/validation.
+- `cargo test` (12 tests): connector telemetry shape + command routing + **typed connector errors**;
+  **persisted sync queue** (enqueue → persist → reload → flush/ack/fail, restart survival, poison-item
+  cap); **canonical-JSON reproduction** + **Ed25519 verify** — including a cross-language vector using a
+  signature produced by the real PHP libsodium server crypto over `SigningService::canonical`; deep-link
+  target parsing/validation.
+
+> **Not re-verified on-device in this pass:** the full page-load manifest-verification flow (Rust HTTP
+> GET of `/client-manifest` + `/public/signing-key` against a running server, then live connector
+> gating in the WebView) is covered by unit tests for its crypto/canonical/gating pieces but has not
+> been re-run end-to-end in a built desktop app here. The signature/canonical interop is proven against
+> actual PHP 8.4 libsodium output (above), so the remaining on-device check is the HTTP wiring + timing.
 
 ## Security
 
-- Only signed FormLogic apps on approved origins get bridge access (remote-IPC allowlist in
-  `capabilities/`, plus signed [client manifest](../../docs/CUSTOM_APP_PLATFORM.md#client-manifest)
-  verification as a follow-up). Arbitrary PWAs can render but cannot touch connectors.
+- Only signed FormLogic apps on approved origins get bridge access. Two layers: (1) the remote-IPC
+  allowlist in `capabilities/` (coarse origin gate for `window.__TAURI__`); (2) on each top-level
+  navigation the runtime fetches the app's signed
+  [client manifest](../../docs/CUSTOM_APP_PLATFORM.md#client-manifest) + the server's Ed25519 public
+  key and verifies the detached signature over the manifest's canonical JSON (reproduced byte-for-byte
+  from `SigningService::canonical`). Only a **verified** origin is granted the connector commands its
+  manifest declares — `connector_request`/`connector_status`/`sync_*` reject an unverified origin with
+  a typed `origin_denied` error (and an ungranted command with `capability_denied`), and the JS shim
+  flips `window.FormLogicNative.available=false` so a failed page is display-only. Arbitrary PWAs can
+  render but cannot touch connectors.
 - Deep links open **http/https targets only** — `javascript:`/`file:`/`data:` are rejected, so a
   crafted link can't execute in the privileged shell origin. The `device` connector's phone-ability
   access is gated per-command by app-logic permissions (`connector.device.<cmd>`), and device I/O

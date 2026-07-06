@@ -196,6 +196,54 @@ class HealthController
             $checks['ai'] = ['ok' => true, 'critical' => false, 'detail' => $detail];
         }
 
+        // Signing / native-runtime trust — Ed25519 (libsodium) lets the native runtime and package
+        // importers verify signed manifests/packages against the PUBLIC key. HMAC fallback works only
+        // for same-server verification, so native trust is degraded. Non-critical (self-host installs
+        // may not use the native runtime), but warned so an operator knows why native trust is off.
+        try {
+            $signing = new \FormLogic\Services\SigningService($this->db);
+            $ed = $signing->isEd25519();
+            $requireEd = ($_ENV['NATIVE_TRUST_REQUIRES_ED25519'] ?? '1') !== '0';
+            $checks['signing'] = [
+                'ok' => $ed || !$requireEd,
+                'critical' => false,
+                'detail' => $ed
+                    ? ('Ed25519 (' . $signing->keyId() . ($signing->hasStoredKeypair() ? ', keypair present' : ', keypair generated on first use') . ')')
+                    : 'HMAC fallback (HS256) — not publicly/native-verifiable',
+            ];
+            if (!$ed) {
+                $checks['signing']['warning'] = 'libsodium/Ed25519 unavailable: the native runtime and package importers cannot verify signatures. Install ext-sodium for native-runtime trust.';
+            }
+        } catch (\Throwable $e) {
+            $checks['signing'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // Platform tables — custom domains + the offline-sync idempotency ledger. Non-critical:
+        // absence means the schema init hasn't run for these features, not an outage.
+        try {
+            $conn = $this->db->getConnection();
+            foreach (['app_domains' => 'custom domains', 'app_submission_idempotency' => 'offline sync idempotency'] as $table => $label) {
+                $stmt = $conn->query('SHOW TABLES LIKE ' . $conn->quote($table));
+                $present = $stmt && $stmt->fetchColumn() !== false;
+                $checks["table:$table"] = [
+                    'ok' => $present,
+                    'critical' => false,
+                    'detail' => $present ? "present ($label)" : "missing ($label) — run schema init",
+                ];
+            }
+        } catch (\Throwable $e) {
+            $checks['platform_tables'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // Native runtime build config (informational) — the Tauri shell that hosts custom apps.
+        $tauriConf = dirname($base) . '/native-runtime/src-tauri/tauri.conf.json';
+        $hasNative = is_file($tauriConf);
+        $checks['native_runtime'] = [
+            'ok' => true,
+            'critical' => false,
+            'detail' => $hasNative ? 'tauri.conf.json present' : 'native runtime config not found (optional)',
+        ];
+
         $ok = true;
         foreach ($checks as $c) {
             if (($c['critical'] ?? false) && !($c['ok'] ?? false)) {

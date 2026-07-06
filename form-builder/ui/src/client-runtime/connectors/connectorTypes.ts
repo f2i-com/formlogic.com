@@ -46,6 +46,65 @@ export interface BrowserConnector {
 }
 
 // ---------------------------------------------------------------------------
+// Typed connector errors (spec §41 hardening).
+//
+// A real native connector must be able to say WHY a call failed so the client can decide whether a
+// browser/mock fallback is safe. The native bridge rejects with a JSON string `{code, message}` (or a
+// ConnectorError); older runtimes reject with a bare string (no code) — treated as legacy.
+// ---------------------------------------------------------------------------
+export type ConnectorErrorCode =
+  | 'origin_denied'
+  | 'capability_denied'
+  | 'connector_missing'
+  | 'connector_unavailable'
+  | 'command_failed'
+  | 'ipc_unavailable';
+
+export interface ConnectorErrorShape {
+  code: ConnectorErrorCode;
+  message: string;
+}
+
+export class ConnectorError extends Error {
+  code: ConnectorErrorCode;
+  constructor(code: ConnectorErrorCode, message: string) {
+    super(message);
+    this.name = 'ConnectorError';
+    this.code = code;
+  }
+}
+
+/**
+ * Extract the typed error code from a rejected bridge call. Returns null for a bare-string rejection
+ * (a legacy runtime with no code), so the caller can apply rollout-compatible fallback.
+ */
+export function parseConnectorError(e: unknown): ConnectorErrorShape | null {
+  if (e instanceof ConnectorError) return { code: e.code, message: e.message };
+  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : '';
+  if (raw && raw.charAt(0) === '{') {
+    try {
+      const obj = JSON.parse(raw) as { code?: unknown; message?: unknown };
+      if (obj && typeof obj.code === 'string') {
+        return { code: obj.code as ConnectorErrorCode, message: typeof obj.message === 'string' ? obj.message : raw };
+      }
+    } catch {
+      /* not JSON — a legacy bare-string error */
+    }
+  }
+  return null;
+}
+
+/**
+ * Codes for which falling back to a browser/mock connector is safe: the native side is absent or
+ * unreachable. A capability denial or a genuine per-request failure from a REAL connector must NEVER
+ * be masked with mock data, so those codes are deliberately excluded.
+ */
+export const FALLBACKABLE_CODES: ReadonlySet<ConnectorErrorCode> = new Set<ConnectorErrorCode>([
+  'ipc_unavailable',
+  'connector_missing',
+]);
+
+// ---------------------------------------------------------------------------
 // FormLogic Native Runtime bridge (spec §38/§39).
 //
 // Present ONLY inside the signed native runtime; `undefined` in a normal browser.
@@ -55,6 +114,17 @@ export interface BrowserConnector {
 export interface NativeRuntimeInfo {
   version: string;
   platform: string;
+}
+
+/** A queued offline submission as reported by the native runtime's persistent sync queue. */
+export interface NativeSyncQueueItem {
+  id: string;
+  appSlug: string;
+  formId: string;
+  idempotencyKey: string;
+  status: string;
+  attempts: number;
+  lastError: string | null;
 }
 
 export interface FormLogicNativeBridge {
@@ -72,6 +142,17 @@ export interface FormLogicNativeBridge {
       eventName: string,
       callback: (event: unknown) => void
     ): () => void;
+  };
+  /** Persistent offline sync queue (native runtime). Absent on older runtimes / in a browser. */
+  sync?: {
+    enqueueSubmission(item: {
+      appSlug: string;
+      formId: string;
+      idempotencyKey: string;
+      answers: Record<string, unknown>;
+    }): Promise<{ id: string }>;
+    getQueue(): Promise<NativeSyncQueueItem[]>;
+    flush(): Promise<{ flushed: number; failed: number } | { pending: unknown[] }>;
   };
 }
 

@@ -8,6 +8,7 @@ use FormLogic\Constants\AppPermissions;
 use FormLogic\Controllers\AppPublicController;
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
+use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppUserService;
@@ -68,7 +69,8 @@ class AppVisibilityRouteTest extends TestCase
             $formService,
             $responseService,
             $conn,
-            $sqlite
+            $sqlite,
+            new AppDomainService($conn)
         );
     }
 

@@ -30,6 +30,20 @@ class SigningService
         return function_exists('sodium_crypto_sign_detached');
     }
 
+    /** True when Ed25519 (libsodium) is available — required for publicly/native-verifiable signatures. */
+    public function isEd25519(): bool
+    {
+        return $this->ed25519();
+    }
+
+    /** True when a signing keypair has already been generated + persisted (read-only; never generates). */
+    public function hasStoredKeypair(): bool
+    {
+        $stmt = $this->mysql->prepare("SELECT 1 FROM system_meta WHERE meta_key = :k LIMIT 1");
+        $stmt->execute(['k' => self::META_KEY]);
+        return $stmt->fetchColumn() !== false;
+    }
+
     public function keyId(): string
     {
         return 'formlogic-' . ($this->ed25519() ? 'ed25519' : 'hs256') . '-1';

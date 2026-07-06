@@ -15,12 +15,15 @@ import {
   Loader2,
   CheckCircle,
   ExternalLink,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { PackIcon } from '../components/ui/PackIcon';
-import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry } from '../lib/api';
+import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../lib/api';
 import { PackScreenshots } from '../components/builder/PackScreenshots';
+import { TrustBadge, CapabilityReview } from '../components/builder/TrustBadge';
+import { packHasCodeScreen, packHasLogicScript } from '../lib/packTrust';
 import { toast } from '../stores/toastStore';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
@@ -52,6 +55,8 @@ export default function PackDetailPage() {
   const [installing, setInstalling] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [versionsExpanded, setVersionsExpanded] = useState(false);
+  // Pre-install capability review (spec §30.1): the downloaded pack + server-computed trust/capabilities.
+  const [consent, setConsent] = useState<{ dl: PackData; catalogId: string; versionId: string; review: PackDescribeResult | null } | null>(null);
 
   // The shared Demo account has every pack pre-installed — treat it as "view the demo", never
   // "Installed"/"Install" (installs are blocked on the demo anyway).
@@ -159,22 +164,14 @@ export default function PackDetailPage() {
     if (pack) checkInstalled();
   }, [pack, checkInstalled]);
 
-  const handleInstall = useCallback(async (versionId?: string) => {
-    if (!user) { goSignIn(); return; }
-    if (!slug || installing) return;
+  // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).
+  const doImport = useCallback(async (dl: PackData, catalogId: string, versionId: string) => {
     setInstalling(true);
     try {
-      const dlResult = await api.downloadPack(slug, versionId);
-      if (!dlResult.data?.pack) {
-        toast.error('Failed to download pack');
-        return;
-      }
-      const importResult = await api.importPack(dlResult.data.pack, {
-        catalogId: dlResult.data.catalogId,
-        versionId: dlResult.data.versionId,
-      });
+      const importResult = await api.importPack(dl, { catalogId, versionId });
       if (importResult.data) {
         setInstalled(true);
+        setConsent(null);
         toast.success(
           'Pack installed',
           `Imported ${importResult.data.forms.length} form(s) and ${importResult.data.apps.length} app(s).`
@@ -188,7 +185,36 @@ export default function PackDetailPage() {
     } finally {
       setInstalling(false);
     }
-  }, [slug, installing, refreshForms, fetchApps, user, goSignIn]);
+  }, [refreshForms, fetchApps]);
+
+  const handleInstall = useCallback(async (versionId?: string) => {
+    if (!user) { goSignIn(); return; }
+    if (!slug || installing) return;
+    setInstalling(true);
+    try {
+      const dlResult = await api.downloadPack(slug, versionId);
+      if (!dlResult.data?.pack) {
+        toast.error('Failed to download pack');
+        setInstalling(false);
+        return;
+      }
+      const dl = dlResult.data.pack;
+      // Capability review before installing: ask the server what this pack can do + its trust level.
+      const review = (await api.describePack({ pack: dl })).data ?? null;
+      const caps = review?.capabilities;
+      const needsReview = packHasCodeScreen(dl) || packHasLogicScript(dl)
+        || (!!caps && (caps.connectors.length > 0 || caps.permissions.length > 0 || caps.hasCustomLogic));
+      if (needsReview) {
+        setConsent({ dl, catalogId: dlResult.data.catalogId, versionId: dlResult.data.versionId, review });
+        setInstalling(false);
+        return;
+      }
+      await doImport(dl, dlResult.data.catalogId, dlResult.data.versionId);
+    } catch (err) {
+      toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+      setInstalling(false);
+    }
+  }, [slug, installing, user, goSignIn, doImport]);
 
   const handleSubmitRating = useCallback(async () => {
     if (!user) { goSignIn(); return; }
@@ -326,6 +352,8 @@ export default function PackDetailPage() {
                     v{pack.latestVersion}
                   </span>
                 )}
+                {/* Server-computed trust level (spec §30.1) — never derived on the client. */}
+                <TrustBadge trust={pack.trustLevel || (pack.official ? 'official' : 'community')} />
               </div>
             </div>
           </div>
@@ -384,13 +412,33 @@ export default function PackDetailPage() {
                 Installed
               </Button>
             ) : (
-              <Button variant="primary" onClick={() => handleInstall()} isLoading={installing}>
+              <Button variant="primary" onClick={() => handleInstall()} isLoading={installing && !consent}>
                 {!installing && <Package className="mr-1.5 h-4 w-4" />}
-                {installing ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
+                {installing && !consent ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
               </Button>
             ))}
           </div>
         </div>
+
+        {/* Pre-install capability review + server-computed trust (spec §30.1) */}
+        {consent && (
+          <div className="space-y-3 rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5 p-4 sm:p-5">
+            <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200">
+              <ShieldAlert className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+              <span>Review what this package can do before installing.{(packHasCodeScreen(consent.dl) || packHasLogicScript(consent.dl)) && ' It includes code (custom screens and/or backend scripts) that runs with access to data you are permitted to see.'}</span>
+            </div>
+            {consent.review && (
+              <CapabilityReview caps={consent.review.capabilities} trust={consent.review.trust} />
+            )}
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="sm" onClick={() => doImport(consent.dl, consent.catalogId, consent.versionId)} isLoading={installing}>
+                {!installing && <Package className="mr-1.5 h-4 w-4" />}
+                {installing ? 'Installing…' : 'Install anyway'}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setConsent(null)} disabled={installing}>Cancel</Button>
+            </div>
+          </div>
+        )}
 
         {/* Description */}
         {pack.description && (

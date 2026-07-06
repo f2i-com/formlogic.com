@@ -6,6 +6,11 @@ namespace FormLogic\Services;
 
 class PackFileService
 {
+    /** Per-entry uncompressed cap for an extracted archive member (spec §29.6 assets). 5MB. */
+    public const MAX_ASSET_BYTES = 5 * 1024 * 1024;
+    /** Aggregate uncompressed ceiling across ALL entries — the zip-bomb guard for extraction. */
+    public const MAX_TOTAL_UNCOMPRESSED = 64 * 1024 * 1024;
+
     private string $storagePath;
     private int $maxZipSize;
     private array $allowedFileTypes;
@@ -15,6 +20,63 @@ class PackFileService
         $this->storagePath = $config['storagePath'] ?? __DIR__ . '/../../storage/packs';
         $this->maxZipSize = $config['maxZipSize'] ?? 50 * 1024 * 1024;
         $this->allowedFileTypes = $config['allowedFileTypes'] ?? ['application/zip', 'application/x-zip-compressed'];
+    }
+
+    /**
+     * Reject a zip entry name that could escape the extraction root (zip-slip): absolute paths,
+     * Windows drive letters, backslashes, NUL bytes, a leading slash, or any ".." path segment.
+     * The single source of truth for archive-path safety — reused by every zip reader in the app so
+     * a new import path can never ship a weaker check than the marketplace upload.
+     */
+    public static function isSafeZipEntryName(string $name): bool
+    {
+        if ($name === '' || strlen($name) > 255) {
+            return false;
+        }
+        if (str_contains($name, "\0") || str_contains($name, '\\')) {
+            return false;
+        }
+        if (str_starts_with($name, '/') || preg_match('#^[A-Za-z]:#', $name) === 1) {
+            return false;
+        }
+        foreach (explode('/', $name) as $segment) {
+            if ($segment === '..') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Validate EVERY entry in an already-open ZipArchive against zip-slip (path traversal) and
+     * zip-bomb (per-entry + aggregate uncompressed size) before anything is read out of it. Throws
+     * on the first violation. Shared guard for both the marketplace upload and the application-package
+     * import so all zip handling enforces the same limits.
+     */
+    public static function assertSafeArchive(
+        \ZipArchive $zip,
+        int $maxEntryBytes = self::MAX_ASSET_BYTES,
+        int $maxTotalBytes = self::MAX_TOTAL_UNCOMPRESSED
+    ): void {
+        $total = 0;
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $stat = $zip->statIndex($i);
+            if ($stat === false) {
+                throw new \RuntimeException('Corrupt or unreadable archive entry');
+            }
+            $name = (string) ($stat['name'] ?? '');
+            if (!self::isSafeZipEntryName($name)) {
+                throw new \RuntimeException('Unsafe path in archive: ' . $name);
+            }
+            $size = (int) ($stat['size'] ?? 0);
+            if ($size > $maxEntryBytes) {
+                throw new \RuntimeException('Archive entry "' . $name . '" exceeds the ' . round($maxEntryBytes / 1024 / 1024) . 'MB per-file limit');
+            }
+            $total += $size;
+            if ($total > $maxTotalBytes) {
+                throw new \RuntimeException('Archive uncompressed size exceeds the ' . round($maxTotalBytes / 1024 / 1024) . 'MB limit');
+            }
+        }
     }
 
     /**
@@ -50,6 +112,14 @@ class PackFileService
         $result = $zip->open($tmpPath);
         if ($result !== true) {
             throw new \RuntimeException('Failed to open zip file');
+        }
+
+        // Reject zip-slip / zip-bomb across ALL entries up front (shared guard) before reading any.
+        try {
+            self::assertSafeArchive($zip);
+        } catch (\RuntimeException $e) {
+            $zip->close();
+            throw $e;
         }
 
         // Reject zip bombs: check the manifest's UNCOMPRESSED size before reading

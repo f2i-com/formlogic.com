@@ -25,8 +25,10 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Badge } from '../ui/Badge';
 import { PackIcon } from '../ui/PackIcon';
-import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack } from '../../lib/api';
+import { api, type PackData, type PackImportResult, type PackInstallation, type CatalogPack, type PackDescribeResult } from '../../lib/api';
+import { validateApplicationPackage } from '../../application-package/packageValidator';
 import { packHasCodeScreen, packHasLogicScript } from '../../lib/packTrust';
+import { CapabilityReview } from './TrustBadge';
 import { toast } from '../../stores/toastStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAppStore } from '../../stores/appStore';
@@ -54,6 +56,12 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   // Upload state
   const [uploadedPack, setUploadedPack] = useState<PackData | null>(null);
+  // A dropped .formlogic-app ARCHIVE (binary ZIP) can't be parsed client-side — held for direct import.
+  const [pendingArchiveFile, setPendingArchiveFile] = useState<File | null>(null);
+  // A parsed signed/application-package ENVELOPE (JSON) — the whole thing is sent so the server verifies it.
+  const [signedEnvelope, setSignedEnvelope] = useState<Record<string, unknown> | null>(null);
+  // Server-computed capability review + trust for a package (shown before Install).
+  const [packageReview, setPackageReview] = useState<PackDescribeResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadError, setUploadError] = useState('');
@@ -239,6 +247,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   const resetState = useCallback(() => {
     setUploadedPack(null);
+    setPendingArchiveFile(null);
+    setSignedEnvelope(null);
+    setPackageReview(null);
     setUploadFileName('');
     setUploadError('');
     setImporting(false);
@@ -263,12 +274,75 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     if (tab === 'mypacks') loadMyPacks();
   }, [resetState, loadMyPacks]);
 
+  // Pull the inner Pack out of any recognized wrapper: a signed { package } envelope, an
+  // ApplicationPackage { pack }, or a bare/flat pack. Returns null if none is present.
+  const extractPack = useCallback((obj: unknown): PackData | null => {
+    if (!obj || typeof obj !== 'object') return null;
+    const o = obj as Record<string, unknown>;
+    if (o.package && typeof o.package === 'object') return extractPack(o.package);
+    if (o.pack && typeof o.pack === 'object') return o.pack as PackData;
+    if (o.formatVersion && o.packMeta && Array.isArray(o.forms)) return o as unknown as PackData;
+    return null;
+  }, []);
+
+  // Capability review + trust from the server (never trust a client-side claim).
+  const loadPackageReview = useCallback(async (envelope: Record<string, unknown>) => {
+    const body = envelope.signature
+      ? { package: (envelope.package ?? envelope), signature: envelope.signature as string, alg: envelope.alg as string | undefined }
+      : { pack: extractPack(envelope) ?? undefined };
+    try {
+      const res = await api.describePack(body);
+      if (res.data) setPackageReview(res.data);
+    } catch {
+      // review is best-effort; the server still verifies at import time
+    }
+  }, [extractPack]);
+
+  // Route a parsed JSON blob: a signed/application-package envelope, or a flat pack.
+  const routeParsedJson = useCallback((parsed: unknown, fileName: string) => {
+    const o = (parsed && typeof parsed === 'object') ? parsed as Record<string, unknown> : null;
+    const isEnvelope = !!o && (('signature' in o && ('package' in o || 'pack' in o)) || ('manifest' in o && 'pack' in o));
+    if (isEnvelope && o) {
+      // Validate the envelope shape when it carries a manifest (the signed bare-pack shape has none).
+      const inner = (o.package && typeof o.package === 'object') ? o.package as Record<string, unknown> : o;
+      if ('manifest' in inner) {
+        const v = validateApplicationPackage(inner);
+        if (!v.valid) {
+          setUploadError('Invalid application package: ' + (v.errors[0] ?? 'unknown error'));
+          return;
+        }
+      }
+      const pack = extractPack(o);
+      if (!pack) {
+        setUploadError('The application package does not contain a valid pack.');
+        return;
+      }
+      setUploadedPack(pack);
+      setSignedEnvelope(o);
+      setUploadFileName(fileName);
+      void loadPackageReview(o);
+      return;
+    }
+    if (o && o.formatVersion && o.packMeta && Array.isArray(o.forms)) {
+      setUploadedPack(o as unknown as PackData);
+      setUploadFileName(fileName);
+      return;
+    }
+    setUploadError('Invalid pack format. Expected formatVersion, packMeta, and forms fields.');
+  }, [extractPack, loadPackageReview]);
+
   const parseFile = useCallback((file: File) => {
     setUploadError('');
     setUploadedPack(null);
+    setPendingArchiveFile(null);
+    setSignedEnvelope(null);
+    setPackageReview(null);
     setUploadFileName('');
 
-    if (file.name.endsWith('.zip')) {
+    const lower = file.name.toLowerCase();
+
+    // Legacy marketplace .zip (manifest.json only) — parsed server-side for preview.
+    if (lower.endsWith('.zip')) {
       (async () => {
         setUploading(true);
         try {
@@ -288,8 +362,29 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       return;
     }
 
-    if (!file.name.endsWith('.json')) {
-      setUploadError('Only .json and .zip files are accepted.');
+    // A .formlogic-app that is NOT a .json is the new ARCHIVE (binary ZIP) — held for direct import
+    // (the server verifies + extracts it). If it turns out to be JSON text, route it as an envelope.
+    if (lower.endsWith('.formlogic-app')) {
+      (async () => {
+        try {
+          const text = await file.text();
+          if (text.trimStart().startsWith('{')) {
+            routeParsedJson(JSON.parse(text), file.name);
+          } else {
+            setPendingArchiveFile(file);
+            setUploadFileName(file.name);
+          }
+        } catch {
+          // Not JSON text → treat as a binary archive to import directly.
+          setPendingArchiveFile(file);
+          setUploadFileName(file.name);
+        }
+      })();
+      return;
+    }
+
+    if (!lower.endsWith('.json')) {
+      setUploadError('Only .json, .zip and .formlogic-app files are accepted.');
       return;
     }
 
@@ -301,19 +396,13 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = JSON.parse(e.target?.result as string) as PackData;
-        if (!data.formatVersion || !data.packMeta || !Array.isArray(data.forms)) {
-          setUploadError('Invalid pack format. Expected formatVersion, packMeta, and forms fields.');
-          return;
-        }
-        setUploadedPack(data);
-        setUploadFileName(file.name);
+        routeParsedJson(JSON.parse(e.target?.result as string), file.name);
       } catch {
         setUploadError('Failed to parse JSON file.');
       }
     };
     reader.readAsText(file);
-  }, []);
+  }, [routeParsedJson]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -324,12 +413,27 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   }, [parseFile]);
 
   const handleImport = useCallback(async () => {
-    if (!uploadedPack || importing) return;
+    if (importing) return;
+    if (!uploadedPack && !pendingArchiveFile) return;
     setImporting(true);
     try {
-      const response = await api.importPack(uploadedPack);
+      // Three import shapes, all landing at the same result overlay:
+      //  1. a .formlogic-app ARCHIVE → server verifies + extracts the ZIP
+      //  2. a signed/application-package ENVELOPE → server verifies the signature
+      //  3. a flat pack → the classic import path (back-compat)
+      const response = pendingArchiveFile
+        ? await api.importApplicationPackage(pendingArchiveFile)
+        : signedEnvelope
+          ? await api.importSignedPackage(signedEnvelope)
+          : await api.importPack(uploadedPack as PackData);
       if (response.data) {
-        setImportResult(response.data);
+        setImportResult({
+          success: true,
+          message: '',
+          installationId: response.data.installationId,
+          forms: response.data.forms,
+          apps: response.data.apps,
+        });
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
         toast.success(
           'Pack imported successfully',
@@ -344,7 +448,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       toast.error('Import failed', err instanceof Error ? err.message : 'Unknown error');
     }
     setImporting(false);
-  }, [uploadedPack, importing, refreshForms, fetchApps, loadInstallations, handleClose]);
+  }, [uploadedPack, pendingArchiveFile, signedEnvelope, importing, refreshForms, fetchApps, loadInstallations, handleClose]);
 
   const handleUninstall = useCallback(async (installationId: string) => {
     setUninstallingId(installationId);
@@ -783,11 +887,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 onDrop={handleDrop}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(false); }}
-                onClick={() => !uploadedPack && !uploading && fileInputRef.current?.click()}
+                onClick={() => !uploadedPack && !pendingArchiveFile && !uploading && fileInputRef.current?.click()}
                 className={`relative rounded-xl transition-all ${
                   isDragging
                     ? 'border-2 border-dashed border-primary-500 bg-primary-50/60 dark:bg-primary-500/10 dark:border-primary-400 shadow-lg shadow-primary-500/10'
-                    : uploadedPack
+                    : (uploadedPack || pendingArchiveFile)
                       ? 'border border-green-300 bg-green-50/50 dark:bg-green-500/5 dark:border-green-500/40'
                       : 'border-2 border-dashed border-gray-300 dark:border-slate-700 hover:border-primary-400 dark:hover:border-primary-500/50 bg-gray-50/50 dark:bg-slate-800/30 cursor-pointer group'
                 }`}
@@ -795,11 +899,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".json,.zip"
+                  accept=".json,.zip,.formlogic-app"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                   className="hidden"
                 />
-                {uploadedPack ? (
+                {(uploadedPack || pendingArchiveFile) ? (
                   <div className="flex items-center gap-4 p-4">
                     <div className="flex-shrink-0 w-12 h-12 rounded-lg bg-green-100 dark:bg-green-500/20 flex items-center justify-center">
                       <CheckCircle className="h-6 w-6 text-green-600 dark:text-green-400" />
@@ -807,7 +911,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{uploadFileName}</p>
                       <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                        {uploadedPack.packMeta.name} &middot; v{uploadedPack.packMeta.version}
+                        {uploadedPack
+                          ? `${uploadedPack.packMeta.name} · v${uploadedPack.packMeta.version}`
+                          : 'Application package archive · verified on import'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
@@ -820,7 +926,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUploadedPack(null); setUploadFileName(''); setUploadError(''); }}
+                        onClick={(e) => { e.stopPropagation(); setUploadedPack(null); setPendingArchiveFile(null); setSignedEnvelope(null); setPackageReview(null); setUploadFileName(''); setUploadError(''); }}
                         className="p-1 rounded-md text-gray-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer"
                       >
                         <X className="h-4 w-4" />
@@ -846,6 +952,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                     <div className="flex items-center gap-2 mt-3">
                       <Badge variant="default" size="sm">.json</Badge>
                       <Badge variant="default" size="sm">.zip</Badge>
+                      <Badge variant="default" size="sm">.formlogic-app</Badge>
                     </div>
                   </div>
                 )}
@@ -857,6 +964,11 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                   <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-red-500" />
                   <span>{uploadError}</span>
                 </div>
+              )}
+
+              {/* Capability review + server-computed trust (application-package envelope) — shown BEFORE install */}
+              {packageReview && (
+                <CapabilityReview caps={packageReview.capabilities} trust={packageReview.trust} />
               )}
 
               {/* Pack preview */}
@@ -990,7 +1102,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <Button
                   variant="primary"
                   onClick={handleImport}
-                  disabled={!uploadedPack}
+                  disabled={!uploadedPack && !pendingArchiveFile}
                   isLoading={importing}
                   leftIcon={importing ? undefined : <Download className="h-4 w-4" />}
                 >

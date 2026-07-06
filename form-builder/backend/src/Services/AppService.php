@@ -373,6 +373,34 @@ class AppService
         return $forms;
     }
 
+    /**
+     * Form-level customLogic bundles for every form in the app. Used to aggregate connector
+     * capabilities into the signed client manifest (getAppForms deliberately omits custom_logic
+     * from its hot path, so this is a dedicated read).
+     * @return array<int,array<string,mixed>>
+     */
+    public function getAppFormsWithLogic(string $appId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT f.custom_logic
+            FROM app_forms af
+            JOIN forms f ON f.id = af.form_id
+            WHERE af.app_id = :app_id
+        ");
+        $stmt->execute(['app_id' => $appId]);
+        $bundles = [];
+        while ($row = $stmt->fetch()) {
+            $raw = $row['custom_logic'] ?? null;
+            if (is_string($raw) && $raw !== '') {
+                $decoded = json_decode($raw, true);
+                if (is_array($decoded)) {
+                    $bundles[] = $decoded;
+                }
+            }
+        }
+        return $bundles;
+    }
+
     public function addFormToApp(string $appId, string $formId, ?string $displayName = null): array
     {
         // Get current max sort order

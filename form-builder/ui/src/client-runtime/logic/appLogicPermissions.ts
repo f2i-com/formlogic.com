@@ -47,6 +47,18 @@ export function effectRequiredPermission(effect: CustomAppLogicEffect): string |
   }
 }
 
+/**
+ * Effects allowed WITHOUT an explicit grant when a bundle opts out of strict permissions
+ * (bundle.strictPermissions === false). Deliberately limited to purely-local, non-sensitive UI
+ * effects — NEVER connector.*, response writes, storage, or navigation, which always require a grant
+ * regardless of strict mode. In strict mode (the default) even these need an explicit grant.
+ */
+const DEFAULT_SAFE_EFFECTS = new Set<CustomAppLogicEffect['type']>(['ui.setValues', 'ui.toast']);
+
+export function isDefaultSafeEffect(effect: CustomAppLogicEffect): boolean {
+  return DEFAULT_SAFE_EFFECTS.has(effect.type);
+}
+
 /** Does one granted permission cover the required permission string? */
 function grantCovers(grant: string, required: string): boolean {
   if (grant === '*') return true;
@@ -78,6 +90,23 @@ export function collectGrants(
   const grants = new Set<string>();
   for (const p of bundle.permissions ?? []) grants.add(p as string);
   for (const p of script?.permissions ?? []) grants.add(p as string);
+  return grants;
+}
+
+/**
+ * Every permission string declared anywhere in a bundle — bundle-level grants plus every script's
+ * grants. Used by the SDK connector gate so a host-rendered screen can only call connector commands
+ * the app actually declares (matching the capabilities published in the signed client manifest).
+ */
+export function collectAllGrants(
+  bundle: Pick<CustomAppLogicBundle, 'permissions' | 'scripts'> | null | undefined
+): Set<string> {
+  const grants = new Set<string>();
+  if (!bundle) return grants;
+  for (const p of bundle.permissions ?? []) grants.add(p as string);
+  for (const s of bundle.scripts ?? []) {
+    for (const p of s?.permissions ?? []) grants.add(p as string);
+  }
   return grants;
 }
 

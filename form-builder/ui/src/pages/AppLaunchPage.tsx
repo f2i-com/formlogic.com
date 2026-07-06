@@ -18,6 +18,9 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
   const accent = app.theme.primaryColor || '#6366f1';
   const onAccent = useMemo(() => (accent.startsWith('#') ? readableForegroundColor(accent) : '#fff'), [accent]);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  // Set when the `formlogic://` handoff didn't take (the runtime isn't installed) so we can offer a
+  // clear "Get the app" fallback instead of silently dropping the user onto the web app.
+  const [nativeMissing, setNativeMissing] = useState(false);
 
   // Brand the tab + browser chrome for the app.
   useEffect(() => {
@@ -54,9 +57,12 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
 
   // Hand off to the installed FormLogic Native Runtime via a deep link, so the user
   // never types a URL. `formlogic://open?url=…` is claimed by the runtime's intent
-  // filter (Android) / scheme registration (desktop). If nothing handles it — the
-  // runtime isn't installed — the tab stays visible and we fall back to the web app.
+  // filter (Android) / scheme registration (desktop) — the guaranteed handoff that
+  // needs no per-domain App-Links verification. If nothing handles it — the runtime
+  // isn't installed — the tab stays visible and we reveal a "Get the app" fallback
+  // (rather than silently dropping to the web app).
   function openInNativeRuntime() {
+    setNativeMissing(false);
     const target = window.location.origin + openUrl;
     const deepLink = `formlogic://open?url=${encodeURIComponent(target)}`;
     let handedOff = false;
@@ -67,7 +73,7 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
     window.setTimeout(() => {
       document.removeEventListener('visibilitychange', markHandedOff);
       if (!handedOff && document.visibilityState === 'visible') {
-        window.location.href = openUrl;
+        setNativeMissing(true);
       }
     }, 1400);
     window.location.href = deepLink;
@@ -144,6 +150,34 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
             >
               Open in native runtime
             </button>
+          )}
+
+          {/* Fallback: the `formlogic://` handoff didn't take, so the native runtime isn't installed.
+              Offer a clear way to get it — and to continue in the browser — instead of a dead button. */}
+          {landing.showInstallNative && nativeMissing && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-left dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-sm font-medium text-gray-800 dark:text-slate-100">Don't have the app yet?</p>
+              <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-slate-400">
+                Nothing on this device opened the native runtime. Install it, or keep going in your browser.
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <a
+                  href="https://formlogic.com/download"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 flex-1 items-center justify-center rounded-lg px-4 text-sm font-semibold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                  style={{ background: accent, color: onAccent, ['--tw-ring-color' as string]: accent }}
+                >
+                  Get the FormLogic app
+                </a>
+                <a
+                  href={openUrl}
+                  className="inline-flex h-10 flex-1 items-center justify-center rounded-lg border border-gray-200 px-4 text-sm font-semibold text-gray-800 transition-colors hover:bg-gray-100 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+                >
+                  Continue in browser
+                </a>
+              </div>
+            </div>
           )}
         </div>
 

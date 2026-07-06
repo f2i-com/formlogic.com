@@ -6,7 +6,8 @@
 import { useMemo, useState } from 'react';
 import { Braces, Plus, Trash2, Play, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '../../lib/api';
-import { runAppLogic } from '../../lib/formlogic';
+import { runHook, type AppLogicHookOutcome } from '../../client-runtime/logic/appLogicHost';
+import type { AppLogicEffectHandlers } from '../../client-runtime/logic/appLogicEffects';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
 import type { CustomAppLogicBundle, CustomAppLogicHookName, CustomAppLogicScript } from '../../types/customAppLogic';
@@ -42,6 +43,17 @@ function newScript(): CustomAppLogicScript {
   return { id: `script_${Math.random().toString(36).slice(2, 8)}`, hook: 'onBeforeSubmit', runtime: 'quickjs', source: STARTER.onBeforeSubmit, enabled: true };
 }
 
+/** Human-readable summary of a host run — leads with the outcome + denied permissions, then full JSON. */
+function formatOutcome(o: AppLogicHookOutcome, applied: Record<string, unknown>): string {
+  const lines: string[] = [];
+  lines.push(o.rejected ? `❌ REJECTED: ${o.message ?? ''}` : `✓ ran ${o.ran} script${o.ran === 1 ? '' : 's'}`);
+  if (Object.keys(applied).length) lines.push('setValues → ' + JSON.stringify(applied));
+  if (o.warnings.length) lines.push('⚠ warnings: ' + o.warnings.join('; '));
+  if (o.deniedPermissions.length) lines.push('⛔ DENIED (missing permission): ' + o.deniedPermissions.join(', '));
+  if (o.errors.length) lines.push('errors: ' + o.errors.join('; '));
+  return lines.join('\n') + '\n\n' + JSON.stringify(o, null, 2);
+}
+
 export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialLogic?: CustomAppLogicBundle }) {
   const [open, setOpen] = useState(false);
   const [scripts, setScripts] = useState<CustomAppLogicScript[]>(() => initialLogic?.scripts ?? []);
@@ -65,8 +77,23 @@ export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialL
     const s = scripts[i];
     setTestOut((o) => ({ ...o, [i]: 'Running…' }));
     try {
-      const res = await runAppLogic(s.source, { hook: s.hook, ...SAMPLE_CTX });
-      setTestOut((o) => ({ ...o, [i]: JSON.stringify(res, null, 2) }));
+      // Preview through the REAL trusted host (runHook), not raw runAppLogic — so the output reflects
+      // permission checks + effect application (what the runtime actually does), including any effect
+      // DENIED for a missing grant. Runs every script bound to this hook so connector→onConnectorEvent
+      // chains resolve; the mock connector handler feeds the sample event result.
+      const applied: Record<string, unknown> = {};
+      const handlers: AppLogicEffectHandlers = {
+        setValues: (v) => Object.assign(applied, v),
+        toast: () => {},
+        connectorRequest: async () => SAMPLE_CTX.event.result,
+      };
+      const outcome = await runHook({
+        bundle,
+        hook: s.hook,
+        input: { answers: SAMPLE_CTX.answers, values: {}, params: {}, meta: SAMPLE_CTX.meta, event: SAMPLE_CTX.event },
+        handlers,
+      });
+      setTestOut((o) => ({ ...o, [i]: formatOutcome(outcome, applied) }));
     } catch (e) {
       setTestOut((o) => ({ ...o, [i]: 'Error: ' + (e instanceof Error ? e.message : String(e)) }));
     }
@@ -163,8 +190,9 @@ export function AppLogicPanel({ appId, initialLogic }: { appId: string; initialL
             <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>Save app logic</Button>
           </div>
           <p className="text-xs text-gray-400 dark:text-slate-500">
-            Test run uses a sample ctx (low fuel, a vehicle-status event). The result is exactly what the runtime
-            applies after permission checks.
+            Test run executes this hook through the real host with a sample ctx (low fuel + a device/vehicle
+            event), showing the applied values, warnings, and any effects <strong>denied</strong> for a missing
+            permission — then the full outcome JSON.
           </p>
         </div>
       )}

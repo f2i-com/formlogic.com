@@ -81,4 +81,13 @@ class CustomLogicSanitizerTest extends TestCase
         $huge['scripts'][] = ['hook' => 'onAppStart', 'runtime' => 'quickjs', 'source' => str_repeat('b', 60000)];
         $this->assertFalse(CustomLogicSanitizer::withinSizeCap($huge));
     }
+
+    public function testSizeCapRejectsUnencodableBundle(): void
+    {
+        // Invalid UTF-8 makes json_encode() return false; that must be treated as over cap,
+        // never as "within" — an unencodable bundle can't be stored or round-tripped.
+        $bad = ['scripts' => [['hook' => 'onAppStart', 'runtime' => 'quickjs', 'source' => "\xB1\x31\xff"]]];
+        $this->assertFalse(json_encode($bad) !== false, 'test precondition: bundle should be unencodable');
+        $this->assertFalse(CustomLogicSanitizer::withinSizeCap($bad));
+    }
 }

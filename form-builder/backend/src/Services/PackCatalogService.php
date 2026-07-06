@@ -9,6 +9,10 @@ use PDO;
 
 class PackCatalogService
 {
+    /** Marketplace item types (spec §30). Only 'application_package' has a runtime install target today. */
+    public const ITEM_TYPES = ['application_package', 'connector', 'theme', 'widget', 'quickjs_library', 'sdk_component', 'template'];
+    public const TRUST_LEVELS = ['official', 'verified', 'community', 'private'];
+
     private PDO $mysql;
 
     public function __construct(MySQLConnection $mysql)
@@ -41,6 +45,17 @@ class PackCatalogService
         if (!empty($filters['category'])) {
             $where[] = "pc.category = :category";
             $params['category'] = $filters['category'];
+        }
+
+        // Marketplace facets (spec §30): filter by artifact type + trust level. Values are validated
+        // against the fixed enums so a bad query param is ignored rather than passed to SQL.
+        if (!empty($filters['itemType']) && in_array($filters['itemType'], self::ITEM_TYPES, true)) {
+            $where[] = "pc.item_type = :itemType";
+            $params['itemType'] = $filters['itemType'];
+        }
+        if (!empty($filters['trustLevel']) && in_array($filters['trustLevel'], self::TRUST_LEVELS, true)) {
+            $where[] = "pc.trust_level = :trustLevel";
+            $params['trustLevel'] = $filters['trustLevel'];
         }
 
         if (!empty($filters['tag'])) {
@@ -264,12 +279,23 @@ class PackCatalogService
         $version = $metadata['version'] ?? '1.0.0';
         $packJson = $this->encodePackDataWithCap($packData);
 
+        // item_type: validated against the fixed enum; anything unknown falls back to the default.
+        $itemType = (isset($metadata['itemType']) && in_array($metadata['itemType'], self::ITEM_TYPES, true))
+            ? $metadata['itemType'] : 'application_package';
+        $visibility = $metadata['visibility'] ?? 'public';
+        // trust_level is derived SERVER-SIDE (never from client input): a private listing is 'private';
+        // a listing published by the platform's official account is 'official'; everything else is
+        // 'community'. NOTE: signature-backed 'verified' is deferred — the publish flow does not yet
+        // submit a package signature; when it does, SigningService::verify() will upgrade this to
+        // 'verified'/'official' (spec §30.1).
+        $trustLevel = $this->deriveTrustLevel($userId, $visibility);
+
         $this->mysql->beginTransaction();
         try {
             // Create catalog entry
             $stmt = $this->mysql->prepare("
-                INSERT INTO pack_catalog (id, slug, publisher_id, name, description, icon, tags, category, visibility, status)
-                VALUES (:id, :slug, :publisher_id, :name, :description, :icon, :tags, :category, :visibility, 'published')
+                INSERT INTO pack_catalog (id, slug, publisher_id, name, description, icon, tags, category, item_type, trust_level, visibility, status)
+                VALUES (:id, :slug, :publisher_id, :name, :description, :icon, :tags, :category, :item_type, :trust_level, :visibility, 'published')
             ");
             $stmt->execute([
                 'id' => $catalogId,
@@ -280,7 +306,9 @@ class PackCatalogService
                 'icon' => $metadata['icon'] ?? null,
                 'tags' => json_encode($metadata['tags'] ?? []),
                 'category' => $metadata['category'] ?? null,
-                'visibility' => $metadata['visibility'] ?? 'public',
+                'item_type' => $itemType,
+                'trust_level' => $trustLevel,
+                'visibility' => $visibility,
             ]);
 
             // Create initial version
@@ -587,6 +615,23 @@ class PackCatalogService
 
     // --- Private helpers ---
 
+    /**
+     * Server-derived trust level at publish time — NEVER from client input. A private listing is 'private';
+     * a listing from the platform's official account is 'official'; otherwise 'community'. (Signature-backed
+     * 'verified' is deferred until the publish flow submits a package signature — see publishPack().)
+     */
+    private function deriveTrustLevel(string $userId, string $visibility): string
+    {
+        if ($visibility === 'private') {
+            return 'private';
+        }
+        $stmt = $this->mysql->prepare("SELECT email FROM users WHERE id = :id LIMIT 1");
+        $stmt->execute(['id' => $userId]);
+        $email = $stmt->fetchColumn();
+        $officialEmail = $_ENV['OFFICIAL_EMAIL'] ?? 'official@formlogic.local';
+        return (is_string($email) && $email === $officialEmail) ? 'official' : 'community';
+    }
+
     private function verifyOwnership(string $catalogId, string $userId): void
     {
         $stmt = $this->mysql->prepare("SELECT publisher_id FROM pack_catalog WHERE id = :id");
@@ -613,6 +658,10 @@ class PackCatalogService
             'screenshots' => json_decode($row['screenshots'] ?? '[]', true) ?: [],
             'tags' => json_decode($row['tags'] ?? '[]', true),
             'category' => $row['category'],
+            // Marketplace artifact type + server-derived trust level (spec §30). Older rows created before
+            // the columns existed decode to the enum defaults.
+            'itemType' => $row['item_type'] ?? 'application_package',
+            'trustLevel' => $row['trust_level'] ?? 'community',
             'visibility' => $row['visibility'],
             'status' => $row['status'],
             'downloadCount' => (int)($row['download_count'] ?? 0),

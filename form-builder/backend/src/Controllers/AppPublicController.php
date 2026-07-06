@@ -6,6 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Services\AppService;
+use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppUserService;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\ResponseService;
@@ -29,6 +30,7 @@ class AppPublicController
     private ResponseService $responseService;
     private PDO $mysql;
     private SQLiteConnection $sqlite;
+    private AppDomainService $appDomains;
 
     public function __construct(
         AppService $appService,
@@ -37,7 +39,8 @@ class AppPublicController
         FormService $formService,
         ResponseService $responseService,
         MySQLConnection $mysql,
-        SQLiteConnection $sqlite
+        SQLiteConnection $sqlite,
+        AppDomainService $appDomains
     ) {
         $this->appService = $appService;
         $this->appUserService = $appUserService;
@@ -46,6 +49,7 @@ class AppPublicController
         $this->responseService = $responseService;
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
+        $this->appDomains = $appDomains;
     }
 
     /**
@@ -453,13 +457,66 @@ class AppPublicController
     {
         $key = (isset($data['idempotencyKey']) && is_string($data['idempotencyKey']) && $data['idempotencyKey'] !== '')
             ? $data['idempotencyKey'] : null;
-        if ($key !== null) {
-            $existing = $this->idempotencyFind($app['id'], $formId, $key);
-            if ($existing !== null) {
-                return ['status' => 200, 'payload' => ['response' => ['id' => $existing], 'idempotent' => true]];
-            }
+
+        // No key: run the pipeline directly (no idempotency guarantees).
+        if ($key === null) {
+            return $this->runSubmissionPipeline($app, $formId, $data, $userId);
         }
 
+        // Reserve the key BEFORE any work, using the table's UNIQUE(app_id, form_id, idempotency_key)
+        // constraint as the atomic gate. This closes the check-then-act race (two concurrent replays
+        // both passing a prior SELECT and each creating a duplicate response) and makes the ledger
+        // payload-hash aware. The hash is over the RAW client answers so an exact replay matches and a
+        // reused key with a different body is detected as a conflict.
+        $payloadHash = hash('sha256', (string) json_encode($data['answers'] ?? []));
+        $reserved = $this->idempotencyReserve($app['id'], $formId, $userId, $key, $payloadHash);
+        if (is_array($reserved)) {
+            // A row already exists for this (app, form, key).
+            if (($reserved['payload_hash'] ?? '') !== $payloadHash) {
+                return ['status' => 409, 'payload' => ['error' => true, 'conflict' => true,
+                    'message' => 'This idempotency key was already used with a different submission.']];
+            }
+            if (is_string($reserved['response_id'] ?? null) && $reserved['response_id'] !== '') {
+                // Completed replay — return the original response, create nothing new.
+                return ['status' => 200, 'payload' => ['response' => ['id' => $reserved['response_id']], 'idempotent' => true]];
+            }
+            // Same payload, reservation still 'pending' — a concurrent submit is in flight. Ask the
+            // caller to retry; the in-flight winner will complete it. (Batch sync is sequential, so it
+            // never reaches this branch.)
+            return ['status' => 409, 'payload' => ['error' => true, 'processing' => true,
+                'message' => 'This submission is already being processed. Please retry in a moment.']];
+        }
+        // $reserved is 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for a
+        // non-duplicate reason — fail OPEN and submit without idempotency rather than reject a real
+        // submission, matching the prior best-effort intent).
+        $ownsReservation = ($reserved === 'owner');
+
+        $result = $this->runSubmissionPipeline($app, $formId, $data, $userId);
+
+        if ($ownsReservation) {
+            $respId = ($result['status'] === 201) ? ($result['payload']['response']['id'] ?? null) : null;
+            if (is_string($respId) && $respId !== '') {
+                $this->idempotencyComplete($app['id'], $formId, $key, $respId);
+            } else {
+                // Validation / quota / rejection / error: release the reservation so a legitimate retry
+                // of a genuinely-failed submit isn't poisoned by a stale 'pending' row.
+                $this->idempotencyRelease($app['id'], $formId, $key);
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * The server-authoritative submission pipeline (validation, quota, persistence, onSubmit script),
+     * independent of idempotency. Returns ['status'=>int, 'payload'=>array] so both the wrapper above
+     * and the sync-batch caller can collect per-item results.
+     *
+     * @param array<string,mixed> $app
+     * @param array<string,mixed> $data
+     * @return array{status:int, payload:array<string,mixed>}
+     */
+    private function runSubmissionPipeline(array $app, string $formId, array $data, string $userId): array
+    {
         // Get form's logic script if any
         $form = $this->formService->getForm($formId);
         $script = $form ? ($form['logicScript'] ?? null) : null;
@@ -542,12 +599,6 @@ class AppPublicController
                 return ['status' => 422, 'payload' => ['error' => true, 'message' => $result->message, 'rejected' => true]];
             }
 
-            // Record idempotency so a replay returns this same response instead of duplicating.
-            $respId = is_array($result) ? ($result['id'] ?? null) : null;
-            if ($key !== null && is_string($respId)) {
-                $this->idempotencyRecord($app['id'], $formId, $userId, $key, $respId, $data['answers'] ?? []);
-            }
-
             return ['status' => 201, 'payload' => ['response' => $result]];
         } catch (\Exception $e) {
             return ['status' => 500, 'payload' => ['error' => true, 'message' => 'Failed to save response']];
@@ -613,33 +664,83 @@ class AppPublicController
         return $this->jsonResponse($response, ['results' => $results]);
     }
 
-    private function idempotencyFind(string $appId, string $formId, string $key): ?string
-    {
-        $stmt = $this->mysql->prepare(
-            "SELECT response_id FROM app_submission_idempotency
-             WHERE app_id = :a AND form_id = :f AND idempotency_key = :k AND response_id IS NOT NULL LIMIT 1"
-        );
-        $stmt->execute(['a' => $appId, 'f' => $formId, 'k' => $key]);
-        $id = $stmt->fetchColumn();
-        return $id !== false ? (string) $id : null;
-    }
-
-    /** Best-effort ledger write — never fails a real submission if the ledger insert fails. */
-    private function idempotencyRecord(string $appId, string $formId, string $userId, string $key, string $responseId, array $answers): void
+    /**
+     * Reserve an idempotency key by inserting a 'pending' row; the UNIQUE(app_id, form_id,
+     * idempotency_key) constraint is the atomic gate. Returns:
+     *   'owner'        — we won the reservation (caller must complete or release it),
+     *   'unavailable'  — the ledger write failed for a non-duplicate reason (caller should fail open),
+     *   array{response_id:?string, payload_hash:string, status:string} — an existing row (replay/conflict/in-flight).
+     * @return string|array<string,mixed>
+     */
+    private function idempotencyReserve(string $appId, string $formId, string $userId, string $key, string $payloadHash)
     {
         try {
             $stmt = $this->mysql->prepare(
                 "INSERT INTO app_submission_idempotency (id, app_id, form_id, user_id, idempotency_key, response_id, payload_hash, status, created_at)
-                 VALUES (:id, :a, :f, :u, :k, :r, :h, 'completed', NOW())
-                 ON DUPLICATE KEY UPDATE response_id = VALUES(response_id), status = 'completed'"
+                 VALUES (:id, :a, :f, :u, :k, NULL, :h, 'pending', NOW())"
             );
             $stmt->execute([
                 'id' => $this->uuidV4(),
-                'a' => $appId, 'f' => $formId, 'u' => $userId, 'k' => $key,
-                'r' => $responseId, 'h' => hash('sha256', (string) json_encode($answers)),
+                'a' => $appId, 'f' => $formId, 'u' => $userId, 'k' => $key, 'h' => $payloadHash,
             ]);
+            return 'owner';
+        } catch (\PDOException $e) {
+            // 23000 / MySQL 1062 = duplicate key → a row already exists for this key.
+            $dup = $e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062);
+            if ($dup) {
+                // If it vanished between the failed insert and this read (a racing release), fail open.
+                return $this->idempotencyFind($appId, $formId, $key) ?? 'unavailable';
+            }
+            // Any other DB error: fail open — idempotency is best-effort, never block a real submit.
+            return 'unavailable';
+        }
+    }
+
+    /** @return array{response_id:?string, payload_hash:string, status:string}|null */
+    private function idempotencyFind(string $appId, string $formId, string $key): ?array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT response_id, payload_hash, status FROM app_submission_idempotency
+             WHERE app_id = :a AND form_id = :f AND idempotency_key = :k LIMIT 1"
+        );
+        $stmt->execute(['a' => $appId, 'f' => $formId, 'k' => $key]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+        return [
+            'response_id' => is_string($row['response_id'] ?? null) ? $row['response_id'] : null,
+            'payload_hash' => (string) ($row['payload_hash'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+        ];
+    }
+
+    /** Mark a reservation completed, pointing it at the created response. Best-effort. */
+    private function idempotencyComplete(string $appId, string $formId, string $key, string $responseId): void
+    {
+        try {
+            $stmt = $this->mysql->prepare(
+                "UPDATE app_submission_idempotency SET response_id = :r, status = 'completed'
+                 WHERE app_id = :a AND form_id = :f AND idempotency_key = :k"
+            );
+            $stmt->execute(['r' => $responseId, 'a' => $appId, 'f' => $formId, 'k' => $key]);
         } catch (\Throwable $e) {
-            // ignore — idempotency is best-effort
+            // ignore — the response is already persisted; a failed ledger update only risks a future
+            // duplicate on replay, never data loss.
+        }
+    }
+
+    /** Release an unfulfilled reservation (only our own 'pending' row) so a retry can proceed. */
+    private function idempotencyRelease(string $appId, string $formId, string $key): void
+    {
+        try {
+            $stmt = $this->mysql->prepare(
+                "DELETE FROM app_submission_idempotency
+                 WHERE app_id = :a AND form_id = :f AND idempotency_key = :k AND status = 'pending'"
+            );
+            $stmt->execute(['a' => $appId, 'f' => $formId, 'k' => $key]);
+        } catch (\Throwable $e) {
+            // ignore
         }
     }
 
@@ -1029,14 +1130,6 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found'], 404);
         }
 
-        $theme = $app['theme'] ?? [];
-        $settings = $app['settings'] ?? [];
-
-        // Defense-in-depth: a malformed stored hex would produce an invalid manifest
-        // (browsers reject it). Fall back to a safe default if it isn't a valid hex.
-        $hex = static fn(?string $v, string $default): string =>
-            (is_string($v) && preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $v)) ? $v : $default;
-
         // The manifest is served from the API origin, but the app runs on the FRONTEND
         // origin. Per the manifest spec, relative start_url/scope/icons resolve against
         // the manifest's (API) origin — which puts the installing document out of scope
@@ -1045,14 +1138,87 @@ class AppPublicController
         try { $base = rtrim(\FormLogic\Helpers\AppUrl::frontendBase($request), '/'); } catch (\Throwable $e) { $base = null; }
         $appPath = '/app/' . $slug;
 
+        $manifest = $this->buildPwaManifest($app, $base ?? '', $appPath, $appPath);
+
+        $json = json_encode($manifest);
+        if ($json === false) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to build manifest'], 500);
+        }
+        $response->getBody()->write($json);
+        return $response
+            ->withStatus(200)
+            ->withHeader('Content-Type', 'application/manifest+json');
+    }
+
+    /**
+     * PWA manifest served at a CUSTOM DOMAIN root: GET /manifest.json. Resolves the request Host
+     * (or ?host=) to a connected+active domain of a PUBLISHED app and returns a same-origin
+     * installable manifest rooted at "/" (the branded launch page). Chrome refuses a cross-origin
+     * scope, so start_url/scope/icons are built from the request scheme + verified Host — NOT
+     * AppUrl::frontendBase (which deliberately ignores the Host). On a platform host (no custom
+     * domain) this 404s; the VitePWA /manifest.webmanifest stays the platform default.
+     */
+    public function manifestByHost(Request $request, Response $response): Response
+    {
+        $hostHeader = $request->getHeaderLine('Host');
+        $resolveHost = trim((string) ($request->getQueryParams()['host'] ?? ''));
+        if ($resolveHost === '') {
+            $resolveHost = $hostHeader;
+        }
+        $resolved = $resolveHost !== '' ? $this->appDomains->resolveAppSlugByHost($resolveHost) : null;
+        if (!$resolved) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not found'], 404);
+        }
+        $app = $this->appService->getAppBySlug($resolved['slug']);
+        if (!$app || ($app['status'] ?? '') !== 'published') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Not found'], 404);
+        }
+
+        // Same-origin base from the request scheme + the (verified) Host. Prefer the actual Host
+        // header for the authority so the origin matches the installing document exactly.
+        $authorityHost = $hostHeader !== '' ? $hostHeader : $resolveHost;
+        $base = $this->sameOriginBase($request, $authorityHost);
+        // The custom-domain PWA installs at the branded root ("/").
+        $manifest = $this->buildPwaManifest($app, $base, '/', '/');
+
+        $json = json_encode($manifest);
+        if ($json === false) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to build manifest'], 500);
+        }
+        $response->getBody()->write($json);
+        return $response
+            ->withStatus(200)
+            ->withHeader('Content-Type', 'application/manifest+json');
+    }
+
+    /**
+     * Build a PWA web-app manifest for $app. $base is the ABSOLUTE origin that start_url/scope/icons
+     * resolve against (the server-trusted frontend origin for the platform slug route; the same-origin
+     * custom domain for the by-host route); pass '' when no trusted base is available. $startPath and
+     * $scopePath are document paths within that origin. Never includes any form schema/field data.
+     *
+     * @param array<string,mixed> $app
+     * @return array<string,mixed>
+     */
+    private function buildPwaManifest(array $app, string $base, string $startPath, string $scopePath): array
+    {
+        $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        $base = rtrim($base, '/');
+
+        // Defense-in-depth: a malformed stored hex would produce an invalid manifest
+        // (browsers reject it). Fall back to a safe default if it isn't a valid hex.
+        $hex = static fn(?string $v, string $default): string =>
+            (is_string($v) && preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $v)) ? $v : $default;
+
         $manifest = [
             'name' => $app['name'],
             // mb_substr (not substr): a byte-cut multibyte name would be invalid UTF-8,
             // which makes json_encode() return false -> an empty/broken manifest.
-            'short_name' => $settings['pwaShortName'] ?? mb_substr($app['name'], 0, 12),
+            'short_name' => $settings['pwaShortName'] ?? mb_substr((string) $app['name'], 0, 12),
             'description' => $app['description'] ?? '',
-            'start_url' => ($base ?? '') . $appPath,
-            'scope' => ($base ?? '') . $appPath,
+            'start_url' => $base . $startPath,
+            'scope' => $base . $scopePath,
             'display' => 'standalone',
             'background_color' => $hex($theme['backgroundColor'] ?? null, '#ffffff'),
             'theme_color' => $hex($settings['pwaThemeColor'] ?? $theme['primaryColor'] ?? null, '#6366f1'),
@@ -1065,25 +1231,32 @@ class AppPublicController
             $icons[] = ['src' => $app['logoUrl'], 'sizes' => '192x192', 'type' => 'image/png'];
             $icons[] = ['src' => $app['logoUrl'], 'sizes' => '512x512', 'type' => 'image/png'];
         }
-        // ALWAYS include the platform icons (absolute, frontend origin) so the manifest
-        // carries the 192 + 512 + maskable icons Chrome requires to be installable —
-        // without these an app with no logo is silently un-installable, even though the
-        // Deploy UI offers "Add to Home Screen".
-        if ($base !== null) {
+        // ALWAYS include the platform icons (absolute) so the manifest carries the 192 + 512 +
+        // maskable icons Chrome requires to be installable — without these an app with no logo is
+        // silently un-installable, even though the Deploy UI offers "Add to Home Screen".
+        if ($base !== '') {
             $icons[] = ['src' => $base . '/pwa-192x192.png', 'sizes' => '192x192', 'type' => 'image/png', 'purpose' => 'any'];
             $icons[] = ['src' => $base . '/pwa-512x512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'any'];
             $icons[] = ['src' => $base . '/pwa-512x512.png', 'sizes' => '512x512', 'type' => 'image/png', 'purpose' => 'maskable'];
         }
         $manifest['icons'] = $icons;
 
-        $json = json_encode($manifest);
-        if ($json === false) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to build manifest'], 500);
+        return $manifest;
+    }
+
+    /**
+     * Same-origin absolute base (scheme://authority) for a custom-domain manifest. The authority is the
+     * verified Host; the scheme comes from X-Forwarded-Proto when proxied, else the request URI scheme,
+     * defaulting to https (custom domains require HTTPS in production).
+     */
+    private function sameOriginBase(Request $request, string $host): string
+    {
+        $proto = trim(explode(',', $request->getHeaderLine('X-Forwarded-Proto'))[0]);
+        $scheme = $proto !== '' ? strtolower($proto) : ($request->getUri()->getScheme() ?: 'https');
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            $scheme = 'https';
         }
-        $response->getBody()->write($json);
-        return $response
-            ->withStatus(200)
-            ->withHeader('Content-Type', 'application/manifest+json');
+        return $scheme . '://' . $host;
     }
 
     public function lookupRecords(Request $request, Response $response, array $args): Response

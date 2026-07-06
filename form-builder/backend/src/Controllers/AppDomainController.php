@@ -142,4 +142,62 @@ class AppDomainController
         }
         return $this->jsonResponse($response, $config);
     }
+
+    /**
+     * Public: Android Digital Asset Links (App Links verification), served at the domain ROOT
+     * (/.well-known/assetlinks.json) via an .htaccess rewrite. No auth.
+     *
+     * Default = the hosted FormLogic Native Runtime entry (`com.formlogic.runtime` + its signing-cert
+     * fingerprint; the fingerprint is env-overridable via ANDROID_CERT_FINGERPRINT so ops can rotate
+     * it without a redeploy, defaulting to the value shipped in the static assetlinks.json). When the
+     * request Host resolves to a connected custom domain whose app_domains.native_config declares its
+     * own white-label build (`packageName` + non-empty `sha256CertFingerprints`), that build's
+     * statement is returned instead so a per-tenant runtime can App-Link-verify its own domain.
+     */
+    public function assetLinks(Request $request, Response $response): Response
+    {
+        $package = 'com.formlogic.runtime';
+        $fingerprint = trim((string) ($_ENV['ANDROID_CERT_FINGERPRINT'] ?? getenv('ANDROID_CERT_FINGERPRINT') ?: ''));
+        if ($fingerprint === '') {
+            // Same fingerprint shipped in ui/public/.well-known/assetlinks.json (behaviour preserved).
+            $fingerprint = 'BB:B4:82:AC:7A:E1:AF:A7:35:2F:B6:C8:83:36:41:58:09:21:19:42:E6:63:59:4E:D5:51:EB:0D:38:C3:48:08';
+        }
+        $fingerprints = [$fingerprint];
+
+        // A resolved custom domain may carry its own white-label native build.
+        $resolveHost = trim((string) ($request->getQueryParams()['host'] ?? ''));
+        if ($resolveHost === '') {
+            $resolveHost = $request->getHeaderLine('Host');
+        }
+        if ($resolveHost !== '') {
+            $resolved = $this->domains->resolveAppSlugByHost($resolveHost);
+            $nc = is_array($resolved['nativeConfig'] ?? null) ? $resolved['nativeConfig'] : [];
+            $pkg = (isset($nc['packageName']) && is_string($nc['packageName'])) ? trim($nc['packageName']) : '';
+            $fps = [];
+            if (isset($nc['sha256CertFingerprints']) && is_array($nc['sha256CertFingerprints'])) {
+                foreach ($nc['sha256CertFingerprints'] as $fp) {
+                    if (is_string($fp) && trim($fp) !== '') {
+                        $fps[] = trim($fp);
+                    }
+                }
+            }
+            if ($pkg !== '' && !empty($fps)) {
+                $package = $pkg;
+                $fingerprints = $fps;
+            }
+        }
+
+        $payload = [[
+            'relation' => ['delegate_permission/common.handle_all_urls'],
+            'target' => [
+                'namespace' => 'android_app',
+                'package_name' => $package,
+                'sha256_cert_fingerprints' => array_values($fingerprints),
+            ],
+        ]];
+
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        $response->getBody()->write($json === false ? '[]' : $json);
+        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+    }
 }

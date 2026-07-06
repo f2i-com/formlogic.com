@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\PackCapabilities;
 use PDO;
 
 class PackService
@@ -467,6 +468,171 @@ class PackService
         $this->validatePack($pack);
 
         return $pack;
+    }
+
+    /**
+     * Export an app as a full .formlogic-app ARCHIVE (spec §29): a ZIP bundling
+     *   manifest.json  — the ApplicationPackageManifest (id/name/version/description + a content hash)
+     *   pack.json      — the existing exportApp() payload (the atomic importer's source of truth)
+     *   quickjs/customLogic.json — the app's sandboxed QuickJS bundle, if any
+     *   assets/*       — inline data-URI assets decoded to real files, if any
+     *   launch.json / native.json — launch + native runtime config, if present on the app
+     *   signature.json — a DETACHED signature over pack.json (SigningService), so importers can verify it
+     * Returns the path to a temp .zip the caller must stream then delete.
+     *
+     * $signing is passed in (not a constructor dep) so the export/import surface stays additive over the
+     * existing PackService wiring; when absent the archive is unsigned (importers treat it as community).
+     */
+    public function exportApplicationPackage(string $appId, string $userId, ?SigningService $signing = null): string
+    {
+        // Reuse the owner-checked, whitelisted, @pack:-remapped pack builder verbatim.
+        $pack = $this->exportApp($appId, $userId);
+        $app = $this->appService->getApp($appId) ?? [];
+        $packApp = $pack['apps'][0] ?? [];
+
+        $name = (string) ($pack['packMeta']['name'] ?? 'App');
+        $version = (string) ($pack['packMeta']['version'] ?? '1.0.0');
+        $slug = $this->slugify((string) ($packApp['packAppId'] ?? $name));
+
+        // Canonical pack JSON (unescaped slashes) — hashed for the manifest and signed detached.
+        $packJson = (string) json_encode($pack, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        $contentHash = 'sha256:' . hash('sha256', $packJson);
+
+        $manifest = [
+            'version' => 1,
+            'kind' => 'formlogic.applicationPackage',
+            'id' => $slug,
+            'name' => $name,
+            'description' => (string) ($pack['packMeta']['description'] ?? ''),
+            'packVersion' => $version,
+            'contentHash' => $contentHash,
+            'capabilities' => PackCapabilities::describe($pack),
+        ];
+
+        $zipPath = (string) tempnam(sys_get_temp_dir(), 'flapp_');
+        $zip = new \ZipArchive();
+        if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+            @unlink($zipPath);
+            throw new \RuntimeException('Failed to create application package archive');
+        }
+
+        $zip->addFromString('manifest.json', (string) json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        $zip->addFromString('pack.json', $packJson);
+
+        // quickjs/ — the sandboxed app-logic bundle (also embedded in pack.json for the atomic import;
+        // surfaced here as a discrete file for external tooling / capability review).
+        if (!empty($packApp['customLogic']) && is_array($packApp['customLogic'])) {
+            $zip->addFromString('quickjs/customLogic.json', (string) json_encode($packApp['customLogic'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        }
+
+        // launch.json / native.json — only if the app record carries them (per-domain configs live
+        // elsewhere; these are future-proofed and simply omitted when absent).
+        if (is_array($app['launch'] ?? null) && !empty($app['launch'])) {
+            $zip->addFromString('launch.json', (string) json_encode($app['launch'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        }
+        if (is_array($app['native'] ?? null) && !empty($app['native'])) {
+            $zip->addFromString('native.json', (string) json_encode($app['native'], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        }
+
+        // assets/ — decode any inline data-URI assets to real files under a safe key.
+        foreach ((is_array($app['assets'] ?? null) ? $app['assets'] : []) as $key => $dataUri) {
+            if (!is_string($key) || !is_string($dataUri) || !PackFileService::isSafeZipEntryName('assets/' . $key)) {
+                continue;
+            }
+            $decoded = $this->decodeDataUri($dataUri);
+            if ($decoded !== null && strlen($decoded) <= PackFileService::MAX_ASSET_BYTES) {
+                $zip->addFromString('assets/' . $key, $decoded);
+            }
+        }
+
+        // Detached signature over the pack payload (verifiable against this server's public key).
+        if ($signing !== null) {
+            $signed = $signing->sign($pack);
+            $zip->addFromString('signature.json', (string) json_encode([
+                'signature' => $signed['signature'],
+                'alg' => $signed['alg'],
+                'keyId' => $signed['keyId'],
+                'contentHash' => $contentHash,
+            ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+        }
+
+        $zip->close();
+        return $zipPath;
+    }
+
+    /**
+     * Import a .formlogic-app ARCHIVE (the inverse of exportApplicationPackage). Opens the ZIP, validates
+     * EVERY entry with the shared PackFileService zip-slip + zip-bomb guard, verifies signature.json when
+     * present (rejecting a tampered archive), reads pack.json, and delegates to the existing ATOMIC
+     * importPack() — so remapping / rollback / quota are unchanged. customLogic rides inside pack.json, so
+     * the discrete quickjs/ + assets/ + launch/native entries are validated-but-informational here.
+     *
+     * @return array importPack() result plus 'trust' (official|local-only|community).
+     */
+    public function importApplicationPackage(
+        string $zipPath,
+        string $userId,
+        ?SigningService $signing = null,
+        ?string $catalogId = null,
+        ?string $versionId = null
+    ): array {
+        $zip = new \ZipArchive();
+        if ($zip->open($zipPath) !== true) {
+            throw new \RuntimeException('Failed to open the application package');
+        }
+
+        try {
+            // 1. Zip-slip + zip-bomb guard over every entry BEFORE reading anything out.
+            PackFileService::assertSafeArchive($zip);
+
+            // 2. pack.json is the atomic importer's source of truth (required).
+            $packJson = $zip->getFromName('pack.json');
+            if ($packJson === false) {
+                throw new \RuntimeException('Application package is missing pack.json');
+            }
+            $pack = json_decode($packJson, true, 128);
+            if (!is_array($pack)) {
+                throw new \RuntimeException('pack.json is not valid JSON');
+            }
+
+            // 3. Detached signature: verify over the pack payload; reject on failure (tamper).
+            $trust = 'community';
+            $sigRaw = $zip->getFromName('signature.json');
+            if ($sigRaw !== false) {
+                $sig = json_decode($sigRaw, true);
+                if (!is_array($sig) || !isset($sig['signature'], $sig['alg'])) {
+                    throw new \RuntimeException('signature.json is malformed');
+                }
+                $ok = $signing !== null && $signing->verify([
+                    'payload' => $pack,
+                    'signature' => (string) $sig['signature'],
+                    'alg' => (string) $sig['alg'],
+                ]);
+                if (!$ok) {
+                    throw new \RuntimeException('Application package signature verification failed');
+                }
+                // Ed25519 is publicly verifiable ("official"); an HS256 fallback is only checkable on
+                // this same server, so mark it local-only (importers must not treat it as external trust).
+                $trust = ((string) $sig['alg']) === 'Ed25519' ? 'official' : 'local-only';
+            }
+        } finally {
+            $zip->close();
+        }
+
+        // 4. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
+        $result = $this->importPack($pack, $userId, $catalogId, $versionId);
+        $result['trust'] = $trust;
+        return $result;
+    }
+
+    /** Decode a data: URI to raw bytes; returns null if it is not a well-formed base64 data URI. */
+    private function decodeDataUri(string $uri): ?string
+    {
+        if (!preg_match('#^data:[^,]*;base64,(.*)$#s', $uri, $m)) {
+            return null;
+        }
+        $decoded = base64_decode($m[1], true);
+        return $decoded === false ? null : $decoded;
     }
 
     /**

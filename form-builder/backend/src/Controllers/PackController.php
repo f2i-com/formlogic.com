@@ -59,9 +59,194 @@ class PackController
             'signature' => $signed['signature'],
             'alg' => $signed['alg'],
             'keyId' => $signed['keyId'],
-            'trust' => 'official',
+            // 'official' means Ed25519-signed (verifiable against our public key). An HS256 fallback
+            // signature is only checkable on this same server, so mark it local-only — importers must
+            // not treat it as externally verified.
+            'trust' => ($signed['alg'] ?? '') === 'Ed25519' ? 'official' : 'local-only',
             'capabilities' => PackCapabilities::describe($pack),
         ]);
+    }
+
+    /**
+     * GET /api/apps/{id}/export/package
+     * Export an app as a full .formlogic-app ARCHIVE (ZIP): manifest.json + pack.json + quickjs/ +
+     * assets/ + optional launch/native + a detached signature.json. Streamed as application/zip.
+     */
+    public function exportAppArchive(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $appId = (string) ($args['id'] ?? '');
+        if ($appId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App ID is required'], 400);
+        }
+        $zipPath = null;
+        try {
+            $zipPath = $this->packService->exportApplicationPackage($appId, $userId, $this->signingService);
+
+            // Derive the download filename from the archive's own manifest (avoids rebuilding the pack).
+            $slug = 'app';
+            $zip = new \ZipArchive();
+            if ($zip->open($zipPath) === true) {
+                $manifestJson = $zip->getFromName('manifest.json');
+                $zip->close();
+                $manifest = is_string($manifestJson) ? json_decode($manifestJson, true) : null;
+                $candidate = is_array($manifest) ? preg_replace('/[^a-z0-9-]/', '', strtolower((string) ($manifest['id'] ?? ''))) : '';
+                if (is_string($candidate) && $candidate !== '') {
+                    $slug = $candidate;
+                }
+            }
+
+            if ($this->auditService) {
+                $this->auditService->log('app.export', 'app', $appId, $userId, $this->ipResolver->getClientIp($request), ['appName' => $slug, 'package' => true]);
+            }
+
+            $data = (string) file_get_contents($zipPath);
+            $response->getBody()->write($data);
+            return $response
+                ->withHeader('Content-Type', 'application/zip')
+                ->withHeader('Content-Length', (string) strlen($data))
+                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic-app"');
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to export application package'], 500);
+        } finally {
+            if ($zipPath !== null && file_exists($zipPath)) {
+                @unlink($zipPath);
+            }
+        }
+    }
+
+    /**
+     * POST /api/application-packages/import
+     * Import a full Application Package. Content-negotiated:
+     *   - multipart file upload → a .formlogic-app ZIP archive (verified + extracted server-side)
+     *   - JSON body { package, signature, alg, keyId } | { pack } → a signed/flat envelope
+     * The SERVER verifies the signature and stamps trust — a client-supplied trust level is never used.
+     */
+    public function importSigned(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        // ── Path A: multipart ZIP upload (.formlogic-app archive) ──────────────────────────────
+        $uploaded = $request->getUploadedFiles()['file'] ?? null;
+        if ($uploaded !== null) {
+            if ($uploaded->getError() !== UPLOAD_ERR_OK) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Upload error'], 400);
+            }
+            $tmpPath = null;
+            try {
+                $tmpPath = (string) tempnam(sys_get_temp_dir(), 'flappimp_');
+                $uploaded->moveTo($tmpPath);
+                $result = $this->packService->importApplicationPackage($tmpPath, $userId, $this->signingService);
+                $this->auditImport($request, $userId, $result, ['package' => true, 'trust' => $result['trust'] ?? null]);
+                return $this->jsonResponse($response, [
+                    'success' => true,
+                    'trust' => $result['trust'] ?? 'community',
+                    'installationId' => $result['installationId'],
+                    'forms' => $result['forms'],
+                    'apps' => $result['apps'],
+                ], 201);
+            } catch (\RuntimeException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            } catch (\Exception $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import application package'], 500);
+            } finally {
+                if ($tmpPath !== null && file_exists($tmpPath)) {
+                    @unlink($tmpPath);
+                }
+            }
+        }
+
+        // ── Path B: JSON signed-envelope { package, signature, alg } or flat { pack } ──────────
+        $body = $request->getParsedBody() ?? [];
+        // `package` is what was signed (a bare Pack from export/signed, or a full ApplicationPackage).
+        $package = is_array($body['package'] ?? null) ? $body['package'] : null;
+        if ($package === null) {
+            $package = is_array($body['pack'] ?? null) ? $body['pack'] : null;
+        }
+        if (!is_array($package)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Package data is required'], 400);
+        }
+
+        // Verify the signature over EXACTLY what was signed (the `package` field). Trust is server-derived.
+        $trust = 'community';
+        if (isset($body['signature'])) {
+            $ok = $this->signingService && $this->signingService->verify([
+                'payload' => $package,
+                'signature' => (string) $body['signature'],
+                'alg' => (string) ($body['alg'] ?? ''),
+            ]);
+            $trust = $ok ? (((string) ($body['alg'] ?? '')) === 'Ed25519' ? 'official' : 'local-only') : 'unverified';
+
+            // Optional workspace policy: block an unverified package (mirrors PlanService gating in import()).
+            $requireVerified = (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? '') === 'true');
+            if ($requireVerified && $trust === 'unverified') {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'unverified_package',
+                    'message' => 'This workspace only allows verified (signed) application packages.',
+                ], 403);
+            }
+        }
+
+        // Unwrap: an ApplicationPackage carries the Pack under `.pack`; a bare Pack IS the payload.
+        $packData = is_array($package['pack'] ?? null) ? $package['pack'] : $package;
+        if (!is_array($packData) || !isset($packData['forms'])) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Package does not contain a valid pack'], 400);
+        }
+
+        // Same up-front form-count quota as the flat import path.
+        $incomingForms = is_array($packData['forms'] ?? null) ? count($packData['forms']) : 0;
+        if ($incomingForms > 0 && $this->planService && !$this->planService->canCreateForms($userId, $incomingForms)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'form_limit',
+                'message' => 'This package would exceed your plan\'s form limit (' . $this->planService->formLimit($userId) . '). Free up space or upgrade first.',
+            ], 402);
+        }
+
+        try {
+            $result = $this->packService->importPack($packData, $userId);
+            $this->auditImport($request, $userId, $result, ['package' => true, 'signed' => isset($body['signature']), 'trust' => $trust]);
+            return $this->jsonResponse($response, [
+                'success' => true,
+                'trust' => $trust,
+                'installationId' => $result['installationId'],
+                'forms' => $result['forms'],
+                'apps' => $result['apps'],
+            ], 201);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to import application package'], 500);
+        }
+    }
+
+    /** Shared audit helper for the application-package import paths. */
+    private function auditImport(Request $request, string $userId, array $result, array $extra = []): void
+    {
+        if (!$this->auditService) {
+            return;
+        }
+        $this->auditService->log(
+            'pack.import',
+            'pack',
+            $result['installationId'] ?? 'unknown',
+            $userId,
+            $this->ipResolver->getClientIp($request),
+            array_merge([
+                'installationId' => $result['installationId'] ?? null,
+                'formsCreated' => count($result['forms'] ?? []),
+                'appsCreated' => count($result['apps'] ?? []),
+            ], $extra)
+        );
     }
 
     /**

@@ -392,6 +392,9 @@ class MySQLConnection
         ");
 
         // Pack catalog — marketplace registry
+        // item_type / trust_level (spec §30) model a multi-artifact marketplace: for now every listing is
+        // an 'application_package' with server-derived trust; the other item types are reserved (no runtime
+        // install target yet — see PackCatalogService).
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS pack_catalog (
                 id VARCHAR(36) PRIMARY KEY,
@@ -402,6 +405,8 @@ class MySQLConnection
                 icon VARCHAR(50),
                 tags JSON,
                 category VARCHAR(100),
+                item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
+                trust_level ENUM('official','verified','community','private') DEFAULT 'community',
                 visibility ENUM('public','private','unlisted') DEFAULT 'public',
                 status ENUM('draft','published','archived') DEFAULT 'draft',
                 download_count INT UNSIGNED DEFAULT 0,
@@ -412,6 +417,8 @@ class MySQLConnection
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (publisher_id) REFERENCES users(id) ON DELETE CASCADE,
                 INDEX idx_category (category),
+                INDEX idx_item_type (item_type),
+                INDEX idx_trust_level (trust_level),
                 INDEX idx_visibility_status (visibility, status),
                 INDEX idx_featured (featured)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -521,6 +528,19 @@ class MySQLConnection
         $result = $pdo->query("SHOW COLUMNS FROM apps LIKE 'custom_logic'");
         if ($result->rowCount() === 0) {
             $pdo->exec("ALTER TABLE apps ADD COLUMN custom_logic MEDIUMTEXT DEFAULT NULL AFTER reports");
+        }
+
+        // Per-domain config columns (native app / PWA / security) for existing installs. On a brand-new
+        // DB app_domains may not exist yet (created further below WITH these columns), so guard + ignore.
+        try {
+            foreach (['native_config', 'pwa_config', 'security_config'] as $domainCol) {
+                $res = $pdo->query("SHOW COLUMNS FROM app_domains LIKE '$domainCol'");
+                if ($res && $res->rowCount() === 0) {
+                    $pdo->exec("ALTER TABLE app_domains ADD COLUMN $domainCol JSON NULL AFTER landing_config");
+                }
+            }
+        } catch (\Throwable $e) {
+            // app_domains not created yet on a fresh DB — the CREATE TABLE below includes these columns.
         }
 
         // Add scopes column to mcp_sessions (per-token capability list) if it doesn't exist
@@ -636,6 +656,8 @@ class MySQLConnection
                 icon VARCHAR(50),
                 tags JSON,
                 category VARCHAR(100),
+                item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package',
+                trust_level ENUM('official','verified','community','private') DEFAULT 'community',
                 visibility ENUM('public','private','unlisted') DEFAULT 'public',
                 status ENUM('draft','published','archived') DEFAULT 'draft',
                 download_count INT UNSIGNED DEFAULT 0,
@@ -646,10 +668,24 @@ class MySQLConnection
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (publisher_id) REFERENCES users(id) ON DELETE CASCADE,
                 INDEX idx_category (category),
+                INDEX idx_item_type (item_type),
+                INDEX idx_trust_level (trust_level),
                 INDEX idx_visibility_status (visibility, status),
                 INDEX idx_featured (featured)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        // Marketplace item_type + trust_level for existing pack_catalog installs (spec §30).
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'item_type'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN item_type ENUM('application_package','connector','theme','widget','quickjs_library','sdk_component','template') DEFAULT 'application_package' AFTER category");
+            $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_item_type (item_type)");
+        }
+        $result = $pdo->query("SHOW COLUMNS FROM pack_catalog LIKE 'trust_level'");
+        if ($result->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE pack_catalog ADD COLUMN trust_level ENUM('official','verified','community','private') DEFAULT 'community' AFTER item_type");
+            $pdo->exec("ALTER TABLE pack_catalog ADD INDEX idx_trust_level (trust_level)");
+        }
 
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS pack_versions (
@@ -826,6 +862,9 @@ class MySQLConnection
                 verified_at DATETIME NULL,
                 tls_status VARCHAR(32) NOT NULL DEFAULT 'pending',
                 landing_config JSON NULL,
+                native_config JSON NULL,
+                pwa_config JSON NULL,
+                security_config JSON NULL,
                 last_checked_at DATETIME NULL,
                 last_error TEXT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

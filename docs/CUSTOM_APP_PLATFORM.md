@@ -224,7 +224,7 @@ vehicle adapters.
 
 ## Application Package Format
 
-*(.formlogic-app)* Status: **types + validator + signed export** implemented. Spec §29.
+*(.formlogic-app)* Status: **implemented** — types, validator, signed export, full ZIP-archive export + verified import. Spec §29.
 
 An Application Package is the portable, runtime-aware superset of a Pack: the app + forms + screens
 + dashboards + reports, plus custom app-logic, launch/native config, and assets. The existing Pack
@@ -247,10 +247,16 @@ existing `PackService::validatePack` on import.
 
 ### Signing (spec §29.6)
 
-- `GET /api/apps/{id}/export/signed` → `{ package, signature, alg:"Ed25519", keyId, trust:"official",
-  capabilities }` (signed by `SigningService`).
+- `GET /api/apps/{id}/export/signed` → `{ package, signature, alg, keyId, trust, capabilities }` (signed
+  by `SigningService`; `trust` is `official` under Ed25519, `local-only` under the HS256 fallback that no
+  third party can verify).
+- `GET /api/apps/{id}/export/package` → the full **`.formlogic-app` ZIP** (`manifest.json` + `pack.json`
+  + `quickjs/` + `assets/` + detached `signature.json`), streamed as `application/zip`.
+- `POST /api/application-packages/import` — a multipart ZIP **or** a JSON `{ package, signature, alg }`
+  envelope; the SERVER verifies the signature, stamps trust, and delegates to the atomic `importPack`.
+  Every ZIP entry passes a shared path-traversal + zip-bomb guard (`PackFileService::assertSafeArchive`).
 - `POST /api/packs/describe` with `{ package, signature, alg }` → `{ trust, capabilities }`. A valid
-  signature ⇒ `official`; a tampered payload ⇒ not official; unsigned ⇒ `community`.
+  signature ⇒ `official`; a tampered payload ⇒ `unverified`; unsigned ⇒ `community`.
 
 ### Capability review
 
@@ -259,8 +265,10 @@ logicScripts, connectors[], permissions[] }` — what an install will be able to
 the user commits. (Consumed by the [Marketplace](#marketplace) install flow.)
 
 ### Deferred
-`.formlogic-app` zip container with `manifest.json`/`assets/`/`quickjs/`; import of the full envelope
-(assets extraction); marketplace publishing of signed packages.
+Non-pack marketplace item types (connector/theme/widget/…) — the catalog has the `item_type` column but
+those have no runtime install target yet. `launch.json`/`native.json` are written on export and validated
+on import but have no app-level storage target today (informational). Signature-derived `verified` trust
+at publish time (the publish flow doesn't yet submit a package signature).
 
 ---
 
@@ -275,6 +283,28 @@ Two manifests serve an app:
 2. **Client app manifest** — `GET /api/app/{slug}/client-manifest` (new). A richer, **signed**
    descriptor for the native runtime: display / install / offline / native / sdk / logic sections.
    Public metadata only — never form schemas or field names.
+
+### Custom-domain root endpoints
+
+So the native runtime + browsers can discover an app from a custom domain **root** (no `/api/app/{slug}`
+path), three top-level paths are served by the backend and resolve the request **Host** to its
+connected+active domain of a **published** app (`AppDomainService::resolveAppSlugByHost`, same gate as
+`resolveLaunchConfig`). The Host is trusted only because it's matched to an `app_domains` row:
+
+- `GET /.well-known/formlogic-app.json` — the **same signed client manifest** as `/client-manifest`
+  (re-built by slug, so byte-identical). 404 on a platform host.
+- `GET /manifest.json` — a **same-origin** PWA manifest rooted at `/` (the branded launch page), built
+  from the request scheme + Host (Chrome refuses a cross-origin scope). 404 on a platform host — the
+  VitePWA `/manifest.webmanifest` stays the platform default.
+- `GET /.well-known/assetlinks.json` — dynamic Android **App Links** statements. Defaults to the hosted
+  runtime entry (`com.formlogic.runtime` + its cert fingerprint, env-overridable via
+  `ANDROID_CERT_FINGERPRINT`); a domain whose `app_domains.native_config` declares its own
+  `packageName` + `sha256CertFingerprints` (a white-label build) gets that instead.
+
+These three paths live at the domain root, so the single-domain deploy's `.htaccess`
+(`ui/public/.htaccess` + `ui/dist/.htaccess`) funnels them to the API front controller; the static
+`ui/public/.well-known/assetlinks.json` remains the build-time default for split/API-elsewhere deploys.
+See the App-Links compile-time caveat in [[NATIVE_RUNTIME_TAURI#app-links-hosts-are-compile-time-per-tenant--custom-domain-limit]].
 
 ### Signature envelope (spec §25)
 
@@ -297,21 +327,26 @@ permissions: `connector.vehicle.status.read` → `{ connector: "vehicle", comman
 So the native runtime knows exactly what the app will ask for, and can prompt/approve.
 
 ### Files
-`Controllers/AppManifestController.php`, `Services/SigningService.php`.
+`Controllers/AppManifestController.php`, `Services/SigningService.php`, `Controllers/AppPublicController.php`
+(PWA manifest), `Controllers/AppDomainController.php` (asset links), `Services/AppDomainService.php`
+(host→app resolver).
 
 ### Deferred
-Key rotation / multiple keyIds; the native runtime enforcing signature verification before enabling
-the bridge; `.well-known/formlogic-app.json` alias.
+Key rotation / multiple keyIds. (The native runtime **now enforces** signature verification before
+enabling the bridge — see `docs/NATIVE_RUNTIME_TAURI.md`.) When libsodium/Ed25519 is unavailable the
+manifest endpoint returns 503 rather than an HS256 manifest no third party could verify.
 
 ---
 
 ## Marketplace
 
-Status: **foundation** (signing + trust + capability review). Spec §30.
+Status: **implemented** (item-type + server-derived trust level + capability review on install). Spec §30.
 
-The existing pack marketplace distributes **apps**. This section covers the trust + safety layer
-added for the custom-app platform; broader categories (connectors, themes, widgets, QuickJS
-libraries) remain future work.
+The existing pack marketplace distributes **apps**. This section covers the trust + safety layer added
+for the custom-app platform. The catalog now carries `item_type`
+(application_package/connector/theme/widget/quickjs_library/sdk_component/template) and a server-derived
+`trust_level`; the non-`application_package` types are schema-supported but have no runtime install target
+yet (future work). Trust + a capability review are surfaced before install.
 
 ### Trust levels
 
@@ -384,12 +419,15 @@ domain on `formlogic.local` without DNS.
   lookup so the flow is locally testable.
 
 ### Security (spec §59)
-Ownership verified before activation; one app per domain (unique); no private structure in the public
-launch config; HTTPS + real DNS required in production.
+Ownership verified via DNS-TXT before activation; TLS is then **measured** (a real HTTPS handshake sets
+`tls_status` active/pending/external — not assumed), and the probe is SSRF-guarded (`IpSafety` rejects a
+host resolving to a private/reserved/metadata IP). One app per domain (unique); no private structure in
+the public launch config; HTTPS + real DNS required in production.
 
 ### Deferred
-`website_plus_app` / `native_required` / `redirect` modes, automatic TLS provisioning, per-domain
-landing-page editor UI.
+`website_plus_app` / `native_required` / `redirect` modes; automatic TLS *provisioning* (status is
+measured, but certificate issuance is external). The per-domain landing-page editor UI is now
+implemented (`CustomDomainsPanel`).
 
 ---
 

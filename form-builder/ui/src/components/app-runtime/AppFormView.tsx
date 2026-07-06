@@ -848,11 +848,24 @@ export function AppFormView() {
   });
 
   // Fire onScreenEnter when the user opens a form. A script may request connector data
-  // (native/mock), which the host chains into onConnectorEvent to prefill fields. Runs
-  // after the per-form reset effect above, so prefill lands on a clean answers record.
+  // (native/mock), which the host chains into onConnectorEvent to prefill fields.
+  //
+  // Timing is load-gated: the form definition (and its form-level `customLogic`) arrives
+  // asynchronously from api.getAppForm, so we must NOT run on formId change alone — at that
+  // point `form?.customLogic` is still null and form-scoped onScreenEnter scripts would be
+  // silently skipped. We wait for `loading` to flip false (the fetch for THIS form resolved,
+  // guarded against stale responses in the reset effect above) and fire exactly once per
+  // screen entry — keyed on appSlug::formId so answer edits / unrelated re-renders don't
+  // re-trigger it, and re-entering a form later does. Runs after the reset effect (which
+  // clears answers on formId change, in an earlier render), so prefill lands on a clean record.
+  const screenEnterKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!appSlug || !formId || loading || !form) return;
+    const key = `${appSlug}::${formId}`;
+    if (screenEnterKeyRef.current === key) return;
+    screenEnterKeyRef.current = key;
     void runScreenEnter();
-  }, [appSlug, formId, runScreenEnter]);
+  }, [appSlug, formId, loading, form, runScreenEnter]);
 
   // Move scroll + keyboard focus to a field's first control (classic-mode error handling),
   // so a keyboard/SR user lands on the offending field instead of staying on Submit.

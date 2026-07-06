@@ -3,20 +3,25 @@
 // A thin, permission-aware wrapper over the app runtime store (and auth store)
 // so custom screens / AI-generated UI can read app data and act on it without
 // touching raw API endpoints, the runtime store internals, or the native bridge
-// (spec §27). Every hook respects the same permissions the runtime enforces; the
-// server stays authoritative. These are the same capabilities the sandboxed
-// custom-screen SDK exposes, made available to host-rendered React screens.
+// (spec §27). Permission-aware: submit + connector calls are gated (role permissions for submits,
+// the app's declared connector grants for connector calls) before they reach the transport; the
+// server and native bridge remain the real trust boundary. These are the same capabilities the
+// sandboxed custom-screen SDK exposes, made available to host-rendered React screens.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../stores/appRuntimeStore';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { getConnectorClient } from '../client-runtime/connectors/nativeConnectorClient';
+import { collectAllGrants, isPermissionGranted } from '../client-runtime/logic/appLogicPermissions';
+import { flushQueue, isFlushing, queueCounts, subscribeQueue } from '../client-runtime/offlineQueue';
 import { detectRuntimeEnvironment, type RuntimeEnvironment } from '../client-runtime/detectEnvironment';
-import type { ConnectorStatusInfo, ConnectorSummary } from '../client-runtime/connectors/connectorTypes';
+import type { ConnectorStatusInfo, ConnectorSummary, NativeRuntimeInfo } from '../client-runtime/connectors/connectorTypes';
 import type { App, AppRuntimeForm, PermissionAction } from '../types/app';
+import { api } from '../lib/api';
 
 const EMPTY_FORMS: AppRuntimeForm[] = [];
+const EMPTY_OBJ: Record<string, unknown> = {};
 
 /** The current app (theme/name/slug/settings), or null before the runtime loads. */
 export function useCurrentApp(): App | null {
@@ -130,16 +135,30 @@ export interface SdkConnector {
   status: () => Promise<ConnectorStatusInfo>;
 }
 
-/** A connector handle (native bridge when available, else the browser mock). */
+/**
+ * A connector handle (native bridge when available, else the browser mock). `request` is gated on the
+ * app's declared connector grants (bundle- + script-level `connector.<id>.<command>` permissions, the
+ * same set published in the signed client manifest): a command the app hasn't been granted is rejected
+ * before it reaches the transport, mirroring the QuickJS app-logic host. Advisory only — the native
+ * bridge and server stay the real trust boundary.
+ */
 export function useConnector(connectorId: string): SdkConnector {
+  const appLogic = useAppRuntimeStore((s) => s.config?.app.customLogic ?? null);
   return useMemo(() => {
     const client = getConnectorClient();
+    const grants = collectAllGrants(appLogic);
+    const ensureGranted = (command: string): Promise<never> | null => {
+      const required = `connector.${connectorId}.${command}`;
+      return isPermissionGranted(required, grants)
+        ? null
+        : Promise.reject(new Error(`This app has not been granted the "${required}" connector permission.`));
+    };
     return {
       id: connectorId,
-      request: (command, payload) => client.request(connectorId, command, payload),
+      request: (command, payload) => ensureGranted(command) ?? client.request(connectorId, command, payload),
       status: () => client.status(connectorId),
     };
-  }, [connectorId]);
+  }, [connectorId, appLogic]);
 }
 
 export interface SdkConnectors {
@@ -186,25 +205,181 @@ export function useRuntimeEnvironment(): RuntimeEnvironment {
 }
 
 export interface SdkOfflineQueue {
+  /** Items waiting to sync (not yet failed). */
   pending: number;
+  /** Items that failed to sync and are kept for retry. */
+  failed: number;
+  /** A flush is in progress. */
+  syncing: boolean;
+  /** Last flush error, if any. */
+  lastError: string | null;
+  /** The device is currently offline. */
+  offline: boolean;
+  /** True when there is queued work OR the device is offline (something to show the user). */
   enabled: boolean;
+  /** Attempt to deliver all queued submissions now. */
+  flush: () => Promise<void>;
 }
 
 /**
- * Offline submission queue status. Full offline sync is a later milestone; today
- * this reports the browser's online state so screens can show an offline notice.
+ * Real offline submission queue status. Reports the browser IndexedDB queue (populated when a submit is
+ * made offline — see appRuntimeStore.createResponse), merged with the native runtime's persistent queue
+ * when the bridge is present, plus a flush() action. Auto-flushes on reconnect.
  */
 export function useOfflineQueue(): SdkOfflineQueue {
   const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+  const [counts, setCounts] = useState<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
+  const [syncing, setSyncing] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+
   useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
+    let cancelled = false;
+    const refresh = () => {
+      setSyncing(isFlushing());
+      queueCounts()
+        .then(async (c) => {
+          if (cancelled) return;
+          let pending = c.pending;
+          // Merge the native runtime's persistent queue when present.
+          const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
+          if (bridge?.available && bridge.sync?.getQueue) {
+            try {
+              const nativeItems = await bridge.sync.getQueue();
+              if (!cancelled && Array.isArray(nativeItems)) pending += nativeItems.length;
+            } catch {
+              /* ignore native queue read errors */
+            }
+          }
+          if (!cancelled) setCounts({ pending, failed: c.failed });
+        })
+        .catch(() => {});
+    };
+    const unsub = subscribeQueue(refresh);
+    refresh();
+    const on = () => { setOnline(true); refresh(); };
+    const off = () => { setOnline(false); refresh(); };
     window.addEventListener('online', on);
     window.addEventListener('offline', off);
     return () => {
+      cancelled = true;
+      unsub();
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
     };
   }, []);
-  return { pending: 0, enabled: !online };
+
+  const flush = useCallback(async () => {
+    setLastError(null);
+    const r = await flushQueue();
+    if (r.failed > 0) setLastError(`${r.failed} submission${r.failed === 1 ? '' : 's'} failed to sync`);
+  }, []);
+
+  return {
+    pending: counts.pending,
+    failed: counts.failed,
+    syncing,
+    lastError,
+    offline: !online,
+    enabled: counts.pending > 0 || counts.failed > 0 || !online,
+    flush,
+  };
+}
+
+/** The current app's settings object (empty object before load). */
+export function useSettings(): Record<string, unknown> {
+  return useAppRuntimeStore((s) => (s.config?.app.settings as Record<string, unknown> | undefined) ?? EMPTY_OBJ);
+}
+/** Alias of useSettings (app-scoped settings). */
+export const useAppSettings = useSettings;
+
+/** The current app's theme object (colors) for screens that want to match the app. */
+export function useAppTheme(): Record<string, unknown> {
+  return useAppRuntimeStore((s) => (s.config?.app.theme as Record<string, unknown> | undefined) ?? EMPTY_OBJ);
+}
+
+/** A single response by id (from the recent set for `formKey`), or null. */
+export function useResponse(formKey: string, id: string): SdkResponseRow | null {
+  const { rows } = useResponses(formKey, { limit: 100 });
+  return rows.find((r) => r.id === id) ?? null;
+}
+
+/** Live status for a connector (fetched once on mount / when the connector changes). */
+export function useConnectorStatus(connectorId: string): ConnectorStatusInfo | null {
+  const connector = useConnector(connectorId);
+  const [status, setStatus] = useState<ConnectorStatusInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(connector.status()).then((s) => { if (!cancelled) setStatus(s); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [connector]);
+  return status;
+}
+
+export interface SdkConnectorPermission {
+  /** True when the `command` passed to the hook is granted. */
+  granted: boolean;
+  /** Check an arbitrary command against the app's declared connector grants. */
+  can: (command: string) => boolean;
+}
+/** Whether the app has been granted a connector command (mirrors the useConnector gate). */
+export function useConnectorPermission(connectorId: string, command?: string): SdkConnectorPermission {
+  const appLogic = useAppRuntimeStore((s) => s.config?.app.customLogic ?? null);
+  return useMemo(() => {
+    const grants = collectAllGrants(appLogic);
+    const can = (cmd: string) => isPermissionGranted(`connector.${connectorId}.${cmd}`, grants);
+    return { granted: command ? can(command) : false, can };
+  }, [appLogic, connectorId, command]);
+}
+
+export interface SdkNativeRuntime {
+  available: boolean;
+  info: NativeRuntimeInfo | null;
+  environment: RuntimeEnvironment;
+}
+/** Native runtime presence + info (info is null in a plain browser). */
+export function useNativeRuntime(): SdkNativeRuntime {
+  const environment = useRuntimeEnvironment();
+  const [info, setInfo] = useState<NativeRuntimeInfo | null>(null);
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
+    if (!bridge?.available) return;
+    let cancelled = false;
+    bridge.runtime.getInfo().then((i) => { if (!cancelled) setInfo(i); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  return { available: getConnectorClient().isNativeAvailable(), info, environment };
+}
+
+export interface SdkManifest {
+  payload: Record<string, unknown>;
+  signature: string;
+  alg: string;
+  keyId: string;
+}
+export interface UseAppManifestResult {
+  manifest: SdkManifest | null;
+  loading: boolean;
+  error: string | null;
+}
+/** The app's signed client manifest (display/native/offline capabilities). */
+export function useAppManifest(): UseAppManifestResult {
+  const slug = useAppRuntimeStore((s) => s.appSlug);
+  const [manifest, setManifest] = useState<SdkManifest | null>(null);
+  // Init from slug presence so we never setState synchronously in the effect (no slug → not loading).
+  const [loading, setLoading] = useState<boolean>(!!slug);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!slug) return () => { cancelled = true; };
+    api.getClientManifest(slug)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.data) setManifest(res.data as SdkManifest);
+        else setError(typeof res.error === 'string' ? res.error : 'Failed to load manifest');
+        setLoading(false);
+      })
+      .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Failed'); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [slug]);
+  return { manifest, loading, error };
 }
