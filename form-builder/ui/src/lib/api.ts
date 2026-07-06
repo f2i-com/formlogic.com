@@ -69,6 +69,25 @@ export function newIdempotencyKey(): string {
   return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Rich result of an app-runtime submission that PRESERVES the server's 409 conflict signalling so the
+ * offline queue can tell a terminal conflict (key reused with a different payload) apart from a
+ * retryable "already being processed" race. Unlike the generic ApiResponse (which flattens the body to
+ * a single `error` string), this exposes the {conflict}/{processing} flags from the 409 body.
+ */
+export interface AppSubmitResult {
+  ok: boolean;
+  response?: unknown;
+  error?: string;
+  /** 409: this idempotency key was already used with a DIFFERENT submission — terminal conflict. */
+  conflict?: boolean;
+  /** 409: an identical submission is already in flight server-side — retryable. */
+  processing?: boolean;
+  /** 200: an idempotent replay of an already-completed submission. */
+  idempotent?: boolean;
+  status?: number;
+}
+
 export interface AppDomain {
   id: string;
   appId: string;
@@ -82,6 +101,9 @@ export interface AppDomain {
   verifiedAt: string | null;
   tlsStatus: string;
   landingConfig: Record<string, unknown>;
+  nativeConfig?: Record<string, unknown>;
+  pwaConfig?: Record<string, unknown>;
+  securityConfig?: Record<string, unknown>;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -221,6 +243,42 @@ class ApiClient {
     } catch (error) {
       logger.error('API request failed:', error);
       return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /**
+   * Like request(), but returns the raw HTTP status + parsed body instead of flattening a non-2xx
+   * response to a single `error` string. Used where the caller needs structured fields from an error
+   * body (e.g. the 409 {conflict}/{processing} flags on an app submission). Additive: existing
+   * endpoints keep using request().
+   */
+  private async requestWithMeta(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null; networkError?: string }> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    }
+    try {
+      const response = await fetch(url, { ...options, headers, credentials: 'include' });
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = (await response.json()) as Record<string, unknown>;
+      } catch {
+        body = null;
+      }
+      if (response.status === 401) this.handleUnauthorized();
+      return { ok: response.ok, status: response.status, body };
+    } catch (error) {
+      logger.error('API request failed:', error);
+      return { ok: false, status: 0, body: null, networkError: error instanceof Error ? error.message : 'Network error' };
     }
   }
 
@@ -955,6 +1013,50 @@ class ApiClient {
     return this.request(`/app/${slug}/forms/${formId}/responses`, {
       method: 'POST',
       body: JSON.stringify(body),
+    });
+  }
+
+  /**
+   * Submit one app response, preserving the server's 409 conflict/processing signalling (unlike
+   * createAppResponse, which flattens it). Used by the offline queue's deliver() so it can distinguish
+   * a terminal conflict from a retryable in-flight race. Same demo-mode + idempotency-key behaviour.
+   */
+  async createAppResponseResult(slug: string, formId: string, data: Record<string, unknown>): Promise<AppSubmitResult> {
+    if (this._demoMode) {
+      const answers = (data.answers as Record<string, unknown>) ?? {};
+      const response = await addDemoRecord(formId, answers);
+      return { ok: true, response, status: 200 };
+    }
+    const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
+    const res = await this.requestWithMeta(`/app/${slug}/forms/${formId}/responses`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    const b = res.body ?? {};
+    if (res.ok) {
+      return { ok: true, response: (b as { response?: unknown }).response, idempotent: b.idempotent === true, status: res.status };
+    }
+    const message = typeof b.message === 'string' ? b.message : (res.networkError ?? 'An error occurred');
+    return {
+      ok: false,
+      error: message,
+      conflict: b.conflict === true,
+      processing: b.processing === true,
+      status: res.status,
+    };
+  }
+
+  /**
+   * Offline sync: submit a batch of queued responses in one request (the same idempotent pipeline as a
+   * single submit). Returns per-item results keyed by idempotencyKey. Used by flushNativeQueue().
+   */
+  async syncBatch(
+    slug: string,
+    items: Array<{ idempotencyKey: string; formId: string; answers: Record<string, unknown> }>
+  ): Promise<ApiResponse<{ results: Array<{ idempotencyKey: string | null; success: boolean; responseId: string | null; error: string | null }> }>> {
+    return this.request(`/app/${slug}/sync/batch`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
     });
   }
 

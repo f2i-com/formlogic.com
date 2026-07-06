@@ -146,6 +146,17 @@ The existing *sandboxed* custom-screen SDK (postMessage bridge, iframe = the bou
 This SDK is for **host-rendered** React screens that run in the trusted app shell. Both expose the
 same capabilities; pick by whether your screen is sandboxed code or trusted React.
 
+### Trust boundary: host-rendered React is first-party only
+
+Host-rendered SDK screens run as **trusted React inside the app shell** — there is no sandbox around
+them — so they are restricted to the **first-party screen registry** (components FormLogic ships and
+registers). The platform **never dynamically evaluates untrusted package React**: there is no runtime
+`eval` / dynamic `import()` of component code that arrived inside an application package. If a
+distributed or otherwise untrusted package needs custom UI, it must ship a **sandboxed `code` screen**
+(the iframe is the security boundary) rather than an SDK screen. Widening this — running third-party
+React in the trusted shell — would require **signed-package trust *and* an isolation mechanism**, and is
+out of scope until both exist.
+
 ### Deferred
 `<FormView>`, `<ResponseDetail>`, `<AppButton>`; an npm-published `@formlogic/sdk`; SDK version
 negotiation in the client manifest.
@@ -264,6 +275,23 @@ existing `PackService::validatePack` on import.
 logicScripts, connectors[], permissions[] }` — what an install will be able to do, surfaced before
 the user commits. (Consumed by the [Marketplace](#marketplace) install flow.)
 
+### Screen/UI portability rules
+
+An application package can carry three kinds of screen, and they differ in trust *and* in whether they
+are portable across installs:
+
+| screen kind | trust model | portable in a package? |
+|---|---|---|
+| **dashboard** (no-code widget grid) | host-rendered, data-only — no author code runs | **yes** — fully portable; nothing to sandbox or review |
+| **code** (sandboxed HTML/CSS/JS) | untrusted; the iframe sandbox **is** the boundary | **yes** — portable as untrusted; capability/permission review still applies |
+| **sdk** (host-rendered React) | first-party trusted, **registry-only** (see the [FormLogic SDK trust note](#trust-boundary-host-rendered-react-is-first-party-only)) | **only** when the referenced component already ships in the first-party registry |
+
+Importing **arbitrary package React** — component source that would render in the trusted shell — is
+**NOT supported yet**: an untrusted package's custom UI must be a `code` screen. So a portable,
+distributable package uses **dashboard + code** screens; `sdk` screens are for first-party apps whose
+components already ship in the runtime. Widening to trusted third-party React requires signed-package
+trust plus isolation (same condition as the SDK trust note).
+
 ### Deferred
 Non-pack marketplace item types (connector/theme/widget/…) — the catalog has the `item_type` column but
 those have no runtime install target yet. `launch.json`/`native.json` are written on export and validated
@@ -296,6 +324,14 @@ connected+active domain of a **published** app (`AppDomainService::resolveAppSlu
 - `GET /manifest.json` — a **same-origin** PWA manifest rooted at `/` (the branded launch page), built
   from the request scheme + Host (Chrome refuses a cross-origin scope). 404 on a platform host — the
   VitePWA `/manifest.webmanifest` stays the platform default.
+  - **Dev `?host` override vs. manifest origin**: `?host=<domain>` selects *which app* the manifest
+    describes (it resolves the app slug), but the manifest's **origin** — `start_url` / `scope` / icon
+    URLs — is built from the **actual request `Host` header**, falling back to `?host` only when no
+    `Host` is present. So previewing in dev on `formlogic.local` with `?host=mine.management` yields a
+    manifest whose origin is `formlogic.local` (the local host), not the customer domain. There is no
+    production origin-spoofing: the served origin always follows the real request Host, so `?host` can
+    point the lookup at another app but cannot make a platform host emit a foreign-origin installable
+    manifest.
 - `GET /.well-known/assetlinks.json` — dynamic Android **App Links** statements. Defaults to the hosted
   runtime entry (`com.formlogic.runtime` + its cert fingerprint, env-overridable via
   `ANDROID_CERT_FINGERPRINT`); a domain whose `app_domains.native_config` declares its own
@@ -423,6 +459,15 @@ Ownership verified via DNS-TXT before activation; TLS is then **measured** (a re
 `tls_status` active/pending/external — not assumed), and the probe is SSRF-guarded (`IpSafety` rejects a
 host resolving to a private/reserved/metadata IP). One app per domain (unique); no private structure in
 the public launch config; HTTPS + real DNS required in production.
+
+**SSRF guidance for any FUTURE outbound request** (e.g. an HTTP-file domain-verification method,
+favicon/asset fetch, or `.well-known` probing): reuse `IpSafety::resolvesToPublicHost()` and call it
+**immediately before every outbound request** — not once at domain-save time. A host that resolved to a
+public IP at save time can be re-pointed at a private/metadata IP later (DNS rebinding), so re-resolve
+per request. In addition: **re-check every redirect target** the same way (never blindly follow
+`Location`), allow **`http`/`https` schemes only**, **cap the response size**, and use a **short
+timeout**. `probeTls()` in `AppDomainService` is the reference call site — it re-guards the host right
+before opening the TLS handshake; any new fetch path must do the same.
 
 ### Deferred
 `website_plus_app` / `native_required` / `redirect` modes; automatic TLS *provisioning* (status is

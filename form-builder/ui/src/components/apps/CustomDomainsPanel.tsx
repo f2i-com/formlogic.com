@@ -3,8 +3,13 @@
 // Owners connect their own domain (e.g. mine.management), see the DNS TXT record to
 // add, verify it, and open/remove it. Verification is server-side (real DNS in
 // production; a dev shortcut on non-production hosts so the flow is testable locally).
+//
+// TLS policy is surfaced prominently: in flexible mode (APP_DOMAIN_REQUIRE_TLS_ACTIVE=0,
+// the default) ownership alone connects the domain and any pending HTTPS is noted but not
+// blocking; in strict mode the server holds the domain at status='verified' (ownership
+// proven, HTTPS pending) until a live TLS handshake promotes it to 'active'.
 import { useEffect, useState } from 'react';
-import { Globe2, Plus, Trash2, RefreshCw, ExternalLink, Copy, Check, ChevronDown, ChevronRight, Sliders } from 'lucide-react';
+import { Globe2, Plus, Trash2, RefreshCw, ExternalLink, Copy, Check, ChevronDown, ChevronRight, Sliders, Lock, Smartphone } from 'lucide-react';
 import { api, type AppDomain } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -18,13 +23,32 @@ const MODE_OPTIONS = [
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     active: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20',
+    verified: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20',
     pending: 'bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20',
     failed: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20',
   };
-  const label = status === 'active' ? 'Connected' : status === 'failed' ? 'Not verified' : 'Pending verification';
+  const label =
+    status === 'active' ? 'Connected'
+    : status === 'verified' ? 'Verified · HTTPS pending'
+    : status === 'failed' ? 'Not verified'
+    : 'Pending verification';
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${map[status] ?? map.pending}`}>
       {label}
+    </span>
+  );
+}
+
+/** Prominent HTTPS/TLS indicator (measured during verification). Live = emerald; anything else = amber. */
+function TlsBadge({ tlsStatus }: { tlsStatus?: string }) {
+  const live = tlsStatus === 'active';
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[11px] font-medium ${live ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+      title="HTTPS/TLS status measured during verification"
+    >
+      <Lock className="h-3 w-3 shrink-0" />
+      {live ? 'HTTPS live' : 'HTTPS pending'}
     </span>
   );
 }
@@ -138,6 +162,137 @@ function LaunchPageEditor({ appId, domain, onSaved }: { appId: string; domain: A
   );
 }
 
+// Per-domain native-runtime config. Round-trips through app_domains.native_config; the dynamic
+// /.well-known/assetlinks.json route reads packageName + sha256CertFingerprints from it so a
+// white-label Android build can App-Link-verify this custom domain. `nativeConfig` isn't declared on
+// the AppDomain type yet, so read it through a narrow cast (robust whether or not it's typed elsewhere).
+type NativeConfig = {
+  packageName?: string;
+  sha256CertFingerprints?: string[];
+  minRuntimeVersion?: string;
+  installUrl?: string;
+  requireNativeRuntime?: boolean;
+  showNativeCta?: boolean;
+};
+
+function readNativeConfig(domain: AppDomain): NativeConfig {
+  const raw = (domain as unknown as { nativeConfig?: NativeConfig }).nativeConfig;
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+/** Per-domain native app / App Links editor — persists into app_domains.native_config. */
+function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain: AppDomain; onSaved: (d: AppDomain) => void }) {
+  const [open, setOpen] = useState(false);
+  const initial = readNativeConfig(domain);
+  const [packageName, setPackageName] = useState(initial.packageName ?? '');
+  const [fingerprints, setFingerprints] = useState((initial.sha256CertFingerprints ?? []).join('\n'));
+  const [minRuntimeVersion, setMinRuntimeVersion] = useState(initial.minRuntimeVersion ?? '');
+  const [installUrl, setInstallUrl] = useState(initial.installUrl ?? '');
+  const [requireNativeRuntime, setRequireNativeRuntime] = useState(!!initial.requireNativeRuntime);
+  const [showNativeCta, setShowNativeCta] = useState(!!initial.showNativeCta);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    const sha256CertFingerprints = fingerprints
+      .split(/[\n,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const nativeConfig: NativeConfig = {
+      packageName: packageName.trim() || undefined,
+      sha256CertFingerprints,
+      minRuntimeVersion: minRuntimeVersion.trim() || undefined,
+      installUrl: installUrl.trim() || undefined,
+      requireNativeRuntime,
+      showNativeCta,
+    };
+    const res = await api.updateAppDomain(appId, domain.id, { nativeConfig });
+    setSaving(false);
+    if (res.error) {
+      toast.error('Could not save native app settings', typeof res.error === 'string' ? res.error : undefined);
+      return;
+    }
+    if (res.data?.domain) {
+      onSaved(res.data.domain);
+      toast.success('Native app settings saved');
+    }
+  };
+
+  return (
+    <div className="mt-2 border-t border-gray-100 dark:border-slate-700/60 pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-xs font-medium text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        <Smartphone className="h-3.5 w-3.5" /> Native app &amp; App Links
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <p className="text-[11px] leading-relaxed text-gray-500 dark:text-slate-400">
+            For a white-label Android build. The package name + certificate fingerprints are served at{' '}
+            <span className="font-mono">/.well-known/assetlinks.json</span> so your app can App-Link-verify this domain.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="block min-w-0">
+              <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Android package name</span>
+              <input
+                value={packageName}
+                onChange={(e) => setPackageName(e.target.value)}
+                placeholder="com.yourcompany.app"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500"
+              />
+            </label>
+            <label className="block min-w-0">
+              <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Minimum runtime version</span>
+              <input
+                value={minRuntimeVersion}
+                onChange={(e) => setMinRuntimeVersion(e.target.value)}
+                placeholder="0.1.0"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500"
+              />
+            </label>
+          </div>
+          <label className="block min-w-0">
+            <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">SHA-256 certificate fingerprints</span>
+            <textarea
+              value={fingerprints}
+              onChange={(e) => setFingerprints(e.target.value)}
+              rows={2}
+              placeholder={'One per line\nAB:CD:EF:…'}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-primary-500 resize-y break-all"
+            />
+            <span className="block text-[11px] text-gray-400 dark:text-slate-500 mt-1">One fingerprint per line (or comma-separated).</span>
+          </label>
+          <label className="block min-w-0">
+            <span className="block text-[11px] font-medium text-gray-500 dark:text-slate-400 mb-1">Native install URL</span>
+            <input
+              value={installUrl}
+              onChange={(e) => setInstallUrl(e.target.value)}
+              placeholder="https://play.google.com/store/apps/details?id=…"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-primary-500"
+            />
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
+              <input type="checkbox" checked={showNativeCta} onChange={(e) => setShowNativeCta(e.target.checked)} className="rounded" />
+              Show “Get the native app” prompt
+            </label>
+            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-400">
+              <input type="checkbox" checked={requireNativeRuntime} onChange={(e) => setRequireNativeRuntime(e.target.checked)} className="rounded" />
+              Require the native runtime
+            </label>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={save} isLoading={saving} disabled={saving}>Save native settings</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string }) {
   const [domains, setDomains] = useState<AppDomain[]>([]);
   const [loading, setLoading] = useState(true);
@@ -181,8 +336,14 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
     if (res.data?.domain) {
       setDomains((list) => list.map((x) => (x.id === d.id ? res.data!.domain! : x)));
     }
-    if (res.data?.ok) toast.success('Domain verified', 'Your app is now reachable on this domain.');
-    else toast.warning('Not verified yet', res.data?.message || 'Add the DNS TXT record and try again.');
+    const status = res.data?.domain?.status ?? res.data?.status;
+    if (res.data?.ok || status === 'active') {
+      toast.success('Domain verified', 'Your app is now reachable on this domain.');
+    } else if (status === 'verified') {
+      toast.info('Ownership verified', res.data?.message || 'Waiting for HTTPS to go live before this domain activates.');
+    } else {
+      toast.warning('Not verified yet', res.data?.message || 'Add the DNS TXT record and try again.');
+    }
   };
 
   const remove = async (d: AppDomain) => {
@@ -250,22 +411,17 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
           {domains.map((d) => (
             <li key={d.id} className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
                   <span className="font-mono text-sm font-medium text-gray-900 dark:text-white truncate">{d.domain}</span>
                   <StatusBadge status={d.status} />
-                  {d.status === 'active' && d.tlsStatus && (
-                    <span
-                      className={`text-[11px] font-medium ${d.tlsStatus === 'active' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
-                      title="HTTPS/TLS status measured at verification"
-                    >
-                      HTTPS {d.tlsStatus === 'active' ? '✓' : d.tlsStatus}
-                    </span>
+                  {(d.status === 'active' || d.status === 'verified') && d.tlsStatus && (
+                    <TlsBadge tlsStatus={d.tlsStatus} />
                   )}
                 </div>
                 <div className="flex items-center gap-1.5">
                   {d.status !== 'active' && (
                     <Button variant="outline" size="sm" onClick={() => verify(d)} isLoading={busyId === d.id} leftIcon={<RefreshCw className="h-3.5 w-3.5" />}>
-                      Verify
+                      {d.status === 'verified' ? 'Re-check' : 'Verify'}
                     </Button>
                   )}
                   {d.status === 'active' && (
@@ -279,7 +435,23 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
                 </div>
               </div>
 
-              {d.status !== 'active' && (
+              {/* Strict-mode holding state: ownership proven, waiting for HTTPS before it goes live. */}
+              {d.status === 'verified' && (
+                <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  Ownership is verified. This domain goes live automatically once HTTPS is detected — DNS routing or the TLS
+                  certificate may still be provisioning. Click <span className="font-medium">Re-check</span> to try again.
+                </div>
+              )}
+
+              {/* Flexible-mode note: connected, but HTTPS isn't confirmed yet (non-blocking). */}
+              {d.status === 'active' && d.tlsStatus && d.tlsStatus !== 'active' && (
+                <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                  Connected. HTTPS isn’t confirmed yet — DNS routing or the TLS certificate may still be provisioning. This
+                  doesn’t block the domain; re-check later to confirm HTTPS is live.
+                </div>
+              )}
+
+              {(d.status === 'pending' || d.status === 'failed') && (
                 <div className="mt-3 bg-gray-50 dark:bg-slate-800 rounded-lg p-3 text-xs text-gray-600 dark:text-slate-400 overflow-x-auto">
                   <p className="font-medium mb-2 text-gray-700 dark:text-slate-300">Add this DNS record, then click Verify:</p>
                   <div className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 font-mono whitespace-nowrap">
@@ -301,6 +473,11 @@ export function CustomDomainsPanel({ appId }: { appId: string; appSlug?: string 
               )}
 
               <LaunchPageEditor
+                appId={appId}
+                domain={d}
+                onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}
+              />
+              <NativeConfigEditor
                 appId={appId}
                 domain={d}
                 onSaved={(u) => setDomains((list) => list.map((x) => (x.id === u.id ? u : x)))}

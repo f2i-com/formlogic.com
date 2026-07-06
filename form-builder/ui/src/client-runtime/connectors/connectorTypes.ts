@@ -122,9 +122,18 @@ export interface NativeSyncQueueItem {
   appSlug: string;
   formId: string;
   idempotencyKey: string;
+  /** The submission answers; present on getQueue() and (per contract) on flush()'s grouped items. */
+  answers?: Record<string, unknown>;
   status: string;
   attempts: number;
   lastError: string | null;
+  createdAt?: string;
+}
+
+/** One appSlug group returned by the native sync flush() — the items to POST to /sync/batch. */
+export interface NativeSyncFlushGroup {
+  appSlug: string;
+  items: NativeSyncQueueItem[];
 }
 
 export interface FormLogicNativeBridge {
@@ -132,6 +141,13 @@ export interface FormLogicNativeBridge {
   runtime: {
     getInfo(): Promise<NativeRuntimeInfo>;
     openExternal(url: string): Promise<void>;
+    /**
+     * Resolves when the CURRENT page origin's signed-manifest verification COMPLETES (shared
+     * cross-agent contract 1): `verified:true` when the Ed25519 client manifest verified and
+     * capabilities loaded, `verified:false` when verification definitively failed. Optional because
+     * older runtimes predate it — a missing `ready` means "proceed best-effort" (no readiness gate).
+     */
+    ready?(): Promise<{ verified: boolean }>;
   };
   connectors: {
     list(): Promise<ConnectorSummary[]>;
@@ -143,7 +159,12 @@ export interface FormLogicNativeBridge {
       callback: (event: unknown) => void
     ): () => void;
   };
-  /** Persistent offline sync queue (native runtime). Absent on older runtimes / in a browser. */
+  /**
+   * Persistent offline sync queue (native runtime). Absent on older runtimes / in a browser.
+   * Contract 2: the Rust side owns the JS shim; the web side owns flushNativeQueue() which calls
+   * flush() -> POST /sync/batch -> ack() the accepted ids / fail() the rest. `ack`/`fail` may be
+   * absent on a runtime that predates the round they were added, so callers feature-detect them.
+   */
   sync?: {
     enqueueSubmission(item: {
       appSlug: string;
@@ -152,7 +173,12 @@ export interface FormLogicNativeBridge {
       answers: Record<string, unknown>;
     }): Promise<{ id: string }>;
     getQueue(): Promise<NativeSyncQueueItem[]>;
-    flush(): Promise<{ flushed: number; failed: number } | { pending: unknown[] }>;
+    /** Returns pending items grouped by appSlug (attempts already incremented); nothing is removed. */
+    flush(): Promise<{ pending: NativeSyncFlushGroup[] }>;
+    /** Remove the given queue-item ids after the server accepted them. */
+    ack?(ids: string[]): Promise<{ acked: number; remaining: number }>;
+    /** Record a delivery failure for the given ids (kept + retryable until the native attempt cap). */
+    fail?(ids: string[], error: string): Promise<{ failed: number }>;
   };
 }
 

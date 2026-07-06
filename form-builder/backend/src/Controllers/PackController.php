@@ -61,8 +61,9 @@ class PackController
             'keyId' => $signed['keyId'],
             // 'official' means Ed25519-signed (verifiable against our public key). An HS256 fallback
             // signature is only checkable on this same server, so mark it local-only — importers must
-            // not treat it as externally verified.
-            'trust' => ($signed['alg'] ?? '') === 'Ed25519' ? 'official' : 'local-only',
+            // not treat it as externally verified. (We just signed it, so it is inherently verified;
+            // routed through the shared classifier so this cannot diverge from describe/import.)
+            'trust' => PackService::classifyTrust(true, true, (string) ($signed['alg'] ?? '')),
             'capabilities' => PackCapabilities::describe($pack),
         ]);
     }
@@ -152,6 +153,9 @@ class PackController
                     'installationId' => $result['installationId'],
                     'forms' => $result['forms'],
                     'apps' => $result['apps'],
+                    // Envelope metadata (quickjs/launch/native/assets) that could not be applied to a runtime
+                    // target surfaces here rather than being silently dropped (applied inside the service).
+                    'warnings' => $result['warnings'] ?? [],
                 ], 201);
             } catch (\RuntimeException $e) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -175,15 +179,18 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Package data is required'], 400);
         }
 
-        // Verify the signature over EXACTLY what was signed (the `package` field). Trust is server-derived.
+        // Verify the signature over EXACTLY what was signed (the `package` field). Trust is server-derived
+        // via the shared, algorithm-aware classifier (Ed25519 => official, HS256 => local-only, fail =>
+        // unverified) so describe + JSON import + ZIP import can never diverge.
         $trust = 'community';
         if (isset($body['signature'])) {
+            $alg = (string) ($body['alg'] ?? '');
             $ok = $this->signingService && $this->signingService->verify([
                 'payload' => $package,
                 'signature' => (string) $body['signature'],
-                'alg' => (string) ($body['alg'] ?? ''),
+                'alg' => $alg,
             ]);
-            $trust = $ok ? (((string) ($body['alg'] ?? '')) === 'Ed25519' ? 'official' : 'local-only') : 'unverified';
+            $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
 
             // Optional workspace policy: block an unverified package (mirrors PlanService gating in import()).
             $requireVerified = (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? '') === 'true');
@@ -214,6 +221,14 @@ class PackController
 
         try {
             $result = $this->packService->importPack($packData, $userId);
+            // Apply the ENVELOPE-level metadata (customLogic/launch/native/logo that live OUTSIDE pack.json)
+            // to the created app(s) — but ONLY when the package isn't a present-but-FAILING signature. A
+            // tampered ('unverified') envelope must not touch the created app; an unsigned 'community'
+            // package still applies (it makes no verification claim). Anything without a runtime target
+            // today comes back as a warning rather than being silently dropped.
+            $warnings = $trust === 'unverified'
+                ? ['Envelope metadata was skipped because the package signature did not verify.']
+                : $this->packService->applyPackageMetadata($package, $result['apps'], $userId);
             $this->auditImport($request, $userId, $result, ['package' => true, 'signed' => isset($body['signature']), 'trust' => $trust]);
             return $this->jsonResponse($response, [
                 'success' => true,
@@ -221,6 +236,7 @@ class PackController
                 'installationId' => $result['installationId'],
                 'forms' => $result['forms'],
                 'apps' => $result['apps'],
+                'warnings' => $warnings,
             ], 201);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
@@ -261,11 +277,17 @@ class PackController
         if (!is_array($pack)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack data is required'], 400);
         }
+        // Trust is ALGORITHM-AWARE: a verifying Ed25519 signature is publicly/native-verifiable
+        // ('official'); a verifying HS256 fallback is only re-checkable on THIS server ('local-only');
+        // a present-but-failing signature is 'unverified'; no signature is 'community'. Same single
+        // source of truth as the import paths (PackService::classifyTrust) — a blanket 'official' for
+        // any verifying signature would over-trust the symmetric fallback no third party can verify.
         $trust = 'community';
         if (isset($body['signature'])) {
+            $alg = (string) ($body['alg'] ?? '');
             $ok = $this->signingService
-                && $this->signingService->verify(['payload' => $pack, 'signature' => $body['signature'], 'alg' => $body['alg'] ?? '']);
-            $trust = $ok ? 'official' : 'unverified';
+                && $this->signingService->verify(['payload' => $pack, 'signature' => $body['signature'], 'alg' => $alg]);
+            $trust = PackService::classifyTrust(true, (bool) $ok, $alg);
         }
         return $this->jsonResponse($response, [
             'trust' => $trust,

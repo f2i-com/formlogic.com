@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{window::Color, Manager, Url};
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -105,6 +105,42 @@ fn runtime_info() -> RuntimeInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: std::env::consts::OS.to_string(),
     }
+}
+
+// Hard backstop for how long `runtime.ready()` parks awaiting a terminal verification. The web
+// caller (nativeConnectorClient) applies its own ~3s timeout and proceeds best-effort, so this
+// only bounds the blocking thread if verification never resolves (e.g. server unreachable).
+const READY_WAIT_SECS: u64 = 10;
+
+/// Contract (1): resolve the CURRENT page origin's signed-manifest verification state, awaiting
+/// completion. Returns `{ verified: true }` once the Ed25519 client manifest verified and its
+/// native capabilities loaded, or `{ verified: false }` once verification definitively failed
+/// (or the page is not a hosted app under `/app/<slug>`, so there is nothing to verify).
+///
+/// The web runtime awaits this before the FIRST native connector request so an early
+/// `onScreenEnter` read no longer races the async verifier into a non-fallbackable
+/// `origin_denied`. Runs `async` + `spawn_blocking` so the condvar park never blocks the main
+/// (UI) thread. Borrows `State`, so it must return a `Result` (Tauri async-command rule).
+#[tauri::command]
+async fn runtime_ready(
+    webview: tauri::Webview,
+    verified: tauri::State<'_, VerifiedOrigins>,
+) -> Result<Value, String> {
+    // Only a hosted app page under `/app/<slug>` triggers manifest verification; the shell and
+    // any other page have no manifest, so they are never "verified".
+    let url = webview.url().ok();
+    let origin = url.as_ref().and_then(hosted_app_origin);
+    let has_slug = url.as_ref().and_then(slug_of).is_some();
+    let Some(origin) = origin.filter(|_| has_slug) else {
+        return Ok(json!({ "verified": false }));
+    };
+    let origins = verified.inner().clone();
+    let flag = tauri::async_runtime::spawn_blocking(move || {
+        origins.await_terminal(&origin, Duration::from_secs(READY_WAIT_SECS))
+    })
+    .await
+    .unwrap_or(false); // a join failure (verifier panic) is treated as "not verified".
+    Ok(json!({ "verified": flag }))
 }
 
 #[tauri::command]
@@ -484,20 +520,107 @@ impl VerifiedCaps {
     }
 }
 
-/// Per-origin verified capabilities. Shared (Arc) between the page-load verifier and the
-/// bridge command handlers.
-#[derive(Clone, Default)]
-struct VerifiedOrigins(Arc<Mutex<HashMap<String, VerifiedCaps>>>);
+/// The verification state of one origin. The bridge injects `available=true` optimistically
+/// and verifies the signed manifest asynchronously, so an origin passes through `Pending`
+/// (verifier thread running) before reaching a terminal `Verified`/`Failed`. `runtime.ready()`
+/// awaits that terminal transition so an early connector read never races the verifier.
+#[derive(Clone)]
+enum OriginVerification {
+    /// Signed-manifest verification is in flight (thread spawned, not yet terminal).
+    Pending,
+    /// Verified: the Ed25519 client manifest checked out; these native caps are granted.
+    Verified(VerifiedCaps),
+    /// Verification definitively failed (missing/invalid signature, fetch error, slug mismatch…).
+    Failed,
+}
+
+/// Per-origin verification state. Shared (Arc) between the page-load verifier and the bridge
+/// command handlers. The `Condvar` lets `runtime.ready()` park until an origin becomes terminal
+/// (Verified/Failed) instead of racing the async verifier or busy-polling.
+#[derive(Clone)]
+struct VerifiedOrigins(Arc<(Mutex<HashMap<String, OriginVerification>>, Condvar)>);
+
+impl Default for VerifiedOrigins {
+    fn default() -> Self {
+        VerifiedOrigins(Arc::new((Mutex::new(HashMap::new()), Condvar::new())))
+    }
+}
 
 impl VerifiedOrigins {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, OriginVerification>> {
+        let (lock, _) = &*self.0;
+        lock.lock().unwrap()
+    }
+
+    /// The granted caps for a Verified origin; None while Pending, on Failure, or when absent.
     fn get(&self, origin: &str) -> Option<VerifiedCaps> {
-        self.0.lock().unwrap().get(origin).cloned()
+        match self.lock().get(origin) {
+            Some(OriginVerification::Verified(caps)) => Some(caps.clone()),
+            _ => None,
+        }
     }
+
+    /// True only once the origin has reached the terminal `Verified` state (gates sync commands
+    /// and lets the page-load hook skip re-verifying an already-verified origin).
     fn contains(&self, origin: &str) -> bool {
-        self.0.lock().unwrap().contains_key(origin)
+        matches!(self.lock().get(origin), Some(OriginVerification::Verified(_)))
     }
-    fn insert(&self, origin: String, caps: VerifiedCaps) {
-        self.0.lock().unwrap().insert(origin, caps);
+
+    /// Atomically claim verification for an origin: mark it `Pending` and return true iff the
+    /// caller should start the verifier thread. Returns false when the origin is already
+    /// `Verified` or already `Pending` (a verification is in flight) to avoid duplicate work; a
+    /// previously `Failed` origin is retried (re-marked `Pending`) on a fresh navigation.
+    fn begin_verification(&self, origin: &str) -> bool {
+        let mut map = self.lock();
+        let in_flight = matches!(
+            map.get(origin),
+            Some(OriginVerification::Verified(_)) | Some(OriginVerification::Pending)
+        );
+        if !in_flight {
+            map.insert(origin.to_string(), OriginVerification::Pending);
+        }
+        !in_flight
+    }
+
+    /// Record a successful verification and wake any `ready()` waiters.
+    fn insert_verified(&self, origin: String, caps: VerifiedCaps) {
+        let (lock, cvar) = &*self.0;
+        lock.lock().unwrap().insert(origin, OriginVerification::Verified(caps));
+        cvar.notify_all();
+    }
+
+    /// Record a definitive verification failure and wake any `ready()` waiters.
+    fn mark_failed(&self, origin: String) {
+        let (lock, cvar) = &*self.0;
+        lock.lock().unwrap().insert(origin, OriginVerification::Failed);
+        cvar.notify_all();
+    }
+
+    /// Park until the origin's verification is terminal (`Verified`/`Failed`) or `timeout`
+    /// elapses. Returns true iff it ended `Verified`. An origin still `Pending`/absent at the
+    /// deadline yields false so `ready()` resolves `{verified:false}` best-effort (the TS caller
+    /// applies its own shorter timeout; this is only the hard backstop for the blocking thread).
+    fn await_terminal(&self, origin: &str, timeout: Duration) -> bool {
+        let (lock, cvar) = &*self.0;
+        let deadline = Instant::now() + timeout;
+        let mut map = lock.lock().unwrap();
+        loop {
+            match map.get(origin) {
+                Some(OriginVerification::Verified(_)) => return true,
+                Some(OriginVerification::Failed) => return false,
+                _ => {} // Pending or absent (verifier not yet registered): keep waiting.
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let (guard, res) = cvar.wait_timeout(map, deadline - now).unwrap();
+            map = guard;
+            if res.timed_out() {
+                // Final check after the timeout, then give up.
+                return matches!(map.get(origin), Some(OriginVerification::Verified(_)));
+            }
+        }
     }
 }
 
@@ -738,7 +861,18 @@ const BRIDGE_SCRIPT: &str = r#"
       // Target of the deep link that launched the runtime (cold start), or null.
       // The shell reads this so it can open straight into the app without ever
       // flashing the console UI. Consumed once.
-      pendingDeepLink: function () { return invoke('pending_deep_link'); }
+      pendingDeepLink: function () { return invoke('pending_deep_link'); },
+      // Contract (1): resolves once THIS origin's signed-manifest verification has completed —
+      // { verified:true } when the Ed25519 manifest verified + caps loaded, { verified:false }
+      // when it definitively failed (or this page has no manifest). The web runtime awaits this
+      // before its first native connector request so an early read never races the verifier.
+      // Always resolves to the {verified:boolean} shape (never rejects).
+      ready: function () {
+        return invoke('runtime_ready').then(
+          function (r) { return { verified: !!(r && r.verified === true) }; },
+          function () { return { verified: false }; }
+        );
+      }
     },
     connectors: {
       list: function () { return call('connector_list'); },
@@ -900,16 +1034,21 @@ pub fn run() {
                     // bridge display-only. Skip if this origin is already verified.
                     let url = payload.url().clone();
                     if let (Some(origin), Some(slug)) = (hosted_app_origin(&url), slug_of(&url)) {
-                        if !verified_pl.contains(&origin) {
+                        // Claim verification: mark the origin Pending (so runtime.ready() can await
+                        // it) and only spawn when no verification is already done/in-flight.
+                        if verified_pl.begin_verification(&origin) {
                             let wv = webview.clone();
                             let vmap = verified_pl.clone();
                             std::thread::spawn(move || match fetch_and_verify(&origin, &slug) {
                                 Ok(caps) => {
                                     eprintln!("[formlogic] manifest verified for {origin} ({slug})");
-                                    vmap.insert(origin, caps);
+                                    vmap.insert_verified(origin, caps);
                                 }
                                 Err(e) => {
                                     eprintln!("[formlogic] manifest verification FAILED for {origin} ({slug}): {e}");
+                                    // Record the terminal failure (unblocks ready() with verified=false)
+                                    // and flip the bridge to display-only so the web runtime falls back.
+                                    vmap.mark_failed(origin);
                                     let _ = wv.eval(
                                         "try{if(window.FormLogicNative){window.FormLogicNative.available=false;delete window.FormLogicNative.connectors;delete window.FormLogicNative.sync;}}catch(_){}"
                                     );
@@ -954,6 +1093,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             runtime_info,
+            runtime_ready,
             connector_list,
             connector_status,
             connector_request,
@@ -1029,6 +1169,79 @@ mod tests {
         assert!(!caps.grants("vehicle", "gps.read"));
         assert!(caps.grants_any("vehicle"));
         assert!(!caps.grants_any("printer"));
+    }
+
+    // ---- contract (1): runtime.ready() awaits the per-origin verification transition ----
+
+    #[test]
+    fn ready_state_transitions_pending_to_verified() {
+        use std::thread;
+        let origins = VerifiedOrigins::default();
+        let origin = "http://localhost:8090".to_string();
+
+        // First navigation claims verification (marks Pending); a concurrent second claim is a
+        // no-op so we never spawn a duplicate verifier thread.
+        assert!(origins.begin_verification(&origin), "first claim marks Pending");
+        assert!(!origins.begin_verification(&origin), "in-flight claim is a no-op");
+        // While Pending the origin is not yet trusted: no caps, not "contained".
+        assert!(!origins.contains(&origin), "Pending origin is not yet verified");
+        assert!(origins.get(&origin).is_none(), "no caps while Pending");
+
+        // A background verifier flips Pending -> Verified; ready() (await_terminal) must observe it.
+        let bg = origins.clone();
+        let org = origin.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            let mut caps = HashSet::new();
+            caps.insert("vehicle.status.read".to_string());
+            bg.insert_verified(org, VerifiedCaps { slug: "demo".into(), capabilities: caps });
+        });
+        assert!(
+            origins.await_terminal(&origin, Duration::from_secs(5)),
+            "await_terminal resolves true once the manifest verifies"
+        );
+        assert!(origins.contains(&origin));
+        assert!(origins.get(&origin).is_some(), "caps are available after verification");
+    }
+
+    #[test]
+    fn ready_state_transitions_pending_to_failed_and_retries() {
+        use std::thread;
+        let origins = VerifiedOrigins::default();
+        let origin = "https://evil.example".to_string();
+        assert!(origins.begin_verification(&origin));
+
+        let bg = origins.clone();
+        let org = origin.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            bg.mark_failed(org);
+        });
+        assert!(
+            !origins.await_terminal(&origin, Duration::from_secs(5)),
+            "await_terminal resolves false once verification definitively fails"
+        );
+        assert!(!origins.contains(&origin));
+        assert!(origins.get(&origin).is_none());
+
+        // A previously-failed origin is retried (re-claimable) on a fresh navigation.
+        assert!(origins.begin_verification(&origin), "failed origin is retryable");
+    }
+
+    #[test]
+    fn ready_times_out_when_verification_never_resolves() {
+        let origins = VerifiedOrigins::default();
+        // Pending forever (verifier hung / server unreachable): await_terminal backstops to false.
+        assert!(origins.begin_verification("http://pending.forever"));
+        let start = Instant::now();
+        assert!(
+            !origins.await_terminal("http://pending.forever", Duration::from_millis(120)),
+            "an unresolved verification times out to false"
+        );
+        assert!(
+            start.elapsed() >= Duration::from_millis(100),
+            "await_terminal parked for the timeout rather than returning early"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api } from '../lib/api';
+import { api, newIdempotencyKey } from '../lib/api';
 import { enqueueSubmission } from '../client-runtime/offlineQueue';
 import { toast } from './toastStore';
 import type { LinkedRecord } from '../lib/api';
@@ -193,7 +193,18 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         // endpoint on reconnect (the server's payload-hash ledger dedupes the replay), and we return an
         // optimistic response so the UI can proceed to its thank-you/next state.
         if (!api.isDemoMode() && typeof navigator !== 'undefined' && navigator.onLine === false) {
-          const q = await enqueueSubmission({ appSlug: slug, formId, answers });
+          // In the native runtime, prefer the persistent native queue (survives an app restart);
+          // otherwise use the browser IndexedDB queue. Both flush to the SAME idempotent endpoint, so
+          // the shared key keeps the submission deduped whichever queue delivers it.
+          const key = newIdempotencyKey();
+          const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
+          if (bridge?.available && bridge.sync?.enqueueSubmission) {
+            try {
+              const r = await bridge.sync.enqueueSubmission({ appSlug: slug, formId, idempotencyKey: key, answers });
+              return { id: r.id, queued: true, answers, submittedAt: new Date().toISOString() };
+            } catch { /* fall through to the browser queue */ }
+          }
+          const q = await enqueueSubmission({ appSlug: slug, formId, answers, idempotencyKey: key });
           return { id: q.id, queued: true, answers, submittedAt: new Date(q.createdAt).toISOString() };
         }
         const result = await api.createAppResponse(slug, formId, { answers });

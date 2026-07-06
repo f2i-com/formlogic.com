@@ -7,14 +7,16 @@
 // the app's declared connector grants for connector calls) before they reach the transport; the
 // server and native bridge remain the real trust boundary. These are the same capabilities the
 // sandboxed custom-screen SDK exposes, made available to host-rendered React screens.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../stores/appRuntimeStore';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { getConnectorClient } from '../client-runtime/connectors/nativeConnectorClient';
-import { collectAllGrants, isPermissionGranted } from '../client-runtime/logic/appLogicPermissions';
-import { flushQueue, isFlushing, queueCounts, subscribeQueue } from '../client-runtime/offlineQueue';
+import { isPermissionGranted } from '../client-runtime/logic/appLogicPermissions';
+import { collectConnectorGrants } from '../client-runtime/connectors/connectorGrants';
+import { isFlushing, queueCounts, subscribeQueue } from '../client-runtime/offlineQueue';
+import { flushAllQueues, nativeQueueCounts } from '../client-runtime/nativeOfflineQueue';
 import { detectRuntimeEnvironment, type RuntimeEnvironment } from '../client-runtime/detectEnvironment';
 import type { ConnectorStatusInfo, ConnectorSummary, NativeRuntimeInfo } from '../client-runtime/connectors/connectorTypes';
 import type { App, AppRuntimeForm, PermissionAction } from '../types/app';
@@ -142,11 +144,14 @@ export interface SdkConnector {
  * before it reaches the transport, mirroring the QuickJS app-logic host. Advisory only — the native
  * bridge and server stay the real trust boundary.
  */
-export function useConnector(connectorId: string): SdkConnector {
-  const appLogic = useAppRuntimeStore((s) => s.config?.app.customLogic ?? null);
+export function useConnector(connectorId: string, options?: { formId?: string }): SdkConnector {
+  // Select the whole config (stable identity between store updates) and memoize the resolved grant
+  // set; the grant union covers app-level customLogic AND form-level customLogic (contract FU-1).
+  const config = useAppRuntimeStore((s) => s.config);
+  const formId = options?.formId;
   return useMemo(() => {
     const client = getConnectorClient();
-    const grants = collectAllGrants(appLogic);
+    const grants = collectConnectorGrants(config, formId != null ? { formId } : undefined);
     const ensureGranted = (command: string): Promise<never> | null => {
       const required = `connector.${connectorId}.${command}`;
       return isPermissionGranted(required, grants)
@@ -158,7 +163,7 @@ export function useConnector(connectorId: string): SdkConnector {
       request: (command, payload) => ensureGranted(command) ?? client.request(connectorId, command, payload),
       status: () => client.status(connectorId),
     };
-  }, [connectorId, appLogic]);
+  }, [connectorId, config, formId]);
 }
 
 export interface SdkConnectors {
@@ -231,29 +236,26 @@ export function useOfflineQueue(): SdkOfflineQueue {
   const [counts, setCounts] = useState<{ pending: number; failed: number }>({ pending: 0, failed: 0 });
   const [syncing, setSyncing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  // Keep the latest refresh fn so flush() can re-read counts after it finishes.
+  const refreshRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let cancelled = false;
     const refresh = () => {
       setSyncing(isFlushing());
-      queueCounts()
-        .then(async (c) => {
+      // Merge the browser IndexedDB queue with the native runtime's persistent queue (both
+      // pending AND failed) so the SDK surface reflects everything waiting to sync.
+      Promise.all([queueCounts(), nativeQueueCounts()])
+        .then(([browser, native]) => {
           if (cancelled) return;
-          let pending = c.pending;
-          // Merge the native runtime's persistent queue when present.
-          const bridge = typeof window !== 'undefined' ? window.FormLogicNative : undefined;
-          if (bridge?.available && bridge.sync?.getQueue) {
-            try {
-              const nativeItems = await bridge.sync.getQueue();
-              if (!cancelled && Array.isArray(nativeItems)) pending += nativeItems.length;
-            } catch {
-              /* ignore native queue read errors */
-            }
-          }
-          if (!cancelled) setCounts({ pending, failed: c.failed });
+          setCounts({
+            pending: browser.pending + native.pending,
+            failed: browser.failed + native.failed,
+          });
         })
         .catch(() => {});
     };
+    refreshRef.current = refresh;
     const unsub = subscribeQueue(refresh);
     refresh();
     const on = () => { setOnline(true); refresh(); };
@@ -270,8 +272,15 @@ export function useOfflineQueue(): SdkOfflineQueue {
 
   const flush = useCallback(async () => {
     setLastError(null);
-    const r = await flushQueue();
-    if (r.failed > 0) setLastError(`${r.failed} submission${r.failed === 1 ? '' : 's'} failed to sync`);
+    // Flush BOTH the browser and native queues in one action (contract FU-3/#9).
+    const r = await flushAllQueues();
+    const failed = r.browser.failed + r.native.failed;
+    if (failed > 0) {
+      setLastError(`${failed} submission${failed === 1 ? '' : 's'} failed to sync`);
+    } else if (r.lastError) {
+      setLastError(r.lastError);
+    }
+    refreshRef.current();
   }, []);
 
   return {
@@ -322,13 +331,18 @@ export interface SdkConnectorPermission {
   can: (command: string) => boolean;
 }
 /** Whether the app has been granted a connector command (mirrors the useConnector gate). */
-export function useConnectorPermission(connectorId: string, command?: string): SdkConnectorPermission {
-  const appLogic = useAppRuntimeStore((s) => s.config?.app.customLogic ?? null);
+export function useConnectorPermission(
+  connectorId: string,
+  command?: string,
+  options?: { formId?: string }
+): SdkConnectorPermission {
+  const config = useAppRuntimeStore((s) => s.config);
+  const formId = options?.formId;
   return useMemo(() => {
-    const grants = collectAllGrants(appLogic);
+    const grants = collectConnectorGrants(config, formId != null ? { formId } : undefined);
     const can = (cmd: string) => isPermissionGranted(`connector.${connectorId}.${cmd}`, grants);
     return { granted: command ? can(command) : false, can };
-  }, [appLogic, connectorId, command]);
+  }, [config, connectorId, command, formId]);
 }
 
 export interface SdkNativeRuntime {

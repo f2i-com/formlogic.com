@@ -252,12 +252,18 @@ export function NativeRequiredNotice({ message }: { message?: string }) {
   );
 }
 
-/** Compact offline-queue status (pending/failed/syncing) with a flush action when supported. */
+/**
+ * Compact offline-queue status with a flush action. Counts merge the browser IndexedDB queue AND the
+ * native runtime's persistent queue (via useOfflineQueue). `pending` items are retryable; `failed`
+ * items are terminal conflicts (an idempotency key reused with a different submission) that are
+ * surfaced but never auto-retried. "Sync now" flushes both queues.
+ */
 export function OfflineQueuePanel() {
   const q = useOfflineQueue();
   const pending = q.pending ?? 0;
   const failed = (q as { failed?: number }).failed ?? 0;
   const syncing = (q as { syncing?: boolean }).syncing ?? false;
+  const lastError = (q as { lastError?: string | null }).lastError ?? null;
   const flush = (q as { flush?: () => void }).flush;
   return (
     <div className="rounded-xl border border-gray-200/80 dark:border-slate-700/60 p-3 text-sm">
@@ -269,6 +275,9 @@ export function OfflineQueuePanel() {
         <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">
           {pending} pending{failed ? `, ${failed} failed` : ''}{syncing ? ' · syncing…' : ''}
         </p>
+      )}
+      {failed > 0 && lastError && (
+        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{lastError}</p>
       )}
     </div>
   );

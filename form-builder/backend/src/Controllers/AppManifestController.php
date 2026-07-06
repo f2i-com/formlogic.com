@@ -81,8 +81,13 @@ class AppManifestController
     /**
      * Same signed client manifest, discovered at a custom domain's root: GET /.well-known/formlogic-app.json.
      * The request Host (or ?host=) is resolved to a connected+active domain of a PUBLISHED app; the app row
-     * is then re-fetched by slug so the emitted manifest is byte-identical to the slug route. 404 when the
-     * host isn't a connected custom domain. The Host is trusted only because it's gated to an app_domains row.
+     * is then re-fetched by slug. 404 when the host isn't a connected custom domain.
+     *
+     * Unlike the slug route, this manifest is emitted SAME-ORIGIN: source.url / install.pwa.manifestUrl /
+     * install.android.assetLinks / install.android.openUrl point at the CUSTOM domain (request scheme +
+     * this pre-verified active Host) and a top-level `domain` field names it. The Host is trusted to form
+     * the base ONLY because it is gated to an active app_domains row above — it is NEVER fed into
+     * AppUrl::frontendBase (that must stay platform-controlled to avoid Host-header link spoofing).
      */
     public function clientManifestByHost(Request $request, Response $response): Response
     {
@@ -103,26 +108,58 @@ class AppManifestController
             return $guard;
         }
 
-        return $this->jsonResponse($response, $this->signing->sign($this->buildManifest($app, $request)));
+        // The matched normalized domain is the trusted, canonical custom-domain host.
+        $domain = $this->domains->normalizeDomain($host);
+        $base = $this->customDomainBase($request, $domain);
+        return $this->jsonResponse(
+            $response,
+            $this->signing->sign($this->buildManifest($app, $request, $base, $domain))
+        );
+    }
+
+    /**
+     * Same-origin base URL (scheme://host) for a VERIFIED custom domain. The scheme is taken from the
+     * request (defaulting to https, since a live custom domain is served over TLS); the host is the
+     * already-normalized, pre-verified active domain — safe to trust here because the caller gated it
+     * through resolveAppSlugByHost. Never derives a platform origin, so it can't leak into emailed links.
+     */
+    private function customDomainBase(Request $request, string $normalizedDomain): string
+    {
+        $scheme = strtolower($request->getUri()->getScheme());
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            $scheme = 'https';
+        }
+        return $scheme . '://' . $normalizedDomain;
     }
 
     /**
      * Build the (unsigned) client-app manifest for $app. Public metadata only — display / install /
      * offline / native / sdk / logic — NEVER form schemas or field names. Native capabilities are
-     * derived from the app's + its forms' customLogic connector permissions. Links resolve to the
-     * server-trusted frontend base (AppUrl::frontendBase deliberately ignores the request Host).
+     * derived from the app's + its forms' customLogic connector permissions.
      *
-     * @param array<string,mixed> $app  a getAppBySlug() row (decoded settings/theme/customLogic)
+     * Link base: by default the server-trusted frontend base (AppUrl::frontendBase, which deliberately
+     * ignores the request Host). Pass $baseOverride to emit SAME-ORIGIN links for a pre-verified custom
+     * domain — the caller MUST have already gated the host to an active app_domains row (see
+     * clientManifestByHost); this method never validates the base itself. When $customDomain is set it is
+     * echoed as a top-level `domain` field so the runtime knows which custom origin served the manifest.
+     *
+     * @param array<string,mixed> $app          a getAppBySlug() row (decoded settings/theme/customLogic)
+     * @param string|null         $baseOverride  same-origin base (scheme://host) for a verified custom domain
+     * @param string|null         $customDomain  the custom domain to name in the payload
      * @return array<string,mixed>
      */
-    private function buildManifest(array $app, Request $request): array
+    private function buildManifest(array $app, Request $request, ?string $baseOverride = null, ?string $customDomain = null): array
     {
         $slug = (string) ($app['slug'] ?? '');
-        $base = null;
-        try {
-            $base = rtrim(AppUrl::frontendBase($request), '/');
-        } catch (\Throwable $e) {
-            $base = '';
+        if ($baseOverride !== null) {
+            $base = rtrim($baseOverride, '/');
+        } else {
+            $base = null;
+            try {
+                $base = rtrim(AppUrl::frontendBase($request), '/');
+            } catch (\Throwable $e) {
+                $base = '';
+            }
         }
         $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
         $theme = is_array($app['theme'] ?? null) ? $app['theme'] : [];
@@ -138,7 +175,7 @@ class AppManifestController
         ])['permissions'];
         $native = $this->nativeSection($mergedPerms);
 
-        return [
+        $manifest = [
             'version' => 1,
             'kind' => 'formlogic.clientApp',
             'appSlug' => $slug,
@@ -182,6 +219,13 @@ class AppManifestController
                 'permissions' => $mergedPerms,
             ],
         ];
+
+        // Custom-domain manifests name the origin that served them so the native runtime can pin it.
+        if ($customDomain !== null && $customDomain !== '') {
+            $manifest['domain'] = $customDomain;
+        }
+
+        return $manifest;
     }
 
     /** Native capability section derived from a flat list of connector.* permission strings (spec §50). */

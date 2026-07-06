@@ -244,6 +244,80 @@ class HealthController
             'detail' => $hasNative ? 'tauri.conf.json present' : 'native runtime config not found (optional)',
         ];
 
+        // ZipArchive (ext-zip) — application-package import/export reads/writes .fla archives. Non-critical:
+        // absence just disables package import/export, not the running app.
+        try {
+            $hasZip = class_exists('ZipArchive');
+            $checks['ziparchive'] = [
+                'ok' => $hasZip,
+                'critical' => false,
+                'detail' => $hasZip ? 'ext-zip present (application-package import available)' : 'ext-zip missing',
+            ];
+            if (!$hasZip) {
+                $checks['ziparchive']['warning'] = 'PHP ext-zip (ZipArchive) not installed — application-package import/export is disabled. Install ext-zip.';
+            }
+        } catch (\Throwable $e) {
+            $checks['ziparchive'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // Signing keypair presence — surfaces whether a manifest/package signing keypair has actually been
+        // generated + persisted yet (it is generated lazily on first signing use). Non-critical.
+        try {
+            $signingKp = new \FormLogic\Services\SigningService($this->db);
+            $hasKp = $signingKp->hasStoredKeypair();
+            $checks['signing_keypair'] = [
+                'ok' => true,
+                'critical' => false,
+                'detail' => $hasKp ? 'keypair generated + stored' : 'no keypair yet (generated on first manifest/package signing)',
+            ];
+        } catch (\Throwable $e) {
+            $checks['signing_keypair'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // app_domains per-domain config columns (native/PWA/security) — present after schema init that added
+        // the multi-config columns. Non-critical: absence means the migration hasn't run for these features.
+        try {
+            $conn = $this->db->getConnection();
+            $missingDomainCols = [];
+            foreach (['native_config', 'pwa_config', 'security_config'] as $col) {
+                $stmt = $conn->query('SHOW COLUMNS FROM app_domains LIKE ' . $conn->quote($col));
+                if (!$stmt || $stmt->fetchColumn() === false) {
+                    $missingDomainCols[] = $col;
+                }
+            }
+            $checks['app_domains_columns'] = [
+                'ok' => $missingDomainCols === [],
+                'critical' => false,
+                'detail' => $missingDomainCols === []
+                    ? 'native_config/pwa_config/security_config present'
+                    : 'missing: ' . implode(', ', $missingDomainCols) . ' — run schema init',
+            ];
+        } catch (\Throwable $e) {
+            $checks['app_domains_columns'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // pack_catalog marketplace columns (item_type/trust_level) — present after the marketplace schema
+        // migration. Non-critical: absence means catalog listings default to application_package/community.
+        try {
+            $conn = $this->db->getConnection();
+            $missingCatalogCols = [];
+            foreach (['item_type', 'trust_level'] as $col) {
+                $stmt = $conn->query('SHOW COLUMNS FROM pack_catalog LIKE ' . $conn->quote($col));
+                if (!$stmt || $stmt->fetchColumn() === false) {
+                    $missingCatalogCols[] = $col;
+                }
+            }
+            $checks['pack_catalog_columns'] = [
+                'ok' => $missingCatalogCols === [],
+                'critical' => false,
+                'detail' => $missingCatalogCols === []
+                    ? 'item_type/trust_level present (marketplace)'
+                    : 'missing: ' . implode(', ', $missingCatalogCols) . ' — run schema init',
+            ];
+        } catch (\Throwable $e) {
+            $checks['pack_catalog_columns'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
         $ok = true;
         foreach ($checks as $c) {
             if (($c['critical'] ?? false) && !($c['ok'] ?? false)) {

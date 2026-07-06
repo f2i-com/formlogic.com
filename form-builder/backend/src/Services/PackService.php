@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Helpers\PackCapabilities;
 use PDO;
 
@@ -611,18 +612,208 @@ class PackService
                 if (!$ok) {
                     throw new \RuntimeException('Application package signature verification failed');
                 }
-                // Ed25519 is publicly verifiable ("official"); an HS256 fallback is only checkable on
-                // this same server, so mark it local-only (importers must not treat it as external trust).
-                $trust = ((string) $sig['alg']) === 'Ed25519' ? 'official' : 'local-only';
+                // Only reached when the signature verified: Ed25519 => official, HS256 => local-only.
+                // Same classifier as describe + the JSON import path (single source of truth).
+                $trust = self::classifyTrust(true, true, (string) $sig['alg']);
             }
+
+            // 4. Envelope metadata that lives OUTSIDE pack.json (discrete archive entries). Read it INSIDE
+            //    the zip-slip-guarded block so every entry name was already validated by assertSafeArchive.
+            $envelope = $this->readArchiveEnvelope($zip);
         } finally {
             $zip->close();
         }
 
-        // 4. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
+        // 5. Delegate to the existing atomic importer (customLogic embedded in pack.json is applied there).
         $result = $this->importPack($pack, $userId, $catalogId, $versionId);
         $result['trust'] = $trust;
+
+        // 6. Apply the envelope metadata (quickjs/customLogic.json, launch.json, native.json, assets/logo)
+        //    to the created app(s); anything without a runtime target comes back as a warning.
+        $warnings = $this->applyPackageMetadata($envelope, $result['apps'], $userId);
+        if (!empty($warnings)) {
+            $result['warnings'] = $warnings;
+        }
         return $result;
+    }
+
+    /**
+     * Read an application-package archive's ENVELOPE metadata (the parts that live OUTSIDE pack.json):
+     * quickjs/customLogic.json, launch.json, native.json, and assets/* (a logo asset is decoded to a
+     * data: URI; other assets are noted so the caller can warn). Every entry name was already validated
+     * by PackFileService::assertSafeArchive before this runs, so reads here are within the zip-slip guard.
+     *
+     * @return array{customLogic?:array, launch?:array, native?:array, logo?:string, assets?:array<string,bool>}
+     */
+    private function readArchiveEnvelope(\ZipArchive $zip): array
+    {
+        $envelope = [];
+        foreach (['customLogic' => 'quickjs/customLogic.json', 'launch' => 'launch.json', 'native' => 'native.json'] as $key => $entry) {
+            $raw = $zip->getFromName($entry);
+            if ($raw === false) {
+                continue;
+            }
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded) && !empty($decoded)) {
+                $envelope[$key] = $decoded;
+            }
+        }
+
+        // assets/* — surface a logo asset as a data: URI (the only asset with a storage target today);
+        // record the presence of any other asset so the caller can warn (no storage target for those yet).
+        $assets = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (!is_string($name) || !str_starts_with($name, 'assets/') || !PackFileService::isSafeZipEntryName($name)) {
+                continue;
+            }
+            $assetKey = substr($name, strlen('assets/'));
+            if ($assetKey === '') {
+                continue;
+            }
+            $assets[$assetKey] = true;
+            if (!isset($envelope['logo']) && preg_match('/^logo\.(png|jpe?g|gif|webp|svg)$/i', $assetKey, $m)) {
+                $raw = $zip->getFromName($name);
+                if (is_string($raw) && $raw !== '' && strlen($raw) <= PackFileService::MAX_ASSET_BYTES) {
+                    $mime = strtolower($m[1]);
+                    $mime = $mime === 'svg' ? 'image/svg+xml' : ($mime === 'jpg' ? 'image/jpeg' : 'image/' . $mime);
+                    $envelope['logo'] = 'data:' . $mime . ';base64,' . base64_encode($raw);
+                }
+            }
+        }
+        if (!empty($assets)) {
+            $envelope['assets'] = $assets;
+        }
+        return $envelope;
+    }
+
+    /**
+     * Classify import / marketplace TRUST from a signature outcome. Single source of truth shared by
+     * PackController::describe(), the JSON import path, and importApplicationPackage() so they cannot
+     * diverge: an Ed25519 signature that verifies is publicly / native-verifiable ('official'); a
+     * verifying HS256 fallback only re-checks on THIS same server ('local-only'); a present-but-failing
+     * signature is 'unverified'; no signature at all is 'community'.
+     */
+    public static function classifyTrust(bool $hasSignature, bool $verified, string $alg): string
+    {
+        if (!$hasSignature) {
+            return 'community';
+        }
+        if (!$verified) {
+            return 'unverified';
+        }
+        return $alg === 'Ed25519' ? 'official' : 'local-only';
+    }
+
+    /**
+     * Apply an application package's ENVELOPE-level metadata — the parts that live OUTSIDE pack.json — to
+     * the app(s) importPack() just created. Only metadata with a runtime target today is persisted; the
+     * rest is returned as human-readable warnings so nothing is silently dropped:
+     *   - customLogic  → sanitized (CustomLogicSanitizer) + saved to apps.custom_logic (fills only when the
+     *                    created app carries none, so pack.json-embedded logic is never clobbered).
+     *   - logo/logoUrl → saved to apps.logo_url when the app has none (data: URIs are size-guarded).
+     *   - launch/native→ no app-level target yet (they live per-domain on app_domains) → WARNING.
+     *   - other assets → no storage target yet → WARNING.
+     * The envelope was covered by the same signature the caller already verified, so this is safe to apply;
+     * it is still sanitized/guarded defensively (never trust asset paths or oversized logic).
+     *
+     * @param array $envelope The signed envelope (bare Pack => no envelope keys => no-op) or ApplicationPackage.
+     * @param array $apps      importPack() result 'apps' ([{id,name}, ...]).
+     * @param string $userId   Owner of every app importPack() created.
+     * @return string[]        Warnings for metadata that has no runtime target (empty when all applied).
+     */
+    public function applyPackageMetadata(array $envelope, array $apps, string $userId): array
+    {
+        $warnings = [];
+
+        // customLogic living outside pack.json — sanitize to the known-safe shape + size before storing.
+        $customLogic = null;
+        if (is_array($envelope['customLogic'] ?? null) && !empty($envelope['customLogic'])) {
+            $sanitized = CustomLogicSanitizer::sanitize($envelope['customLogic']);
+            if (!empty($sanitized['scripts']) && CustomLogicSanitizer::withinSizeCap($sanitized)) {
+                $customLogic = $sanitized;
+            } else {
+                $warnings[] = 'Package-level custom logic was empty or over the size cap and was not applied.';
+            }
+        }
+
+        // A logo asset (data: URI or http(s) URL) maps to logo_url — the only asset with a storage target.
+        $logoUrl = null;
+        $logo = null;
+        foreach (['logo', 'logoUrl'] as $lk) {
+            if (is_string($envelope[$lk] ?? null) && $envelope[$lk] !== '') {
+                $logo = $envelope[$lk];
+                break;
+            }
+        }
+        if ($logo !== null) {
+            if (str_starts_with($logo, 'data:')) {
+                $decoded = $this->decodeDataUri($logo);
+                if ($decoded !== null && strlen($decoded) <= PackFileService::MAX_ASSET_BYTES) {
+                    $logoUrl = $logo;
+                } else {
+                    $warnings[] = 'Package logo asset was invalid or over the size cap and was not applied.';
+                }
+            } elseif (preg_match('#^https?://#i', $logo)) {
+                $logoUrl = $logo;
+            } else {
+                $warnings[] = 'Package logo reference was not a data: URI or http(s) URL and was not applied.';
+            }
+        }
+
+        $appliedToApp = false;
+        foreach ($apps as $a) {
+            $appId = is_array($a) ? ($a['id'] ?? null) : null;
+            if (!is_string($appId) || $appId === '') {
+                continue;
+            }
+            try {
+                // Owner check: only mutate an app the importer owns (importPack just created these under $userId).
+                $app = $this->appService->getApp($appId);
+                if (!$app || ($app['ownerId'] ?? null) !== $userId) {
+                    continue;
+                }
+                $update = [];
+                if ($customLogic !== null && empty($app['customLogic'])) {
+                    $update['customLogic'] = $customLogic;
+                }
+                if ($logoUrl !== null && empty($app['logoUrl'])) {
+                    $update['logoUrl'] = $logoUrl;
+                }
+                if (!empty($update)) {
+                    $this->appService->updateApp($appId, $update);
+                    $appliedToApp = true;
+                }
+            } catch (\Throwable $e) {
+                // The forms/apps are already committed by importPack (this runs post-commit, outside its
+                // transaction), so a metadata-apply failure must NOT surface as an import failure — that
+                // would make the user retry and duplicate everything. Warn and move on.
+                $warnings[] = 'App imported, but applying package metadata (logo / custom logic) failed — reconfigure it in app settings.';
+            }
+        }
+        if (($customLogic !== null || $logoUrl !== null) && !$appliedToApp) {
+            $warnings[] = 'Package metadata could not be attached: the package created no owned app to apply it to.';
+        }
+
+        // launch / native have no app-level runtime target today (they are configured per custom domain
+        // on app_domains, which an import does not create). Surface rather than drop.
+        if (!empty($envelope['launch'])) {
+            $warnings[] = 'Package launch defaults were received but have no app-level target yet; configure them per custom domain after install.';
+        }
+        if (!empty($envelope['native'])) {
+            $warnings[] = 'Package native defaults were received but have no app-level target yet; configure them per custom domain after install.';
+        }
+
+        // Non-logo assets have no storage target today.
+        $extraAssets = array_values(array_filter(
+            array_keys(is_array($envelope['assets'] ?? null) ? $envelope['assets'] : []),
+            static fn ($k) => !preg_match('/^logo\.(png|jpe?g|gif|webp|svg)$/i', (string) $k)
+        ));
+        if (!empty($extraAssets)) {
+            $warnings[] = 'Package assets (' . implode(', ', array_map('strval', $extraAssets)) . ') have no storage target and were not imported.';
+        }
+
+        return $warnings;
     }
 
     /** Decode a data: URI to raw bytes; returns null if it is not a well-formed base64 data URI. */

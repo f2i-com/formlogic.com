@@ -203,9 +203,31 @@ class AppDomainService
     }
 
     /**
+     * Whether the STRICT activation policy is in force (env APP_DOMAIN_REQUIRE_TLS_ACTIVE=1). When strict,
+     * a domain only reaches status='active' once a live HTTPS handshake succeeds; ownership-verified-but-
+     * TLS-pending domains sit at status='verified' (and stay unreachable). Default (0/unset) = flexible:
+     * ownership alone activates and tls_status is surfaced separately. VARCHAR status column, so 'verified'
+     * needs no schema change.
+     */
+    public function requireTlsActive(): bool
+    {
+        // Normalize the env string (mirrors AIService's env-bool convention) so common truthy spellings
+        // enable the gate — a strict in_array against int/bool entries would silently fail-open on TRUE/yes/on.
+        $v = strtolower(trim((string) ($_ENV['APP_DOMAIN_REQUIRE_TLS_ACTIVE'] ?? getenv('APP_DOMAIN_REQUIRE_TLS_ACTIVE') ?: '')));
+        return in_array($v, ['1', 'true', 'yes', 'on'], true);
+    }
+
+    /**
      * Verify domain ownership. In production this does a real DNS TXT lookup for the
      * per-domain token at _formlogic.<domain>. When $allowDevOverride is true (non-prod),
-     * it marks the domain active without DNS so the flow is testable locally.
+     * it treats ownership as proven without DNS so the flow is testable locally.
+     *
+     * Activation policy (see requireTlsActive):
+     *  - flexible (default): ownership proven → status='active' immediately; tls_status is measured and
+     *    surfaced but does not block activation.
+     *  - strict (APP_DOMAIN_REQUIRE_TLS_ACTIVE=1): ownership proven → status='active' ONLY when probeTls
+     *    returns 'active'; otherwise status='verified' (ownership proven, awaiting live HTTPS). The public
+     *    resolvers require status='active', so a strict domain stays private until TLS is genuinely up.
      *
      * @return array{ok:bool,status:string,message:string,domain:array<string,mixed>|null}
      */
@@ -223,6 +245,11 @@ class AppDomainService
 
         if ($allowDevOverride) {
             $verified = true;
+        } elseif (($row['status'] ?? '') === 'verified' && !empty($row['verified_at'])) {
+            // Ownership was already proven (a strict 'verified' hold). A re-check only needs to re-probe
+            // TLS to promote to 'active' — do NOT re-run the DNS TXT lookup, or a transient/removed record
+            // would demote an already-owned domain back to 'failed' and knock the live HTTPS domain offline.
+            $verified = true;
         } else {
             $verified = $this->dnsTxtContains('_formlogic.' . $domain, $token, $error);
         }
@@ -233,13 +260,26 @@ class AppDomainService
             // 'external' since there is nothing real to probe. The probe is SSRF-guarded: it will not
             // connect to a host that resolves to a private/reserved IP.
             $tls = $allowDevOverride ? 'external' : $this->probeTls($domain);
+            $strict = $this->requireTlsActive();
+            // Strict gate: hold at 'verified' until HTTPS is genuinely live. Flexible: activate on ownership.
+            // Dev-override also satisfies the gate (tls stays 'external' — truthful) so the strict activation
+            // path is testable locally; in production strict still requires a real 'active' TLS probe.
+            $status = ($allowDevOverride || !$strict || $tls === 'active') ? 'active' : 'verified';
+
             $this->mysql->prepare(
-                "UPDATE app_domains SET status = 'active', verified_at = NOW(), tls_status = :tls, last_checked_at = NOW(), last_error = NULL WHERE id = :id"
-            )->execute(['id' => $domainId, 'tls' => $tls]);
-            $message = $tls === 'active'
-                ? 'Domain verified — HTTPS is live.'
-                : 'Ownership verified. HTTPS not confirmed yet (DNS routing / certificate may still be provisioning).';
-            return ['ok' => true, 'status' => 'active', 'message' => $message, 'domain' => $this->getDomain($domainId, $ownerId)];
+                "UPDATE app_domains SET status = :status, verified_at = NOW(), tls_status = :tls, last_checked_at = NOW(), last_error = NULL WHERE id = :id"
+            )->execute(['id' => $domainId, 'status' => $status, 'tls' => $tls]);
+
+            if ($status === 'active') {
+                $message = $tls === 'active'
+                    ? 'Domain verified — HTTPS is live.'
+                    : 'Ownership verified. HTTPS not confirmed yet (DNS routing / certificate may still be provisioning).';
+            } else {
+                $message = 'Ownership verified. This domain activates once HTTPS is live — DNS routing or the '
+                    . 'TLS certificate may still be provisioning. Re-check shortly.';
+            }
+            // ok reflects reachability: true only when the domain is now live (status='active').
+            return ['ok' => $status === 'active', 'status' => $status, 'message' => $message, 'domain' => $this->getDomain($domainId, $ownerId)];
         }
 
         $this->mysql->prepare(
