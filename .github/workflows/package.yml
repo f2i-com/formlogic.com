@@ -54,6 +54,9 @@ jobs:
 
       # Tag builds additionally attach the zip to the GitHub release for that tag,
       # creating the release if it doesn't exist yet (gh is preinstalled on the runner).
+      # The final `release edit --draft=false` matters: deleting/re-pushing a tag orphans its
+      # release into a DRAFT (invisible to the public), and `gh release view` still finds that
+      # draft — without the edit, the zip uploads into a release nobody can see.
       - name: Attach zip to the GitHub release
         if: github.ref_type == 'tag'
         env:
@@ -65,3 +68,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist-package/*.zip --repo "$GITHUB_REPOSITORY" \
               --verify-tag --title "FormLogic $GITHUB_REF_NAME" --generate-notes
           fi
+          # Ensure the release is PUBLISHED (no-op when it already is).
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
