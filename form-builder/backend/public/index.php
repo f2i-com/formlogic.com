@@ -867,6 +867,13 @@ $app->get('/api/forms/{formId}/lookup', function ($request, $response) use ($con
     return $container->get(ResponseController::class)->lookupOwnedRecords($request, $response, $getArgs($request));
 })->add($authRequired);
 
+// Which of the caller's OWN apps contain this form (protected, owner of the form) —
+// powers the app-aware Preview routing (0 published contexts → standalone preview,
+// 1 → /app/{slug}/form/{formId}, 2+ → chooser).
+$app->get('/api/forms/{formId}/app-contexts', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(AppController::class)->formAppContexts($request, $response, $getArgs($request));
+})->add($authRequired);
+
 // Owner-scoped report execution — powers form section-screen widget dashboards in the builder
 // preview / play route / standalone (non-app) forms. Read-only; the owner sees all their responses.
 $app->post('/api/forms/{id}/reports/run', function ($request, $response) use ($container, $getArgs) {
@@ -1338,6 +1345,12 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     });
     $group->post('', function ($request, $response) use ($container) {
         return $container->get(AppController::class)->create($request, $response);
+    });
+    // Batched "apps + their attached forms" listing (same visibility as GET /api/apps)
+    // in one round trip. Static path — registered before /{id} so it can never be
+    // swallowed by the id route.
+    $group->get('/form-usage', function ($request, $response) use ($container) {
+        return $container->get(AppController::class)->formUsage($request, $response);
     });
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppController::class)->show($request, $response, $getArgs($request));

@@ -3,10 +3,10 @@ import { persist } from 'zustand/middleware';
 import { api } from '../lib/api';
 import { useFormStore } from './formStore';
 import { toast } from './toastStore';
-import type { App, AppForm, AppRole } from '../types/app';
+import type { App, AppForm, AppListItem, AppRole } from '../types/app';
 
 interface AppState {
-  apps: App[];
+  apps: AppListItem[];
   activeAppId: string | null;
   isLoading: boolean;
   _loadingCount: number;
@@ -14,7 +14,9 @@ interface AppState {
 
   // App CRUD
   fetchApps: () => Promise<void>;
-  createApp: (data: Partial<App>) => Promise<App | null>;
+  /** Optional `formIds` attach forms ATOMICALLY with the create (one request, one server
+   *  transaction) — an invalid form fails the whole create; no partially-built app. */
+  createApp: (data: Partial<App> & { formIds?: string[] }) => Promise<App | null>;
   updateApp: (id: string, data: Partial<App>) => Promise<boolean>;
   deleteApp: (id: string) => Promise<void>;
   getApp: (id: string) => App | undefined;
@@ -23,8 +25,8 @@ interface AppState {
   // Form management
   fetchAppForms: (appId: string) => Promise<AppForm[]>;
   /** formId → names of OTHER apps (excluding excludeAppId) that include it. Attaching one of
-   *  these forms SHARES it — both apps read and write the same responses. Best-effort: apps
-   *  whose form list fails to load are omitted (the info is decorative badges/copy). */
+   *  these forms SHARES it — both apps read and write the same responses. ONE batched request
+   *  (GET /apps/form-usage); best-effort: any failure returns {} (the info is decorative). */
   fetchFormAppUsage: (excludeAppId?: string) => Promise<Record<string, string[]>>;
   addFormToApp: (appId: string, formId: string, displayName?: string) => Promise<boolean>;
   removeFormFromApp: (appId: string, formId: string) => Promise<void>;
@@ -61,7 +63,7 @@ export const useAppStore = create<AppState>()(
           if (result.error) {
             set({ error: result.error });
           } else {
-            set({ apps: (result.data?.apps as App[]) ?? [] });
+            set({ apps: result.data?.apps ?? [] });
           }
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'Failed to fetch apps' });
@@ -78,7 +80,7 @@ export const useAppStore = create<AppState>()(
             set({ error: result.error });
             return null;
           }
-          const app = result.data?.app as App | undefined;
+          const app = result.data?.app;
           if (!app) {
             set({ error: 'Create failed: no app returned' });
             return null;
@@ -143,24 +145,24 @@ export const useAppStore = create<AppState>()(
         if (result.error) {
           toast.error('Load failed', 'Could not load app forms.');
         }
-        return (result.data?.forms ?? []) as AppForm[];
+        return result.data?.forms ?? [];
       },
 
       fetchFormAppUsage: async (excludeAppId) => {
         try {
-          // Always ask the server (the persisted `apps` slice can be stale) so the
-          // "in <app>" badges reflect reality.
-          const appsRes = await api.getApps();
-          const others = ((appsRes.data?.apps ?? []) as App[]).filter((a) => a.id !== excludeAppId);
-          const results = await Promise.allSettled(others.map((a) => api.getAppForms(a.id)));
+          // ONE batched request — the server returns every visible app WITH its forms
+          // (always fresh; the persisted `apps` slice can be stale), replacing the old
+          // getApps + per-app getAppForms fan-out.
+          const res = await api.getAppsFormUsage();
+          if (res.error || !res.data) return {};
           const usage: Record<string, string[]> = {};
-          results.forEach((res, i) => {
-            if (res.status !== 'fulfilled' || res.value.error) return;
-            ((res.value.data?.forms ?? []) as AppForm[]).forEach((f) => {
+          for (const app of res.data.apps) {
+            if (app.appId === excludeAppId) continue;
+            for (const f of app.forms) {
               if (!usage[f.formId]) usage[f.formId] = [];
-              if (!usage[f.formId].includes(others[i].name)) usage[f.formId].push(others[i].name);
-            });
-          });
+              if (!usage[f.formId].includes(app.appName)) usage[f.formId].push(app.appName);
+            }
+          }
           return usage;
         } catch {
           // Decorative info — never block the picker on it.

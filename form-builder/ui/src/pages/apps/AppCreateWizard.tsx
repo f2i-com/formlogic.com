@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2, Sparkles, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
@@ -12,7 +12,7 @@ import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
-import type { App } from '../../types/app';
+import type { App, AppFormUsageApp } from '../../types/app';
 
 /** How the new app starts: brand new, over existing forms, or as a companion of another app. */
 type WizardMode = 'fresh' | 'existing' | 'companion';
@@ -56,16 +56,31 @@ export function AppCreateWizard() {
   }, []);
   const [isCreating, setIsCreating] = useState(false);
 
-  // formId → names of apps that already include the form. Picking one of these
-  // SHARES it — the new app and the existing one(s) read and write the same data.
-  const [formAppUsage, setFormAppUsage] = useState<Record<string, string[]>>({});
+  // ONE batched request (GET /apps/form-usage) powers BOTH derived views below: the
+  // "in <app>" share badges (formId → other-app names) and the companion picker's REAL
+  // per-app form lists (appId → forms) — replacing the old getApps + per-app getAppForms
+  // fan-out. Best-effort: on failure both views degrade to empty (the info is decorative).
+  const [usageApps, setUsageApps] = useState<AppFormUsageApp[] | null>(null); // null = loading
   useEffect(() => {
     let cancelled = false;
-    useAppStore.getState().fetchFormAppUsage().then((usage) => {
-      if (!cancelled) setFormAppUsage(usage);
-    });
+    api.getAppsFormUsage()
+      .then((res) => { if (!cancelled) setUsageApps(res.error ? [] : res.data?.apps ?? []); })
+      .catch(() => { if (!cancelled) setUsageApps([]); });
     return () => { cancelled = true; };
   }, []);
+
+  // formId → names of apps that already include the form. Picking one of these
+  // SHARES it — the new app and the existing one(s) read and write the same data.
+  const formAppUsage = useMemo(() => {
+    const usage: Record<string, string[]> = {};
+    for (const a of usageApps ?? []) {
+      for (const f of a.forms) {
+        if (!usage[f.formId]) usage[f.formId] = [];
+        if (!usage[f.formId].includes(a.appName)) usage[f.formId].push(a.appName);
+      }
+    }
+    return usage;
+  }, [usageApps]);
 
   // Restore an in-progress draft (saved when the user bounced to the form builder
   // via "Create a Form") via lazy initializers — no setState-on-mount.
@@ -95,30 +110,29 @@ export function AppCreateWizard() {
   const nameTouchedRef = useRef(false);
   const lastPrefillRef = useRef<string | null>(null);
 
-  // Only apps the user owns can grow a companion (the server enforces it; don't offer the rest).
-  const ownedApps = apps.filter((a) => !user?.id || !a.ownerId || a.ownerId === user.id);
+  // Only apps the user owns can grow a companion — the server-authoritative canCreateCompanion
+  // flag decides (the server enforces it; don't offer the rest). Fallback: a stale persisted
+  // apps slice from an OLDER server build may predate the flag entirely — when NO app carries
+  // it, fall back to the legacy ownerId heuristic so the wizard isn't bricked mid-deploy
+  // (the fetchApps refresh above replaces the slice with flagged apps as soon as it lands).
+  const hasCompanionFlag = apps.some((a) => a.canCreateCompanion !== undefined);
+  const ownedApps = hasCompanionFlag
+    ? apps.filter((a) => a.canCreateCompanion)
+    : apps.filter((a) => !user?.id || !a.ownerId || a.ownerId === user.id);
   const sourceApp = sourceAppId ? apps.find((a) => a.id === sourceAppId) ?? null : null;
 
-  // REAL form lists per owned app for the companion path. navConfig is NOT a reliable forms source
-  // (pack-provisioned apps can have an empty/other-shaped navConfig, so counts showed 0) — fetch the
-  // truth once from the owner-scoped app-forms endpoint. appId -> [{ formId, displayName }].
-  const [appFormsMap, setAppFormsMap] = useState<Record<string, { formId: string; displayName: string }[]> | null>(null);
-  useEffect(() => {
-    if (mode !== 'companion' || appFormsMap !== null || ownedApps.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      const entries = await Promise.allSettled(ownedApps.map(async (a) => {
-        const r = await api.getAppForms(a.id);
-        const list = (r.data?.forms ?? []) as { formId: string; displayName?: string; formTitle?: string }[];
-        return [a.id, list.map((f) => ({ formId: f.formId, displayName: f.displayName || f.formTitle || 'Untitled' }))] as const;
-      }));
-      if (cancelled) return;
-      const map: Record<string, { formId: string; displayName: string }[]> = {};
-      for (const e of entries) { if (e.status === 'fulfilled') { map[e.value[0]] = [...e.value[1]]; } }
-      setAppFormsMap(map);
-    })();
-    return () => { cancelled = true; };
-  }, [mode, appFormsMap, ownedApps]);
+  // REAL form lists per app for the companion path. navConfig is NOT a reliable forms source
+  // (pack-provisioned apps can have an empty/other-shaped navConfig, so counts showed 0) —
+  // derived from the SAME single /apps/form-usage batch as the share badges above.
+  // appId -> [{ formId, displayName }]; null while the batch is loading.
+  const appFormsMap = useMemo(() => {
+    if (usageApps === null) return null;
+    const map: Record<string, { formId: string; displayName: string }[]> = {};
+    for (const a of usageApps) {
+      map[a.appId] = a.forms.map((f) => ({ formId: f.formId, displayName: f.displayName || 'Untitled' }));
+    }
+    return map;
+  }, [usageApps]);
   /** Loaded form list for an app, or null while fetching. */
   const formsOf = (appId: string) => appFormsMap?.[appId] ?? null;
   const sourceSummary = sourceApp ? appSummary(sourceApp) : null;
@@ -176,24 +190,36 @@ export function AppCreateWizard() {
     }
     setIsCreating(true);
     try {
-      const app = await createApp({ name, description: description || undefined });
+      // Only the existing-forms path attaches forms; "Start fresh" adds them later.
+      const formIds = mode === 'existing' ? selectedFormIds : [];
+      // Local-only forms (drafted before this account was online) must exist server-side
+      // before the atomic create validates ownership — the same best-effort sync the old
+      // per-form attach loop did. "Already exists" is the normal, ignorable case.
+      for (const formId of formIds) {
+        const form = useFormStore.getState().forms.find((f) => f.id === formId);
+        if (!form) continue;
+        const syncResult = await api.createForm(form);
+        if (syncResult.error && !syncResult.error.toLowerCase().includes('already exists')) {
+          toast.error('Creation failed', syncResult.error);
+          setIsCreating(false);
+          return; // Stay on the review step.
+        }
+      }
+      // ONE atomic request: the server creates the app and attaches every form inside a
+      // single transaction — any invalid form rolls the WHOLE create back (no partial app,
+      // unlike the old create-then-attach loop that could leave forms missing).
+      const app = await createApp({
+        name,
+        description: description || undefined,
+        ...(formIds.length > 0 ? { formIds } : {}),
+      });
       if (app) {
-        // Only the existing-forms path attaches forms; "Start fresh" adds them later.
-        const formIds = mode === 'existing' ? selectedFormIds : [];
-        let failedCount = 0;
-        for (const formId of formIds) {
-          const added = await useAppStore.getState().addFormToApp(app.id, formId);
-          if (!added) failedCount++;
-        }
-        if (failedCount > 0) {
-          toast.warning('Partial success', `App created but ${failedCount} form(s) could not be added.`);
-        }
         try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
         navigate(`/apps/${app.id}/settings`);
         return; // Skip setIsCreating after navigate
-      } else {
-        toast.error('Creation failed', 'Could not create the app. Please try again.');
       }
+      // Stay on the review step and surface the server's friendly message (captured by the store).
+      toast.error('Creation failed', useAppStore.getState().error || 'Could not create the app. Please try again.');
     } catch {
       toast.error('Creation failed', 'An unexpected error occurred. Please try again.');
     }
@@ -211,13 +237,13 @@ export function AppCreateWizard() {
         copyReports: effCopyReports,
         copyLogic: effCopyLogic,
       });
-      const newApp = result.data?.app as { id?: string; name?: string } | undefined;
+      const newApp = result.data?.app;
       if (result.error || !newApp?.id) {
         toast.error('Could not create companion app', typeof result.error === 'string' ? result.error : 'Please try again.');
         setIsCreating(false);
         return;
       }
-      toast.success('Companion app created', `"${newApp.name ?? trimmed}" shares ${sourceApp.name}'s forms and data — members, roles and domains stay its own.`);
+      toast.success('Companion app created', `"${newApp.name || trimmed}" shares ${sourceApp.name}'s forms and data — members, roles and domains stay its own.`);
       // Refresh the apps slice so the new app exists in the store before we land on its settings.
       await useAppStore.getState().fetchApps();
       try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }

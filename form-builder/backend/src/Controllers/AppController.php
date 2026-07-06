@@ -82,11 +82,17 @@ class AppController
         }
 
         $apps = $this->appService->getAllApps($userId);
-        // Don't expose the owner's platform UUID to non-owner members (mirrors the
-        // runtime AppPublicController::getApp stripping).
+        // canManage / canCreateCompanion: server-authoritative flags for list UIs —
+        // owner-only for now. Don't expose the owner's platform UUID to non-owner
+        // members (mirrors the runtime AppPublicController::getApp stripping).
         foreach ($apps as &$a) {
-            if (is_array($a) && ($a['ownerId'] ?? null) !== $userId) {
-                unset($a['ownerId']);
+            if (is_array($a)) {
+                $isOwner = ($a['ownerId'] ?? null) === $userId;
+                $a['canManage'] = $isOwner;
+                $a['canCreateCompanion'] = $isOwner;
+                if (!$isOwner) {
+                    unset($a['ownerId']);
+                }
             }
         }
         unset($a);
@@ -115,6 +121,42 @@ class AppController
             $this->logger->error('App creation error', ['exception' => $e->getMessage()]);
             return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
         }
+    }
+
+    /**
+     * GET /api/apps/form-usage — the caller's apps (same visibility as GET /api/apps:
+     * owner or member) with each app's attached forms, in ONE round trip (batched
+     * server-side, no per-app N+1). Powers form pickers / "used in app X" listings.
+     */
+    public function formUsage(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        return $this->jsonResponse($response, ['apps' => $this->appService->getFormUsageForUser($userId)]);
+    }
+
+    /**
+     * GET /api/forms/{formId}/app-contexts — every app the CALLER owns that contains
+     * this form, shaped for the app-aware Preview router (0 published contexts →
+     * standalone preview, 1 → /app/{slug}/form/{formId}, 2+ → chooser). 404 when the
+     * form isn't owned by the caller (existence is not revealed).
+     */
+    public function formAppContexts(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+
+        $formId = (string) ($args['formId'] ?? '');
+        if ($formId === '' || !$this->appService->isFormOwnedByUser($formId, $userId)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
+        }
+
+        return $this->jsonResponse($response, ['contexts' => $this->appService->getAppContextsForForm($formId, $userId)]);
     }
 
     public function show(Request $request, Response $response, array $args): Response
@@ -324,6 +366,16 @@ class AppController
         }
 
         $data = $request->getParsedBody() ?? [];
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
+
+        // Strict payload allowlist: reject unknown keys instead of silently ignoring
+        // them (catches typos like display_name, blocks smuggling future columns).
+        $unknown = array_diff(array_keys($data), ['displayName', 'isVisible', 'settings']);
+        if (!empty($unknown)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Unknown field(s): ' . implode(', ', array_map('strval', $unknown))], 400);
+        }
 
         try {
             $this->appService->updateAppForm($args['id'], $args['formId'], $data);
@@ -360,7 +412,11 @@ class AppController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'formIds array is required'], 400);
         }
 
-        $this->appService->reorderAppForms($args['id'], $data['formIds']);
+        try {
+            $this->appService->reorderAppForms($args['id'], $data['formIds']);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
         $forms = $this->appService->getAppForms($args['id']);
         return $this->jsonResponse($response, ['forms' => $forms]);
     }

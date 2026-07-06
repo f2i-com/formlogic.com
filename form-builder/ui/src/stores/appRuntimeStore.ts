@@ -281,6 +281,9 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!cfg) return false;
         const existing = cfg.app.customScreen ?? {};
         const customScreen: CustomScreen = { ...existing, enabled: true, kind: 'dashboard', dashboard: screen };
+        // Snapshot the prior slice BEFORE the optimistic set — a failed save must not leave
+        // phantom state the server never accepted.
+        const prevScreen = cfg.app.customScreen;
         // Optimistic: reflect immediately so the home re-renders with the saved layout.
         set({ config: { ...cfg, app: { ...cfg.app, customScreen } } });
         if (api.isDemoMode()) {
@@ -288,7 +291,14 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           return true;
         }
         const r = await api.updateApp(cfg.app.id, { customScreen });
-        if (r.error) { toast.error('Failed to save dashboard', typeof r.error === 'string' ? r.error : undefined); return false; }
+        if (r.error) {
+          // Roll back just this slice on the CURRENT config (unrelated changes that landed
+          // while the request was in flight stay intact).
+          const cur = get().config;
+          if (cur) set({ config: { ...cur, app: { ...cur.app, customScreen: prevScreen } } });
+          toast.error('Failed to save dashboard', typeof r.error === 'string' ? r.error : undefined);
+          return false;
+        }
         return true;
       },
 
@@ -297,6 +307,8 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
         if (!cfg) return false;
         const existing = (cfg.forms.find((f) => f.formId === formId)?.customScreen ?? {}) as CustomScreen;
         const customScreen: CustomScreen = { ...existing, enabled: true, kind: 'dashboard', dashboard: screen };
+        // Snapshot the prior slice BEFORE the optimistic set (rollback target on API failure).
+        const prevScreen = cfg.forms.find((f) => f.formId === formId)?.customScreen;
         // Optimistic: update this form's section screen in the runtime config.
         set({ config: { ...cfg, forms: cfg.forms.map((f) => (f.formId === formId ? { ...f, customScreen } : f)) } });
         if (api.isDemoMode()) {
@@ -304,13 +316,21 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           return true;
         }
         const r = await api.updateForm(formId, { customScreen } as unknown as Record<string, unknown>);
-        if (r.error) { toast.error('Failed to save section screen', typeof r.error === 'string' ? r.error : undefined); return false; }
+        if (r.error) {
+          // Roll back only this form's screen on the CURRENT config.
+          const cur = get().config;
+          if (cur) set({ config: { ...cur, forms: cur.forms.map((f) => (f.formId === formId ? { ...f, customScreen: prevScreen } : f)) } });
+          toast.error('Failed to save section screen', typeof r.error === 'string' ? r.error : undefined);
+          return false;
+        }
         return true;
       },
 
       saveCustomLogic: async (bundle) => {
         const cfg = get().config;
         if (!cfg) return false;
+        // Snapshot the prior slice BEFORE the optimistic set (rollback target on API failure).
+        const prevLogic = cfg.app.customLogic;
         // Optimistic: reflect immediately so hooks pick up the new logic without a reload.
         set({ config: { ...cfg, app: { ...cfg.app, customLogic: bundle } } });
         if (api.isDemoMode()) {
@@ -318,7 +338,13 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           return true;
         }
         const r = await api.updateApp(cfg.app.id, { customLogic: bundle });
-        if (r.error) { toast.error('Failed to save app logic', typeof r.error === 'string' ? r.error : undefined); return false; }
+        if (r.error) {
+          // Roll back only the logic slice on the CURRENT config.
+          const cur = get().config;
+          if (cur) set({ config: { ...cur, app: { ...cur.app, customLogic: prevLogic } } });
+          toast.error('Failed to save app logic', typeof r.error === 'string' ? r.error : undefined);
+          return false;
+        }
         return true;
       },
 

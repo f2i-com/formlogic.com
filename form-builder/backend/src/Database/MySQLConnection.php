@@ -192,6 +192,8 @@ class MySQLConnection
                 theme JSON,
                 nav_config JSON,
                 custom_screen MEDIUMTEXT DEFAULT NULL,
+                reports JSON DEFAULT NULL,
+                custom_logic MEDIUMTEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -215,6 +217,7 @@ class MySQLConnection
                 FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
                 UNIQUE KEY unique_app_form (app_id, form_id),
                 INDEX idx_app_id (app_id),
+                INDEX idx_form_id (form_id),
                 INDEX idx_sort_order (sort_order)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
@@ -547,6 +550,27 @@ class MySQLConnection
                  )
             ");
             $pdo->exec("ALTER TABLE app_forms ADD UNIQUE KEY unique_app_form (app_id, form_id)");
+        }
+
+        // form_id-first index on app_forms for the "which apps contain this form?"
+        // lookups (app-contexts / form-usage / isFormInAnyApp / getAppsForForms).
+        // Older installs had only the InnoDB auto-generated FK index (named
+        // 'form_id'); add the explicit idx_form_id so migrated and fresh schemas
+        // match, then drop the now-redundant auto index (the FK re-binds to
+        // idx_form_id). A composite (form_id, app_id) is deliberately NOT added:
+        // the standalone form_id index already serves every form_id-first lookup
+        // and UNIQUE unique_app_form (app_id, form_id) serves the pair lookups.
+        $hasFormIdIdx = $pdo->query("SHOW INDEX FROM app_forms WHERE Key_name = 'idx_form_id'")->rowCount() > 0;
+        if (!$hasFormIdIdx) {
+            $pdo->exec("ALTER TABLE app_forms ADD INDEX idx_form_id (form_id)");
+            try {
+                if ($pdo->query("SHOW INDEX FROM app_forms WHERE Key_name = 'form_id'")->rowCount() > 0) {
+                    $pdo->exec("ALTER TABLE app_forms DROP INDEX form_id");
+                }
+            } catch (\Throwable $e) {
+                // If the drop is refused (odd FK/index binding), the redundant
+                // auto index is harmless — idx_form_id is what code relies on.
+            }
         }
 
         // Per-domain config columns (native app / PWA / security) for existing installs. On a brand-new

@@ -45,6 +45,7 @@ import { toast } from '../stores/toastStore';
 import { formatRelativeTime, parseServerDate } from '../lib/utils';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { PackImportModal } from '../components/builder/PackImportModal';
+import { useFormPreview } from '../components/builder/useFormPreview';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { api } from '../lib/api';
 import type { PackInstallation } from '../lib/api';
@@ -591,23 +592,20 @@ export function FormsList() {
     return () => { cancelled = true; };
   }, [storageMode]);
 
-  // formId → its app (for grouping standalone vs in-app forms, and app-context preview).
+  // formId → its app, for GROUPING standalone vs in-app forms only. Preview routing does NOT
+  // use this map — a form can be in several apps (companion apps), so preview does a fresh
+  // per-click context lookup via the shared useFormPreview mechanism below.
   const formToApp = useMemo(() => {
     const map: Record<string, { id: string; name: string; slug: string | null }> = {};
     for (const g of appGroups) for (const fid of g.formIds) map[fid] = { id: g.id, name: g.name, slug: g.slug };
     return map;
   }, [appGroups]);
 
-  // Preview IN CONTEXT, always in a NEW TAB:
-  //  • a form that lives in an app opens the real app runtime AT that form — the owner sees it exactly
-  //    as members do and can roam the whole app;
-  //  • a standalone form opens the fillable FORM itself (?form=1 shows the form even when it has a
-  //    custom screen — the screen keeps its own preview in the Studio).
-  const handlePreview = useCallback((formId: string) => {
-    const slug = formToApp[formId]?.slug;
-    const url = slug ? `/app/${slug}/form/${formId}` : `/preview/${formId}?form=1`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, [formToApp]);
+  // Preview IN CONTEXT, always in a NEW TAB: fresh app-context lookup on click — one published
+  // app opens the real app runtime AT that form, several published apps ask which, otherwise
+  // (or on fetch failure) the standalone fillable form (?form=1 shows the form even when it has
+  // a custom screen — the screen keeps its own preview in the Studio).
+  const { openPreview: handlePreview, previewChooser } = useFormPreview();
 
   // The forms to show in the current view: a drilled-in app's forms, or top-level standalone forms.
   // While apps are still loading at the top level, filter with the membership cached from the last
@@ -1072,6 +1070,9 @@ export function FormsList() {
         confirmLabel="Delete"
         variant="danger"
       />
+
+      {/* Preview chooser — shown when a form is published in 2+ apps */}
+      {previewChooser}
 
       {newFormPicker}
     </div>

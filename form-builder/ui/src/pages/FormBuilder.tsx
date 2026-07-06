@@ -44,13 +44,13 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { IconPicker } from '../components/ui/IconPicker';
-import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel } from '../components/builder';
+import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, useFormPreview } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
-import { api, type PackData } from '../lib/api';
+import { type PackData } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
@@ -395,35 +395,14 @@ export default function FormBuilder() {
     toast.success('Saved', 'Form saved successfully');
   }, [form, updateForm]);
 
-  // If this form belongs to an app, Preview opens the real app runtime AT this form (cloud mode only)
-  // so it's seen in context; otherwise the standalone fillable-form preview. Looked up once per form.
-  const [previewAppSlug, setPreviewAppSlug] = useState<string | null>(null);
-  useEffect(() => {
-    if (storageMode !== 'api' || !formId) { setPreviewAppSlug(null); return; }
-    let cancelled = false;
-    (async () => {
-      const res = await api.getApps();
-      const apps = (res.data?.apps || []) as Array<{ id: string; slug?: string | null }>;
-      for (const a of apps) {
-        if (!a.slug) continue;
-        const fr = await api.getAppForms(a.id);
-        const inApp = ((fr.data?.forms || []) as Array<{ formId: string }>).some((f) => f.formId === formId);
-        if (inApp) { if (!cancelled) setPreviewAppSlug(a.slug); return; }
-      }
-      if (!cancelled) setPreviewAppSlug(null);
-    })();
-    return () => { cancelled = true; };
-  }, [storageMode, formId]);
-
-  // Open Preview in a NEW TAB, in context: in-app form → the app runtime at this form; standalone form
-  // → the fillable form itself (?form=1 shows the form even when it has a custom screen).
+  // Open Preview in a NEW TAB, in context: a fresh app-context lookup on each click (shared
+  // mechanism) — one published app opens the app runtime at this form, several ask which,
+  // otherwise (or on any fetch failure) the standalone fillable form.
+  const { openPreview, previewChooser } = useFormPreview();
   const handlePreview = useCallback(() => {
     if (!form) return;
-    const url = previewAppSlug
-      ? `/app/${previewAppSlug}/form/${form.id}`
-      : `/preview/${form.id}?form=1`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, [form, previewAppSlug]);
+    openPreview(form.id);
+  }, [form, openPreview]);
 
   // Deletion is destructive (it also strips conditional logic / calculations on other
   // fields that reference this one) and there's no in-session undo, so confirm first.
@@ -1166,6 +1145,9 @@ export default function FormBuilder() {
         confirmLabel="Delete field"
         variant="danger"
       />
+
+      {/* Preview chooser — shown when this form is published in 2+ apps */}
+      {previewChooser}
     </div>
   );
 }

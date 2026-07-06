@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Plus, Zap } from 'lucide-react';
+import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Loader2, Plus, RotateCw, Zap } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ReportResultView } from './ReportResultView';
 import { formatRelativeTime } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { AppReportResult, DashboardScreen, DashboardWidget } from '../../types/app';
 import {
   GRID_ROW, GRID_GAP, DEFAULT_COLS, useWidgetData, fieldsOf, displayAnswer, autoTitle,
@@ -49,6 +50,11 @@ export interface WidgetDashboardProps extends WidgetDataDeps {
   onOpenRecords?: (formId: string) => void;
   onOpenRecord?: (formId: string, recordId: string) => void;
   className?: string;
+  /** Owner/builder affordance: failed report widgets show a "Details" disclosure (the sanitized
+   *  server message) and a per-widget Retry. When omitted it defaults by scope: 'app' → the runtime
+   *  store's isOwner(), 'form' → true (the only form-scope host is the owner's preview/play route),
+   *  'public' → false. Non-owners always keep the plain "Couldn't load this widget." message. */
+  canEdit?: boolean;
 }
 
 /** Use matchMedia to collapse the grid to a single column on narrow screens. */
@@ -109,6 +115,11 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
   }, [refreshSecs, range]);
 
   const data = useWidgetData(effectiveWidgets, props, refreshTick);
+
+  // Owners/builders get failed-widget error details + Retry (T14). The store call is safe outside
+  // the app runtime too: with no config loaded isOwner() is simply false.
+  const runtimeOwner = useAppRuntimeStore((s) => s.isOwner());
+  const canEdit = props.canEdit ?? (scope === 'app' ? runtimeOwner : scope === 'form');
 
   // ── Drill-down (app runtime only): clicking a chart mark filters that form's records view ──────
   // URL contract: /form/{formId}/responses?form={formId}&drill={groupByFieldId}&value={label}&bucket=….
@@ -192,6 +203,10 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
               reportResult={data.reportResults[w.id]}
               reportLoading={data.reportLoading}
               reportRefreshing={data.reportLoading && data.reportResults[w.id] !== undefined}
+              canEdit={canEdit}
+              errorDetail={data.reportErrors[w.id]}
+              onRetry={canEdit && w.kind === 'report' ? () => data.retryWidget(w.id) : undefined}
+              retrying={!!data.retrying[w.id]}
               listRows={data.listData[w.id]}
               listLoading={w.kind === 'list' && !!w.list?.formId && !!props.fetchRecent && data.listData[w.id] === undefined}
               activity={data.activity}
@@ -218,6 +233,15 @@ export interface WidgetViewProps {
   reportLoading: boolean;
   /** True while a widget re-runs (e.g. a range change) but still shows its previous result. */
   reportRefreshing?: boolean;
+  /** Owner/builder view: a failed report widget exposes its sanitized error + Retry. */
+  canEdit?: boolean;
+  /** Sanitized server message for a failed report widget (never a raw stack/SQL). */
+  errorDetail?: string;
+  /** Re-runs JUST this widget. Absent = no Retry button (e.g. the builder's inert canvas,
+   *  where errorDetail renders as static text instead of a disclosure). */
+  onRetry?: () => void;
+  /** True while this widget's Retry is in flight. */
+  retrying?: boolean;
   listRows?: WidgetRecord[];
   /** True while this list widget's rows are still being fetched (skeleton instead of empty state). */
   listLoading?: boolean;
@@ -274,7 +298,7 @@ export function WidgetView(p: WidgetViewProps) {
             <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill onPointClick={p.onPointClick} />
           </div>
         ) : (
-          <WidgetEmpty icon={<AlertCircle className="h-6 w-6 opacity-70" />} text="Couldn't load this widget." />
+          <WidgetError canEdit={p.canEdit} detail={p.errorDetail} onRetry={p.onRetry} retrying={p.retrying} />
         )}
       </div>
     );
@@ -407,6 +431,55 @@ function RowChevron() {
       aria-hidden="true"
       className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-x-0.5 -translate-y-1/2 text-gray-400 opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:opacity-100 dark:text-slate-500"
     />
+  );
+}
+
+/**
+ * Failed report widget. Non-owners see only the quiet generic message; owners/builders (canEdit)
+ * additionally get a per-widget Retry and a compact "Details" disclosure showing the SANITIZED
+ * error string the run returned (batch runs drop per-spec messages, so Details often appears only
+ * after a Retry via the single endpoint surfaces one). When onRetry is absent (the builder's
+ * pointer-events-none canvas) the detail renders as static text instead of a click-to-open toggle.
+ */
+function WidgetError({ canEdit, detail, onRetry, retrying }: { canEdit?: boolean; detail?: string; onRetry?: () => void; retrying?: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!canEdit) {
+    return <WidgetEmpty icon={<AlertCircle className="h-6 w-6 opacity-70" />} text="Couldn't load this widget." />;
+  }
+  return (
+    <div className="flex h-full min-h-[72px] flex-col items-center justify-center overflow-auto py-4 text-center text-gray-400 dark:text-slate-500">
+      <AlertCircle className="h-6 w-6 opacity-70" />
+      <p className="mt-2 text-sm">Couldn't load this widget.</p>
+      {(onRetry || detail) && (
+        <div className="mt-1.5 flex items-center gap-3">
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              disabled={retrying}
+              className="inline-flex items-center gap-1 rounded text-xs font-medium app-text-primary hover:underline disabled:opacity-60 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+            >
+              {retrying ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />} Retry
+            </button>
+          )}
+          {detail && onRetry && (
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => setOpen((o) => !o)}
+              className="rounded text-xs font-medium text-gray-500 dark:text-slate-400 hover:underline cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+            >
+              {open ? 'Hide details' : 'Details'}
+            </button>
+          )}
+        </div>
+      )}
+      {detail && (open || !onRetry) && (
+        <p className="mt-1.5 max-w-full break-words rounded-md bg-gray-100/80 px-2.5 py-1.5 text-xs text-gray-600 dark:bg-slate-800/60 dark:text-slate-300">
+          {detail}
+        </p>
+      )}
+    </div>
   );
 }
 

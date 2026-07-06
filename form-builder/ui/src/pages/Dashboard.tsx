@@ -45,7 +45,7 @@ import { useAuthStore } from '../stores/authStore';
 import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
-import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
+import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -351,10 +351,9 @@ export function Dashboard() {
   // 0 / "No submissions yet" while the Total Responses stat shows the real number).
   const [responseCounts, setResponseCounts] = useState<Record<string, number>>({});
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
-  // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is part of.
+  // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is
+  // part of (badge only — preview routing does its own fresh per-click context lookup).
   const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
-  // formId → the app slug it belongs to (cloud mode), so Preview can open the form IN its app.
-  const [appSlugOfForm, setAppSlugOfForm] = useState<Record<string, string>>({});
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -534,34 +533,30 @@ export function Dashboard() {
   const totalResponses = stats.totalResponses;
   const avgCompletionRate = stats.avgCompletionRate;
 
-  // Load which app each form belongs to (cloud mode) so Recent Forms can tag it.
+  // Load which app each form belongs to (cloud mode) so Recent Forms can tag it (badge only).
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (storageMode !== 'api') { if (!cancelled) { setAppOfForm({}); setAppSlugOfForm({}); } return; }
+      if (storageMode !== 'api') { if (!cancelled) setAppOfForm({}); return; }
       const res = await api.getApps();
       const apps = (res.data?.apps || []) as Array<{ id: string; name: string; slug?: string | null }>;
       const map: Record<string, string> = {};
-      const slugMap: Record<string, string> = {};
       await Promise.all(apps.map(async (a) => {
         const fr = await api.getAppForms(a.id);
         for (const f of (fr.data?.forms || []) as Array<{ formId: string }>) {
           map[f.formId] = a.name;
-          if (a.slug) slugMap[f.formId] = a.slug;
         }
       }));
-      if (!cancelled) { setAppOfForm(map); setAppSlugOfForm(slugMap); }
+      if (!cancelled) setAppOfForm(map);
     })();
     return () => { cancelled = true; };
   }, [storageMode]);
 
-  // Preview a form in a NEW TAB and IN CONTEXT: an in-app form opens the app runtime at that form;
-  // a standalone form opens the fillable form itself (?form=1 shows the form even with a custom screen).
-  const previewForm = useCallback((formId: string) => {
-    const slug = appSlugOfForm[formId];
-    const url = slug ? `/app/${slug}/form/${formId}` : `/preview/${formId}?form=1`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }, [appSlugOfForm]);
+  // Preview a form in a NEW TAB and IN CONTEXT: fresh app-context lookup on click (shared
+  // mechanism) — one published app opens the app runtime at that form, several ask which,
+  // otherwise (or on fetch failure) the standalone fillable form (?form=1 shows the form even
+  // with a custom screen).
+  const { openPreview: previewForm, previewChooser } = useFormPreview();
 
   // Get recent forms
   const recentForms = [...forms]
@@ -1055,6 +1050,9 @@ export function Dashboard() {
         confirmLabel="Delete"
         variant="danger"
       />
+
+      {/* Preview chooser — shown when a form is published in 2+ apps */}
+      {previewChooser}
     </div>
   );
 }

@@ -168,6 +168,29 @@ class AppService
 
     public function createApp(array $data, string $ownerId): array
     {
+        // Optional atomic attach list (POST /api/apps { formIds }): validate shape +
+        // caller ownership BEFORE any insert so an invalid id leaves no app row (or
+        // app_forms rows) behind; the attaches themselves run INSIDE the same
+        // transaction as the app/roles/membership below, so a failed attach rolls
+        // the whole creation back too.
+        $formIds = [];
+        if (isset($data['formIds'])) {
+            if (!is_array($data['formIds'])) {
+                throw new \InvalidArgumentException('formIds must be an array of form ids');
+            }
+            foreach ($data['formIds'] as $fid) {
+                if (!is_string($fid) || trim($fid) === '') {
+                    throw new \InvalidArgumentException('formIds must be an array of form ids');
+                }
+            }
+            $formIds = array_values(array_unique($data['formIds']));
+            foreach ($formIds as $fid) {
+                if (!$this->isFormOwnedByUser($fid, $ownerId)) {
+                    throw new \InvalidArgumentException('One or more forms could not be attached — form not found or access denied');
+                }
+            }
+        }
+
         $id = $this->generateUuid();
         $now = date('Y-m-d H:i:s');
         $slug = $this->generateSlug($data['name'] ?? 'untitled');
@@ -213,6 +236,12 @@ class AppService
 
             // Grant all permissions to Owner role
             $this->grantAllPermissions($ownerRoleId);
+
+            // Attach the requested forms inside the SAME transaction — any failure
+            // (a concurrently deleted form, an FK error) rolls the whole app back.
+            foreach ($formIds as $fid) {
+                $this->addFormToApp($id, $fid);
+            }
 
             if ($ownTransaction) {
                 $this->mysql->commit();
@@ -570,6 +599,100 @@ class AppService
         return $map;
     }
 
+    /**
+     * App contexts for ONE form — sibling of getAppsForForms that also carries the
+     * app status and the per-app display name: every app the OWNER has that contains
+     * this form, shaped for the app-aware Preview router
+     * (GET /api/forms/{formId}/app-contexts). One query.
+     *
+     * @return array<int, array{appId:string, appName:string, slug:string, status:string, formDisplayName:string, isPublished:bool}>
+     */
+    public function getAppContextsForForm(string $formId, string $ownerId): array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT a.id, a.name, a.slug, a.status, af.display_name, f.title AS form_title
+             FROM app_forms af
+             JOIN apps a ON a.id = af.app_id
+             JOIN forms f ON f.id = af.form_id
+             WHERE a.owner_id = :owner_id AND af.form_id = :form_id
+             ORDER BY a.name ASC"
+        );
+        $stmt->execute(['owner_id' => $ownerId, 'form_id' => $formId]);
+
+        $contexts = [];
+        while ($row = $stmt->fetch()) {
+            $contexts[] = [
+                'appId' => $row['id'],
+                'appName' => $row['name'],
+                'slug' => $row['slug'],
+                'status' => $row['status'],
+                'formDisplayName' => ($row['display_name'] !== null && $row['display_name'] !== '')
+                    ? $row['display_name']
+                    : $row['form_title'],
+                'isPublished' => $row['status'] === 'published',
+            ];
+        }
+        return $contexts;
+    }
+
+    /**
+     * Batched "apps + their attached forms" listing for the caller
+     * (GET /api/apps/form-usage): the same app visibility as getAllApps (owner OR
+     * member), each app with its forms — two batched queries total, no per-app N+1.
+     *
+     * @return array<int, array{appId:string, appName:string, slug:string, canManage:bool, forms:array<int, array{formId:string, displayName:string, sortOrder:int, isVisible:bool}>}>
+     */
+    public function getFormUsageForUser(string $userId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT DISTINCT a.id, a.name, a.slug, a.owner_id, a.updated_at
+            FROM apps a
+            LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id
+            WHERE a.owner_id = :owner_id OR au.user_id = :user_id2
+            ORDER BY a.updated_at DESC
+        ");
+        $stmt->execute(['owner_id' => $userId, 'user_id' => $userId, 'user_id2' => $userId]);
+
+        $apps = [];
+        while ($row = $stmt->fetch()) {
+            $apps[$row['id']] = [
+                'appId' => $row['id'],
+                'appName' => $row['name'],
+                'slug' => $row['slug'],
+                // Server-authoritative manage flag — owner-only for now (mirrors the
+                // canManage flag on the GET /api/apps list items).
+                'canManage' => $row['owner_id'] === $userId,
+                'forms' => [],
+            ];
+        }
+        if (empty($apps)) {
+            return [];
+        }
+
+        $appIds = array_keys($apps);
+        $placeholders = implode(',', array_fill(0, count($appIds), '?'));
+        $formStmt = $this->mysql->prepare(
+            "SELECT af.app_id, af.form_id, af.display_name, af.sort_order, af.is_visible, f.title AS form_title
+             FROM app_forms af
+             JOIN forms f ON f.id = af.form_id
+             WHERE af.app_id IN ($placeholders)
+             ORDER BY af.sort_order ASC"
+        );
+        $formStmt->execute($appIds);
+        while ($row = $formStmt->fetch()) {
+            $apps[$row['app_id']]['forms'][] = [
+                'formId' => $row['form_id'],
+                'displayName' => ($row['display_name'] !== null && $row['display_name'] !== '')
+                    ? $row['display_name']
+                    : $row['form_title'],
+                'sortOrder' => (int) $row['sort_order'],
+                'isVisible' => (bool) $row['is_visible'],
+            ];
+        }
+
+        return array_values($apps);
+    }
+
     public function addFormToApp(string $appId, string $formId, ?string $displayName = null): array
     {
         // Friendly duplicate guard — the same form CAN back multiple apps (shared
@@ -646,18 +769,47 @@ class AppService
         $params = ['app_id' => $appId, 'form_id' => $formId];
 
         if (isset($data['displayName'])) {
+            // app_forms.display_name is VARCHAR(255) NOT-blank by convention: trim,
+            // reject empty, reject overlong (a friendly 400 beats a silent truncate
+            // or a strict-mode 500 at INSERT time).
+            if (!is_string($data['displayName'])) {
+                throw new \InvalidArgumentException('Display name must be text');
+            }
+            $displayName = trim($data['displayName']);
+            if ($displayName === '') {
+                throw new \InvalidArgumentException('Display name cannot be empty');
+            }
+            if (mb_strlen($displayName) > 255) {
+                throw new \InvalidArgumentException('Display name must be 255 characters or fewer');
+            }
             $updates[] = "display_name = :display_name";
-            $params['display_name'] = $data['displayName'];
+            $params['display_name'] = $displayName;
         }
 
         if (isset($data['isVisible'])) {
             $updates[] = "is_visible = :is_visible";
-            $params['is_visible'] = (int)$data['isVisible'];
+            $params['is_visible'] = (int)(bool)$data['isVisible'];
         }
 
         if (isset($data['settings'])) {
+            // app_forms.settings is a JSON OBJECT (per-app form settings) — reject
+            // scalars/lists, and cap the stored size: the column rides along on the
+            // hot getAppForms join, so a multi-hundred-KB blob is abuse, not config.
+            // A stdClass IS a JSON object: the pack exporter emits empty settings as
+            // new \stdClass() (jsonObject) and the in-process export→import round trip
+            // hands it straight here without an HTTP re-serialization — normalize it.
+            if ($data['settings'] instanceof \stdClass) {
+                $data['settings'] = (array) $data['settings'];
+            }
+            if (!is_array($data['settings']) || ($data['settings'] !== [] && array_is_list($data['settings']))) {
+                throw new \InvalidArgumentException('Settings must be an object');
+            }
+            $settingsJson = json_encode($data['settings']);
+            if ($settingsJson === false || strlen($settingsJson) > 16384) {
+                throw new \InvalidArgumentException('Settings are too large (16KB max)');
+            }
             $updates[] = "settings = :settings";
-            $params['settings'] = json_encode($data['settings']);
+            $params['settings'] = $settingsJson;
         }
 
         if (empty($updates)) {
@@ -672,6 +824,27 @@ class AppService
 
     public function reorderAppForms(string $appId, array $formIds): bool
     {
+        // The submitted list must be EXACTLY the app's current form set — a
+        // permutation with no missing, duplicate, or foreign ids — so a stale or
+        // malicious payload can't leave sort_order gaps/collisions or no-op ids in.
+        foreach ($formIds as $fid) {
+            if (!is_string($fid) || $fid === '') {
+                throw new \InvalidArgumentException('formIds must be an array of form ids');
+            }
+        }
+        if (count($formIds) !== count(array_unique($formIds))) {
+            throw new \InvalidArgumentException('formIds contains duplicate ids');
+        }
+
+        $stmt = $this->mysql->prepare("SELECT form_id FROM app_forms WHERE app_id = :app_id");
+        $stmt->execute(['app_id' => $appId]);
+        $current = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+        // Equal counts + no duplicates + no foreign ids ⇒ the sets are identical.
+        if (count($formIds) !== count($current) || array_diff($formIds, $current) !== []) {
+            throw new \InvalidArgumentException("formIds must list exactly the app's current forms (no missing or foreign ids)");
+        }
+
         $this->mysql->beginTransaction();
         try {
             foreach ($formIds as $index => $formId) {

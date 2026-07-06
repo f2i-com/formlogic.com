@@ -66,6 +66,37 @@ export interface App {
   updatedAt: string;
 }
 
+/** An app as returned by the apps LIST endpoint (GET /api/apps): the base App plus list-only
+ *  capability flags. `canManage` / `canCreateCompanion` are server-authoritative (owner-only for
+ *  now) — prefer them over inferring ownership from `ownerId`'s presence. */
+export type AppListItem = App & {
+  formCount?: number;
+  canManage?: boolean;
+  canCreateCompanion?: boolean;
+};
+
+/** One app (owned by the caller) that contains a given form — from
+ *  GET /api/forms/{formId}/app-contexts. Powers context-aware Preview routing:
+ *  a form in exactly one PUBLISHED app previews inside that app's runtime. */
+export interface FormAppContext {
+  appId: string;
+  appName: string;
+  slug: string;
+  status: 'draft' | 'published' | 'archived';
+  formDisplayName: string;
+  isPublished: boolean;
+}
+
+/** One of the caller's apps with its attached forms — from GET /api/apps/form-usage,
+ *  the ONE-round-trip replacement for the old getApps + per-app getAppForms fan-out. */
+export interface AppFormUsageApp {
+  appId: string;
+  appName: string;
+  slug: string;
+  canManage: boolean;
+  forms: Array<{ formId: string; displayName: string; sortOrder: number; isVisible: boolean }>;
+}
+
 /** A saved report on an app. `builder` = no-code spec; `screen` reserved for future AI report screens. */
 export interface AppReport {
   id: string;

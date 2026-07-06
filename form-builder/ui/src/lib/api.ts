@@ -3,6 +3,7 @@
  */
 
 import type { Form } from '../types/form';
+import type { App, AppForm, AppFormUsageApp, AppListItem, FormAppContext } from '../types/app';
 import { logger } from './logger';
 import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
 
@@ -739,11 +740,33 @@ class ApiClient {
   }
 
   // App Admin endpoints
-  async getApps(): Promise<ApiResponse<{ apps: unknown[]; count: number }>> {
+  async getApps(): Promise<ApiResponse<{ apps: AppListItem[]; count: number }>> {
     return this.request('/apps');
   }
 
-  async createApp(data: Record<string, unknown>): Promise<ApiResponse<{ app: unknown }>> {
+  /**
+   * All of the caller's apps (owner + member, same visibility as getApps) WITH their attached
+   * forms in ONE round trip — the batched replacement for the per-app getAppForms fan-out that
+   * powers "in <app>" share badges and the companion picker's form lists.
+   */
+  async getAppsFormUsage(): Promise<ApiResponse<{ apps: AppFormUsageApp[] }>> {
+    return this.request('/apps/form-usage');
+  }
+
+  /**
+   * The caller-owned apps that contain this form (404 when the form isn't the caller's) —
+   * drives context-aware Preview routing: 1 published context opens /app/{slug}/form/{formId}.
+   */
+  async getFormAppContexts(formId: string): Promise<ApiResponse<{ contexts: FormAppContext[] }>> {
+    return this.request(`/forms/${formId}/app-contexts`);
+  }
+
+  /**
+   * Create an app. Optional `formIds` (each form must be owned by the caller) attach forms
+   * ATOMICALLY inside one server transaction — any invalid form rolls the whole create back
+   * (400, no app row, no attachments), replacing the old create-then-attach loop.
+   */
+  async createApp(data: Partial<App> & { formIds?: string[] }): Promise<ApiResponse<{ app: App }>> {
     return this.request('/apps', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -778,7 +801,7 @@ class ApiClient {
   async createCompanionApp(
     appId: string,
     opts?: { name?: string; copyDashboard?: boolean; copyReports?: boolean; copyLogic?: boolean }
-  ): Promise<ApiResponse<{ app: unknown }>> {
+  ): Promise<ApiResponse<{ app: App }>> {
     const body: Record<string, unknown> = {};
     if (opts?.name) body.name = opts.name;
     if (typeof opts?.copyDashboard === 'boolean') body.copyDashboard = opts.copyDashboard;
@@ -855,7 +878,7 @@ class ApiClient {
   }
 
   // App Form management
-  async getAppForms(appId: string): Promise<ApiResponse<{ forms: unknown[] }>> {
+  async getAppForms(appId: string): Promise<ApiResponse<{ forms: AppForm[] }>> {
     return this.request(`/apps/${appId}/forms`);
   }
 

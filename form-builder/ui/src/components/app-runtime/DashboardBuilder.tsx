@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ReportBuilder } from './ReportBuilder';
 import { WidgetView } from './WidgetDashboard';
 import {
@@ -204,6 +205,34 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   // The app being edited (excluded from the copy-source list). Both builder hosts live inside the
   // app runtime, so the store is populated; falls back to undefined harmlessly elsewhere.
   const currentAppId = useAppRuntimeStore((s) => s.config?.app.id);
+  const activeFormId = useAppRuntimeStore((s) => s.activeFormId);
+
+  // ── Add-widget target form (T13) ────────────────────────────────────────────
+  // Presets prefill their specs/lists from ONE selected form. Default = the most relevant form:
+  // the runtime's active form when it's part of this dashboard's form set (form-scope builders
+  // pass exactly that one form), else the first. Form-section dashboards are single-form, so the
+  // picker is hidden there and the target stays locked to that form.
+  const [targetFormId, setTargetFormId] = useState<string>(() =>
+    (activeFormId && builderForms.some((f) => f.formId === activeFormId) ? activeFormId : builderForms[0]?.formId ?? '')
+  );
+  const targetForm = builderForms.find((f) => f.formId === targetFormId) ?? builderForms[0];
+  const showFormPicker = scope === 'app' && builderForms.length > 1;
+
+  // ── Unsaved-change tracking (T23) ───────────────────────────────────────────
+  // A stable serialized compare against the state captured on mount (cols can't change in the
+  // builder, so it isn't part of the snapshot). Saving re-baselines; Cancel/close confirm when
+  // dirty, and a beforeunload handler guards page navigation/refresh while dirty.
+  const snapshot = JSON.stringify({ widgets, showRangePicker, refreshInterval });
+  const [cleanSnapshot, setCleanSnapshot] = useState(snapshot);
+  const dirty = snapshot !== cleanSnapshot;
+  const [confirmClose, setConfirmClose] = useState(false);
+  useEffect(() => {
+    if (!dirty || typeof window === 'undefined') return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const requestCancel = () => { if (dirty) setConfirmClose(true); else onCancel(); };
 
   // Suppress text selection during a drag/resize (mutating document.body must live in an effect).
   useEffect(() => {
@@ -263,9 +292,11 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   };
 
   const addWidget = (preset: GalleryPreset) => {
+    const form = targetForm;
+    // A data widget must never be created with an empty formId (its query could never run).
+    if ((preset.kind === 'report' || preset.kind === 'list') && !form?.formId) return;
     setAddOpen(false);
     const maxBottom = widgets.reduce((m, w) => Math.max(m, w.layout.y + w.layout.h), 0);
-    const form = builderForms[0];
     const w: DashboardWidget = {
       id: uid(),
       title: preset.label,
@@ -296,7 +327,9 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     // finally guarantees the button leaves the "Saving…" state even if onSave rejects — otherwise a
     // failed save would leave the builder stuck in a disabled/spinning state.
     try {
-      await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }), ...(refreshInterval ? { refreshInterval } : {}) });
+      const ok = await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }), ...(refreshInterval ? { refreshInterval } : {}) });
+      // A successful save re-baselines the dirty compare (hosts usually unmount us, but not always).
+      if (ok) setCleanSnapshot(JSON.stringify({ widgets, showRangePicker, refreshInterval }));
     } finally {
       setSaving(false);
     }
@@ -350,7 +383,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
         <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize · double-click a widget to edit it</p>
         <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button size="sm" variant="outline" onClick={requestCancel}>Cancel</Button>
           <Button size="sm" onClick={handleSave} disabled={saving} leftIcon={saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}>
             {saving ? 'Saving…' : 'Save dashboard'}
           </Button>
@@ -393,6 +426,8 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
                       widget={w}
                       reportResult={data.reportResults[w.id]}
                       reportLoading={data.reportLoading}
+                      canEdit
+                      errorDetail={data.reportErrors[w.id]}
                       listRows={data.listData[w.id]}
                       activity={data.activity}
                       forms={builderForms as unknown as WidgetDataForm[]}
@@ -425,21 +460,45 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       {/* Add-widget preset gallery */}
       {addOpen && (
         <Modal isOpen onClose={() => setAddOpen(false)} title="Add a widget" size="full">
-          <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {GALLERY.filter((p) => !p.appOnly || scope === 'app').map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => addWidget(p)}
-                className="group flex min-w-0 flex-col items-start gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 p-3.5 text-left cursor-pointer transition-all hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:ring-2 app-ring-primary"
+          {/* Target-form picker (app dashboards over 2+ forms): presets prefill from this form.
+              Form-section dashboards are single-form, so the picker never shows there. */}
+          {showFormPicker && (
+            <div className="flex flex-wrap items-center gap-2 px-4 pt-4 sm:px-5 sm:pt-5">
+              <label htmlFor="widget-target-form" className="text-sm font-medium text-gray-700 dark:text-slate-300">
+                Create widgets for:
+              </label>
+              <select
+                id="widget-target-form"
+                value={targetForm?.formId ?? ''}
+                onChange={(e) => setTargetFormId(e.target.value)}
+                className="max-w-full rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950/50 text-sm text-gray-900 dark:text-white px-2.5 py-1.5 focus:outline-none focus:ring-2 app-ring-primary cursor-pointer"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg app-bg-primary-light app-text-primary">
-                  <p.Icon className="h-4 w-4" />
-                </span>
-                <span className="text-sm font-semibold text-gray-900 dark:text-white">{p.label}</span>
-                <span className="text-xs leading-snug text-gray-500 dark:text-slate-400">{p.desc}</span>
-              </button>
-            ))}
+                {builderForms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {GALLERY.filter((p) => !p.appOnly || scope === 'app').map((p) => {
+              // Data presets need a target form — with none available they can't create a widget.
+              const needsForm = p.kind === 'report' || p.kind === 'list';
+              const blocked = needsForm && !targetForm?.formId;
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => addWidget(p)}
+                  disabled={blocked}
+                  title={blocked ? 'Add a form first — this widget shows form data.' : undefined}
+                  className="group flex min-w-0 flex-col items-start gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 p-3.5 text-left transition-all enabled:cursor-pointer enabled:hover:bg-gray-50 dark:enabled:hover:bg-slate-800/60 enabled:hover:ring-2 app-ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg app-bg-primary-light app-text-primary">
+                    <p.Icon className="h-4 w-4" />
+                  </span>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white">{p.label}</span>
+                  <span className="text-xs leading-snug text-gray-500 dark:text-slate-400">{p.desc}</span>
+                </button>
+              );
+            })}
           </div>
         </Modal>
       )}
@@ -447,7 +506,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       {/* Config: report widgets reuse the full ReportBuilder; others get a compact editor. */}
       {configWidget && configWidget.kind === 'report' && (
         <ReportBuilder
-          report={{ id: configWidget.id, name: configWidget.title ?? '', type: 'builder', spec: configWidget.spec ?? defaultSpec(builderForms[0], 'bar') } as AppReport}
+          report={{ id: configWidget.id, name: configWidget.title ?? '', type: 'builder', spec: configWidget.spec ?? defaultSpec(targetForm, 'bar') } as AppReport}
           forms={builderForms}
           runReport={props.runReport}
           onClose={() => setConfigId(null)}
@@ -484,6 +543,18 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           }}
         />
       )}
+
+      {/* Unsaved-changes guard for the builder's own Cancel exit (T23). */}
+      <ConfirmDialog
+        isOpen={confirmClose}
+        onClose={() => setConfirmClose(false)}
+        onConfirm={() => { setConfirmClose(false); onCancel(); }}
+        title="Discard unsaved changes?"
+        message="This dashboard has unsaved changes. Closing the editor will discard them."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        variant="danger"
+      />
     </div>
   );
 }
