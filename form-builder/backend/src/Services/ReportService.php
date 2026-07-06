@@ -50,7 +50,7 @@ class ReportService
     public function __construct(private SQLiteConnection $sqlite, private ?FormService $formService = null) {}
 
     /**
-     * @param array $spec  { viz, filters, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit?, dateRange?, seriesBy? }
+     * @param array $spec  { viz, filters, filterMode?, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit?, dateRange?, seriesBy? }
      * @param array $fields the base form's field definitions
      * @param array $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', scope:'all'|'own', fields, path }]
      * @param ?array $resolvableFormIds  target forms whose linked_record labels the caller may reveal in
@@ -161,6 +161,7 @@ class ReportService
                 $params[':uid'] = $userId;
             }
             $pi = 0;
+            $filterConds = []; // conditions from the validated user filters (combined below per filterMode)
             foreach (array_slice((array) ($spec['filters'] ?? []), 0, self::MAX_FILTERS) as $flt) {
                 if (!is_array($flt)) { continue; }
                 $ref = (string) ($flt['field'] ?? '');
@@ -171,8 +172,8 @@ class ReportService
                 $isDate = in_array($fdef['type'] ?? '', self::DATE_TYPES, true) || $ref === '__submitted_at';
                 $op = (string) ($flt['op'] ?? 'eq');
 
-                if ($op === 'empty') { $where[] = "($expr IS NULL OR $expr = '' OR $expr = '[]')"; continue; }
-                if ($op === 'notempty') { $where[] = "($expr IS NOT NULL AND $expr != '' AND $expr != '[]')"; continue; }
+                if ($op === 'empty') { $filterConds[] = "($expr IS NULL OR $expr = '' OR $expr = '[]')"; continue; }
+                if ($op === 'notempty') { $filterConds[] = "($expr IS NOT NULL AND $expr != '' AND $expr != '[]')"; continue; }
 
                 // Relative date filters — boundaries computed in the app timezone (PHP), bound as params.
                 if (in_array($op, self::DATE_OPS, true)) {
@@ -181,19 +182,19 @@ class ReportService
                         $n = max(1, min((int) ($flt['value'] ?? 30), 3650));
                         $p = ':p' . $pi++;
                         $params[$p] = (clone $nowLocal)->modify("-{$n} days")->format('Y-m-d');
-                        $where[] = "date($le) >= $p";
+                        $filterConds[] = "date($le) >= $p";
                     } elseif ($op === 'this_month') {
                         $p = ':p' . $pi++;
                         $params[$p] = $nowLocal->format('Y-m');
-                        $where[] = "strftime('%Y-%m', $le) = $p";
+                        $filterConds[] = "strftime('%Y-%m', $le) = $p";
                     } elseif ($op === 'this_year') {
                         $p = ':p' . $pi++;
                         $params[$p] = $nowLocal->format('Y');
-                        $where[] = "strftime('%Y', $le) = $p";
+                        $filterConds[] = "strftime('%Y', $le) = $p";
                     } elseif ($op === 'today') {
                         $p = ':p' . $pi++;
                         $params[$p] = $nowLocal->format('Y-m-d');
-                        $where[] = "date($le) = $p";
+                        $filterConds[] = "date($le) = $p";
                     }
                     continue;
                 }
@@ -204,13 +205,13 @@ class ReportService
                     $params[$p] = (string) ($flt['value'] ?? '');
                     $arr = "CASE WHEN json_valid($expr) AND json_type($expr) = 'array' THEN $expr ELSE json_array($expr) END";
                     $cond = "EXISTS (SELECT 1 FROM json_each($arr) WHERE value = $p)";
-                    $where[] = $op === 'has' ? $cond : "NOT $cond";
+                    $filterConds[] = $op === 'has' ? $cond : "NOT $cond";
                     continue;
                 }
 
                 if ($op === 'contains') {
                     $p = ':p' . $pi++;
-                    $where[] = "$expr LIKE $p ESCAPE '!'";
+                    $filterConds[] = "$expr LIKE $p ESCAPE '!'";
                     $params[$p] = '%' . strtr((string) ($flt['value'] ?? ''), ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
                     continue;
                 }
@@ -218,13 +219,22 @@ class ReportService
                     $p = ':p' . $pi++;
                     $params[$p] = (string) ($flt['value'] ?? '');
                     if ($isNumeric) {
-                        $where[] = "CAST($expr AS REAL) " . self::OPS[$op] . " CAST($p AS REAL)";
+                        $filterConds[] = "CAST($expr AS REAL) " . self::OPS[$op] . " CAST($p AS REAL)";
                     } elseif ($isDate) {
-                        $where[] = "date($expr) " . self::OPS[$op] . " date($p)";
+                        $filterConds[] = "date($expr) " . self::OPS[$op] . " date($p)";
                     } else {
-                        $where[] = "$expr " . self::OPS[$op] . " $p";
+                        $filterConds[] = "$expr " . self::OPS[$op] . " $p";
                     }
                 }
+            }
+            // filterMode 'any' (2+ validated filters only) ORs the USER filters together in one
+            // parenthesized group; the base status/scope conditions above and the dateRange constraint
+            // below always stay AND'd outside it. 'all'/absent/a single surviving filter keeps today's
+            // plain AND chain — byte-identical SQL to the legacy behaviour.
+            if (($spec['filterMode'] ?? '') === 'any' && count($filterConds) >= 2) {
+                $where[] = '(' . implode(' OR ', $filterConds) . ')';
+            } else {
+                array_push($where, ...$filterConds);
             }
             // ── dateRange quick preset (dashboard range picker) — the boundary is computed in PHP in the
             // app timezone (same machinery as the relative-date filters above) and bound as a parameter;

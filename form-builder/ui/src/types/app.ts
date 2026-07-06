@@ -111,6 +111,9 @@ export interface AppReportSpec {
   joins?: Array<{ via: string; formId: string; type: 'inner' | 'left' }>;
   /** Field refs may be a base field id, "<formId>::<fieldId>" (joined), or pseudo-fields "__submitted_at"/"__status". */
   filters?: Array<{ field: string; op: string; value?: string }>;
+  /** How the filters combine: 'any' ORs them together (base status/scope + dateRange stay AND'd);
+   *  absent/'all' = every filter must match (legacy behaviour). */
+  filterMode?: 'all' | 'any';
   groupBy?: { field: string; bucket?: 'none' | 'day' | 'month' | 'year' };
   measure?: { fn: 'count' | 'countDistinct' | 'sum' | 'avg' | 'min' | 'max'; field?: string };
   columns?: string[];
@@ -202,6 +205,8 @@ export interface DashboardScreen {
    *  (date-bucketed groupBy or a dateRange). The picker merges its preset into each report widget's
    *  spec.dateRange before running it. */
   showRangePicker?: boolean;
+  /** Auto-refresh cadence in seconds — 30 | 60 | 300 only; absent = off. */
+  refreshInterval?: number;
 }
 
 export interface AppForm {

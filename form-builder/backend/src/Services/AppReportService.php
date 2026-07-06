@@ -23,6 +23,8 @@ class AppReportService
     private const PSEUDO = ['__submitted_at', '__status'];
     // dateRange quick presets ('all' persists but adds no query constraint).
     private const DATE_RANGE_PRESETS = ['all', '7d', '30d', '90d', 'thisMonth', 'ytd'];
+    // Dashboard auto-refresh cadences (seconds) — the only values that persist.
+    private const REFRESH_INTERVALS = [30, 60, 300];
     // Presentation-only spec options (rendered client-side; never touch the query).
     private const ACCENT_COLORS = ['primary', 'blue', 'green', 'amber', 'red', 'violet', 'teal'];
     private const NUM_FORMATS = ['plain', 'compact', 'currency', 'percent'];
@@ -186,6 +188,9 @@ class AppReportService
             }
             if ($filters) { $clean['filters'] = $filters; }
         }
+        // filterMode: 'any' ORs the saved filters together at run time. 'all' is the engine default and
+        // is never stored; anything but the literal 'any' is dropped.
+        if (($spec['filterMode'] ?? null) === 'any') { $clean['filterMode'] = 'any'; }
 
         if (!empty($spec['columns']) && is_array($spec['columns'])) {
             $cols = array_values(array_filter(array_map('strval', $spec['columns']), $refValid));
@@ -340,6 +345,11 @@ class AppReportService
         }
         $dash = ['version' => 1, 'cols' => $cols, 'widgets' => array_values($out)];
         if (is_bool($dashboard['showRangePicker'] ?? null)) { $dash['showRangePicker'] = $dashboard['showRangePicker']; }
+        // Auto-refresh cadence (seconds): only the fixed 30 / 60 / 300 steps persist; anything else drops.
+        $ri = $dashboard['refreshInterval'] ?? null;
+        if (is_numeric($ri) && (float) $ri == (int) $ri && in_array((int) $ri, self::REFRESH_INTERVALS, true)) {
+            $dash['refreshInterval'] = (int) $ri;
+        }
         return $dash;
     }
 
@@ -416,6 +426,9 @@ class AppReportService
             }
             if ($filters) { $clean['filters'] = $filters; }
         }
+        // filterMode: 'any' ORs the saved filters together at run time. 'all' is the engine default and
+        // is never stored; anything but the literal 'any' is dropped.
+        if (($spec['filterMode'] ?? null) === 'any') { $clean['filterMode'] = 'any'; }
 
         if (!empty($spec['columns']) && is_array($spec['columns'])) {
             $cols = array_values(array_filter(array_map('strval', $spec['columns']), $refValid));

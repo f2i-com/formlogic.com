@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Trash2, Columns3, Download, Inbox, Lock, Plus } from 'lucide-react';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
+import { Trash2, Columns3, Download, Inbox, Lock, Plus, X } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { DataTable, type Column } from '../ui/DataTable';
 import { PageHeader } from '../ui/PageHeader';
@@ -14,6 +14,18 @@ import { toast } from '../../stores/toastStore';
 // Exclude non-data field types from columns
 const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
 const SERVER_PAGE = 10; // rows per page in server mode — small pages keep queries fast and pagination visible
+
+/** Drill-down filter carried in the URL by dashboard chart clicks (see WidgetDashboard):
+ *  ?form={formId}&drill={groupByFieldId}&value={label}&bucket={day|month|year}. */
+interface DrillFilter { field: string; value: string; bucket?: 'day' | 'month' | 'year' }
+
+function parseDrill(params: URLSearchParams): DrillFilter | null {
+  const field = params.get('drill');
+  const value = params.get('value');
+  if (!field || !value) return null;
+  const b = params.get('bucket');
+  return { field, value, bucket: b === 'day' || b === 'month' || b === 'year' ? b : undefined };
+}
 
 /** Flatten answers + resolved linked-record display onto each row so columns can render/sort by key. */
 function flattenResponses(data: Record<string, unknown>[]): Record<string, unknown>[] {
@@ -43,12 +55,18 @@ export function AppDataTable() {
   // Demo keeps a browser-local overlay of records, so it fetches everything and searches/paginates
   // client-side. Real apps use fast server-side pagination + search (limited rows per query).
   const serverMode = !api.isDemoMode();
+  // Drill-down from a dashboard chart click. The responses endpoint has no field-scoped filter, so
+  // server mode seeds the existing SERVER-side search with the clicked value (choice labels resolve
+  // to stored option values server-side; date-bucket labels substring-match their dates). Demo mode
+  // — where every row is already in the browser — applies an exact client-side field match instead.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const drill = useMemo(() => parseDrill(searchParams), [searchParams]);
   const [exporting, setExporting] = useState(false);
   const [responses, setResponses] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [searchInput, setSearchInput] = useState(() => (serverMode && drill ? drill.value : ''));
+  const [debouncedSearch, setDebouncedSearch] = useState(() => (serverMode && drill ? drill.value : ''));
   const [loading, setLoading] = useState(true);
   const [loadedOnce, setLoadedOnce] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +127,34 @@ export function AppDataTable() {
       };
     }
   }, [colDropdownOpen]);
+
+  // Re-seed when the drill in the URL changes AFTER mount (back/forward, or a new chart click while
+  // this route is already rendered). The initial drill is applied by the state initializers above.
+  const drillKey = drill ? `${drill.field}|${drill.value}|${drill.bucket ?? ''}` : null;
+  const appliedDrillRef = useRef(drillKey);
+  useEffect(() => {
+    if (drillKey === appliedDrillRef.current) return;
+    appliedDrillRef.current = drillKey;
+    if (drill && serverMode) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL→state sync: a new drill arrived via navigation
+      setSearchInput(drill.value);
+      setDebouncedSearch(drill.value);
+      setPage(0);
+    }
+  }, [drillKey, drill, serverMode]);
+
+  const clearDrillParams = () => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      ['form', 'drill', 'value', 'bucket'].forEach((k) => next.delete(k));
+      return next;
+    }, { replace: true });
+  };
+
+  const dismissDrill = () => {
+    clearDrillParams();
+    if (serverMode) { setSearchInput(''); setDebouncedSearch(''); setPage(0); }
+  };
 
   // Check if form has any linked_record fields
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
@@ -198,6 +244,33 @@ export function AppDataTable() {
     });
     return () => { cancelled = true; };
   }, [formId, config, hasLinkedFields, hasViewPermission, fetchResponses, fetchResponsePage, reloadKey, serverMode, page, debouncedSearch, appSlug, fields]);
+
+  // Demo mode: exact client-side drill match over the fully-loaded rows. Charts show option LABELS
+  // for choice fields, so map the clicked label back to its stored option value(s) before comparing;
+  // date-bucket drills prefix-match (e.g. '2026-06' matches '2026-06-15').
+  const drillMatcher = useMemo(() => {
+    if (!drill || serverMode) return null;
+    const d = drill;
+    const opts = fields.find((f) => f.id === d.field)?.properties?.options ?? [];
+    const candidates = new Set<string>([d.value, ...opts.filter((o) => (o.label ?? o.value) === d.value).map((o) => o.value)]);
+    return (r: Record<string, unknown>) => {
+      if (d.field === '__status') return String(r.status ?? 'submitted') === d.value;
+      if (d.field === '__submitted_at') return String(r.submittedAt ?? '').startsWith(d.value);
+      const raw = (r.answers as Record<string, unknown> | undefined)?.[d.field];
+      if (raw == null || raw === '') return false;
+      if (Array.isArray(raw)) return raw.some((v) => candidates.has(String(v)));
+      const s = String(raw);
+      return candidates.has(s) || (!!d.bucket && s.startsWith(d.value));
+    };
+  }, [drill, serverMode, fields]);
+  const visibleResponses = useMemo(() => (drillMatcher ? responses.filter(drillMatcher) : responses), [drillMatcher, responses]);
+  const visibleTotal = drillMatcher ? visibleResponses.length : total;
+
+  const drillFieldLabel = drill
+    ? (drill.field === '__submitted_at' ? 'Submitted'
+      : drill.field === '__status' ? 'Status'
+        : (fields.find((f) => f.id === drill.field)?.label || 'Filter'))
+    : '';
 
   const handleDelete = async () => {
     if (!formId || !deleteId) return;
@@ -405,9 +478,9 @@ export function AppDataTable() {
     </button>
   ) : null;
 
-  // No records at all (not a filtered-out search) — show a real empty state with a CTA
+  // No records at all (not a filtered-out search or drill) — show a real empty state with a CTA
   // instead of an empty table. `!loading` avoids a flash while a refetch is in flight.
-  const showEmpty = loadedOnce && !loading && !error && total === 0 && !searchInput && !debouncedSearch;
+  const showEmpty = loadedOnce && !loading && !error && total === 0 && !searchInput && !debouncedSearch && !drill;
 
   if (formId && !canViewOwn(formId) && !canViewAll(formId)) {
     return (
@@ -434,12 +507,29 @@ export function AppDataTable() {
       <PageHeader
         title={runtimeForm?.displayName || 'Responses'}
         subtitle={loadedOnce && !error
-          ? <span className="tabular-nums">{total} {total === 1 ? 'record' : 'records'}</span>
+          ? <span className="tabular-nums">{visibleTotal} {visibleTotal === 1 ? 'record' : 'records'}</span>
           : 'Submitted records'}
         onBack={goBack}
         backLabel="Back to records"
         actions={newRecordButton}
       />
+
+      {/* Drill-down chip: the active dashboard-chart filter, dismissible back to the full list. */}
+      {drill && (
+        <div className="mb-3">
+          <span className="inline-flex max-w-full items-center gap-1.5 rounded-full app-bg-primary-light px-3 py-1.5 text-xs font-medium app-text-primary">
+            <span className="truncate">{drillFieldLabel}: {drill.value}</span>
+            <button
+              type="button"
+              onClick={dismissDrill}
+              aria-label={`Clear filter ${drillFieldLabel}: ${drill.value}`}
+              className="shrink-0 rounded-full p-0.5 transition-colors hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
 
       {error ? (
         <div className="text-center py-12" role="alert">
@@ -479,19 +569,24 @@ export function AppDataTable() {
            included); the true zero-records case is handled by the EmptyState above, so
            the in-table empty message only appears for searches with no matches. */
         <DataTable
-          data={responses}
+          data={visibleResponses}
           columns={columns}
           searchable
           searchPlaceholder="Search records…"
           pageSize={SERVER_PAGE}
-          totalCount={total}
+          totalCount={visibleTotal}
           isLoading={loading}
-          emptyMessage="No records match your search"
+          emptyMessage={drill ? 'No records match this filter' : 'No records match your search'}
           serverMode={serverMode}
           page={serverMode ? page : undefined}
           onPageChange={serverMode ? setPage : undefined}
           searchValue={serverMode ? searchInput : undefined}
-          onSearchChange={serverMode ? ((v) => { setSearchInput(v); setPage(0); }) : undefined}
+          onSearchChange={serverMode ? ((v) => {
+            setSearchInput(v);
+            setPage(0);
+            // The drill funnels through this search box in server mode — typing your own search takes over.
+            if (drill && v.trim() !== drill.value) clearDrillParams();
+          }) : undefined}
           searchBarExtra={<>{exportButton}{columnVisibilityDropdown}</>}
           onRowClick={(r) => navigate(`/app/${appSlug}/form/${formId}/responses/${r.id}`)}
           actions={formId && canDelete(formId) ? (r) => (

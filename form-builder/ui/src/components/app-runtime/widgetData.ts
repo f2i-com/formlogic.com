@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseServerDate } from '../../lib/utils';
 import type { AppReportResult, AppReportSpec, DashboardWidget } from '../../types/app';
 
@@ -76,8 +76,12 @@ export function autoTitle(fields: RtField[], answers: Record<string, unknown>): 
 /**
  * Fetch everything a set of widgets needs: report specs (one batched round), list rows per form, and
  * the cross-form activity feed. Shared by the runtime renderer and the builder so both are WYSIWYG.
+ *
+ * `refreshToken` (optional): bump it to re-run the report widgets in the BACKGROUND — same specs, no
+ * loading/refreshing states, previous data stays visible until the fresh results land (and a widget
+ * whose re-run fails keeps its last good result). Powers dashboard auto-refresh without flicker.
  */
-export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps): WidgetData {
+export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, refreshToken = 0): WidgetData {
   const { runReport, runBatch, fetchRecent, forms, canViewForm } = deps;
 
   // ── Report widgets: one batched round ──────────────────────────────────────
@@ -88,11 +92,16 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps):
   const specsKey = useMemo(() => JSON.stringify(specEntries), [specEntries]);
   const [reportResults, setReportResults] = useState<Record<string, AppReportResult | null>>({});
   const [reportLoading, setReportLoading] = useState(true);
+  // Tracks the last specs run, so a token bump with UNCHANGED specs is a background refresh while a
+  // spec change (range picker, edited widget) keeps today's foreground loading/refreshing treatment.
+  const lastSpecsKey = useRef<string | null>(null);
 
   useEffect(() => {
+    const background = refreshToken > 0 && lastSpecsKey.current === specsKey;
+    lastSpecsKey.current = specsKey;
     if (specEntries.length === 0) { setReportResults({}); setReportLoading(false); return; }
     let cancelled = false;
-    setReportLoading(true);
+    if (!background) setReportLoading(true);
     (async () => {
       const specs = specEntries.map(([, s]) => s);
       let results: (AppReportResult | null)[];
@@ -102,14 +111,20 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps):
         results = specs.map(() => null);
       }
       if (cancelled) return;
-      const map: Record<string, AppReportResult | null> = {};
-      specEntries.forEach(([id], i) => { map[id] = results[i] ?? null; });
-      setReportResults(map);
+      setReportResults((prev) => {
+        const map: Record<string, AppReportResult | null> = background ? { ...prev } : {};
+        specEntries.forEach(([id], i) => {
+          const r = results[i] ?? null;
+          // A failed background re-run keeps the widget's last good data (never blank a wallboard).
+          if (!background || r !== null || prev[id] === undefined) map[id] = r;
+        });
+        return map;
+      });
       setReportLoading(false);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [specsKey]);
+  }, [specsKey, refreshToken]);
 
   // ── List widgets: newest rows per referenced form ──────────────────────────
   const [listData, setListData] = useState<Record<string, WidgetRecord[]>>({});

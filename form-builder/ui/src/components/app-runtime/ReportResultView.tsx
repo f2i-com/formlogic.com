@@ -1,7 +1,8 @@
-import { useId, useMemo, cloneElement, type ReactElement } from 'react';
+import { useId, useMemo, useState, cloneElement, type ReactElement } from 'react';
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area,
-  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList, ReferenceLine,
+  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList, ReferenceLine, Dot,
+  type ActiveDotProps,
 } from 'recharts';
 import { BarChart3 } from 'lucide-react';
 import type { AppReportResult, AppReportSpec } from '../../types/app';
@@ -133,15 +134,50 @@ interface Props {
   print?: boolean;
   /** Fill the parent's height (for fixed-size dashboard widget cells) instead of the intrinsic chart height. */
   fill?: boolean;
+  /** When set, chart data points (bars, pie/donut slices, line/area hover points) become clickable and
+   *  report the clicked category label (+ series name on stacked/multi-series charts). Absent = exactly
+   *  today's inert charts, so print / PDF / public / builder-preview callers are unchanged. */
+  onPointClick?: (point: { label: string; series?: string }) => void;
 }
 
-export function ReportResultView({ result, spec, primaryColor, print = false, fill = false }: Props) {
+export function ReportResultView({ result, spec, primaryColor, print = false, fill = false, onPointClick }: Props) {
   const t = useChartTheme(primaryColor, print, spec?.color);
   // Unique gradient id per chart INSTANCE — a shared id makes every area chart on a dashboard resolve
   // the FIRST widget's <defs> (wrong colour + double-applied opacity), a classic recharts collision.
   const gradId = 'flg' + useId().replace(/[^a-zA-Z0-9]/g, '');
   const vf = useMemo(() => makeFormatter(spec), [spec]);
   const target = typeof spec?.target === 'number' && Number.isFinite(spec.target) ? spec.target : undefined;
+
+  // ── Drill-down affordances — attached ONLY when the caller wires onPointClick (never in print) ──
+  const canClick = !!onPointClick && !print;
+  // Hovered mark index for the subtle dim on single-series bar / pie cells (inert charts never set it).
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  /** Category label from a recharts click datum (bar entry / pie sector / active dot all carry payload). */
+  const pointFrom = (data: unknown, series?: string): { label: string; series?: string } | null => {
+    const d = data as { payload?: { label?: unknown }; name?: unknown } | null | undefined;
+    const raw = d?.payload?.label ?? d?.name;
+    if (raw == null || raw === '' || raw === '—') return null; // '—' = the empty-label placeholder
+    return series === undefined ? { label: String(raw) } : { label: String(raw), series };
+  };
+  const clickPoint = (series?: string) => (data: unknown) => {
+    const pt = pointFrom(data, series);
+    if (pt && onPointClick) onPointClick(pt);
+  };
+  /** Click + cursor for Bar/Pie marks (recharts item handlers receive (data, index, event)). */
+  const markEvents = (series?: string) => (canClick ? { cursor: 'pointer', onClick: clickPoint(series) } : {});
+  /** Hover tracking for charts whose Cells render the dim treatment (single-series bar, pie/donut). */
+  const hoverEvents = canClick ? { onMouseEnter: (_: unknown, i: number) => setHoverIdx(i), onMouseLeave: () => setHoverIdx(null) } : {};
+  /** Clickable hover dot for line/area points — function form so the dot receives the point's payload. */
+  const clickableDot = (r: number, series?: string) => (dp: ActiveDotProps) => (
+    <Dot
+      {...dp}
+      r={r}
+      strokeWidth={2}
+      stroke={t.surface}
+      cursor="pointer"
+      onClick={() => { const pt = pointFrom(dp, series); if (pt && onPointClick) onPointClick(pt); }}
+    />
+  );
 
   // KPI ─────────────────────────────────────────────
   if (result.viz === 'kpi') {
@@ -302,14 +338,14 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
         <AreaChart data={rows} margin={margin}>
           {common}
           {names.map((n) => (
-            <Area key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} fill={colorOf.get(n)} fillOpacity={0.14} isAnimationActive={anim} dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: t.surface }} />
+            <Area key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} fill={colorOf.get(n)} fillOpacity={0.14} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4, n) : { r: 4, strokeWidth: 2, stroke: t.surface }} />
           ))}
         </AreaChart>
       ) : (
         <LineChart data={rows} margin={margin}>
           {common}
           {names.map((n) => (
-            <Line key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} isAnimationActive={anim} dot={false} activeDot={{ r: 4.5, strokeWidth: 2, stroke: t.surface }} />
+            <Line key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4.5, n) : { r: 4.5, strokeWidth: 2, stroke: t.surface }} />
           ))}
         </LineChart>
       );
@@ -325,7 +361,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
             <ReferenceLine y={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTopRight')} />
           )}
           {names.map((n, i) => (
-            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={42} radius={i === names.length - 1 ? [6, 6, 0, 0] : undefined}>
+            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={42} radius={i === names.length - 1 ? [6, 6, 0, 0] : undefined} {...markEvents(n)}>
               {showTotals && i === names.length - 1 && (
                 <LabelList dataKey="__total" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />
               )}
@@ -347,7 +383,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
             <ReferenceLine x={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTop')} />
           )}
           {names.map((n, i) => (
-            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={38} radius={i === names.length - 1 ? [0, 6, 6, 0] : undefined}>
+            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={38} radius={i === names.length - 1 ? [0, 6, 6, 0] : undefined} {...markEvents(n)}>
               {showTotals && i === names.length - 1 && (
                 <LabelList dataKey="__total" position="right" formatter={(v: unknown) => vf.short(v)} style={{ fontSize: 11, fill: t.axis }} />
               )}
@@ -396,7 +432,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
                 </linearGradient>
               </defs>
               {common}
-              <Area type="monotone" name="Value" dataKey="value" stroke={t.accent} strokeWidth={2} fill={`url(#${gradId})`} fillOpacity={1} isAnimationActive={anim} dot={false} activeDot={{ r: 4.5, strokeWidth: 2, stroke: t.surface }}>
+              <Area type="monotone" name="Value" dataKey="value" stroke={t.accent} strokeWidth={2} fill={`url(#${gradId})`} fillOpacity={1} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4.5) : { r: 4.5, strokeWidth: 2, stroke: t.surface }}>
                 {showLabels && <LabelList dataKey="value" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />}
               </Area>
             </AreaChart>
@@ -413,7 +449,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
                 strokeWidth={2.5}
                 isAnimationActive={anim}
                 dot={series.length <= 20 ? { r: 3, fill: t.accent, stroke: t.surface, strokeWidth: 1.5 } : false}
-                activeDot={{ r: 5, strokeWidth: 2, stroke: t.surface }}
+                activeDot={canClick ? clickableDot(5) : { r: 5, strokeWidth: 2, stroke: t.surface }}
               >
                 {showLabels && <LabelList dataKey="value" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />}
               </Line>
@@ -451,8 +487,12 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
               labelLine={false}
               stroke={t.surface}
               strokeWidth={2}
+              {...markEvents()}
+              {...hoverEvents}
             >
-              {series.map((_, i) => <Cell key={i} fill={t.palette[i % t.palette.length]} />)}
+              {series.map((_, i) => (
+                <Cell key={i} fill={t.palette[i % t.palette.length]} cursor={canClick ? 'pointer' : undefined} fillOpacity={canClick && hoverIdx === i ? 0.8 : undefined} />
+              ))}
             </Pie>
             <Tooltip contentStyle={t.tooltip} formatter={(v) => `${vf.full(v)} · ${Math.round((Number(v) / total) * 100)}%`} />
           </PieChart>
@@ -483,7 +523,9 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
   // Bars show value labels by default (legacy look); showDataLabels: false hides them.
   const showBarLabels = spec?.showDataLabels !== false;
   // One accent per chart when the user picked a colour; the legacy categorical cycle otherwise.
-  const barCells = series.map((_, i) => <Cell key={i} fill={t.hasNamedAccent ? t.accent : t.palette[i % t.palette.length]} />);
+  const barCells = series.map((_, i) => (
+    <Cell key={i} fill={t.hasNamedAccent ? t.accent : t.palette[i % t.palette.length]} cursor={canClick ? 'pointer' : undefined} fillOpacity={canClick && hoverIdx === i ? 0.8 : undefined} />
+  ));
 
   if (spec?.horizontal === false) {
     return (
@@ -497,7 +539,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
             {target !== undefined && (
               <ReferenceLine y={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTopRight')} />
             )}
-            <Bar dataKey="value" name="Value" radius={[6, 6, 0, 0]} isAnimationActive={anim} maxBarSize={42}>
+            <Bar dataKey="value" name="Value" radius={[6, 6, 0, 0]} isAnimationActive={anim} maxBarSize={42} {...markEvents()} {...hoverEvents}>
               {barCells}
               {showBarLabels && <LabelList dataKey="value" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />}
             </Bar>
@@ -520,7 +562,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
           {target !== undefined && (
             <ReferenceLine x={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTop')} />
           )}
-          <Bar dataKey="value" name="Value" radius={[0, 6, 6, 0]} isAnimationActive={anim} maxBarSize={38}>
+          <Bar dataKey="value" name="Value" radius={[0, 6, 6, 0]} isAnimationActive={anim} maxBarSize={38} {...markEvents()} {...hoverEvents}>
             {barCells}
             {showBarLabels && <LabelList dataKey="value" position="right" formatter={(v: unknown) => vf.short(v)} style={{ fontSize: 11, fill: t.axis }} />}
           </Bar>

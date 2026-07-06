@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Plus, Trash2, Settings2, GripVertical, Save, Loader2,
   BarChart3, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
-  AreaChart, TrendingUp, ListOrdered, Target,
+  AreaChart, TrendingUp, ListOrdered, Target, Copy,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -12,7 +12,11 @@ import {
   useWidgetData, GRID_ROW, GRID_GAP, DEFAULT_COLS,
   type WidgetDataDeps, type WidgetDataForm,
 } from './widgetData';
+import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
+import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import type { AppReport, AppReportSpec, AppRuntimeForm, DashboardScreen, DashboardWidget, DashboardWidgetKind } from '../../types/app';
+import type { CustomScreen } from '../../types/form';
 
 const uid = () => 'w_' + Math.random().toString(36).slice(2, 10);
 
@@ -189,6 +193,17 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   // Dashboard-level date-range picker (shown at runtime only when a widget is time-aware).
   // Default ON; only an explicit false is persisted, so untouched dashboards stay unchanged.
   const [showRangePicker, setShowRangePicker] = useState(props.initial?.showRangePicker !== false);
+  // Auto-refresh interval in seconds (30 | 60 | 300); 0 = off and nothing is persisted, so
+  // untouched dashboards stay byte-identical. Unknown saved values fall back to off.
+  const [refreshInterval, setRefreshInterval] = useState<number>(
+    props.initial?.refreshInterval === 30 || props.initial?.refreshInterval === 60 || props.initial?.refreshInterval === 300
+      ? props.initial.refreshInterval
+      : 0
+  );
+  const [copyOpen, setCopyOpen] = useState(false);
+  // The app being edited (excluded from the copy-source list). Both builder hosts live inside the
+  // app runtime, so the store is populated; falls back to undefined harmlessly elsewhere.
+  const currentAppId = useAppRuntimeStore((s) => s.config?.app.id);
 
   // Suppress text selection during a drag/resize (mutating document.body must live in an effect).
   useEffect(() => {
@@ -281,7 +296,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     // finally guarantees the button leaves the "Saving…" state even if onSave rejects — otherwise a
     // failed save would leave the builder stuck in a disabled/spinning state.
     try {
-      await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }) });
+      await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }), ...(refreshInterval ? { refreshInterval } : {}) });
     } finally {
       setSaving(false);
     }
@@ -307,12 +322,30 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap px-1 pb-3 shrink-0">
         <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setAddOpen(true)}>Add widget</Button>
+        <Button size="sm" variant="outline" leftIcon={<Copy className="h-4 w-4" />} onClick={() => setCopyOpen(true)}>Copy from app…</Button>
         <label
           className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none"
           title="Show a date-range picker on the dashboard when any widget is time-based"
         >
           <input type="checkbox" className="app-accent rounded" checked={showRangePicker} onChange={(e) => setShowRangePicker(e.target.checked)} />
           Date range picker
+        </label>
+        <label
+          className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 select-none"
+          title="Automatically re-run the dashboard's data while it's being viewed"
+        >
+          Auto-refresh
+          <select
+            value={refreshInterval}
+            onChange={(e) => setRefreshInterval(Number(e.target.value))}
+            aria-label="Auto-refresh interval"
+            className="rounded-md border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950/50 text-xs text-gray-700 dark:text-slate-300 px-1.5 py-1 focus:outline-none focus:ring-2 app-ring-primary cursor-pointer"
+          >
+            <option value={0}>Off</option>
+            <option value={30}>30s</option>
+            <option value={60}>1m</option>
+            <option value={300}>5m</option>
+          </select>
         </label>
         <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize · double-click a widget to edit it</p>
         <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
@@ -429,6 +462,28 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
           onSave={(patch) => { applyConfig(configWidget.id, patch); setConfigId(null); }}
         />
       )}
+
+      {/* Copy another owned app's dashboard into this draft (widgets on shared forms only). */}
+      {copyOpen && (
+        <CopyDashboardModal
+          currentAppId={currentAppId}
+          builderForms={builderForms}
+          scope={scope}
+          onClose={() => setCopyOpen(false)}
+          onReplace={(copied, skipped, sourceName) => {
+            setWidgets(copied);
+            setSelectedId(null);
+            setConfigId(null);
+            setCopyOpen(false);
+            toast.success(
+              `Copied ${copied.length} widget${copied.length === 1 ? '' : 's'} from “${sourceName}”`,
+              skipped > 0
+                ? `${skipped} widget${skipped === 1 ? ' was' : 's were'} skipped — ${skipped === 1 ? "its form isn't" : "their forms aren't"} in this ${scope === 'app' ? 'app' : 'dashboard'}.`
+                : undefined
+            );
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -543,6 +598,147 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
         <div className="flex shrink-0 items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={save}>Save widget</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Copy dashboard from another owned app ───────────────────────────────────────
+
+/**
+ * Widgets that can survive a copy into THIS dashboard: report/list widgets only when their source
+ * form is also in the current app (shared forms keep working — companion-app synergy), text always,
+ * and the app-derived kinds (actions/activity) only on app-scope dashboards.
+ */
+function copyableWidgets(widgets: DashboardWidget[], formIds: Set<string>, scope: 'app' | 'form'): DashboardWidget[] {
+  return widgets.filter((w) => {
+    if (w.kind === 'report') return !!w.spec?.formId && formIds.has(w.spec.formId);
+    if (w.kind === 'list') return !!w.list?.formId && formIds.has(w.list.formId);
+    if (w.kind === 'text') return true;
+    return scope === 'app';
+  });
+}
+
+type CopySourceApp = { id: string; name: string; widgetCount: number };
+type CopyAppListItem = { id?: string; name?: string; ownerId?: string; customScreen?: CustomScreen | null };
+
+/**
+ * "Copy from app…": pick one of the owner's OTHER apps that has a widget dashboard, preview how many
+ * of its widgets fit here (form-matched), and on explicit confirm hand back deep copies (fresh ids,
+ * layouts preserved) that REPLACE the current draft. List = api.getApps() (ownerId is only present on
+ * apps the requester owns); the picked app's dashboard = the owner-scoped api.getApp() detail.
+ */
+function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onReplace }: {
+  currentAppId?: string;
+  builderForms: AppRuntimeForm[];
+  scope: 'app' | 'form';
+  onClose: () => void;
+  onReplace: (widgets: DashboardWidget[], skipped: number, sourceName: string) => void;
+}) {
+  const [apps, setApps] = useState<CopySourceApp[] | null>(null); // null = loading
+  const [pickedId, setPickedId] = useState('');
+  const [detail, setDetail] = useState<{ name: string; widgets: DashboardWidget[] } | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pickSeq = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await api.getApps();
+      if (cancelled) return;
+      if (res.error) { setError('Could not load your apps.'); setApps([]); return; }
+      const list = (res.data?.apps ?? []) as CopyAppListItem[];
+      setApps(list
+        .filter((a) => !!a.id && !!a.ownerId && a.id !== currentAppId
+          && a.customScreen?.kind === 'dashboard' && (a.customScreen.dashboard?.widgets?.length ?? 0) > 0)
+        .map((a) => ({ id: a.id as string, name: a.name || 'Untitled app', widgetCount: a.customScreen?.dashboard?.widgets?.length ?? 0 })));
+    })();
+    return () => { cancelled = true; };
+  }, [currentAppId]);
+
+  const pick = async (id: string) => {
+    setPickedId(id);
+    setLoadingDetail(true);
+    setError(null);
+    setDetail(null);
+    const seq = ++pickSeq.current; // stale-response protection when switching apps quickly
+    const res = await api.getApp(id);
+    if (seq !== pickSeq.current) return;
+    setLoadingDetail(false);
+    const app = res.data?.app as { name?: string; customScreen?: CustomScreen | null } | undefined;
+    const dash = app?.customScreen?.kind === 'dashboard' ? app.customScreen.dashboard : undefined;
+    if (res.error || !app || !dash) { setError("Could not load that app's dashboard."); return; }
+    setDetail({ name: app.name || 'Untitled app', widgets: dash.widgets ?? [] });
+  };
+
+  const formIds = useMemo(() => new Set(builderForms.map((f) => f.formId)), [builderForms]);
+  const usable = useMemo(() => (detail ? copyableWidgets(detail.widgets, formIds, scope) : []), [detail, formIds, scope]);
+  const skipped = detail ? detail.widgets.length - usable.length : 0;
+  const hereLabel = scope === 'app' ? 'app' : 'dashboard';
+
+  const confirm = () => {
+    if (!detail || usable.length === 0) return;
+    // Deep copies with fresh widget ids; layouts (x/y/w/h) come across verbatim.
+    const copied = usable.map((w) => {
+      const c = JSON.parse(JSON.stringify(w)) as DashboardWidget;
+      c.id = uid();
+      return c;
+    });
+    onReplace(copied, skipped, detail.name);
+  };
+
+  return (
+    <Modal isOpen onClose={onClose} title="Copy dashboard from app" size="md">
+      <div className="flex max-h-[calc(90dvh_-_8rem)] flex-col">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+          {apps === null ? (
+            <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
+          ) : apps.length === 0 ? (
+            <p className="py-4 text-center text-sm text-gray-500 dark:text-slate-400">
+              {error ?? 'None of your other apps has a widget dashboard yet — build one there first, then copy it here.'}
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-gray-500 dark:text-slate-400">
+                Pick one of your apps — its dashboard widgets replace this draft. Only widgets whose form is also in this {hereLabel} are copied.
+              </p>
+              <div className="space-y-1.5" role="group" aria-label="Source app">
+                {apps.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    aria-pressed={pickedId === a.id}
+                    onClick={() => pick(a.id)}
+                    className={`w-full flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm cursor-pointer transition-colors ${pickedId === a.id ? 'app-border-primary app-bg-primary-light app-text-primary' : 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
+                  >
+                    <span className="truncate font-medium">{a.name}</span>
+                    <span className="shrink-0 text-xs text-gray-400 dark:text-slate-500">{a.widgetCount} widget{a.widgetCount === 1 ? '' : 's'}</span>
+                  </button>
+                ))}
+              </div>
+              {loadingDetail && (
+                <p className="flex items-center gap-2 text-xs text-gray-400 dark:text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking which widgets fit…</p>
+              )}
+              {error && !loadingDetail && <p className="text-xs text-red-500">{error}</p>}
+              {detail && !loadingDetail && (
+                <div className="rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-950/40 px-3 py-2.5 text-sm text-gray-700 dark:text-slate-300">
+                  “{detail.name}” has {detail.widgets.length} widget{detail.widgets.length === 1 ? '' : 's'} — <strong>{usable.length}</strong> can be copied here
+                  {skipped > 0 && <> ({skipped} skipped — their forms aren't in this {hereLabel})</>}.
+                  {usable.length > 0
+                    ? <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">Copying replaces every widget currently in this draft.</span>
+                    : <span className="mt-1 block text-xs text-gray-400 dark:text-slate-500">None of its widgets use a form that's in this {hereLabel}.</span>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={confirm} disabled={!detail || loadingDetail || usable.length === 0}>
+            {usable.length > 0 ? `Replace draft · ${usable.length} widget${usable.length === 1 ? '' : 's'}` : 'Replace draft'}
+          </Button>
         </div>
       </div>
     </Modal>

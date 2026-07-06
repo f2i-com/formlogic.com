@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Plus, Zap } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ReportResultView } from './ReportResultView';
 import { formatRelativeTime } from '../../lib/utils';
+import { api } from '../../lib/api';
 import type { AppReportResult, DashboardScreen, DashboardWidget } from '../../types/app';
 import {
   GRID_ROW, GRID_GAP, DEFAULT_COLS, useWidgetData, fieldsOf, displayAnswer, autoTitle,
@@ -33,6 +35,9 @@ function isTimeAware(w: DashboardWidget): boolean {
   return bucket === 'day' || bucket === 'month' || bucket === 'year' || w.spec.dateRange != null;
 }
 
+/** Chart types whose marks drill into the records view (KPI/table have no clickable category marks). */
+const DRILL_VIZ = new Set(['bar', 'pie', 'donut', 'line', 'area']);
+
 export interface WidgetDashboardProps extends WidgetDataDeps {
   dashboard: DashboardScreen;
   scope: 'app' | 'form' | 'public';
@@ -61,6 +66,8 @@ function useNarrow(): boolean {
 
 export function WidgetDashboard(props: WidgetDashboardProps) {
   const { dashboard, forms, scope, accent } = props;
+  const { appSlug } = useParams();
+  const navigate = useNavigate();
   const narrow = useNarrow();
   const cols = Math.max(1, Math.min(dashboard.cols ?? DEFAULT_COLS, 24));
   const widgets = useMemo(
@@ -82,7 +89,49 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     );
   }, [widgets, range]);
 
-  const data = useWidgetData(effectiveWidgets, props);
+  // Auto-refresh (dashboard.refreshInterval = 30 | 60 | 300 seconds): re-run the report widgets on a
+  // timer — paused while the tab is hidden, restarted by a manual range change, cleaned up on unmount.
+  // Absent/invalid = no timers at all (today's behaviour). Ticks are BACKGROUND refreshes: the hook
+  // keeps the previous data visible while refetching, so a wallboard never flickers.
+  const ri = (dashboard as DashboardScreen & { refreshInterval?: number }).refreshInterval;
+  const refreshSecs = ri === 30 || ri === 60 || ri === 300 ? ri : undefined;
+  const [refreshTick, setRefreshTick] = useState(0);
+  useEffect(() => {
+    if (!refreshSecs || typeof document === 'undefined') return;
+    let timer: number | undefined;
+    const stop = () => { if (timer !== undefined) { window.clearInterval(timer); timer = undefined; } };
+    const start = () => { if (timer === undefined) timer = window.setInterval(() => setRefreshTick((n) => n + 1), refreshSecs * 1000); };
+    const onVisibility = () => { if (document.hidden) stop(); else start(); };
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
+    // `range` is a dep on purpose: a manual range change already refetches, so restart the countdown.
+  }, [refreshSecs, range]);
+
+  const data = useWidgetData(effectiveWidgets, props, refreshTick);
+
+  // ── Drill-down (app runtime only): clicking a chart mark filters that form's records view ──────
+  // URL contract: /form/{formId}/responses?form={formId}&drill={groupByFieldId}&value={label}&bucket=….
+  // Gated on the same permission the records grid enforces (canViewForm = view own/all responses).
+  // Joined refs can't filter the records grid, and the pseudo-fields (__submitted_at/__status) only
+  // filter client-side — so those drill only in demo mode, where the grid holds every row locally.
+  const drillFor = (w: DashboardWidget): ((point: { label: string; series?: string }) => void) | undefined => {
+    if (scope !== 'app' || !appSlug) return undefined;
+    if (w.kind !== 'report' || !w.spec || !DRILL_VIZ.has(w.spec.viz)) return undefined;
+    const spec = w.spec;
+    const field = spec.groupBy?.field;
+    if (!field || field.includes('::')) return undefined;
+    if (field.startsWith('__') && !api.isDemoMode()) return undefined;
+    if (!forms.some((f) => f.formId === spec.formId)) return undefined;
+    if (props.canViewForm && !props.canViewForm(spec.formId)) return undefined;
+    const b = spec.groupBy?.bucket;
+    const bucket = b === 'day' || b === 'month' || b === 'year' ? b : undefined;
+    return (point) => {
+      if (!point.label) return;
+      const qs = `?form=${encodeURIComponent(spec.formId)}&drill=${encodeURIComponent(field)}&value=${encodeURIComponent(point.label)}${bucket ? `&bucket=${bucket}` : ''}`;
+      navigate(`/app/${appSlug}/form/${spec.formId}/responses${qs}`);
+    };
+  };
 
   if (widgets.length === 0) {
     return (
@@ -152,6 +201,7 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
               onOpenForm={props.onOpenForm}
               onOpenRecords={props.onOpenRecords}
               onOpenRecord={props.onOpenRecord}
+              onPointClick={drillFor(w)}
             />
           </div>
         ))}
@@ -178,6 +228,8 @@ export interface WidgetViewProps {
   onOpenForm?: (formId: string) => void;
   onOpenRecords?: (formId: string) => void;
   onOpenRecord?: (formId: string, recordId: string) => void;
+  /** Report widgets only: makes chart marks clickable (drill-down). Absent = inert charts (builder). */
+  onPointClick?: (point: { label: string; series?: string }) => void;
 }
 
 export function WidgetView(p: WidgetViewProps) {
@@ -219,7 +271,7 @@ export function WidgetView(p: WidgetViewProps) {
           <ReportSkeleton viz={w.spec?.viz} />
         ) : p.reportResult ? (
           <div className={`h-full min-h-0 transition-opacity ${p.reportRefreshing ? 'opacity-50' : ''}`}>
-            <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill />
+            <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill onPointClick={p.onPointClick} />
           </div>
         ) : (
           <WidgetEmpty icon={<AlertCircle className="h-6 w-6 opacity-70" />} text="Couldn't load this widget." />

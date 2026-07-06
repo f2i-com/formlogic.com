@@ -115,6 +115,8 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   const [measureField, setMeasureField] = useState(initSpec?.measure?.field ?? '');
   const [columns, setColumns] = useState<string[]>(initSpec?.columns ?? []);
   const [filters, setFilters] = useState<Filter[]>((initSpec?.filters ?? []).map((f) => ({ field: f.field, op: f.op, value: String(f.value ?? '') })));
+  // How multiple filters combine: 'all' (AND — the default, never persisted) or 'any' (OR).
+  const [filterMode, setFilterMode] = useState<'all' | 'any'>(initSpec?.filterMode === 'any' ? 'any' : 'all');
   const [limit, setLimit] = useState(initSpec?.limit ?? 100);
   const [joins, setJoins] = useState<Join[]>((initSpec?.joins as Join[]) ?? []);
   const initTableSort = (initSpec?.sort && typeof initSpec.sort === 'object') ? initSpec.sort as { by: string; dir: 'asc' | 'desc' } : { by: '__submitted_at', dir: 'desc' as const };
@@ -222,6 +224,8 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   // The QUERY part of the spec — the only part that requires a server round-trip when it changes.
   const querySpec: AppReportSpec = useMemo(() => {
     const base: AppReportSpec = { formId, viz, filters: filters.filter((f) => f.field), limit };
+    // Emitted ONLY when 'any' — omitting the default keeps existing saved specs byte-identical.
+    if (filterMode === 'any') base.filterMode = 'any';
     if (joins.length) base.joins = joins;
     if (isSeries) {
       base.groupBy = { field: groupField, bucket: groupIsDate ? bucket : 'none' };
@@ -249,7 +253,7 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
       base.dateRange = rangeField ? { preset: rangePreset, field: rangeField } : { preset: rangePreset };
     }
     return base;
-  }, [formId, viz, isSeries, isCartesian, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit, seriesOrder, tableSort, splitField, splitLimit, sparkline, rangePreset, rangeField]);
+  }, [formId, viz, isSeries, isCartesian, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, filterMode, limit, seriesOrder, tableSort, splitField, splitLimit, sparkline, rangePreset, rangeField]);
 
   // Full spec = query + presentation. Presentation-only edits re-render the preview instantly
   // (no refetch) because the fetch effect below is keyed on querySpec alone.
@@ -498,7 +502,15 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
 
           {/* Filters */}
           <div>
-            <label className={sectionLabel}>Filters</label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className={sectionLabel}>Filters</label>
+              {filters.length >= 2 && (
+                <div className="inline-flex rounded-lg border border-gray-200 dark:border-slate-700 p-0.5" role="group" aria-label="Combine filters">
+                  <button type="button" aria-pressed={filterMode === 'all'} onClick={() => setFilterMode('all')} className={segBtn(filterMode === 'all')}>Match all</button>
+                  <button type="button" aria-pressed={filterMode === 'any'} onClick={() => setFilterMode('any')} className={segBtn(filterMode === 'any')}>Match any</button>
+                </div>
+              )}
+            </div>
             <div className="mt-1.5 space-y-2">
               {filters.map((flt, i) => {
                 const fld = fieldByRef[flt.field];
