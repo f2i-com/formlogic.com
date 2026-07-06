@@ -145,6 +145,21 @@ class McpOAuthController
         $p = $this->formBody($request);
         $grantType = (string) ($p['grant_type'] ?? '');
 
+        // Arrival diagnostic (no secrets — code/verifier/secret are NEVER logged). This is the
+        // definitive signal for debugging a remote client like Claude: if a token request from
+        // Anthropic's egress (160.79.104.0/21) never appears in the log during a failed connection,
+        // an edge/WAF/Cloudflare layer is eating it before PHP; if it appears, the logged failure
+        // reason below is the exact cause.
+        $sp = $request->getServerParams();
+        $this->logger?->info('MCP OAuth: token request received', [
+            'grant' => $grantType,
+            'client_id' => (string) ($p['client_id'] ?? ($request->getHeaderLine('Authorization') !== '' ? '(via Authorization header)' : '(none)')),
+            'ip' => $sp['REMOTE_ADDR'] ?? null,
+            'forwarded_for' => $request->getHeaderLine('X-Forwarded-For') ?: null,
+            'content_type' => $request->getHeaderLine('Content-Type') ?: null,
+            'has_resource' => isset($p['resource']),
+        ]);
+
         // Client identification/authentication. We advertise 'none' + 'client_secret_post'; a Basic
         // Authorization header is also accepted defensively (some clients default to
         // client_secret_basic regardless of the metadata).
@@ -228,6 +243,10 @@ class McpOAuthController
     /** RFC 6749 §5.2 error shape: { error, error_description } (NOT the app's {error:true} shape). */
     private function oauthError(Response $response, string $error, string $description, int $status): Response
     {
+        // Log every OAuth error at the endpoint boundary (no secrets — description is a fixed
+        // human string, never an echo of a code/verifier). Turns an opaque remote "authorization
+        // failed" into a precise server-side reason the operator can read in app.log.
+        $this->logger?->info('MCP OAuth: request rejected', ['error' => $error, 'reason' => $description, 'status' => $status]);
         return $this->jsonResponse($response, ['error' => $error, 'error_description' => $description], $status)
             ->withHeader('Cache-Control', 'no-store');
     }
