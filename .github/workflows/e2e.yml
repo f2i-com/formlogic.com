@@ -28,11 +28,11 @@ jobs:
           --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
           --health-interval=10s --health-timeout=5s --health-retries=10
     env:
-      DB_HOST: 127.0.0.1
-      DB_PORT: '3306'
-      DB_DATABASE: formlogic
-      DB_USERNAME: root
-      DB_PASSWORD: root
+      # NOTE: deliberately NO job-level DB_* here. The backend reads them from the .env file written
+      # below; job-level DB_* would sit in the process environment where IMMUTABLE Dotenv sees them
+      # as "already set" and skips copying them into $_ENV — with a variables_order that omits E,
+      # $_ENV then stays empty and PHP silently falls back to localhost/defaults (this exact
+      # interaction broke the provision step). The mysql-client schema import hardcodes its creds.
       E2E_BASE_URL: http://127.0.0.1:8080
       # Host only — the specs append "/api/..." themselves (matches the api.formlogic.local default).
       E2E_API_URL: http://127.0.0.1:8080

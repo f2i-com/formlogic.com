@@ -25,7 +25,20 @@ if ($isProduction && (strlen($jwtSecret) < 32 || $isPlaceholderSecret)) {
 }
 
 // Get DB password - fail hard in production if using default
-$dbPassword = $_ENV['DB_PASSWORD'] ?? 'password';
+// $_ENV first, real process env second. PHP CLIs (bin/upgrade.php, scripts/provision-demo.php)
+// and `php -S` can run with a variables_order that omits E, leaving $_ENV empty even when the
+// process environment (CI job env, docker -e, systemd Environment=) carries the value — and
+// IMMUTABLE Dotenv skips writing a var into $_ENV when it already exists in the environment
+// ($_SERVER counts), so relying on $_ENV alone silently falls back to defaults. (This exact
+// interaction broke the E2E release gate's provision step.)
+$envOr = static function (string $key, ?string $default = null): ?string {
+    if (isset($_ENV[$key]) && $_ENV[$key] !== '') {
+        return (string) $_ENV[$key];
+    }
+    $v = getenv($key);
+    return ($v !== false && $v !== '') ? $v : $default;
+};
+$dbPassword = $envOr('DB_PASSWORD', 'password');
 if ($isProduction && $dbPassword === 'password') {
     throw new \RuntimeException(
         'SECURITY ERROR: DB_PASSWORD must be set to a secure value in production.'
@@ -79,10 +92,10 @@ return [
         ],
 
         'mysql' => [
-            'host' => $_ENV['DB_HOST'] ?? 'localhost',
-            'port' => $_ENV['DB_PORT'] ?? '3306',
-            'database' => $_ENV['DB_DATABASE'] ?? 'formlogic',
-            'username' => $_ENV['DB_USERNAME'] ?? 'formlogic',
+            'host' => $envOr('DB_HOST', 'localhost'),
+            'port' => $envOr('DB_PORT', '3306'),
+            'database' => $envOr('DB_DATABASE', 'formlogic'),
+            'username' => $envOr('DB_USERNAME', 'formlogic'),
             'password' => $dbPassword,
             'charset' => 'utf8mb4',
             'collation' => 'utf8mb4_unicode_ci',

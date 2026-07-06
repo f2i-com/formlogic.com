@@ -27,12 +27,22 @@ use FormLogic\Services\PackService;
 use FormLogic\Services\PackCatalogService;
 use FormLogic\Services\ResponseService;
 
+// $_ENV first, process env second: with a variables_order lacking E, $_ENV is empty in CLI while
+// the process env (CI job env / docker -e) carries the values — and immutable Dotenv skips vars
+// that already exist in the environment, so $_ENV alone silently falls back to defaults.
+$envOr = static function (string $key, string $default = ''): string {
+    if (isset($_ENV[$key]) && $_ENV[$key] !== '') {
+        return (string) $_ENV[$key];
+    }
+    $v = getenv($key);
+    return ($v !== false && $v !== '') ? $v : $default;
+};
 $conf = [
-    'host' => $_ENV['DB_HOST'] ?? 'localhost',
-    'port' => $_ENV['DB_PORT'] ?? '3306',
-    'database' => $_ENV['DB_DATABASE'] ?? 'formlogic',
-    'username' => $_ENV['DB_USERNAME'] ?? 'formlogic',
-    'password' => $_ENV['DB_PASSWORD'] ?? '',
+    'host' => $envOr('DB_HOST', 'localhost'),
+    'port' => $envOr('DB_PORT', '3306'),
+    'database' => $envOr('DB_DATABASE', 'formlogic'),
+    'username' => $envOr('DB_USERNAME', 'formlogic'),
+    'password' => $envOr('DB_PASSWORD', ''),
     'charset' => 'utf8mb4',
     'collation' => 'utf8mb4_unicode_ci',
 ];
