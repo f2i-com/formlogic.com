@@ -201,33 +201,46 @@ Notes:
 
 ## Manifest routes: slug endpoint vs. custom-domain `/.well-known/formlogic-app.json`
 
-The **signed client manifest** is served at two routes that return a **byte-identical** signed
-envelope (the same payload rebuilt by slug, so the same Ed25519 signature verifies either way):
+The **signed client manifest** is served at two routes. Both are signed by the same server key, but
+they are **not byte-identical**: each route binds the payload's top-level **`domain`** field to the
+origin it serves (see [[CUSTOM_APP_PLATFORM#domain-binding-signed-manifest--serving-origin]]), and the
+custom-domain manifest additionally emits **same-origin links** (source/install URLs on the custom
+domain):
 
-- **Slug endpoint** `GET /api/app/{slug}/client-manifest` — the canonical route. This is what the
-  **native runtime fetches** (`fetch_and_verify()` in `lib.rs`: it navigates to an app, resolves the
-  slug, and GETs `{origin}/api/app/{slug}/client-manifest` + `{origin}/api/public/signing-key`). It
-  works on the platform host **and** on a custom domain (both same-origin once the window is on the
-  app).
-- **Custom-domain root** `GET /.well-known/formlogic-app.json` — a **discovery** path at the *domain
-  root* so a browser / OS can find an app's manifest from a custom domain **without knowing the slug**.
-  The backend resolves the request **Host** to its connected + active domain of a *published* app
+- **Custom-domain root** `GET /.well-known/formlogic-app.json` — served at the *domain root*: the
+  backend resolves the request **Host** to its connected + active domain of a *published* app
   (`AppDomainService::resolveAppSlugByHost`, the same gate as `resolveLaunchConfig`) and returns the
-  same signed manifest. It **404s on a platform host** (there's no domain→app mapping there — use the
-  slug route). See [[CUSTOM_APP_PLATFORM#custom-domain-root-endpoints]].
+  signed manifest with `domain` = that custom domain. It **404s on a platform host** (there's no
+  domain→app mapping there). See [[CUSTOM_APP_PLATFORM#custom-domain-root-endpoints]].
+- **Slug endpoint** `GET /api/app/{slug}/client-manifest` — the platform route; `domain` is bound to
+  the **platform host** (from the server-trusted frontend base, never the request Host).
 
-So: the runtime uses the **slug** route in practice (it already knows the slug it navigated to); the
-`.well-known` route exists for root-level discovery on a customer domain and is a convenience alias,
-not a second trust path — both are verified identically against `/api/public/signing-key`.
+The runtime (`fetch_and_verify()` → `choose_manifest_envelope()` in `lib.rs`) **prefers the
+same-origin `/.well-known/formlogic-app.json`** manifest and **falls back** to
+`{origin}/api/app/{slug}/client-manifest` when the well-known probe 404s / doesn't parse as a signed
+envelope (e.g. on the platform host). Either way the envelope is verified identically against
+`{origin}/api/public/signing-key`, and the payload's `appSlug` + `domain` must match the navigated
+slug + the current origin host — a **missing or mismatched `domain` is a hard failure** (a
+validly-signed manifest replayed from another origin is refused).
 
 ## Security
 Only signed FormLogic apps on approved origins get bridge access: a remote-IPC origin allowlist PLUS
-per-app **signed client-manifest verification**. On each page load the runtime fetches
-`/api/app/{slug}/client-manifest` + `/api/public/signing-key`, verifies the detached Ed25519 signature
-over the PHP-canonical payload, and only then exposes `connectors`/`sync` for the connector commands the
-manifest grants — unverified origin → `origin_denied`, ungranted command → `capability_denied`, and the
-webview otherwise stays display-only. Arbitrary PWAs can render but not touch connectors. Connector
-errors are typed (`{code,message}`) so the web client never masks a capability denial with mock data.
+per-app **signed client-manifest verification**. On each page load of a hosted app (`/app/<slug>`) the
+runtime fetches the signed client manifest (preferring `/.well-known/formlogic-app.json`, falling back
+to `/api/app/{slug}/client-manifest`) + `/api/public/signing-key`, verifies the detached Ed25519
+signature over the PHP-canonical payload, and **pins identity**: `payload.appSlug` must match the
+navigated slug and `payload.domain` must match the serving origin host (missing/mismatched → hard
+failure). Only then does it expose `connectors`/`sync` for the connector commands the manifest grants —
+unverified origin → `origin_denied`, ungranted command → `capability_denied`, and the webview otherwise
+stays display-only. Arbitrary PWAs can render but not touch connectors. Connector errors are typed
+(`{code,message}`) so the web client never masks a capability denial with mock data.
+
+`runtime.ready()` (bridge → the `runtime_ready` command) lets the web layer **await the current
+origin's verification outcome** before its first native connector request (so an early
+`onScreenEnter` read can't race the async verifier into `origin_denied`): it resolves
+`{ verified: true }` once the manifest verified, `{ verified: false }` on definitive failure or for
+any page that isn't a hosted app (a 10s hard backstop in the Rust command bounds the wait; the web
+caller applies its own ~3s timeout and proceeds best-effort).
 
 ## Deferred
 Real device connectors (beyond the mock vehicle); iOS build + Universal Links (the assetlinks/App-Links

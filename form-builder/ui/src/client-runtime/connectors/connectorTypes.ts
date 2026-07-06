@@ -173,12 +173,21 @@ export interface FormLogicNativeBridge {
       answers: Record<string, unknown>;
     }): Promise<{ id: string }>;
     getQueue(): Promise<NativeSyncQueueItem[]>;
-    /** Returns pending items grouped by appSlug (attempts already incremented); nothing is removed. */
+    /** Returns pending items grouped by appSlug; nothing is removed and attempts are untouched. */
     flush(): Promise<{ pending: NativeSyncFlushGroup[] }>;
     /** Remove the given queue-item ids after the server accepted them. */
     ack?(ids: string[]): Promise<{ acked: number; remaining: number }>;
-    /** Record a delivery failure for the given ids (kept + retryable until the native attempt cap). */
+    /**
+     * Record a RETRYABLE delivery failure for the given ids: kept queued with one attempt
+     * burned, promoted to terminal 'failed' at the native attempt cap.
+     */
     fail?(ids: string[], error: string): Promise<{ failed: number }>;
+    /**
+     * Terminally fail the given ids — marked 'failed' immediately, regardless of attempts. For
+     * failures that can never succeed on retry (e.g. an idempotency-key conflict). Absent on
+     * runtimes that predate it, so callers feature-detect and fall back to fail().
+     */
+    failTerminal?(ids: string[], error: string): Promise<{ failed: number }>;
   };
 }
 

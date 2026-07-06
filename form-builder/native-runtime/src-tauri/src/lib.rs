@@ -271,9 +271,12 @@ fn connector_request(
 // so it is directly unit-testable and adds no dependency/offline-resolve risk).
 //
 // The native side does NOT POST to the server: the WebView holds the session cookie, so
-// `sync_flush` RETURNS pending items grouped by appSlug to the caller, which POSTs them to
-// `/api/app/{slug}/sync/batch`, then calls `sync_ack(ids)` for the ones the server accepted
-// (removing them) and `sync_fail(ids, error)` for the rest (kept, with attempts + lastError).
+// `sync_flush` RETURNS pending items grouped by appSlug to the caller (read-only — it never
+// mutates attempts), which POSTs them to `/api/app/{slug}/sync/batch`, then calls
+// `sync_ack(ids)` for the ones the server accepted (removing them) and `sync_fail(ids, error)`
+// for the rest. A non-terminal fail records ONE attempt (+ lastError) and promotes to terminal
+// "failed" at MAX_SYNC_ATTEMPTS; `sync_fail(ids, error, terminal:true)` marks "failed"
+// immediately (e.g. an idempotency conflict that can never succeed on retry).
 // ---------------------------------------------------------------------------
 const MAX_SYNC_ATTEMPTS: u32 = 5;
 static QUEUE_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -353,14 +356,13 @@ impl PersistentSyncQueue {
         self.items.lock().unwrap().clone()
     }
 
-    /// Return pending items grouped by appSlug for the caller to POST. Increments each
-    /// returned item's `attempts` (a delivery attempt) — items are NOT removed here, so a
-    /// failed POST never silently drops data; `sync_ack` removes the accepted ones.
+    /// Return pending items grouped by appSlug for the caller to POST. Read-only: flushing
+    /// must NOT mutate `attempts` (otherwise mere polling of a long-'processing' item would
+    /// creep it toward the terminal cap without any recorded failure) — items are NOT removed
+    /// here either, so a failed POST never silently drops data; `sync_ack` removes the
+    /// accepted ones and `fail` records each retryable failure as one attempt.
     fn flush(&self) -> Value {
-        let mut items = self.items.lock().unwrap();
-        for it in items.iter_mut().filter(|i| i.status == "pending") {
-            it.attempts += 1;
-        }
+        let items = self.items.lock().unwrap();
         let mut by_slug: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         for it in items.iter().filter(|i| i.status == "pending") {
             by_slug
@@ -368,7 +370,6 @@ impl PersistentSyncQueue {
                 .or_default()
                 .push(serde_json::to_value(it).unwrap_or(Value::Null));
         }
-        self.persist(&items);
         let pending: Vec<Value> = by_slug
             .into_iter()
             .map(|(slug, group)| json!({ "appSlug": slug, "items": group }))
@@ -387,17 +388,28 @@ impl PersistentSyncQueue {
         json!({ "acked": removed, "remaining": items.len() })
     }
 
-    /// Record a failure for the given ids: keep them (retryable) with `lastError` set, and
-    /// promote to terminal "failed" once they exceed MAX_SYNC_ATTEMPTS so a poison item stops
-    /// being retried. `attempts` was already bumped by `flush`.
-    fn fail(&self, ids: &[String], error: &str) -> Value {
+    /// Record a failure for the given ids with `lastError` set.
+    ///
+    /// Non-terminal (`terminal == false`): a recorded retryable failure counts as ONE attempt
+    /// (`flush` never touches attempts), and the item promotes to terminal "failed" once
+    /// attempts reach MAX_SYNC_ATTEMPTS so a poison item stops being retried.
+    ///
+    /// Terminal (`terminal == true`): mark "failed" immediately regardless of attempts — used
+    /// for failures that can never succeed on retry (e.g. an idempotency-key conflict where
+    /// the key was already used with a different submission).
+    fn fail(&self, ids: &[String], error: &str, terminal: bool) -> Value {
         let mut items = self.items.lock().unwrap();
         let set: HashSet<&String> = ids.iter().collect();
         let mut n = 0;
         for it in items.iter_mut().filter(|i| set.contains(&i.id)) {
             it.last_error = Some(error.to_string());
-            if it.attempts >= MAX_SYNC_ATTEMPTS {
+            if terminal {
                 it.status = "failed".into();
+            } else {
+                it.attempts += 1;
+                if it.attempts >= MAX_SYNC_ATTEMPTS {
+                    it.status = "failed".into();
+                }
             }
             n += 1;
         }
@@ -455,9 +467,12 @@ fn sync_fail(
     state: tauri::State<PersistentSyncQueue>,
     ids: Vec<String>,
     error: String,
+    terminal: Option<bool>,
 ) -> Result<Value, String> {
     require_verified_origin(&webview, &verified)?;
-    Ok(state.fail(&ids, &error))
+    // `terminal` is an optional third argument so callers built against the older
+    // two-argument shape keep the retryable (attempt-counting) behavior.
+    Ok(state.fail(&ids, &error, terminal.unwrap_or(false)))
 }
 
 fn gen_id() -> String {
@@ -955,12 +970,16 @@ const BRIDGE_SCRIPT: &str = r#"
     },
     // Offline sync (persisted, spec §15). enqueueSubmission/getQueue/flush are the contract;
     // ack/fail complete the loop after the WebView POSTs a flushed batch to /sync/batch.
+    // fail() records a retryable failure (one attempt; terminal at the native cap);
+    // failTerminal() marks 'failed' immediately for errors that can never succeed on retry
+    // (e.g. an idempotency conflict). Callers feature-detect failTerminal (older runtimes lack it).
     sync: {
       enqueueSubmission: function (item) { return call('sync_enqueue', { item: item }); },
       getQueue: function () { return call('sync_get_queue'); },
       flush: function () { return call('sync_flush'); },
       ack: function (ids) { return call('sync_ack', { ids: ids || [] }); },
-      fail: function (ids, error) { return call('sync_fail', { ids: ids || [], error: String(error == null ? '' : error) }); }
+      fail: function (ids, error) { return call('sync_fail', { ids: ids || [], error: String(error == null ? '' : error) }); },
+      failTerminal: function (ids, error) { return call('sync_fail', { ids: ids || [], error: String(error == null ? '' : error), terminal: true }); }
     }
   };
 })();
@@ -1364,13 +1383,14 @@ mod tests {
         assert!(!id1.is_empty() && !id2.is_empty());
         assert_eq!(queue.get_queue().len(), 2);
 
-        // flush groups pending items by appSlug and increments attempts, without removing them.
+        // flush groups pending items by appSlug WITHOUT removing them and WITHOUT touching
+        // attempts (reading the queue is not a failure; only sync_fail records attempts).
         let flushed = queue.flush();
         let pending = flushed["pending"].as_array().unwrap();
         assert_eq!(pending.len(), 1, "one appSlug group");
         assert_eq!(pending[0]["appSlug"], "demo");
         assert_eq!(pending[0]["items"].as_array().unwrap().len(), 2);
-        assert_eq!(pending[0]["items"][0]["attempts"], 1);
+        assert_eq!(pending[0]["items"][0]["attempts"], 0);
         assert_eq!(pending[0]["items"][0]["status"], "pending");
 
         // Survives a process restart: a fresh queue reloads the same 2 items from disk.
@@ -1388,32 +1408,90 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, id2);
 
-        // fail records lastError and keeps the item (still retryable under the attempt cap).
-        let failed = after.fail(&[id2.clone()], "network down");
+        // A non-terminal fail records lastError + ONE attempt and keeps the item (still
+        // retryable under the attempt cap).
+        let failed = after.fail(&[id2.clone()], "network down", false);
         assert_eq!(failed["failed"], 1);
         let final_items = PersistentSyncQueue::load(path.clone()).get_queue();
         assert_eq!(final_items.len(), 1);
         assert_eq!(final_items[0].last_error.as_deref(), Some("network down"));
+        assert_eq!(final_items[0].attempts, 1);
+        assert_eq!(final_items[0].status, "pending");
 
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn sync_queue_fail_promotes_after_max_attempts() {
+    fn sync_queue_flush_does_not_bump_attempts() {
+        // Reading/flushing the queue must be attempt-neutral: a long-'processing' item that is
+        // polled repeatedly (flush → keep, no fail) must never creep toward the terminal cap.
+        let path = temp_queue_path("flush-neutral");
+        let _ = std::fs::remove_file(&path);
+        let queue = PersistentSyncQueue::load(path.clone());
+        queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
+        for _ in 0..(MAX_SYNC_ATTEMPTS * 3) {
+            queue.flush();
+        }
+        let items = queue.get_queue();
+        assert_eq!(items[0].attempts, 0, "flush must not mutate attempts");
+        assert_eq!(items[0].status, "pending");
+        // And it is still returned by flush().
+        let pending = queue.flush();
+        assert_eq!(pending["pending"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn sync_queue_fail_bumps_attempts_and_promotes_at_cap() {
         let path = temp_queue_path("poison");
         let _ = std::fs::remove_file(&path);
         let queue = PersistentSyncQueue::load(path.clone());
         let id = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
-        // Flush repeatedly (each flush bumps attempts) then fail past the cap → terminal "failed".
-        for _ in 0..(MAX_SYNC_ATTEMPTS + 1) {
-            queue.flush();
+        // Each recorded retryable failure = one attempt; the item stays pending below the cap...
+        for i in 1..MAX_SYNC_ATTEMPTS {
+            queue.fail(&[id.clone()], "boom", false);
+            let items = queue.get_queue();
+            assert_eq!(items[0].attempts, i);
+            assert_eq!(items[0].status, "pending", "still retryable below the cap");
         }
-        queue.fail(&[id], "boom");
+        // ...and the MAX_SYNC_ATTEMPTS-th failure promotes it to terminal "failed".
+        queue.fail(&[id], "boom", false);
         let items = queue.get_queue();
+        assert_eq!(items[0].attempts, MAX_SYNC_ATTEMPTS);
         assert_eq!(items[0].status, "failed");
         // A terminal item is no longer returned by flush().
         let pending = queue.flush();
         assert_eq!(pending["pending"].as_array().unwrap().len(), 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn sync_queue_terminal_fail_marks_failed_immediately() {
+        // terminal:true (e.g. an idempotency conflict — the key was already used with a
+        // different submission, so no retry can ever succeed) marks "failed" on the FIRST
+        // failure, regardless of attempts.
+        let path = temp_queue_path("terminal");
+        let _ = std::fs::remove_file(&path);
+        let queue = PersistentSyncQueue::load(path.clone());
+        let id = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f", "answers": {} }));
+        let other = queue.enqueue(&json!({ "appSlug": "demo", "formId": "f2", "answers": {} }));
+
+        let res = queue.fail(&[id.clone()], "idempotency conflict", true);
+        assert_eq!(res["failed"], 1);
+        let items = queue.get_queue();
+        let it = items.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(it.status, "failed");
+        assert_eq!(it.last_error.as_deref(), Some("idempotency conflict"));
+        assert_eq!(it.attempts, 0, "terminal fail does not count as a retry attempt");
+
+        // The terminal state persists across a restart, and only the OTHER item still flushes.
+        let reloaded = PersistentSyncQueue::load(path.clone());
+        let pending = reloaded.flush();
+        let groups = pending["pending"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        let group_items = groups[0]["items"].as_array().unwrap();
+        assert_eq!(group_items.len(), 1);
+        assert_eq!(group_items[0]["id"], Value::String(other));
         let _ = std::fs::remove_file(&path);
     }
 

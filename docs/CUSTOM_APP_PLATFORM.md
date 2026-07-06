@@ -278,16 +278,89 @@ existing `PackService::validatePack` on import.
 
 ### Signing (spec §29.6)
 
+Routes:
+
 - `GET /api/apps/{id}/export/signed` → `{ package, signature, alg, keyId, trust, capabilities }` (signed
   by `SigningService`; `trust` is `official` under Ed25519, `local-only` under the HS256 fallback that no
   third party can verify).
 - `GET /api/apps/{id}/export/package` → the full **`.formlogic-app` ZIP** (`manifest.json` + `pack.json`
-  + `quickjs/` + `assets/` + detached `signature.json`), streamed as `application/zip`.
+  + `quickjs/` + optional `launch.json`/`native.json` + `assets/` + detached `signature.json`), streamed
+  as `application/zip`.
 - `POST /api/application-packages/import` — a multipart ZIP **or** a JSON `{ package, signature, alg }`
   envelope; the SERVER verifies the signature, stamps trust, and delegates to the atomic `importPack`.
   Every ZIP entry passes a shared path-traversal + zip-bomb guard (`PackFileService::assertSafeArchive`).
 - `POST /api/packs/describe` with `{ package, signature, alg }` → `{ trust, capabilities }`. A valid
   signature ⇒ `official`; a tampered payload ⇒ `unverified`; unsigned ⇒ `community`.
+
+#### What the ZIP signature covers (whole-archive model)
+
+`PackService::exportApplicationPackage` signs the **archive as a whole**, not just `pack.json`:
+
+- `signature.json` is a **detached signature over the CANONICAL `manifest.json`** (the
+  `ApplicationPackageManifest`, canonicalized by `SigningService`).
+- The manifest carries **`entries`** — a `sha256` hex digest of **every archive entry the importer
+  consumes**: `pack.json` (always), `quickjs/customLogic.json`, `launch.json`, `native.json`, and each
+  `assets/*` file present. `contentHash` remains `sha256:<pack.json digest>` for backward-compatible
+  identification.
+- So the single detached signature **transitively covers the whole envelope**: a tampered
+  quickjs/launch/native/asset file is detected on import even though it lives outside `pack.json`.
+
+#### Import verification (`PackService::importApplicationPackage`)
+
+Order of operations for a `.formlogic-app` ZIP:
+
+1. **Zip-slip + zip-bomb guard** over every entry (`PackFileService::assertSafeArchive`) before
+   anything is read.
+2. `pack.json` is required and must parse (it is the atomic importer's source of truth).
+3. When `signature.json` is present, the archive is treated as **signed** and everything must verify:
+   - `manifest.json` must exist, parse, and its **signature must verify** (`SigningService::verify`).
+     A present-but-failing signature is a **hard import failure** (HTTP 400), not a downgrade to
+     "community".
+   - The signed `manifest.entries` must cover `pack.json`, and **every listed entry's sha256 is
+     recomputed and must match exactly** (`verifyEntryHashes`; constant-time compare). A mismatch, a
+     covered entry missing from the archive, a malformed hash, or an unsafe listed entry name → reject.
+   - **Unsigned extras are rejected**: an applicable envelope file (`quickjs/customLogic.json`,
+     `launch.json`, `native.json`) or an `assets/*` file that is *present in a signed archive but not
+     listed* in the verified manifest is treated as injected content and fails the import
+     (`readArchiveEnvelope`).
+   - Trust is then classified by the shared `PackService::classifyTrust`: Ed25519 ⇒ `official`,
+     HS256 ⇒ `local-only`.
+4. An archive **without** `signature.json` imports as `community` — no coverage constraint applies
+   (there is no verification claim to enforce).
+5. Only after the covered entries verify does it delegate to the atomic `importPack()` (remap /
+   rollback / quota unchanged) and apply the now-signature-covered envelope metadata
+   (`applyPackageMetadata`).
+
+#### JSON-envelope path: invalid signatures are 400 by default
+
+On the JSON import path (`POST /api/application-packages/import` with `{ package, signature, alg }`),
+a **present-but-invalid** signature is a tamper / key-mismatch signal and is **rejected with HTTP 400**
+(`code: "signature_invalid"`) rather than silently imported as `unverified`. An explicit
+`allowUnverified: true` in the body lets a user knowingly proceed — the pack imports, but its
+**envelope metadata (customLogic / logo / launch / native) is skipped** because the trust stays
+`unverified`. Unsigned packages take neither branch and import as `community`.
+
+#### Workspace policy: `REQUIRE_VERIFIED_PACKAGES`
+
+With env `REQUIRE_VERIFIED_PACKAGES=true`, **every import path requires positive verification**
+(trust `official` or `local-only`):
+
+- ZIP path — rejected inside `importApplicationPackage` **before** the atomic import commits.
+- JSON path — HTTP 403 (`code: "unverified_package"`); `allowUnverified` **cannot** bypass the policy.
+- Legacy flat `POST /api/packs/import` — a flat pack is inherently unsigned (`community`), so it is
+  rejected outright (403) — the policy can't be sidestepped via the older endpoint.
+
+#### `launch.json` / `native.json` are warning-only today
+
+Both files are signature-covered and hash-checked on import, but there is **no app-level storage
+target** for them yet — launch/native configuration lives **per custom domain** on `app_domains`,
+which an import does not create. They surface as import `warnings` ("configure them per custom domain
+after install") rather than being silently dropped. Envelope `customLogic` (sanitized, size-capped,
+fill-only-when-empty) and a `logo` asset (→ `logo_url`) are the envelope parts with runtime targets.
+
+Related: every **signed client manifest** (the *runtime* manifest, distinct from the package manifest)
+now carries a `domain` binding that the native runtime enforces — see
+[Client Manifest → Domain binding](#domain-binding-signed-manifest--serving-origin).
 
 ### Capability review
 
@@ -314,9 +387,10 @@ trust plus isolation (same condition as the SDK trust note).
 
 ### Deferred
 Non-pack marketplace item types (connector/theme/widget/…) — the catalog has the `item_type` column but
-those have no runtime install target yet. `launch.json`/`native.json` are written on export and validated
-on import but have no app-level storage target today (informational). Signature-derived `verified` trust
-at publish time (the publish flow doesn't yet submit a package signature).
+those have no runtime install target yet. `launch.json`/`native.json` are signature-covered and
+hash-checked on import but have no app-level storage target today (surfaced as import warnings; see
+above). Signature-derived `verified` trust at publish time (the publish flow doesn't yet submit a
+package signature).
 
 ---
 
@@ -339,8 +413,11 @@ path), three top-level paths are served by the backend and resolve the request *
 connected+active domain of a **published** app (`AppDomainService::resolveAppSlugByHost`, same gate as
 `resolveLaunchConfig`). The Host is trusted only because it's matched to an `app_domains` row:
 
-- `GET /.well-known/formlogic-app.json` — the **same signed client manifest** as `/client-manifest`
-  (re-built by slug, so byte-identical). 404 on a platform host.
+- `GET /.well-known/formlogic-app.json` — the app's **signed client manifest**, rebuilt for the custom
+  domain: links (`source.url`, `install.pwa.manifestUrl`, `install.android.*`) are emitted
+  **same-origin** against the verified custom domain, and the payload's top-level `domain` field names
+  it (so it is *not* byte-identical to the platform slug route, whose `domain` is the platform host —
+  see [Domain binding](#domain-binding-signed-manifest--serving-origin)). 404 on a platform host.
 - `GET /manifest.json` — a **same-origin** PWA manifest rooted at `/` (the branded launch page), built
   from the request scheme + Host (Chrome refuses a cross-origin scope). 404 on a platform host — the
   VitePWA `/manifest.webmanifest` stays the platform default.
@@ -375,6 +452,26 @@ See the App-Links compile-time caveat in [[NATIVE_RUNTIME_TAURI#app-links-hosts-
   (`{ alg, keyId, publicKey }`) and check the detached signature over the canonical payload.
 - Canonicalization normalizes `{}` vs `[]` through a JSON round-trip so a signature verifies after
   the payload crosses the wire.
+
+### Domain binding (signed manifest ↔ serving origin)
+
+**Every signed client manifest carries a top-level `domain` field** naming the origin host it was
+built for, and the **native runtime requires it to match the origin that served it**:
+
+- The custom-domain routes (`/.well-known/formlogic-app.json`, and `?host=`-resolved lookups) bind
+  `domain` to the matched, pre-verified **custom domain** (`AppManifestController::clientManifestByHost`).
+- The platform slug route (`GET /api/app/{slug}/client-manifest`) binds `domain` to the **platform
+  host** derived from the server-trusted frontend base (`AppManifestController::platformHost()`, via
+  `AppUrl::frontendBase` — never the request Host). On failure it emits an empty binding, which the
+  runtime treats as missing — fail-closed.
+- The native runtime (`check_manifest_identity` in `native-runtime/src-tauri/src/lib.rs`) verifies the
+  Ed25519 signature, then requires `payload.appSlug` to match the navigated slug **and** `payload.domain`
+  to be present and case-insensitively equal to the current origin host. A **missing or mismatched
+  `domain` is a hard verification failure**: the webview stays display-only.
+
+Why: without the binding, a validly-signed but domain-less manifest could be **replayed onto an
+attacker origin** to grant native capabilities there. With it, a signature only ever authorizes the
+origin the server bound it to.
 
 ### Native capabilities
 

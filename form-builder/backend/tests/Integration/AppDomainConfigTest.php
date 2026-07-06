@@ -177,9 +177,18 @@ class AppDomainConfigTest extends TestCase
                 'requireNativeRuntime' => true,
                 'showNativeCta' => true,
             ],
-            // security_config is stored on the admin path but must NEVER reach the public launch config.
+            // securityConfig is INTERNAL/RESERVED — updateDomain must DROP this write silently (#5).
             'securityConfig' => ['secret' => $secret, 'signingKey' => $secret],
         ]);
+
+        // The reserved key was never persisted: the admin shape shows an empty securityConfig.
+        $afterWrite = self::$svc->getDomain($d['id'], $this->ownerId);
+        $this->assertSame([], $afterWrite['securityConfig'], 'updateDomain must silently drop securityConfig writes');
+
+        // Simulate a LEGACY row that already carries security material (written before the write path
+        // was closed) — the public resolver must still never surface it.
+        self::$pdo->prepare('UPDATE app_domains SET security_config = ? WHERE id = ?')
+            ->execute([json_encode(['secret' => $secret, 'signingKey' => $secret]), $d['id']]);
 
         // Activate the domain (dev-override) so the public resolver returns it.
         self::$svc->verifyDomain($d['id'], $this->ownerId, true);
@@ -201,8 +210,36 @@ class AppDomainConfigTest extends TestCase
         $this->assertArrayNotHasKey('securityConfig', $launch);
         $this->assertStringNotContainsString($secret, json_encode($launch) ?: '', 'security secret must not leak publicly');
 
-        // …but the owner-scoped admin path still has the securityConfig (confirms it was stored, just not leaked).
+        // …but the owner-scoped admin path still returns the legacy-stored value (read stays open; only
+        // the owner-facing WRITE path is closed until a real consumer exists).
         $admin = self::$svc->getDomain($d['id'], $this->ownerId);
         $this->assertSame($secret, $admin['securityConfig']['secret']);
+    }
+
+    public function testUpdateDomainWhitelistsPwaConfig(): void
+    {
+        $d = $this->makeDomain();
+
+        $updated = self::$svc->updateDomain($d['id'], $this->ownerId, [
+            'pwaConfig' => [
+                'themeColor' => '#6366f1',              // valid hex → kept
+                'backgroundColor' => 'red',              // named color → dropped (hex only)
+                'display' => 'standalone',               // valid enum → kept
+                'orientation' => 'diagonal',             // not in enum → dropped
+                'startUrl' => 'https://evil.example/x',  // unknown key → stripped
+                'serviceWorker' => '/sw.js',             // unknown key → stripped
+            ],
+        ]);
+
+        $this->assertNotNull($updated);
+        // Key order is a sanitizer implementation detail — compare canonically.
+        $this->assertEqualsCanonicalizing(
+            ['themeColor' => '#6366f1', 'display' => 'standalone'],
+            $updated['pwaConfig']
+        );
+
+        // Re-fetch confirms the WHITELISTED shape persisted (not just returned from memory).
+        $reloaded = self::$svc->getDomain($d['id'], $this->ownerId);
+        $this->assertEqualsCanonicalizing(['themeColor' => '#6366f1', 'display' => 'standalone'], $reloaded['pwaConfig']);
     }
 }

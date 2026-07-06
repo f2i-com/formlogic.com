@@ -65,12 +65,12 @@ class AppManifestControllerTest extends TestCase
     }
 
     /** @return array<string,mixed> */
-    private function build(?string $baseOverride, ?string $customDomain): array
+    private function build(?string $baseOverride, ?string $customDomain, ?array $nativeConfig = null): array
     {
         $m = new ReflectionMethod(AppManifestController::class, 'buildManifest');
         $m->setAccessible(true);
         $req = $this->createMock(ServerRequestInterface::class);
-        return $m->invoke($this->controller(), $this->app, $req, $baseOverride, $customDomain);
+        return $m->invoke($this->controller(), $this->app, $req, $baseOverride, $customDomain, $nativeConfig);
     }
 
     public function testCustomDomainManifestIsSameOriginAndCarriesDomain(): void
@@ -102,5 +102,71 @@ class AppManifestControllerTest extends TestCase
         $this->assertSame('https://platform.example/app/demo', $manifest['source']['url']);
         $this->assertSame('https://platform.example/api/app/demo/manifest.json', $manifest['install']['pwa']['manifestUrl']);
         $this->assertArrayNotHasKey('domain', $manifest, 'platform manifest must not name a custom domain');
+    }
+
+    // ---- hardening #7: per-domain white-label nativeConfig in the SIGNED manifest ------------------
+
+    public function testCustomDomainManifestUsesWhiteLabelNativeConfig(): void
+    {
+        $manifest = $this->build('https://mine.example.com', 'mine.example.com', [
+            'packageName' => 'com.acme.minecab',
+            'minRuntimeVersion' => '1.2.3',
+            'installUrl' => 'https://play.google.com/store/apps/details?id=com.acme.minecab',
+        ]);
+
+        $android = $manifest['install']['android'];
+        $this->assertSame('com.acme.minecab', $android['packageName']);
+        $this->assertSame('1.2.3', $android['minVersion']);
+        $this->assertSame('https://play.google.com/store/apps/details?id=com.acme.minecab', $android['installUrl']);
+        // Same-origin links are unaffected by the white-label identity.
+        $this->assertSame('https://mine.example.com/.well-known/assetlinks.json', $android['assetLinks']);
+        $this->assertSame('https://mine.example.com/app/demo', $android['openUrl']);
+    }
+
+    public function testPlatformManifestKeepsGenericRuntimeIdentity(): void
+    {
+        putenv('APP_URL=https://platform.example');
+        $_ENV['APP_URL'] = 'https://platform.example';
+
+        // The platform slug route passes NO nativeConfig — generic runtime identity, no installUrl.
+        $manifest = $this->build(null, null);
+        $android = $manifest['install']['android'];
+        $this->assertSame('com.formlogic.runtime', $android['packageName']);
+        $this->assertSame('0.1.0', $android['minVersion']);
+        $this->assertArrayNotHasKey('installUrl', $android);
+    }
+
+    public function testPartialOrInvalidNativeConfigFallsBackPerField(): void
+    {
+        // Invalid package + missing version + hostile install URL → every field falls back / is dropped,
+        // even if a caller somehow skipped sanitizeNativeConfig (belt and braces in buildManifest).
+        $manifest = $this->build('https://mine.example.com', 'mine.example.com', [
+            'packageName' => 'not a package!',
+            'installUrl' => 'javascript:alert(1)',
+        ]);
+        $android = $manifest['install']['android'];
+        $this->assertSame('com.formlogic.runtime', $android['packageName']);
+        $this->assertSame('0.1.0', $android['minVersion']);
+        $this->assertArrayNotHasKey('installUrl', $android);
+    }
+
+    public function testManifestNeverEmitsFingerprintsOrSecurityConfig(): void
+    {
+        // Even a hostile/legacy native_config row carrying fingerprints or security material must not
+        // surface anywhere in the SIGNED manifest — assetlinks.json is the only fingerprint channel.
+        $fp = str_repeat('AB:', 31) . 'CD';
+        $manifest = $this->build('https://mine.example.com', 'mine.example.com', [
+            'packageName' => 'com.acme.minecab',
+            'sha256CertFingerprints' => [$fp],
+            'securityConfig' => ['secret' => 'TOPSECRET-nope'],
+        ]);
+
+        $json = json_encode($manifest) ?: '';
+        $this->assertStringNotContainsString('sha256CertFingerprints', $json);
+        $this->assertStringNotContainsString($fp, $json);
+        $this->assertStringNotContainsString('securityConfig', $json);
+        $this->assertStringNotContainsString('TOPSECRET-nope', $json);
+        // …while the whitelisted identity still flows through.
+        $this->assertSame('com.acme.minecab', $manifest['install']['android']['packageName']);
     }
 }

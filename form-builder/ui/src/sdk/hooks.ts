@@ -385,14 +385,36 @@ export function useAppManifest(): UseAppManifestResult {
   useEffect(() => {
     let cancelled = false;
     if (!slug) return () => { cancelled = true; };
-    api.getClientManifest(slug)
-      .then((res) => {
-        if (cancelled) return;
-        if (res.data) setManifest(res.data as SdkManifest);
-        else setError(typeof res.error === 'string' ? res.error : 'Failed to load manifest');
-        setLoading(false);
-      })
-      .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Failed'); setLoading(false); } });
+    const apply = (res: { data?: unknown; error?: string }) => {
+      if (cancelled) return;
+      if (res.data) setManifest(res.data as SdkManifest);
+      else setError(typeof res.error === 'string' ? res.error : 'Failed to load manifest');
+      setLoading(false);
+    };
+    const loadBySlug = () =>
+      api.getClientManifest(slug)
+        .then(apply)
+        .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Failed'); setLoading(false); } });
+    // On a CUSTOM domain, prefer the same-origin /.well-known/formlogic-app.json discovery
+    // manifest: it is domain-bound (source/install links point at THIS origin) rather than the
+    // platform-origin slug manifest. Fall back to the slug route when the well-known fetch
+    // 404s/fails (e.g. a split deploy without the root rewrite). Platform + native hosts keep
+    // the slug route unchanged.
+    if (detectRuntimeEnvironment().hostMode === 'custom-domain') {
+      api.getWellKnownManifest()
+        .then((res) => {
+          if (cancelled) return;
+          // The well-known manifest is DOMAIN-bound (the app connected to this custom domain). Only
+          // apply it when it describes the app THIS runtime is actually running — under /app/{other}
+          // on the same domain the domain app's manifest would be the wrong app's identity/capabilities.
+          const wkPayload = (res.data as SdkManifest | undefined)?.payload as { appSlug?: unknown } | undefined;
+          if (res.data && wkPayload?.appSlug === slug) apply(res);
+          else void loadBySlug();
+        })
+        .catch(() => { if (!cancelled) void loadBySlug(); });
+    } else {
+      void loadBySlug();
+    }
     return () => { cancelled = true; };
   }, [slug]);
   return { manifest, loading, error };

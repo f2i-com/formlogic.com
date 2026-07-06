@@ -183,20 +183,26 @@ class AppDomainService
             $updates[] = 'landing_config = :landing';
             $params['landing'] = !empty($clean) ? json_encode($clean) : null;
         }
-        // Additional per-domain config (native app / PWA / security). security_config is stored + returned
-        // ONLY through this owner-scoped admin path — resolveLaunchConfig (public) never surfaces it.
-        foreach (['nativeConfig' => 'native_config', 'pwaConfig' => 'pwa_config', 'securityConfig' => 'security_config'] as $key => $col) {
+        // Additional per-domain config (native app / PWA). Both are validated field-by-field before
+        // persistence: nativeConfig via sanitizeNativeConfig (package pattern / hex fingerprints /
+        // http(s) install URL / capped version), pwaConfig via sanitizePwaConfig (a hard whitelist of
+        // themeColor/backgroundColor hex colors + display/orientation enums — unknown keys and invalid
+        // values are DROPPED, never stored as an opaque blob).
+        //
+        // securityConfig is INTERNAL/RESERVED: it has NO consumer yet, so writes arriving through this
+        // owner-facing update path are dropped SILENTLY (the key is simply ignored) rather than persisting
+        // an opaque blob that a future consumer might trust. Existing rows keep whatever they hold; the
+        // column is only ever returned on the owner-scoped admin path (toAdminArray) and is never read by
+        // the public resolvers (resolveLaunchConfig / resolveAppSlugByHost never SELECT or surface it).
+        foreach (['nativeConfig' => 'native_config', 'pwaConfig' => 'pwa_config'] as $key => $col) {
             if (array_key_exists($key, $data)) {
-                // Native config is validated field-by-field (package pattern / hex fingerprints / http(s)
-                // install URL / capped version). pwa/security are opaque admin blobs — stored as-is.
                 if ($key === 'nativeConfig') {
                     $clean = is_array($data[$key] ?? null) ? $this->sanitizeNativeConfig($data[$key]) : [];
-                    $value = !empty($clean) ? json_encode($clean) : null;
                 } else {
-                    $value = !empty($data[$key]) ? json_encode($data[$key]) : null;
+                    $clean = is_array($data[$key] ?? null) ? $this->sanitizePwaConfig($data[$key]) : [];
                 }
                 $updates[] = "$col = :$col";
-                $params[$col] = $value;
+                $params[$col] = !empty($clean) ? json_encode($clean) : null;
             }
         }
         if (!empty($updates)) {
@@ -575,7 +581,10 @@ class AppDomainService
         if (($v = $this->capString($cfg['minRuntimeVersion'] ?? null, 32)) !== null) {
             $out['minRuntimeVersion'] = $v;
         }
-        if (($v = $this->sanitizeHttpUrl($cfg['installUrl'] ?? null)) !== null) {
+        // installUrl is HTTPS-ONLY: it downloads an installable binary and flows into the SIGNED client
+        // manifest + the public launch page CTA — a cleartext http link would let an on-path attacker
+        // swap the APK. Enforced on write here AND on read (publicNativeSection) for legacy rows.
+        if (($v = $this->sanitizeHttpUrl($cfg['installUrl'] ?? null, 2048, true)) !== null) {
             $out['installUrl'] = $v;
         }
         foreach (['requireNativeRuntime', 'showNativeCta'] as $b) {
@@ -584,6 +593,59 @@ class AppDomainService
             }
         }
         return $out;
+    }
+
+    /**
+     * Sanitize per-domain PWA config to a HARD WHITELIST before persistence (hardening #5):
+     *   themeColor / backgroundColor — CSS hex colors (#RGB/#RGBA/#RRGGBB/#RRGGBBAA) only;
+     *   display     — standalone | fullscreen | minimal-ui | browser;
+     *   orientation — portrait | landscape | any.
+     * Unknown keys and invalid values are DROPPED (never stored), so pwa_config can never carry an
+     * opaque attacker-shaped blob into whatever renders it later.
+     *
+     * @param array<string,mixed> $cfg
+     * @return array<string,mixed>
+     */
+    public function sanitizePwaConfig(array $cfg): array
+    {
+        $out = [];
+        if (($v = $this->sanitizeHexColor($cfg['themeColor'] ?? null)) !== null) {
+            $out['themeColor'] = $v;
+        }
+        if (($v = $this->sanitizeHexColor($cfg['backgroundColor'] ?? null)) !== null) {
+            $out['backgroundColor'] = $v;
+        }
+        if (($v = $this->sanitizeEnum($cfg['display'] ?? null, ['standalone', 'fullscreen', 'minimal-ui', 'browser'])) !== null) {
+            $out['display'] = $v;
+        }
+        if (($v = $this->sanitizeEnum($cfg['orientation'] ?? null, ['portrait', 'landscape', 'any'])) !== null) {
+            $out['orientation'] = $v;
+        }
+        return $out;
+    }
+
+    /** A CSS hex color — #RGB / #RGBA / #RRGGBB / #RRGGBBAA; null when invalid. */
+    private function sanitizeHexColor($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = trim($value);
+        return preg_match('/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/', $s) ? $s : null;
+    }
+
+    /**
+     * A closed-vocabulary string (case-normalized to lowercase); null when not one of $allowed.
+     *
+     * @param string[] $allowed
+     */
+    private function sanitizeEnum($value, array $allowed): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+        $s = strtolower(trim($value));
+        return in_array($s, $allowed, true) ? $s : null;
     }
 
     /**
@@ -598,7 +660,8 @@ class AppDomainService
     public function publicNativeSection(array $nc): array
     {
         $packageName = $this->sanitizeAndroidPackage($nc['packageName'] ?? null);
-        $installUrl = $this->sanitizeHttpUrl($nc['installUrl'] ?? null);
+        // https-only (see sanitizeNativeConfig) — read-time filter so a legacy http row can't leak.
+        $installUrl = $this->sanitizeHttpUrl($nc['installUrl'] ?? null, 2048, true);
         $minRuntimeVersion = $this->capString($nc['minRuntimeVersion'] ?? null, 32);
         $requireNativeRuntime = !empty($nc['requireNativeRuntime']);
         $showNativeCta = !empty($nc['showNativeCta']);
@@ -626,7 +689,7 @@ class AppDomainService
     }
 
     /** An http(s) URL only (rejects javascript:/data:/etc.), length-capped; null when invalid. */
-    private function sanitizeHttpUrl($value, int $maxLen = 2048): ?string
+    private function sanitizeHttpUrl($value, int $maxLen = 2048, bool $httpsOnly = false): ?string
     {
         if (!is_string($value)) {
             return null;
@@ -636,13 +699,14 @@ class AppDomainService
             return null;
         }
         $scheme = strtolower((string) parse_url($s, PHP_URL_SCHEME));
-        if ($scheme !== 'http' && $scheme !== 'https') {
+        $allowed = $httpsOnly ? ['https'] : ['http', 'https'];
+        if (!in_array($scheme, $allowed, true)) {
             return null;
         }
         return filter_var($s, FILTER_VALIDATE_URL) !== false ? $s : null;
     }
 
-    /** An http(s) URL or a size-capped data:image; null when invalid. */
+    /** An http(s) URL or a size-capped base64 raster-image data: URI (see sanitizeDataImageUri); null when invalid. */
     private function sanitizeLogoUrl($value): ?string
     {
         if (!is_string($value)) {
@@ -652,11 +716,29 @@ class AppDomainService
         if ($s === '') {
             return null;
         }
-        if (stripos($s, 'data:image/') === 0) {
-            // Cap so we don't persist a huge base64 blob in the JSON column.
-            return strlen($s) <= 200000 ? $s : null;
+        if (stripos($s, 'data:') === 0) {
+            return $this->sanitizeDataImageUri($s);
         }
         return $this->sanitizeHttpUrl($s);
+    }
+
+    /**
+     * A data: URI is accepted ONLY as a base64 RASTER image (hardening #6):
+     * data:image/(png|jpeg|jpg|webp|gif);base64,<valid base64>, capped at 200 KB so we never persist a
+     * huge blob in the JSON column. Everything else is REJECTED — data:image/svg+xml (an SVG is a script
+     * container: <script>, on* handlers, foreignObject), non-base64 (URL-encoded) payloads, and every
+     * other MIME type or scheme. The base64 must actually decode (strict alphabet) to a non-empty body.
+     */
+    private function sanitizeDataImageUri(string $s): ?string
+    {
+        if (strlen($s) > 200000) {
+            return null;
+        }
+        if (!preg_match('#^data:image/(?:png|jpe?g|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$#i', $s, $m)) {
+            return null;
+        }
+        $decoded = base64_decode($m[1], true);
+        return ($decoded !== false && $decoded !== '') ? $s : null;
     }
 
     /** An email-ish address (rejects javascript: and other non-email input); null when invalid. */

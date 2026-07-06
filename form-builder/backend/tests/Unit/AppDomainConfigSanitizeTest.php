@@ -62,6 +62,52 @@ class AppDomainConfigSanitizeTest extends TestCase
         $this->assertArrayNotHasKey('logoUrl', $bad);
     }
 
+    // ---- logo data: URI tightening (#6) -----------------------------------------------------------
+
+    public function testLogoDataUriAcceptsOnlyBase64RasterImages(): void
+    {
+        // A real (1x1 PNG) base64 payload for each allowed raster MIME type is accepted verbatim.
+        $png = base64_encode("\x89PNG\r\n\x1a\n" . random_bytes(16));
+        foreach (['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'] as $mime) {
+            $uri = 'data:' . $mime . ';base64,' . $png;
+            $out = $this->svc->sanitizeLandingConfig(['logoUrl' => $uri]);
+            $this->assertSame($uri, $out['logoUrl'] ?? null, $mime . ' should be accepted');
+        }
+    }
+
+    public function testLogoDataUriRejectsSvg(): void
+    {
+        // SVG is a script container (<script>, on* handlers) — never acceptable as a data: logo,
+        // even base64-encoded.
+        $svg = 'data:image/svg+xml;base64,' . base64_encode('<svg onload="alert(1)"/>');
+        $out = $this->svc->sanitizeLandingConfig(['logoUrl' => $svg]);
+        $this->assertArrayNotHasKey('logoUrl', $out);
+    }
+
+    public function testLogoDataUriRejectsNonImageAndNonBase64(): void
+    {
+        // data:text/html is an XSS vector.
+        $html = 'data:text/html;base64,' . base64_encode('<script>alert(1)</script>');
+        $this->assertArrayNotHasKey('logoUrl', $this->svc->sanitizeLandingConfig(['logoUrl' => $html]));
+
+        // Non-base64 (URL-encoded) image payloads are rejected — only ;base64, is allowed.
+        $urlEncoded = 'data:image/png,%89PNG%0D%0A';
+        $this->assertArrayNotHasKey('logoUrl', $this->svc->sanitizeLandingConfig(['logoUrl' => $urlEncoded]));
+
+        // A ";base64," marker with a payload outside the base64 alphabet must not pass.
+        $badB64 = 'data:image/png;base64,!!!!not-base64!!!!';
+        $this->assertArrayNotHasKey('logoUrl', $this->svc->sanitizeLandingConfig(['logoUrl' => $badB64]));
+
+        // Empty payload decodes to '' — rejected too.
+        $this->assertArrayNotHasKey('logoUrl', $this->svc->sanitizeLandingConfig(['logoUrl' => 'data:image/png;base64,']));
+    }
+
+    public function testLogoDataUriRejectsOversizedBlob(): void
+    {
+        $huge = 'data:image/png;base64,' . str_repeat('A', 200001);
+        $this->assertArrayNotHasKey('logoUrl', $this->svc->sanitizeLandingConfig(['logoUrl' => $huge]));
+    }
+
     public function testLandingSupportEmailValidation(): void
     {
         $ok = $this->svc->sanitizeLandingConfig(['supportEmail' => 'help@acme.com']);
@@ -130,13 +176,18 @@ class AppDomainConfigSanitizeTest extends TestCase
         $this->assertSame([$good], $out['sha256CertFingerprints']);
     }
 
-    public function testNativeInstallUrlMustBeHttp(): void
+    public function testNativeInstallUrlMustBeHttps(): void
     {
         $ok = $this->svc->sanitizeNativeConfig(['installUrl' => 'https://play.google.com/store/apps/details?id=com.acme.app']);
         $this->assertSame('https://play.google.com/store/apps/details?id=com.acme.app', $ok['installUrl']);
 
         $this->assertArrayNotHasKey('installUrl', $this->svc->sanitizeNativeConfig(['installUrl' => 'javascript:alert(1)']));
         $this->assertArrayNotHasKey('installUrl', $this->svc->sanitizeNativeConfig(['installUrl' => 'market://details?id=x']));
+        // HTTPS ONLY (adversarial-review fix): a cleartext http download link must never survive —
+        // it flows into the SIGNED client manifest + the public launch page CTA.
+        $this->assertArrayNotHasKey('installUrl', $this->svc->sanitizeNativeConfig(['installUrl' => 'http://downloads.example.com/app.apk']));
+        // Read-time filter too, so a legacy http row can't leak through the public launch config.
+        $this->assertNull($this->svc->publicNativeSection(['installUrl' => 'http://downloads.example.com/app.apk'])['installUrl']);
     }
 
     public function testNativeCapsVersionAndNormalizesBooleans(): void
@@ -149,6 +200,55 @@ class AppDomainConfigSanitizeTest extends TestCase
         $this->assertSame(32, strlen($out['minRuntimeVersion']));
         $this->assertTrue($out['requireNativeRuntime']);
         $this->assertFalse($out['showNativeCta']);
+    }
+
+    // ---- pwa config whitelist (#5) ----------------------------------------------------
+
+    public function testPwaConfigRoundTripsValidValues(): void
+    {
+        $out = $this->svc->sanitizePwaConfig([
+            'themeColor' => '#6366f1',
+            'backgroundColor' => '#FFF',
+            'display' => 'standalone',
+            'orientation' => 'portrait',
+        ]);
+        $this->assertSame([
+            'themeColor' => '#6366f1',
+            'backgroundColor' => '#FFF',
+            'display' => 'standalone',
+            'orientation' => 'portrait',
+        ], $out);
+    }
+
+    public function testPwaConfigStripsUnknownKeys(): void
+    {
+        // Unknown keys — including anything attacker-shaped — are stripped, never stored.
+        $out = $this->svc->sanitizePwaConfig([
+            'themeColor' => '#123456',
+            'startUrl' => 'https://evil.example/phish',
+            'serviceWorker' => '/sw.js',
+            'scriptUrl' => 'javascript:alert(1)',
+            '__proto__' => ['polluted' => true],
+        ]);
+        $this->assertSame(['themeColor' => '#123456'], $out);
+    }
+
+    public function testPwaConfigDropsInvalidColorsAndEnums(): void
+    {
+        $out = $this->svc->sanitizePwaConfig([
+            'themeColor' => 'url(javascript:alert(1))', // not a hex color
+            'backgroundColor' => '#12345',              // 5 digits — invalid hex form
+            'display' => 'popup',                       // not in the display enum
+            'orientation' => 'sideways',                // not in the orientation enum
+        ]);
+        $this->assertSame([], $out);
+    }
+
+    public function testPwaConfigNormalizesEnumCase(): void
+    {
+        $out = $this->svc->sanitizePwaConfig(['display' => ' Fullscreen ', 'orientation' => 'ANY']);
+        $this->assertSame('fullscreen', $out['display']);
+        $this->assertSame('any', $out['orientation']);
     }
 
     // ---- public native projection ---------------------------------------------------

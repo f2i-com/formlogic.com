@@ -68,6 +68,9 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<PackImportResult | null>(null);
+  // Non-fatal warnings from the server import response (application-package envelope metadata —
+  // launch/native defaults, extra assets — that had no runtime target and was not applied).
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [expandedForms, setExpandedForms] = useState(true);
   const [expandedApps, setExpandedApps] = useState(true);
 
@@ -254,6 +257,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setUploadError('');
     setImporting(false);
     setImportResult(null);
+    setImportWarnings([]);
     setExpandedForms(true);
     setExpandedApps(true);
     setIsDragging(false);
@@ -427,6 +431,13 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           ? await api.importSignedPackage(signedEnvelope)
           : await api.importPack(uploadedPack as PackData);
       if (response.data) {
+        // Application-package imports return a warnings array (envelope launch/native/assets
+        // metadata with no runtime target yet). The flat pack import returns none — read defensively.
+        const rawWarnings = (response.data as unknown as { warnings?: unknown }).warnings;
+        const warnings = Array.isArray(rawWarnings)
+          ? rawWarnings.filter((w): w is string => typeof w === 'string')
+          : [];
+        setImportWarnings(warnings);
         setImportResult({
           success: true,
           message: '',
@@ -435,11 +446,21 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
           apps: response.data.apps,
         });
         await Promise.all([refreshForms(), fetchApps(), loadInstallations()]);
-        toast.success(
-          'Pack imported successfully',
-          `Imported ${response.data.forms.length} form(s) and ${response.data.apps.length} app(s).`
-        );
-        closeTimerRef.current = setTimeout(handleClose, 1500);
+        if (warnings.length > 0) {
+          // Surface the count + first warning as a toast; the full list stays readable in the
+          // modal's result view, so DON'T auto-close it (the user closes it when done).
+          toast.warning(
+            `Pack imported with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}`,
+            warnings[0]
+          );
+          setImporting(false);
+        } else {
+          toast.success(
+            'Pack imported successfully',
+            `Imported ${response.data.forms.length} form(s) and ${response.data.apps.length} app(s).`
+          );
+          closeTimerRef.current = setTimeout(handleClose, 1500);
+        }
         return;
       } else {
         toast.error('Import failed', response.error || 'No data returned.');
@@ -542,6 +563,31 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
               <p className="text-sm text-gray-500 dark:text-slate-400">
                 {importResult.forms.length} form(s) and {importResult.apps.length} app(s) imported.
               </p>
+              {/* Non-fatal server warnings (envelope launch/native/assets metadata that was not
+                  applied). When present the modal does NOT auto-close, so give it a Close button. */}
+              {importWarnings.length > 0 && (
+                <div className="w-full max-w-lg space-y-2 text-left">
+                  <div className="flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
+                    <div className="min-w-0 space-y-1.5">
+                      <p className="font-medium">
+                        Imported with {importWarnings.length} warning{importWarnings.length === 1 ? '' : 's'}
+                      </p>
+                      <ul className="list-disc pl-4 space-y-1">
+                        {importWarnings.map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    Launch and native runtime defaults are configured per custom domain after install — open the app's settings and connect a custom domain to set them.
+                  </p>
+                  <div className="flex justify-center pt-1">
+                    <Button variant="outline" onClick={handleClose}>Close</Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

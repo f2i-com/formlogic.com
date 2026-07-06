@@ -480,11 +480,33 @@ class AppPublicController
                 // Completed replay — return the original response, create nothing new.
                 return ['status' => 200, 'payload' => ['response' => ['id' => $reserved['response_id']], 'idempotent' => true]];
             }
-            // Same payload, reservation still 'pending' — a concurrent submit is in flight. Ask the
-            // caller to retry; the in-flight winner will complete it. (Batch sync is sequential, so it
-            // never reaches this branch.)
-            return ['status' => 409, 'payload' => ['error' => true, 'processing' => true,
-                'message' => 'This submission is already being processed. Please retry in a moment.']];
+            // Same payload, reservation still 'pending'. A YOUNG row means a concurrent submit is
+            // genuinely in flight — ask the caller to retry. A STALE row is an ABANDONED reservation
+            // (the owning request died between reserve and complete/release — crash, OOM, timeout);
+            // without a takeover the client would loop on 409 processing forever (the offline queues
+            // deliberately keep 'processing' items attempt-neutral). Retake it atomically: the DELETE
+            // is guarded on status='pending' + age entirely DB-side, so two racers can't both win —
+            // only the one whose DELETE removed the row (or who subsequently wins the re-reserve)
+            // proceeds as owner.
+            $takenOver = false;
+            try {
+                $del = $this->mysql->prepare(
+                    "DELETE FROM app_submission_idempotency
+                     WHERE app_id = :a AND form_id = :f AND idempotency_key = :k
+                       AND status = 'pending' AND created_at < (NOW() - INTERVAL 600 SECOND)"
+                );
+                $del->execute(['a' => $app['id'], 'f' => $formId, 'k' => $key]);
+                if ($del->rowCount() > 0) {
+                    $takenOver = ($this->idempotencyReserve($app['id'], $formId, $userId, $key, $payloadHash) === 'owner');
+                }
+            } catch (\Throwable $e) {
+                // Takeover is best-effort; fall through to the normal processing response.
+            }
+            if (!$takenOver) {
+                return ['status' => 409, 'payload' => ['error' => true, 'processing' => true,
+                    'message' => 'This submission is already being processed. Please retry in a moment.']];
+            }
+            $reserved = 'owner';
         }
         // $reserved is 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for a
         // non-duplicate reason — fail OPEN and submit without idempotency rather than reject a real
@@ -600,7 +622,10 @@ class AppPublicController
             }
 
             return ['status' => 201, 'payload' => ['response' => $result]];
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // \Throwable (not \Exception): an \Error escaping here would skip processSubmission's
+            // reservation release and strand a 'pending' idempotency row (forever-409-processing until
+            // the stale-takeover window). Returning a result keeps the release path on every failure.
             return ['status' => 500, 'payload' => ['error' => true, 'message' => 'Failed to save response']];
         }
     }
@@ -1274,8 +1299,18 @@ class AppPublicController
         // Upgrade-only: X-Forwarded-Proto is honored only to CONFIRM https (a proxy forwarding http on the
         // wire); a spoofed "X-Forwarded-Proto: http" must not downgrade a same-origin manifest to cleartext.
         $proto = strtolower(trim(explode(',', $request->getHeaderLine('X-Forwarded-Proto'))[0]));
-        $scheme = $proto === 'https' ? 'https' : (strtolower($request->getUri()->getScheme()) === 'http' ? 'http' : 'https');
-        return $scheme . '://' . $host;
+        if ($proto === 'https') {
+            return 'https://' . $host;
+        }
+        // Production default-https (hardening #4): a TLS-terminating proxy that does NOT set
+        // X-Forwarded-Proto shows the backend plain http, but a live custom domain is always served over
+        // TLS in production — so only development may ever emit http (keeps http://formlogic.local
+        // working). Mirrors config/settings.php's safe-by-default env read: anything other than an
+        // explicit APP_ENV=development counts as production.
+        if (($_ENV['APP_ENV'] ?? (getenv('APP_ENV') ?: 'production')) !== 'development') {
+            return 'https://' . $host;
+        }
+        return (strtolower($request->getUri()->getScheme()) === 'http' ? 'http' : 'https') . '://' . $host;
     }
 
     public function lookupRecords(Request $request, Response $response, array $args): Response

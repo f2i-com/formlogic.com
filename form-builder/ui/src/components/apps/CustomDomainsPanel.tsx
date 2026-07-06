@@ -222,8 +222,10 @@ function validateNativeConfig(input: {
     errors.fingerprints = 'Each fingerprint must be 32 colon-separated hex pairs (AB:CD:EF:…).';
   }
   const url = input.installUrl.trim();
-  if (url && !isHttpUrl(url)) {
-    errors.installUrl = 'Enter an http(s) URL.';
+  // HTTPS only: this link downloads an installable binary and is emitted in the SIGNED client
+  // manifest — the server drops non-https values, so surface it here instead of silently losing it.
+  if (url && (!isHttpUrl(url) || !/^https:\/\//i.test(url))) {
+    errors.installUrl = 'Enter an https:// URL (app downloads must be served over TLS).';
   }
   const ver = input.minRuntimeVersion.trim();
   if (ver && (ver.length > 32 || !VERSION_RE.test(ver))) {

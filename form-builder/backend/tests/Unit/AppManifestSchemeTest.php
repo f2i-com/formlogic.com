@@ -14,12 +14,18 @@ use Psr\Http\Message\UriInterface;
 use ReflectionMethod;
 
 /**
- * Custom-domain hardening #5 + #6.
+ * Custom-domain hardening #5 + #6 (+ the production default-https hardening #4).
  *
  * #5 — customDomainBase() must honor a TLS-terminating proxy: the scheme in the SIGNED custom-domain
  *      client manifest is derived from a trusted X-Forwarded-Proto header first (only http/https), then
  *      the request URI scheme, then default https. So a proxy that forwards http on the wire still yields
  *      https links (mirrors AppPublicController::sameOriginBase).
+ *
+ * #4 — in PRODUCTION (safe-by-default: anything but an explicit APP_ENV=development) the scheme is ALWAYS
+ *      https, even when the backend sees plain http and NO X-Forwarded-Proto (a TLS-terminating proxy
+ *      that doesn't set the header). The http fallback via the request URI scheme is development-only,
+ *      so http://formlogic.local keeps working. Tests that exercise that fallback set
+ *      APP_ENV=development explicitly.
  *
  * #6 — a custom-domain manifest's install.pwa.manifestUrl points at the dedicated same-origin ROOT PWA
  *      manifest {customBase}/manifest.json (so the installing document stays in scope), while the platform
@@ -32,6 +38,7 @@ class AppManifestSchemeTest extends TestCase
     /** @var array<string,mixed> */
     private array $app;
     private ?string $savedAppUrl = null;
+    private ?string $savedAppEnv = null;
 
     protected function setUp(): void
     {
@@ -46,6 +53,8 @@ class AppManifestSchemeTest extends TestCase
         ];
         $get = getenv('APP_URL');
         $this->savedAppUrl = $get === false ? null : $get;
+        $env = $_ENV['APP_ENV'] ?? (getenv('APP_ENV') !== false ? getenv('APP_ENV') : null);
+        $this->savedAppEnv = is_string($env) ? $env : null;
     }
 
     protected function tearDown(): void
@@ -56,6 +65,18 @@ class AppManifestSchemeTest extends TestCase
         } else {
             putenv('APP_URL=' . $this->savedAppUrl);
             $_ENV['APP_URL'] = $this->savedAppUrl;
+        }
+        $this->setAppEnv($this->savedAppEnv);
+    }
+
+    private function setAppEnv(?string $value): void
+    {
+        if ($value === null) {
+            putenv('APP_ENV');
+            unset($_ENV['APP_ENV']);
+        } else {
+            putenv('APP_ENV=' . $value);
+            $_ENV['APP_ENV'] = $value;
         }
     }
 
@@ -112,7 +133,9 @@ class AppManifestSchemeTest extends TestCase
     public function testUnsupportedForwardedProtoIsIgnoredAndNeverNonHttp(): void
     {
         // Upgrade-only honors ONLY X-Forwarded-Proto: https; a junk proto is ignored and the scheme falls
-        // back to the real connection scheme — always http or https, never ftp/javascript/etc.
+        // back to the real connection scheme — always http or https, never ftp/javascript/etc. The http
+        // fallback is DEVELOPMENT-only (hardening #4), so pin the env here.
+        $this->setAppEnv('development');
         // ftp over an http connection → the connection's http (not a forced https, and never ftp).
         $base = $this->customDomainBase($this->req('ftp', 'http'), 'mine.example.com');
         $this->assertSame('http://mine.example.com', $base);
@@ -129,11 +152,42 @@ class AppManifestSchemeTest extends TestCase
         $this->assertSame('https://mine.example.com', $base);
     }
 
-    public function testFallsBackToRequestUriSchemeWhenNoForwardedProto(): void
+    public function testFallsBackToRequestUriSchemeWhenNoForwardedProtoInDevelopment(): void
     {
-        // No forwarded proto → use the request URI scheme (http here) rather than defaulting to https.
+        // Development only: no forwarded proto → use the request URI scheme (http here) rather than
+        // defaulting to https, so http://formlogic.local dev domains keep working.
+        $this->setAppEnv('development');
         $base = $this->customDomainBase($this->req('', 'http'), 'mine.example.com');
         $this->assertSame('http://mine.example.com', $base);
+    }
+
+    // ---- #4: production always emits https ---------------------------------------------------------
+
+    public function testProductionHttpWithoutForwardedProtoYieldsHttps(): void
+    {
+        // A TLS-terminating proxy that does NOT set X-Forwarded-Proto: the backend sees plain http and
+        // no header, but a live production custom domain is always TLS — the SIGNED manifest must carry
+        // https links.
+        $this->setAppEnv('production');
+        $base = $this->customDomainBase($this->req('', 'http'), 'mine.example.com');
+        $this->assertSame('https://mine.example.com', $base);
+    }
+
+    public function testProductionForwardedProtoHttpStillYieldsHttps(): void
+    {
+        // Even an explicit (spoofed or misconfigured) X-Forwarded-Proto: http never downgrades production.
+        $this->setAppEnv('production');
+        $base = $this->customDomainBase($this->req('http', 'http'), 'mine.example.com');
+        $this->assertSame('https://mine.example.com', $base);
+    }
+
+    public function testUnsetAppEnvIsTreatedAsProduction(): void
+    {
+        // Safe-by-default (mirrors config/settings.php): a missing APP_ENV counts as production, so a
+        // deployment that forgot to set it can never emit cleartext manifest links.
+        $this->setAppEnv(null);
+        $base = $this->customDomainBase($this->req('', 'http'), 'mine.example.com');
+        $this->assertSame('https://mine.example.com', $base);
     }
 
     // ---- #6: custom-domain vs platform manifestUrl ------------------------------------------------

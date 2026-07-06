@@ -117,9 +117,15 @@ class AppManifestController
         // The matched normalized domain is the trusted, canonical custom-domain host.
         $domain = $this->domains->normalizeDomain($host);
         $base = $this->customDomainBase($request, $domain);
+        // White-label native install identity (hardening #7): the matched domain's native_config flows
+        // into the SIGNED manifest. Re-sanitized here (defense in depth) so a legacy/unsanitized row
+        // can't smuggle an invalid package name or a non-http install URL into a signed payload.
+        $nativeConfig = $this->domains->sanitizeNativeConfig(
+            is_array($resolved['nativeConfig'] ?? null) ? $resolved['nativeConfig'] : []
+        );
         return $this->jsonResponse(
             $response,
-            $this->signing->sign($this->buildManifest($app, $request, $base, $domain))
+            $this->signing->sign($this->buildManifest($app, $request, $base, $domain, $nativeConfig))
         );
     }
 
@@ -138,8 +144,11 @@ class AppManifestController
     /**
      * Resolve the effective request scheme, UPGRADE-ONLY. X-Forwarded-Proto is honored only to CONFIRM
      * https (a TLS-terminating proxy that forwards http on the wire); a spoofed "X-Forwarded-Proto: http"
-     * can NOT downgrade a signed custom-domain manifest's links to cleartext. Otherwise the real
-     * connection scheme is used; default https. Only ever returns 'http' or 'https'.
+     * can NOT downgrade a signed custom-domain manifest's links to cleartext. In PRODUCTION the answer
+     * is ALWAYS https — a live custom domain is served over TLS, and a TLS-terminating proxy that does
+     * not set X-Forwarded-Proto would otherwise make the backend see plain http and emit cleartext links
+     * in a SIGNED manifest (hardening #4). Only in development does the real connection scheme flow
+     * through (so http://formlogic.local keeps working). Only ever returns 'http' or 'https'.
      */
     private function requestScheme(Request $request): string
     {
@@ -147,7 +156,20 @@ class AppManifestController
         if ($proto === 'https') {
             return 'https';
         }
+        if ($this->isProduction()) {
+            return 'https';
+        }
         return strtolower($request->getUri()->getScheme()) === 'http' ? 'http' : 'https';
+    }
+
+    /**
+     * Mirrors config/settings.php (and AppDomainController's env read): safe-by-default — anything
+     * other than an explicit APP_ENV=development is treated as production, so a missing/typo'd
+     * APP_ENV never emits cleartext manifest links.
+     */
+    private function isProduction(): bool
+    {
+        return ($_ENV['APP_ENV'] ?? (getenv('APP_ENV') ?: 'production')) !== 'development';
     }
 
     /**
@@ -176,12 +198,19 @@ class AppManifestController
      * clientManifestByHost); this method never validates the base itself. When $customDomain is set it is
      * echoed as a top-level `domain` field so the runtime knows which custom origin served the manifest.
      *
-     * @param array<string,mixed> $app          a getAppBySlug() row (decoded settings/theme/customLogic)
-     * @param string|null         $baseOverride  same-origin base (scheme://host) for a verified custom domain
-     * @param string|null         $customDomain  the custom domain to name in the payload
+     * White-label (hardening #7): $nativeConfig — the custom domain's SANITIZED native_config — may
+     * override the generic install.android identity (packageName / minVersion) and add an installUrl.
+     * Only those three keys are ever read from it: sha256CertFingerprints (served via
+     * /.well-known/assetlinks.json, never the manifest) and securityConfig are NEVER emitted here.
+     * The platform slug route passes null and keeps the generic com.formlogic.runtime defaults.
+     *
+     * @param array<string,mixed>      $app          a getAppBySlug() row (decoded settings/theme/customLogic)
+     * @param string|null              $baseOverride  same-origin base (scheme://host) for a verified custom domain
+     * @param string|null              $customDomain  the custom domain to name in the payload
+     * @param array<string,mixed>|null $nativeConfig  sanitized per-domain white-label native config
      * @return array<string,mixed>
      */
-    private function buildManifest(array $app, Request $request, ?string $baseOverride = null, ?string $customDomain = null): array
+    private function buildManifest(array $app, Request $request, ?string $baseOverride = null, ?string $customDomain = null, ?array $nativeConfig = null): array
     {
         $slug = (string) ($app['slug'] ?? '');
         // A base override is only ever passed for a pre-verified custom domain (clientManifestByHost);
@@ -211,6 +240,32 @@ class AppManifestController
         ])['permissions'];
         $native = $this->nativeSection($mergedPerms);
 
+        // White-label install identity: prefer the (sanitized) per-domain native_config when its values
+        // are present and valid; otherwise the generic FormLogic Native Runtime identity. Validated
+        // AGAIN here (belt and braces) so even a caller that skipped sanitizeNativeConfig cannot put a
+        // malformed package name or a javascript:/market: install URL into a SIGNED manifest.
+        $androidPackage = 'com.formlogic.runtime';
+        $androidMinVersion = '0.1.0';
+        $androidInstallUrl = null;
+        if (is_array($nativeConfig)) {
+            $pkg = $nativeConfig['packageName'] ?? null;
+            if (is_string($pkg) && preg_match('/^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$/', $pkg)) {
+                $androidPackage = $pkg;
+            }
+            $ver = $nativeConfig['minRuntimeVersion'] ?? null;
+            if (is_string($ver) && trim($ver) !== '' && strlen($ver) <= 32) {
+                $androidMinVersion = trim($ver);
+            }
+            $url = $nativeConfig['installUrl'] ?? null;
+            // HTTPS ONLY: this link downloads an installable binary and ships inside an Ed25519-SIGNED
+            // manifest — a cleartext http URL would let an on-path attacker swap the APK while the
+            // signature lends the install block unearned trust. No dev carve-out for executable downloads.
+            if (is_string($url) && strtolower((string) parse_url($url, PHP_URL_SCHEME)) === 'https'
+                && filter_var($url, FILTER_VALIDATE_URL) !== false) {
+                $androidInstallUrl = $url;
+            }
+        }
+
         $manifest = [
             'version' => 1,
             'kind' => 'formlogic.clientApp',
@@ -237,15 +292,19 @@ class AppManifestController
                         ? ($base . '/manifest.json')
                         : ($base . '/api/app/' . $slug . '/manifest.json'),
                 ],
-                'android' => [
-                    // The generic FormLogic Native Runtime opens any app; App Links verification uses
-                    // /.well-known/assetlinks.json served at the domain root.
-                    'enabled' => true,
-                    'packageName' => 'com.formlogic.runtime',
-                    'minVersion' => '0.1.0',
-                    'assetLinks' => $base . '/.well-known/assetlinks.json',
-                    'openUrl' => $base . '/app/' . $slug,
-                ],
+                'android' => array_merge(
+                    [
+                        // The generic FormLogic Native Runtime opens any app (a custom domain's sanitized
+                        // native_config may white-label this identity — see above); App Links verification
+                        // uses /.well-known/assetlinks.json served at the domain root.
+                        'enabled' => true,
+                        'packageName' => $androidPackage,
+                        'minVersion' => $androidMinVersion,
+                        'assetLinks' => $base . '/.well-known/assetlinks.json',
+                        'openUrl' => $base . '/app/' . $slug,
+                    ],
+                    $androidInstallUrl !== null ? ['installUrl' => $androidInstallUrl] : []
+                ),
             ],
             'offline' => [
                 'enabled' => true,

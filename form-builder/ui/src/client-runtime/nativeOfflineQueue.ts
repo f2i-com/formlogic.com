@@ -2,10 +2,12 @@
 //
 // The FormLogic Native Runtime persists queued submissions across process restarts and exposes them
 // over window.FormLogicNative.sync (contract 2). This module drives that queue from the web layer:
-//   flush()  -> returns pending items grouped by appSlug (attempts already bumped; nothing removed)
-//   POST      /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }
+//   flush()   -> returns pending items grouped by appSlug (read-only: nothing removed, attempts untouched)
+//   POST       /api/app/{slug}/sync/batch { items: [{ idempotencyKey, formId, answers }] }
 //   ack(ids)  -> remove the items the server accepted
-//   fail(ids) -> keep the rest (retryable until the native attempt cap), record the error
+//   fail(ids) -> record a RETRYABLE failure (burns one attempt; terminal at the native attempt cap)
+//   failTerminal(ids) -> mark 'failed' immediately (a conflict can never succeed on retry);
+//                        feature-detected, falls back to fail() on older runtimes
 //
 // flushAllQueues() runs the browser queue AND the native queue so a single "Sync now" (and the
 // reconnect auto-flush) drains everything.
@@ -127,7 +129,9 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
     }
     const ackIds: string[] = [];
     const failIds: string[] = [];
+    const terminalIds: string[] = [];
     let failError = 'Sync failed';
+    let terminalError = 'Idempotency conflict';
     for (const it of payloadItems) {
       const r = byKey.get(it.idempotencyKey);
       // ACK a fresh success OR an idempotent replay — in both cases the server already holds this exact
@@ -138,24 +142,40 @@ export async function flushNativeQueue(): Promise<{ flushed: number; failed: num
       }
       // KEEP a `processing` item: an in-flight duplicate is being handled server-side. Leave it queued
       // untouched (no ack, no fail) so the next flush retries it — recording a failure would burn an
-      // attempt toward the native terminal-failure cap for something that just needs a retry.
+      // attempt toward the native terminal-failure cap for something that just needs a retry. This is
+      // genuinely attempt-neutral: the native flush() never mutates attempts.
       if (r?.processing) {
         continue;
       }
-      // FAIL everything else. A `conflict` (reused key + different body) never succeeds on retry, so
-      // exhausting the native attempt cap correctly terminals it; validation/quota rejections and
-      // missing per-item results stay retryable until that cap promotes a poison item to "failed".
+      // TERMINAL-fail a `conflict` (this key was already used with a DIFFERENT submission): no retry
+      // can ever succeed, so burning attempts across flushes would only delay the inevitable while
+      // re-POSTing a doomed item. Mark it 'failed' immediately.
+      if (r?.conflict) {
+        terminalIds.push(it.id);
+        if (r.error) terminalError = r.error;
+        continue;
+      }
+      // FAIL everything else (retryable): validation/quota rejections and missing per-item results
+      // burn one attempt each and stay queued until the native cap promotes a poison item to 'failed'.
       failIds.push(it.id);
       if (r?.error) failError = r.error;
     }
     if (ackIds.length && sync.ack) {
       try { await sync.ack(ackIds); } catch { /* ignore — items remain for the next flush */ }
     }
+    if (terminalIds.length) {
+      // Feature-detect failTerminal: an older runtime without it falls back to a plain retryable
+      // fail, which still terminals the conflict once the native attempt cap is exhausted.
+      try {
+        if (sync.failTerminal) await sync.failTerminal(terminalIds, terminalError);
+        else if (sync.fail) await sync.fail(terminalIds, terminalError);
+      } catch { /* ignore */ }
+    }
     if (failIds.length && sync.fail) {
       try { await sync.fail(failIds, failError); } catch { /* ignore */ }
     }
     flushed += ackIds.length;
-    failed += failIds.length;
+    failed += failIds.length + terminalIds.length;
   }
   return { flushed, failed };
 }

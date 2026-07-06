@@ -781,6 +781,44 @@ class ApiClient {
   async getClientManifest(slug: string): Promise<ApiResponse<{ payload: Record<string, unknown>; signature: string; alg: string; keyId: string }>> {
     return this.request(`/app/${slug}/client-manifest`, { method: 'GET' });
   }
+  /**
+   * The same signed client manifest, discovered at the CURRENT origin's root:
+   * GET /.well-known/formlogic-app.json (custom-domain discovery; 404 when this host
+   * isn't a connected custom domain of a published app).
+   *
+   * Deliberately NOT routed through request(): that helper prepends baseUrl — the /api
+   * prefix, or a different origin entirely when VITE_API_URL is absolute — while this
+   * endpoint lives at the DOMAIN ROOT of whatever host the page was loaded from (the
+   * deploy's .htaccess maps it to the backend front controller). A raw same-origin
+   * root-path fetch is the only correct routing. Any failure (404 off-domain, SPA
+   * index.html fallback, non-manifest JSON, network error) flattens to { error } so
+   * callers can fall back to the slug route.
+   */
+  async getWellKnownManifest(): Promise<ApiResponse<{ payload: Record<string, unknown>; signature: string; alg: string; keyId: string }>> {
+    try {
+      const response = await fetch('/.well-known/formlogic-app.json', {
+        headers: { Accept: 'application/json' },
+        credentials: 'include',
+      });
+      let data: unknown = null;
+      try {
+        data = await response.json();
+      } catch {
+        // Non-JSON body (e.g. the SPA fallback served index.html) → treated as unavailable below.
+        data = null;
+      }
+      const d = (data && typeof data === 'object') ? data as Record<string, unknown> : null;
+      // Require the minimal signed-envelope shape; a 200 that isn't a manifest must
+      // surface as an error so useAppManifest falls back to the slug route.
+      if (!response.ok || !d || typeof d.payload !== 'object' || d.payload === null || typeof d.signature !== 'string') {
+        const message = typeof d?.message === 'string' ? d.message : `Manifest not available (${response.status})`;
+        return { error: message };
+      }
+      return { data: d as { payload: Record<string, unknown>; signature: string; alg: string; keyId: string } };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
   async verifyAppDomain(appId: string, domainId: string): Promise<ApiResponse<{ ok: boolean; status: string; message: string; domain: AppDomain | null }>> {
     return this.request(`/apps/${appId}/domains/${domainId}/verify`, { method: 'POST' });
   }
