@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList, ReferenceLine,
 } from 'recharts';
+import { BarChart3 } from 'lucide-react';
 import type { AppReportResult, AppReportSpec } from '../../types/app';
 
 const PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#f43f5e', '#84cc16', '#eab308', '#ec4899', '#06b6d4'];
@@ -17,6 +18,19 @@ const ACCENTS: Record<string, [string, string]> = {
   violet: ['#7c3aed', '#a78bfa'],
   teal: ['#0d9488', '#2dd4bf'],
 };
+
+/** Categorical hues for multi-series charts as [light, dark] pairs — distinct on both surfaces.
+ *  The literal 'Other' overflow bucket never uses these; it always gets the muted tone. */
+const SERIES_HUES: Array<[string, string]> = [
+  ['#4f46e5', '#818cf8'], // indigo
+  ['#0284c7', '#38bdf8'], // sky
+  ['#059669', '#34d399'], // emerald
+  ['#d97706', '#fbbf24'], // amber
+  ['#e11d48', '#fb7185'], // rose
+  ['#7c3aed', '#a78bfa'], // violet
+  ['#0d9488', '#2dd4bf'], // teal
+  ['#c026d3', '#e879f9'], // fuchsia
+];
 
 /** Locale number with either the legacy auto-decimals or a fixed 0–2 decimal places. */
 const numPart = (v: number, d?: number): string =>
@@ -52,12 +66,14 @@ function makeFormatter(spec?: AppReportSpec): ValueFormatter {
   };
 }
 
-/** Client-side series re-sort — covers orders the server can't produce (label desc, value order on date buckets). */
-function orderSeries<T extends { label: string; value: number }>(series: T[], order?: AppReportSpec['seriesOrder']): T[] {
+/** Client-side series re-sort — covers orders the server can't produce (label desc, value order on date buckets).
+ *  `getValue` lets pivoted multi-series rows sort by their stacked total instead of a `value` prop. */
+function orderSeries<T extends { label: string }>(series: T[], order?: AppReportSpec['seriesOrder'], getValue?: (row: T) => number): T[] {
   if (!order) return series;
+  const val = getValue ?? ((row: T) => (row as { label: string; value?: number }).value ?? 0);
   const out = [...series];
   if (order.startsWith('label')) out.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }));
-  else out.sort((a, b) => a.value - b.value);
+  else out.sort((a, b) => val(a) - val(b));
   if (order.endsWith('desc')) out.reverse();
   return out;
 }
@@ -83,6 +99,10 @@ function useChartTheme(primaryColor?: string, forceLight = false, accentName?: s
       /** True when the user explicitly picked a named colour (single-hue bars, tinted KPI). */
       hasNamedAccent: !!named,
       palette,
+      /** Theme-aware categorical colours for multi-series charts: accent leads, then distinct hues. */
+      seriesPalette: [accent, ...SERIES_HUES.map((h) => h[isDark ? 1 : 0]).filter((c) => c.toLowerCase() !== accent.toLowerCase())],
+      /** Muted tone reserved for the 'Other' overflow bucket. */
+      seriesOther: isDark ? '#64748b' : '#9ca3af',
       axis: isDark ? '#94a3b8' : '#64748b',
       grid: isDark ? '#1e293b' : '#e2e8f0',
       surface: isDark ? '#0f172a' : '#ffffff',
@@ -125,17 +145,39 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
 
   // KPI ─────────────────────────────────────────────
   if (result.viz === 'kpi') {
-    const value = Number(result.value || 0);
+    // Sparkline (spec.sparkline + a date-bucketed series in the result): the big number stays the
+    // total, with a small axis-less trend underneath. Without both pieces the KPI renders as before.
+    const sparkRows = spec?.sparkline === true ? (result.series ?? []).map((s) => ({ label: s.label || '—', value: s.value })) : [];
+    const hasSpark = sparkRows.length >= 2;
+    const value = result.value == null && hasSpark ? sparkRows.reduce((a, s) => a + s.value, 0) : Number(result.value || 0);
     const pct = target !== undefined && target > 0 ? Math.max(0, Math.min(999, Math.round((value / target) * 100))) : null;
+    const sparkChart = (w?: number, h?: number) => (
+      <AreaChart width={w} height={h} data={sparkRows} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id={`${gradId}sp`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={t.accent} stopOpacity={0.3} />
+            <stop offset="100%" stopColor={t.accent} stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
+        <Area type="monotone" dataKey="value" stroke={t.accent} strokeWidth={1.5} fill={`url(#${gradId}sp)`} fillOpacity={1} isAnimationActive={!print} dot={false} activeDot={false} />
+      </AreaChart>
+    );
     return (
       <div className={print ? 'py-6 text-center' : fill ? 'h-full min-h-0 flex flex-col items-center justify-center text-center' : 'py-10 text-center'}>
         <div
-          className={`max-w-full truncate px-2 font-extrabold tracking-tight tabular-nums ${pct !== null && fill ? 'text-4xl sm:text-5xl' : 'text-5xl sm:text-6xl'} ${t.hasNamedAccent ? '' : 'text-gray-900 dark:text-white'}`}
+          className={`max-w-full truncate px-2 font-extrabold tracking-tight tabular-nums ${(pct !== null || hasSpark) && fill ? 'text-4xl sm:text-5xl' : 'text-5xl sm:text-6xl'} ${t.hasNamedAccent ? '' : 'text-gray-900 dark:text-white'}`}
           style={t.hasNamedAccent ? { color: t.accent } : undefined}
           title={vf.full(value)}
         >
           {fill ? vf.short(value) : vf.full(value)}
         </div>
+        {hasSpark && (
+          <div className={`mx-auto mt-2 w-full max-w-[240px] px-2 ${fill ? 'h-8' : 'h-10'}`} aria-hidden="true">
+            {print
+              ? sparkChart(224, 40)
+              : <ResponsiveContainer width="100%" height="100%">{sparkChart()}</ResponsiveContainer>}
+          </div>
+        )}
         {pct !== null && (
           <div className="mt-2.5 w-full max-w-[240px] mx-auto px-2">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
@@ -178,8 +220,8 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
   }
 
   // Charts ──────────────────────────────────────────
-  const series = orderSeries((result.series ?? []).map((s) => ({ ...s, label: s.label || '—' })), spec?.seriesOrder);
-  if (series.length === 0) return <EmptyResult />;
+  const rawSeries = (result.series ?? []).map((s) => ({ ...s, label: s.label || '—' }));
+  if (rawSeries.length === 0) return <EmptyResult />;
 
   // Wrap a chart in fixed dims (print), fill-parent (dashboard widget), or intrinsic height (screen).
   const frame = (height: number, chart: ReactElement) =>
@@ -195,6 +237,135 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
   const labelStyle = { fontSize: 10, fill: t.axis } as const;
   const targetLabel = (position: 'insideTopRight' | 'insideTop') =>
     ({ value: `Target ${vf.short(target)}`, position, fill: t.target, fontSize: 10, fontWeight: 600 } as const);
+
+  // ── Multi-series (rows carry `series` — a seriesBy 2nd dimension; bar/line/area only) ──
+  // Pivot the flat {label, value, series} rows into one row per label with a column per series,
+  // then render stacked bars / one line-area per series. Results without `series` never enter
+  // this branch, so single-series charts render exactly as before.
+  const hasSeriesDim = rawSeries.some((r) => r.series != null && r.series !== '');
+  if (hasSeriesDim && (result.viz === 'bar' || result.viz === 'line' || result.viz === 'area')) {
+    // Distinct series names in first-appearance order; the 'Other' overflow bucket goes last.
+    const names: string[] = [];
+    for (const r of rawSeries) { const n = r.series ?? 'Other'; if (!names.includes(n)) names.push(n); }
+    if (names.includes('Other')) { names.splice(names.indexOf('Other'), 1); names.push('Other'); }
+
+    const labels: string[] = [];
+    const byLabel = new Map<string, Record<string, number>>();
+    for (const r of rawSeries) {
+      let rec = byLabel.get(r.label);
+      if (!rec) { rec = {}; byLabel.set(r.label, rec); labels.push(r.label); }
+      const key = r.series ?? 'Other';
+      rec[key] = (rec[key] ?? 0) + r.value;
+    }
+    type PivotRow = { label: string; __total: number } & Record<string, number | string>;
+    const rows = orderSeries(
+      labels.map((l) => {
+        const rec = byLabel.get(l)!;
+        const row: PivotRow = { label: l, __total: 0 };
+        for (const n of names) { const v = rec[n] ?? 0; row[n] = v; row.__total += v; }
+        return row;
+      }),
+      spec?.seriesOrder,
+      (r) => r.__total
+    );
+
+    // Theme-aware categorical colours: accent leads; 'Other' is always the muted tone.
+    const colorOf = new Map<string, string>();
+    let ci = 0;
+    for (const n of names) colorOf.set(n, n === 'Other' ? t.seriesOther : t.seriesPalette[ci++ % t.seriesPalette.length]);
+
+    const multiTooltip = (
+      <Tooltip
+        content={(tp: unknown) => renderMultiTooltip(tp, vf, t)}
+        cursor={result.viz === 'bar' ? { fill: t.isDark ? 'rgba(148,163,184,0.08)' : 'rgba(0,0,0,0.03)' } : { stroke: t.grid }}
+      />
+    );
+    const showTotals = spec?.showDataLabels !== false;
+
+    let chart: ReactElement;
+    let height = 300;
+    if (result.viz === 'line' || result.viz === 'area') {
+      const margin = { top: 8, right: 12, left: 0, bottom: 0 };
+      const common = (
+        <>
+          <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
+          <XAxis dataKey="label" tick={tick} tickLine={false} axisLine={{ stroke: t.grid }} interval="preserveStartEnd" minTickGap={20} />
+          <YAxis tick={tick} tickLine={false} axisLine={false} allowDecimals={false} width={48} tickFormatter={(v) => vf.short(v)} />
+          {multiTooltip}
+          {target !== undefined && (
+            <ReferenceLine y={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTopRight')} />
+          )}
+        </>
+      );
+      chart = result.viz === 'area' ? (
+        // Flat reduced-opacity fills (no gradient) so overlapping series stay readable.
+        <AreaChart data={rows} margin={margin}>
+          {common}
+          {names.map((n) => (
+            <Area key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} fill={colorOf.get(n)} fillOpacity={0.14} isAnimationActive={anim} dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: t.surface }} />
+          ))}
+        </AreaChart>
+      ) : (
+        <LineChart data={rows} margin={margin}>
+          {common}
+          {names.map((n) => (
+            <Line key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} isAnimationActive={anim} dot={false} activeDot={{ r: 4.5, strokeWidth: 2, stroke: t.surface }} />
+          ))}
+        </LineChart>
+      );
+    } else if (spec?.horizontal === false) {
+      // Vertical stacked columns; the stack total labels sit on the top segment.
+      chart = (
+        <BarChart data={rows} margin={{ top: showTotals ? 22 : 12, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={t.grid} vertical={false} />
+          <XAxis dataKey="label" tick={{ ...tick, fontSize: 11 }} tickLine={false} axisLine={{ stroke: t.grid }} minTickGap={8} />
+          <YAxis tick={tick} tickLine={false} axisLine={false} allowDecimals={false} width={48} tickFormatter={(v) => vf.short(v)} />
+          {multiTooltip}
+          {target !== undefined && (
+            <ReferenceLine y={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTopRight')} />
+          )}
+          {names.map((n, i) => (
+            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={42} radius={i === names.length - 1 ? [6, 6, 0, 0] : undefined}>
+              {showTotals && i === names.length - 1 && (
+                <LabelList dataKey="__total" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />
+              )}
+            </Bar>
+          ))}
+        </BarChart>
+      );
+    } else {
+      // Default horizontal stacked rows (same conventions as the single-series bar).
+      height = Math.max(140, Math.min(rows.length * 40 + 24, 520));
+      const labelWidth = print ? 130 : Math.min(140, Math.max(70, ...rows.map((r) => r.label.length * 6.5)));
+      chart = (
+        <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 34, left: 4, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={t.grid} horizontal={false} />
+          <XAxis type="number" tick={tick} tickLine={false} axisLine={false} allowDecimals={false} tickFormatter={(v) => vf.short(v)} />
+          <YAxis type="category" dataKey="label" tick={tick} tickLine={false} axisLine={false} width={labelWidth} />
+          {multiTooltip}
+          {target !== undefined && (
+            <ReferenceLine x={target} stroke={t.target} strokeDasharray="5 4" strokeWidth={1.5} ifOverflow="extendDomain" label={targetLabel('insideTop')} />
+          )}
+          {names.map((n, i) => (
+            <Bar key={n} dataKey={n} name={n} stackId="s" fill={colorOf.get(n)} isAnimationActive={anim} maxBarSize={38} radius={i === names.length - 1 ? [0, 6, 6, 0] : undefined}>
+              {showTotals && i === names.length - 1 && (
+                <LabelList dataKey="__total" position="right" formatter={(v: unknown) => vf.short(v)} style={{ fontSize: 11, fill: t.axis }} />
+              )}
+            </Bar>
+          ))}
+        </BarChart>
+      );
+    }
+
+    return (
+      <div className={fill ? 'h-full min-h-0 flex flex-col py-1' : chartWrap}>
+        <div className={fill ? 'flex-1 min-h-0' : ''}>{frame(height, chart)}</div>
+        {names.length > 1 && <SeriesLegend names={names} colorOf={colorOf} fill={fill} print={print} />}
+      </div>
+    );
+  }
+
+  const series = orderSeries(rawSeries, spec?.seriesOrder);
 
   if (result.viz === 'line' || result.viz === 'area') {
     const height = 300;
@@ -360,5 +531,59 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
 }
 
 function EmptyResult() {
-  return <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">No data matches this report yet.</p>;
+  return (
+    <div className="flex h-full min-h-[96px] flex-col items-center justify-center py-8 text-center text-gray-400 dark:text-slate-500">
+      <BarChart3 className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
+      <p className="text-sm">No data matches this report yet.</p>
+    </div>
+  );
+}
+
+type ChartTheme = ReturnType<typeof useChartTheme>;
+
+/** Tooltip for multi-series charts: one line per series (swatch + value) plus a Total row. */
+function renderMultiTooltip(props: unknown, vf: ValueFormatter, t: ChartTheme) {
+  const { active, payload, label } = props as {
+    active?: boolean;
+    payload?: Array<{ name?: string | number; value?: number | string; color?: string; dataKey?: string | number }>;
+    label?: string | number;
+  };
+  const items = (payload ?? []).filter((p) => p.dataKey !== '__total');
+  if (!active || items.length === 0) return null;
+  const total = items.reduce((a, p) => a + (Number(p.value) || 0), 0);
+  return (
+    <div style={{ ...t.tooltip, minWidth: 150 }}>
+      <div style={{ ...t.tooltipLabel, marginBottom: 4 }}>{String(label ?? '')}</div>
+      {items.map((p, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '1.5px 0' }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: p.color, flexShrink: 0 }} />
+          <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(p.name ?? '')}</span>
+          <span style={{ marginLeft: 'auto', paddingLeft: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{vf.full(p.value)}</span>
+        </div>
+      ))}
+      {items.length > 1 && (
+        <div style={{ display: 'flex', marginTop: 5, paddingTop: 5, borderTop: t.tooltip.border, fontWeight: 600 }}>
+          <span>Total</span>
+          <span style={{ marginLeft: 'auto', paddingLeft: 12, fontVariantNumeric: 'tabular-nums' }}>{vf.full(total)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Compact HTML legend under multi-series charts (never overlaps the plot, fixed-width-safe in print). */
+function SeriesLegend({ names, colorOf, fill, print }: { names: string[]; colorOf: Map<string, string>; fill: boolean; print: boolean }) {
+  return (
+    <ul
+      className={`mt-2 flex flex-wrap justify-center gap-x-3.5 gap-y-1${fill ? ' shrink-0 overflow-auto max-h-14' : ''}`}
+      style={print ? { maxWidth: PRINT_WIDTH } : undefined}
+    >
+      {names.map((n) => (
+        <li key={n} className={`inline-flex min-w-0 items-center gap-1.5 text-[11px] font-medium ${print ? 'text-gray-600' : 'text-gray-600 dark:text-slate-300'}`}>
+          <span className="h-2 w-2 shrink-0 rounded-sm" style={{ backgroundColor: colorOf.get(n) }} />
+          <span className="max-w-[10rem] truncate">{n}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }

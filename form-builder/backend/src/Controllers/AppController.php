@@ -223,6 +223,35 @@ class AppController
         }
     }
 
+    /**
+     * One-click companion (e.g. admin console) app: a NEW app over the SAME forms
+     * and data as the source app. Members, roles, branding and dashboards stay
+     * separate. POST /api/apps/{id}/companion, body { name? }.
+     */
+    public function createCompanion(Request $request, Response $response, array $args): Response
+    {
+        $app = $this->authorizeAppOwnership($request, $args['id']);
+        if (!$app) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'App not found or access denied'], 404);
+        }
+
+        $data = $request->getParsedBody() ?? [];
+        $name = is_array($data) && isset($data['name']) && is_string($data['name']) ? trim($data['name']) : '';
+
+        $userId = $request->getAttribute('userId');
+
+        try {
+            $companion = $this->appService->createCompanionApp($args['id'], $userId, $name !== '' ? $name : null);
+            $this->audit($request, 'app.create_companion', 'app', $companion['id'] ?? '', ['sourceAppId' => $args['id']]);
+            return $this->jsonResponse($response, ['app' => $companion], 201);
+        } catch (\RuntimeException | \InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        } catch (\Exception $e) {
+            $this->logger->error('Companion app creation error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'An unexpected error occurred'], 500);
+        }
+    }
+
     // Form management
 
     public function listForms(Request $request, Response $response, array $args): Response

@@ -767,6 +767,14 @@ class ApiClient {
     });
   }
 
+  /** One-click companion (e.g. admin console) app over the same forms + data. Omitting name defaults to "<App> Admin". */
+  async createCompanionApp(appId: string, name?: string): Promise<ApiResponse<{ app: unknown }>> {
+    return this.request(`/apps/${appId}/companion`, {
+      method: 'POST',
+      body: JSON.stringify(name ? { name } : {}),
+    });
+  }
+
   // Custom domains (owner-gated)
   async getAppDomains(appId: string): Promise<ApiResponse<{ domains: AppDomain[] }>> {
     return this.request(`/apps/${appId}/domains`);

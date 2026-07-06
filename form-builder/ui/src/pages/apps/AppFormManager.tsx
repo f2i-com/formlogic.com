@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2 } from 'lucide-react';
+import { ArrowLeft, Plus, X, Eye, EyeOff, Pencil, Link2, ArrowLeftIcon, ChevronUp, ChevronDown, Check, Tag, Share2, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
+import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
@@ -22,7 +23,7 @@ interface RelationBadge {
 export function AppFormManager() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
-  const { addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms } = useAppStore();
+  const { addFormToApp, removeFormFromApp, updateAppForm, reorderAppForms, apps } = useAppStore();
   const { forms: allForms, refreshForms } = useFormStore();
   const [appForms, setAppForms] = useState<AppForm[]>([]);
   const [loading, setLoading] = useState(true);
@@ -225,6 +226,35 @@ export function AppFormManager() {
     if (!ok) await loadForms();
   };
 
+  // Companion app: a second app (e.g. an admin console) over these same forms + data.
+  const sourceAppName = apps.find((a) => a.id === appId)?.name;
+  const [companionName, setCompanionName] = useState('');
+  const [companionBusy, setCompanionBusy] = useState(false);
+  // Prefill "<App> Admin" once the app name is known, but never clobber user input.
+  const companionTouchedRef = useRef(false);
+  useEffect(() => {
+    if (!companionTouchedRef.current && sourceAppName) {
+      setCompanionName(`${sourceAppName} Admin`);
+    }
+  }, [sourceAppName]);
+
+  const handleCreateCompanion = async () => {
+    if (!appId || companionBusy) return;
+    setCompanionBusy(true);
+    const name = companionName.trim();
+    const result = await api.createCompanionApp(appId, name || undefined);
+    const newApp = result.data?.app as { id?: string; name?: string } | undefined;
+    if (result.error || !newApp?.id) {
+      toast.error('Could not create companion app', typeof result.error === 'string' ? result.error : 'Please try again.');
+      setCompanionBusy(false);
+      return;
+    }
+    toast.success('Companion app created', `"${newApp.name ?? name}" shares this app's forms and data — members, roles and dashboards are its own.`);
+    // Refresh the apps slice so the new app exists in the store before we land on its manage page.
+    await useAppStore.getState().fetchApps();
+    navigate(`/apps/${newApp.id}/settings?tab=manage`);
+  };
+
   const startRename = (af: AppForm) => {
     setEditingNameId(af.formId);
     setEditNameValue(af.displayName);
@@ -401,6 +431,31 @@ export function AppFormManager() {
               })}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Companion app */}
+      <div className="mt-6 bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4">
+        <h3 className="font-medium text-gray-900 dark:text-white mb-1 tracking-tight flex items-center gap-2">
+          <Layers className="h-4 w-4 text-violet-500 dark:text-violet-400" />
+          Create a companion app
+        </h3>
+        <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+          A second app — e.g. an admin console — over these same forms and data. Members, roles, branding and dashboards stay separate.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <input
+            value={companionName}
+            onChange={(e) => { companionTouchedRef.current = true; setCompanionName(e.target.value); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCompanion(); }}
+            placeholder={sourceAppName ? `${sourceAppName} Admin` : 'Companion app name'}
+            aria-label="Companion app name"
+            disabled={companionBusy}
+            className="flex-1 min-w-0 text-sm px-3 py-2 rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:outline-none disabled:opacity-50"
+          />
+          <Button size="sm" onClick={handleCreateCompanion} isLoading={companionBusy} leftIcon={<Layers className="h-4 w-4" />} className="flex-shrink-0">
+            Create companion app
+          </Button>
         </div>
       </div>
     </div>

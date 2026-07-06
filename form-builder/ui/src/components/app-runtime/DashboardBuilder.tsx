@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Plus, Trash2, Settings2, GripVertical, Save, Loader2,
-  BarChart3, LineChart, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
+  BarChart3, PieChart, Hash, Table2, List as ListIcon, Type, Zap, Activity,
+  AreaChart, TrendingUp, ListOrdered, Target,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -61,6 +62,7 @@ function resolveDrag(base: DashboardWidget[], movingId: string, orig: Layout): D
 const LAYOUT_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
 const CHOICE_TYPES = new Set(['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio']);
 const DATE_TYPES = new Set(['date', 'datetime']);
+const NUMERIC_TYPES = new Set(['number', 'rating', 'scale']);
 
 type BuilderField = { id: string; label?: string; type: string };
 
@@ -81,17 +83,84 @@ function defaultSpec(form: AppRuntimeForm | undefined, viz: AppReportSpec['viz']
   return { formId, viz, groupBy: { field: g.field, bucket: g.isDate ? 'month' : 'none' }, measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8, filters: [] };
 }
 
-type Preset = { key: string; label: string; Icon: typeof BarChart3; kind: DashboardWidgetKind; viz?: AppReportSpec['viz']; w: number; h: number; appOnly?: boolean };
-const PRESETS: Preset[] = [
-  { key: 'bar', label: 'Bar chart', Icon: BarChart3, kind: 'report', viz: 'bar', w: 6, h: 3 },
-  { key: 'line', label: 'Line / trend', Icon: LineChart, kind: 'report', viz: 'line', w: 6, h: 3 },
-  { key: 'pie', label: 'Pie / donut', Icon: PieChart, kind: 'report', viz: 'donut', w: 4, h: 3 },
-  { key: 'kpi', label: 'Number (KPI)', Icon: Hash, kind: 'report', viz: 'kpi', w: 3, h: 1 },
-  { key: 'table', label: 'Table', Icon: Table2, kind: 'report', viz: 'table', w: 6, h: 3 },
-  { key: 'list', label: 'Record list', Icon: ListIcon, kind: 'list', w: 4, h: 3 },
-  { key: 'text', label: 'Text note', Icon: Type, kind: 'text', w: 6, h: 1 },
-  { key: 'actions', label: 'Quick actions', Icon: Zap, kind: 'actions', w: 12, h: 1, appOnly: true },
-  { key: 'activity', label: 'Recent activity', Icon: Activity, kind: 'activity', w: 4, h: 3, appOnly: true },
+// ── Widget preset gallery ──────────────────────────────────────────────────────
+// Each preset prefills a sensible spec from the target form's fields (first date-ish field or
+// __submitted_at for trends, first choice field for breakdowns, first number field for sums), so a
+// freshly added widget shows real data immediately. Everything remains editable afterwards.
+
+const firstFieldOf = (form: AppRuntimeForm | undefined, types: Set<string>): BuilderField | undefined =>
+  fieldsOf(form).find((f) => types.has(f.type));
+const firstDateRef = (form?: AppRuntimeForm) => firstFieldOf(form, DATE_TYPES)?.id ?? '__submitted_at';
+const firstChoiceRef = (form?: AppRuntimeForm) => firstFieldOf(form, CHOICE_TYPES)?.id ?? '__status';
+
+type GalleryPreset = {
+  key: string;
+  label: string;
+  desc: string;
+  Icon: typeof BarChart3;
+  kind: DashboardWidgetKind;
+  w: number;
+  h: number;
+  appOnly?: boolean;
+  /** Prefilled spec for report widgets, derived from the target form's fields. */
+  spec?: (form?: AppRuntimeForm) => AppReportSpec;
+};
+
+const GALLERY: GalleryPreset[] = [
+  {
+    key: 'kpi', label: 'KPI', desc: 'One big number — a count of records.', Icon: Hash, kind: 'report', w: 3, h: 1,
+    spec: (form) => ({ formId: form?.formId ?? '', viz: 'kpi', measure: { fn: 'count' }, filters: [] }),
+  },
+  {
+    key: 'kpi-trend', label: 'KPI + trend', desc: 'Last 30 days total with a mini trend.', Icon: TrendingUp, kind: 'report', w: 3, h: 2,
+    spec: (form) => ({
+      formId: form?.formId ?? '', viz: 'kpi', measure: { fn: 'count' }, filters: [],
+      sparkline: true, groupBy: { field: firstDateRef(form), bucket: 'day' }, dateRange: { preset: '30d' },
+    }),
+  },
+  {
+    key: 'trend', label: 'Trend', desc: 'Area chart of records per day, last 30 days.', Icon: AreaChart, kind: 'report', w: 6, h: 3,
+    spec: (form) => ({
+      formId: form?.formId ?? '', viz: 'area', groupBy: { field: firstDateRef(form), bucket: 'day' },
+      measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 40, dateRange: { preset: '30d' }, filters: [],
+    }),
+  },
+  {
+    key: 'breakdown', label: 'Breakdown', desc: 'Bar chart split by your first choice field.', Icon: BarChart3, kind: 'report', w: 6, h: 3,
+    spec: (form) => ({
+      formId: form?.formId ?? '', viz: 'bar', groupBy: { field: firstChoiceRef(form), bucket: 'none' },
+      measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 8, filters: [],
+    }),
+  },
+  {
+    key: 'top5', label: 'Top 5', desc: 'The five biggest groups, largest first.', Icon: ListOrdered, kind: 'report', w: 4, h: 3,
+    spec: (form) => ({
+      formId: form?.formId ?? '', viz: 'bar', groupBy: { field: firstChoiceRef(form), bucket: 'none' },
+      measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', seriesOrder: 'value_desc', limit: 5, filters: [],
+    }),
+  },
+  {
+    key: 'target', label: 'Target KPI', desc: 'A number with progress toward a goal.', Icon: Target, kind: 'report', w: 3, h: 2,
+    spec: (form) => {
+      const num = firstFieldOf(form, NUMERIC_TYPES);
+      return { formId: form?.formId ?? '', viz: 'kpi', measure: num ? { fn: 'sum', field: num.id } : { fn: 'count' }, target: 100, filters: [] };
+    },
+  },
+  {
+    key: 'donut', label: 'Proportions', desc: 'Donut of a choice field at a glance.', Icon: PieChart, kind: 'report', w: 4, h: 3,
+    spec: (form) => ({
+      formId: form?.formId ?? '', viz: 'donut', groupBy: { field: firstChoiceRef(form), bucket: 'none' },
+      measure: { fn: 'count' }, seriesSort: 'value', sort: 'desc', limit: 6, filters: [],
+    }),
+  },
+  {
+    key: 'table', label: 'Table', desc: 'Recent rows with the first few columns.', Icon: Table2, kind: 'report', w: 6, h: 3,
+    spec: (form) => defaultSpec(form, 'table'),
+  },
+  { key: 'list', label: 'Recent list', desc: 'A compact list of the latest records.', Icon: ListIcon, kind: 'list', w: 4, h: 3 },
+  { key: 'text', label: 'Text', desc: 'A note or section heading.', Icon: Type, kind: 'text', w: 6, h: 1 },
+  { key: 'actions', label: 'Quick actions', desc: 'New-record buttons for every form.', Icon: Zap, kind: 'actions', w: 12, h: 1, appOnly: true },
+  { key: 'activity', label: 'Recent activity', desc: 'Latest records across all forms.', Icon: Activity, kind: 'activity', w: 4, h: 3, appOnly: true },
 ];
 
 export interface DashboardBuilderProps extends WidgetDataDeps {
@@ -117,6 +186,9 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [interacting, setInteracting] = useState(false);
+  // Dashboard-level date-range picker (shown at runtime only when a widget is time-aware).
+  // Default ON; only an explicit false is persisted, so untouched dashboards stay unchanged.
+  const [showRangePicker, setShowRangePicker] = useState(props.initial?.showRangePicker !== false);
 
   // Suppress text selection during a drag/resize (mutating document.body must live in an effect).
   useEffect(() => {
@@ -175,17 +247,17 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     setInteracting(true);
   };
 
-  const addWidget = (preset: Preset) => {
+  const addWidget = (preset: GalleryPreset) => {
     setAddOpen(false);
     const maxBottom = widgets.reduce((m, w) => Math.max(m, w.layout.y + w.layout.h), 0);
     const form = builderForms[0];
     const w: DashboardWidget = {
       id: uid(),
-      title: preset.kind === 'report' ? '' : preset.label,
+      title: preset.label,
       layout: { x: 0, y: maxBottom, w: Math.min(preset.w, cols), h: preset.h },
       kind: preset.kind,
     };
-    if (preset.kind === 'report') w.spec = defaultSpec(form, preset.viz ?? 'bar');
+    if (preset.kind === 'report') w.spec = preset.spec?.(form) ?? defaultSpec(form, 'bar');
     else if (preset.kind === 'list') w.list = { formId: form?.formId ?? '', limit: 6 };
     else if (preset.kind === 'text') w.text = { body: '' };
     setWidgets((ws) => [...ws, w]);
@@ -209,7 +281,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     // finally guarantees the button leaves the "Saving…" state even if onSave rejects — otherwise a
     // failed save would leave the builder stuck in a disabled/spinning state.
     try {
-      await onSave({ version: 1, cols, widgets });
+      await onSave({ version: 1, cols, widgets, ...(showRangePicker ? {} : { showRangePicker: false }) });
     } finally {
       setSaving(false);
     }
@@ -234,27 +306,14 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
     <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap px-1 pb-3 shrink-0">
-        <div className="relative">
-          <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setAddOpen((o) => !o)}>Add widget</Button>
-          {addOpen && (
-            <>
-              <div className="fixed inset-0 z-10" onClick={() => setAddOpen(false)} aria-hidden="true" />
-              <div className="absolute left-0 top-full mt-1 z-20 w-56 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-1.5">
-                {PRESETS.filter((pr) => !pr.appOnly || scope === 'app').map((pr) => (
-                  <button
-                    key={pr.key}
-                    type="button"
-                    onClick={() => addWidget(pr)}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    <pr.Icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
-                    {pr.label}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setAddOpen(true)}>Add widget</Button>
+        <label
+          className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 cursor-pointer select-none"
+          title="Show a date-range picker on the dashboard when any widget is time-based"
+        >
+          <input type="checkbox" className="app-accent rounded" checked={showRangePicker} onChange={(e) => setShowRangePicker(e.target.checked)} />
+          Date range picker
+        </label>
         <p className="text-xs text-gray-400 dark:text-slate-500 hidden sm:block">Drag the handle to move · drag the corner to resize · double-click a widget to edit it</p>
         <p className="text-xs text-gray-400 dark:text-slate-500 sm:hidden">Tip: the drag-and-drop grid is easier to arrange on a larger screen.</p>
         <div className="ml-auto flex items-center gap-2">
@@ -330,6 +389,28 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
         </div>
       </div>
 
+      {/* Add-widget preset gallery */}
+      {addOpen && (
+        <Modal isOpen onClose={() => setAddOpen(false)} title="Add a widget" size="full">
+          <div className="p-4 sm:p-5 grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {GALLERY.filter((p) => !p.appOnly || scope === 'app').map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => addWidget(p)}
+                className="group flex min-w-0 flex-col items-start gap-1.5 rounded-xl border border-gray-200 dark:border-slate-700 p-3.5 text-left cursor-pointer transition-all hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:ring-2 app-ring-primary"
+              >
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg app-bg-primary-light app-text-primary">
+                  <p.Icon className="h-4 w-4" />
+                </span>
+                <span className="text-sm font-semibold text-gray-900 dark:text-white">{p.label}</span>
+                <span className="text-xs leading-snug text-gray-500 dark:text-slate-400">{p.desc}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+
       {/* Config: report widgets reuse the full ReportBuilder; others get a compact editor. */}
       {configWidget && configWidget.kind === 'report' && (
         <ReportBuilder
@@ -364,6 +445,8 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
   const [formId, setFormId] = useState(widget.list?.formId ?? forms[0]?.formId ?? '');
   const [titleField, setTitleField] = useState(widget.list?.titleField ?? '');
   const [subtitleField, setSubtitleField] = useState(widget.list?.subtitleField ?? '');
+  const [metaField, setMetaField] = useState(widget.list?.metaField ?? '');
+  const [linkToRecords, setLinkToRecords] = useState(widget.list?.linkToRecords === true);
   const [limit, setLimit] = useState(widget.list?.limit ?? 6);
   const [body, setBody] = useState(widget.text?.body ?? '');
 
@@ -373,7 +456,17 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
 
   const save = () => {
     const patch: Partial<DashboardWidget> = { title: title.trim() || undefined };
-    if (widget.kind === 'list') patch.list = { formId, titleField: titleField || undefined, subtitleField: subtitleField || undefined, limit: Math.max(1, Math.min(limit, 25)) };
+    if (widget.kind === 'list') {
+      patch.list = {
+        formId,
+        titleField: titleField || undefined,
+        subtitleField: subtitleField || undefined,
+        metaField: metaField || undefined,
+        limit: Math.max(1, Math.min(limit, 25)),
+        // Only an explicit true is stored — absent keeps today's plain (non-linking) list.
+        ...(linkToRecords ? { linkToRecords: true } : {}),
+      };
+    }
     if (widget.kind === 'text') patch.text = { body };
     onSave(patch);
   };
@@ -382,61 +475,75 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
 
   return (
     <Modal isOpen onClose={onClose} title={`Configure · ${kindLabel}`} size="md">
-      <div className="p-5 space-y-4">
-        <div>
-          <label className={lbl}>Title <span className="normal-case font-normal text-gray-400">(optional)</span></label>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kindLabel} className={`mt-1.5 ${sel}`} />
-        </div>
-
-        {widget.kind === 'list' && (
-          <>
-            <div>
-              <label className={lbl}>Records from</label>
-              <select value={formId} onChange={(e) => { setFormId(e.target.value); setTitleField(''); setSubtitleField(''); }} className={`mt-1.5 ${sel}`}>
-                {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className={lbl}>Title field</label>
-                <select value={titleField} onChange={(e) => setTitleField(e.target.value)} className={`mt-1.5 ${sel}`}>
-                  <option value="">Auto</option>
-                  {flds.map((f) => <option key={f.id} value={f.id}>{f.label ?? f.id}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={lbl}>Subtitle field</label>
-                <select value={subtitleField} onChange={(e) => setSubtitleField(e.target.value)} className={`mt-1.5 ${sel}`}>
-                  <option value="">Date submitted</option>
-                  {flds.map((f) => <option key={f.id} value={f.id}>{f.label ?? f.id}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className={lbl}>Rows</label>
-              <input type="number" min={1} max={25} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 6)} className={`mt-1.5 w-24 ${sel}`} />
-            </div>
-          </>
-        )}
-
-        {widget.kind === 'text' && (
+      {/* Body scrolls on short viewports; the Save/Cancel footer stays pinned below it. */}
+      <div className="flex max-h-[calc(90dvh_-_8rem)] flex-col">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
           <div>
-            <label className={lbl}>Text</label>
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder="Add a note, heading, or instructions…" className={`mt-1.5 ${sel} resize-y`} />
+            <label className={lbl}>Title <span className="normal-case font-normal text-gray-400">(optional)</span></label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kindLabel} className={`mt-1.5 ${sel}`} />
           </div>
-        )}
 
-        {(widget.kind === 'actions' || widget.kind === 'activity') && (
-          <p className="text-sm text-gray-500 dark:text-slate-400">
-            {widget.kind === 'actions'
-              ? 'Shows a “new record” button for every form the viewer can submit to.'
-              : 'Shows the newest records across all forms the viewer can see.'}
-          </p>
-        )}
-      </div>
-      <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-        <Button onClick={save}>Save widget</Button>
+          {widget.kind === 'list' && (
+            <>
+              <div>
+                <label className={lbl}>Records from</label>
+                <select value={formId} onChange={(e) => { setFormId(e.target.value); setTitleField(''); setSubtitleField(''); setMetaField(''); }} className={`mt-1.5 ${sel}`}>
+                  {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Title field</label>
+                  <select value={titleField} onChange={(e) => setTitleField(e.target.value)} className={`mt-1.5 ${sel}`}>
+                    <option value="">Auto</option>
+                    {flds.map((f) => <option key={f.id} value={f.id}>{f.label ?? f.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Subtitle field</label>
+                  <select value={subtitleField} onChange={(e) => setSubtitleField(e.target.value)} className={`mt-1.5 ${sel}`}>
+                    <option value="">Date submitted</option>
+                    {flds.map((f) => <option key={f.id} value={f.id}>{f.label ?? f.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Detail field</label>
+                  <select value={metaField} onChange={(e) => setMetaField(e.target.value)} className={`mt-1.5 ${sel}`}>
+                    <option value="">None</option>
+                    {flds.map((f) => <option key={f.id} value={f.id}>{f.label ?? f.id}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Rows</label>
+                  <input type="number" min={1} max={25} value={limit} onChange={(e) => setLimit(Number(e.target.value) || 6)} className={`mt-1.5 ${sel}`} />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
+                <input type="checkbox" className="app-accent rounded" checked={linkToRecords} onChange={(e) => setLinkToRecords(e.target.checked)} />
+                Link rows to their records
+              </label>
+            </>
+          )}
+
+          {widget.kind === 'text' && (
+            <div>
+              <label className={lbl}>Text</label>
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder="Add a note, heading, or instructions…" className={`mt-1.5 ${sel} resize-y`} />
+            </div>
+          )}
+
+          {(widget.kind === 'actions' || widget.kind === 'activity') && (
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              {widget.kind === 'actions'
+                ? 'Shows a “new record” button for every form the viewer can submit to.'
+                : 'Shows the newest records across all forms the viewer can see.'}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save}>Save widget</Button>
+        </div>
       </div>
     </Modal>
   );

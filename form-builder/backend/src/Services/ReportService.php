@@ -37,6 +37,12 @@ class ReportService
     private const SKIP_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
     private const NUMERIC_TYPES = ['number', 'rating', 'scale'];
     private const DATE_TYPES = ['date', 'datetime'];
+    // dateRange quick presets that constrain the query ('all' / unknown values add no constraint).
+    private const RANGE_PRESETS = ['7d', '30d', '90d', 'thisMonth', 'ytd'];
+    // Chart types that accept a seriesBy second dimension (pie/donut/kpi stay single-dimension).
+    private const SERIESBY_VIZ = ['bar', 'line', 'area'];
+    // Row cap for the two-dimensional (groupBy × seriesBy) aggregation before the PHP pivot.
+    private const MAX_PIVOT_CELLS = 2000;
     private const MAX_FILTERS = 25;
     // Drafts + archived never appear in reports; everything else (submitted, reviewed, approved, …) does.
     private const HIDDEN_STATUSES = "('draft', 'archived')";
@@ -44,7 +50,7 @@ class ReportService
     public function __construct(private SQLiteConnection $sqlite, private ?FormService $formService = null) {}
 
     /**
-     * @param array $spec  { viz, filters, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit? }
+     * @param array $spec  { viz, filters, groupBy, measure, columns, joins?, seriesSort?, sort?, having?, limit?, dateRange?, seriesBy? }
      * @param array $fields the base form's field definitions
      * @param array $joins  resolved + authorised joins: [{ formId, via, type:'inner'|'left', scope:'all'|'own', fields, path }]
      * @param ?array $resolvableFormIds  target forms whose linked_record labels the caller may reveal in
@@ -220,6 +226,27 @@ class ReportService
                     }
                 }
             }
+            // ── dateRange quick preset (dashboard range picker) — the boundary is computed in PHP in the
+            // app timezone (same machinery as the relative-date filters above) and bound as a parameter;
+            // the preset never reaches SQL. 'all' / unknown presets add no constraint (legacy behaviour).
+            $drPreset = is_array($spec['dateRange'] ?? null) ? (string) ($spec['dateRange']['preset'] ?? '') : '';
+            if (in_array($drPreset, self::RANGE_PRESETS, true)) {
+                $dref = (string) ($spec['dateRange']['field'] ?? '__submitted_at');
+                // Only a date-typed field (or the submitted-at pseudo-field) can carry the range; anything
+                // else — including refs that don't resolve — falls back to submission time.
+                if ($refExpr($dref) === null || !in_array($refField($dref)['type'] ?? '', self::DATE_TYPES, true)) {
+                    $dref = '__submitted_at';
+                }
+                $le = $localExpr((string) $refExpr($dref));
+                $params[':drange'] = match ($drPreset) {
+                    '7d' => (clone $nowLocal)->modify('-7 days')->format('Y-m-d'),
+                    '30d' => (clone $nowLocal)->modify('-30 days')->format('Y-m-d'),
+                    '90d' => (clone $nowLocal)->modify('-90 days')->format('Y-m-d'),
+                    'thisMonth' => $nowLocal->format('Y-m-01'),
+                    default => $nowLocal->format('Y-01-01'), // ytd
+                };
+                $where[] = "date($le) >= :drange";
+            }
             $whereSql = implode(' AND ', $where);
             $limit = max(1, min((int) ($spec['limit'] ?? 100), 1000));
 
@@ -240,7 +267,36 @@ class ReportService
             if ($viz === 'kpi') {
                 $stmt = $db->prepare("SELECT " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS val FROM $from WHERE $whereSql");
                 $stmt->execute($params);
-                return ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
+                $kpi = ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
+
+                // Sparkline (spec.sparkline + a date-BUCKETED groupBy): also return the bucketed trend so
+                // the renderer can draw a mini axis-less area under the big number. Same whitelisted
+                // refExpr/bucket machinery as the chart-series path; chronological; capped at 90 buckets.
+                if (($spec['sparkline'] ?? null) === true && !empty($spec['groupBy']['field'])) {
+                    $gref = (string) $spec['groupBy']['field'];
+                    $gcol = $refExpr($gref);
+                    $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
+                    if ($gcol !== null && in_array($bucket, ['day', 'month', 'year'], true)) {
+                        $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
+                        $key = match ($bucket) {
+                            'month' => "strftime('%Y-%m', ge.value)",
+                            'year'  => "strftime('%Y', ge.value)",
+                            default => 'date(ge.value)',
+                        };
+                        $sq = $db->prepare(
+                            "SELECT $key AS k, " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS v
+                             FROM $from, json_each($normArr) ge WHERE $whereSql GROUP BY k ORDER BY k ASC LIMIT 90"
+                        );
+                        $sq->execute($params);
+                        $trend = [];
+                        foreach ($sq->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                            if ($row['k'] === null || $row['k'] === '') { continue; }
+                            $trend[] = ['label' => (string) $row['k'], 'value' => (float) $row['v']];
+                        }
+                        if (count($trend) >= 2) { $kpi['series'] = $trend; }
+                    }
+                }
+                return $kpi;
             }
 
             // ── chart series (group + aggregate; array group-by values are unnested via json_each) ──
@@ -260,6 +316,37 @@ class ReportService
                     default => 'ge.value',
                 };
                 $agg = $aggExpr($spec['measure'] ?? ['fn' => 'count']);
+
+                // ── OPTIONAL second dimension (seriesBy) — bar/line/area only. The field passes the SAME
+                // whitelist as groupBy (refExpr rejects unknown/undeclared-join refs); the query aggregates
+                // by BOTH dims and the series cap + 'Other' bucketing happens in PHP post-aggregation.
+                $sbRef = (in_array($viz, self::SERIESBY_VIZ, true) && is_array($spec['seriesBy'] ?? null))
+                    ? (string) ($spec['seriesBy']['field'] ?? '') : '';
+                $sbExpr = $sbRef !== '' ? $refExpr($sbRef) : null;
+                if ($sbExpr !== null) {
+                    // Unnest array answers the same way as the primary dimension.
+                    $sbNorm = "CASE WHEN json_valid($sbExpr) AND json_type($sbExpr) = 'array' THEN $sbExpr ELSE json_array($sbExpr) END";
+                    $groupFrom .= ", json_each($sbNorm) se";
+                    $havingSql = '';
+                    if (isset($spec['having']['op']) && isset(self::OPS[$spec['having']['op']])) {
+                        $havingSql = " HAVING $agg " . self::OPS[$spec['having']['op']] . " CAST(:hv AS REAL)";
+                        $params[':hv'] = (string) ($spec['having']['value'] ?? 0);
+                    }
+                    $stmt = $db->prepare("SELECT $key AS k, se.value AS s, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k, s$havingSql ORDER BY k ASC LIMIT :lim");
+                    foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
+                    $stmt->bindValue(':lim', self::MAX_PIVOT_CELLS, PDO::PARAM_INT);
+                    $stmt->execute();
+                    return ['viz' => $viz, 'series' => $this->pivotSeries(
+                        $stmt->fetchAll(PDO::FETCH_ASSOC),
+                        $refField($gref),
+                        $refField($sbRef),
+                        (int) ($spec['seriesBy']['limit'] ?? 5),
+                        min($limit, 50),
+                        $bucket !== 'none' || (($spec['seriesSort'] ?? '') === 'label'),
+                        ($spec['sort'] ?? 'desc') === 'asc'
+                    )];
+                }
+
                 // Chronological order for date buckets; else by label if asked, else by value.
                 $seriesSort = (string) ($spec['seriesSort'] ?? '');
                 if ($bucket !== 'none' || $seriesSort === 'label') {
@@ -363,6 +450,59 @@ class ReportService
                 try { $db->exec("DETACH DATABASE $alias"); } catch (\Throwable $e) { /* connection closes at request end anyway */ }
             }
         }
+    }
+
+    /**
+     * Pivot two-dimension grouped rows (k = groupBy key, s = seriesBy key, v = aggregate) into FLAT
+     * chart rows { label, value, series }: keeps the top $seriesLimit (clamped 2..8) series by total
+     * value, buckets the remainder into a literal 'Other', caps distinct labels, and maps stored values
+     * to option labels. Rows arrive ORDER BY k ASC, so insertion order IS chronological/label order.
+     *
+     * @param array  $rows        [['k' =>, 's' =>, 'v' =>], …] from the two-dim aggregation
+     * @param ?array $gfield      groupBy field definition (option-label mapping)
+     * @param ?array $sfield      seriesBy field definition
+     * @param bool   $byLabel     true = keep chronological/label order; false = order labels by total value
+     * @param bool   $asc         value-order direction when !$byLabel
+     */
+    private function pivotSeries(array $rows, ?array $gfield, ?array $sfield, int $seriesLimit, int $labelLimit, bool $byLabel, bool $asc): array
+    {
+        $seriesLimit = max(2, min($seriesLimit, 8));
+        $cells = [];         // raw label key => raw series key => summed value
+        $labelTotals = [];   // raw label key => total
+        $seriesTotals = [];  // raw series key => total
+        foreach ($rows as $r) {
+            $k = $r['k'] === null ? '' : (string) $r['k'];
+            $s = $r['s'] === null ? '' : (string) $r['s'];
+            $v = (float) $r['v'];
+            $cells[$k][$s] = ($cells[$k][$s] ?? 0.0) + $v;
+            $labelTotals[$k] = ($labelTotals[$k] ?? 0.0) + $v;
+            $seriesTotals[$s] = ($seriesTotals[$s] ?? 0.0) + $v;
+        }
+        if (!$byLabel) {
+            $asc ? asort($labelTotals) : arsort($labelTotals);
+        }
+        $labels = array_slice(array_keys($labelTotals), 0, $labelLimit);
+        arsort($seriesTotals);
+        $kept = array_slice(array_keys($seriesTotals), 0, $seriesLimit);
+
+        $out = [];
+        foreach ($labels as $k) {
+            $label = (string) $k === '' ? '—' : $this->optLabel($gfield, (string) $k);
+            foreach ($kept as $s) {
+                if (!isset($cells[$k][$s])) { continue; }
+                $out[] = [
+                    'label' => $label,
+                    'value' => (float) $cells[$k][$s],
+                    'series' => (string) $s === '' ? '—' : $this->optLabel($sfield, (string) $s),
+                ];
+            }
+            $other = null;
+            foreach ($cells[$k] as $s => $v) {
+                if (!in_array($s, $kept, true)) { $other = ($other ?? 0.0) + $v; }
+            }
+            if ($other !== null) { $out[] = ['label' => $label, 'value' => $other, 'series' => 'Other']; }
+        }
+        return $out;
     }
 
     /** Whitelist an identifier to safe chars (matches the field-id rules enforced on write). */

@@ -10,6 +10,7 @@ type Field = { id: string; label: string; type: string; properties?: { options?:
 type FieldOpt = { ref: string; label: string; type: string; properties?: Field['properties'] };
 type Filter = { field: string; op: string; value: string };
 type Join = { via: string; formId: string; type: 'inner' | 'left' };
+type RangePreset = NonNullable<AppReportSpec['dateRange']>['preset'];
 
 const LAYOUT_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
 const CHOICE_TYPES = ['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio'];
@@ -36,6 +37,15 @@ const ACCENT_SWATCHES: Array<{ key: ReportAccent | undefined; label: string; swa
   { key: 'red', label: 'Red', swatch: '#ef4444' },
   { key: 'violet', label: 'Violet', swatch: '#8b5cf6' },
   { key: 'teal', label: 'Teal', swatch: '#14b8a6' },
+];
+
+const RANGE_OPTIONS: Array<{ v: RangePreset; label: string }> = [
+  { v: 'all', label: 'All time' },
+  { v: '7d', label: 'Last 7 days' },
+  { v: '30d', label: 'Last 30 days' },
+  { v: '90d', label: 'Last 90 days' },
+  { v: 'thisMonth', label: 'This month' },
+  { v: 'ytd', label: 'Year to date' },
 ];
 
 // Submission time + workflow status are always-available dimensions (server pseudo-fields).
@@ -110,6 +120,14 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   const initTableSort = (initSpec?.sort && typeof initSpec.sort === 'object') ? initSpec.sort as { by: string; dir: 'asc' | 'desc' } : { by: '__submitted_at', dir: 'desc' as const };
   const [tableSort, setTableSort] = useState<{ by: string; dir: 'asc' | 'desc' }>(initTableSort);
 
+  // Time window + second dimension (both optional; absent = the legacy all-time, single-series query).
+  // '' rangeField = the default '__submitted_at', so a saved explicit default round-trips as unset.
+  const [rangePreset, setRangePreset] = useState<RangePreset>(initSpec?.dateRange?.preset ?? 'all');
+  const [rangeField, setRangeField] = useState(initSpec?.dateRange?.field === '__submitted_at' ? '' : (initSpec?.dateRange?.field ?? ''));
+  const [splitField, setSplitField] = useState(initSpec?.seriesBy?.field ?? '');
+  const [splitLimit, setSplitLimit] = useState(initSpec?.seriesBy?.limit ?? 5);
+  const [sparkline, setSparkline] = useState(initSpec?.sparkline === true);
+
   // Presentation options (all optional; unset = the default look). Legacy `seriesSort: 'label'` maps
   // onto the 4-way order so old reports open with the control reflecting how they already render.
   const [accent, setAccent] = useState<ReportAccent | undefined>(initSpec?.color);
@@ -153,6 +171,10 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   const measureNeedsField = measureFn !== 'count';
   const measureFieldOptions = measureFn === 'countDistinct' ? allFields.filter((f) => f.ref !== '__submitted_at') : numberFields;
   const groupIsDate = DATE_TYPES.includes(fieldByRef[groupField]?.type ?? '');
+  // Real date fields (base + joined) — '__submitted_at' is offered separately as the default.
+  const dateFieldOpts = allFields.filter((f) => DATE_TYPES.includes(f.type) && f.ref !== '__submitted_at');
+  // "Split by" candidates: low-cardinality choice-like fields (+ status). The group-by field is excluded.
+  const splittable = allFields.filter((f) => (CHOICE_TYPES.includes(f.type) || f.ref === '__status') && f.ref !== groupField);
 
   // Changing the source form invalidates everything that referenced it.
   const prevFormRef = useRef(formId);
@@ -160,6 +182,7 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
     if (prevFormRef.current !== formId) {
       prevFormRef.current = formId;
       setJoins([]); setGroupField(''); setMeasureField(''); setColumns([]); setFilters([]);
+      setRangeField(''); setSplitField('');
       setTableSort({ by: '__submitted_at', dir: 'desc' });
     }
   }, [formId]);
@@ -183,6 +206,17 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
     setFilters((fs) => fs.filter((f) => !f.field.startsWith(prefix2)));
     setGroupField((g) => (g.startsWith(prefix2) ? '' : g));
     setMeasureField((m) => (m.startsWith(prefix2) ? '' : m));
+    setRangeField((r) => (r.startsWith(prefix2) ? '' : r));
+    setSplitField((s) => (s.startsWith(prefix2) ? '' : s));
+  };
+
+  // Turning the KPI sparkline on needs a date-bucketed groupBy behind it — default one in when missing.
+  const toggleSparkline = (on: boolean) => {
+    setSparkline(on);
+    if (on) {
+      if (!groupIsDate) setGroupField('__submitted_at');
+      if (bucket !== 'day' && bucket !== 'month') setBucket('day');
+    }
   };
 
   // The QUERY part of the spec — the only part that requires a server round-trip when it changes.
@@ -196,10 +230,26 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
       base.seriesSort = seriesOrder.startsWith('label') ? 'label' : 'value';
       base.sort = seriesOrder.endsWith('_asc') ? 'asc' : 'desc';
     }
-    if (viz === 'kpi') base.measure = { fn: measureFn, field: measureField };
+    if (isCartesian && splitField && splitField !== groupField) {
+      base.seriesBy = { field: splitField, limit: splitLimit };
+    }
+    if (viz === 'kpi') {
+      base.measure = { fn: measureFn, field: measureField };
+      if (sparkline) {
+        base.sparkline = true;
+        base.groupBy = {
+          field: groupIsDate ? groupField : '__submitted_at',
+          bucket: bucket === 'day' || bucket === 'month' || bucket === 'year' ? bucket : 'day',
+        };
+      }
+    }
     if (viz === 'table') { base.sort = tableSort; base.columns = columns; }
+    // Time window applies to every viz; 'all' = unset (the legacy all-time query).
+    if (rangePreset !== 'all') {
+      base.dateRange = rangeField ? { preset: rangePreset, field: rangeField } : { preset: rangePreset };
+    }
     return base;
-  }, [formId, viz, isSeries, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit, seriesOrder, tableSort]);
+  }, [formId, viz, isSeries, isCartesian, joins, groupField, groupIsDate, bucket, measureFn, measureField, columns, filters, limit, seriesOrder, tableSort, splitField, splitLimit, sparkline, rangePreset, rangeField]);
 
   // Full spec = query + presentation. Presentation-only edits re-render the preview instantly
   // (no refetch) because the fetch effect below is keyed on querySpec alone.
@@ -268,9 +318,12 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
 
   return (
     <Modal isOpen onClose={onClose} title={report ? 'Edit report' : 'New report'} size="2xl">
-      <div className="flex flex-col-reverse lg:grid lg:grid-cols-[minmax(0,360px)_1fr] max-h-[82dvh] lg:max-h-[76dvh] min-h-0">
-        {/* Controls */}
-        <div className="p-5 space-y-6 overflow-y-auto flex-1 min-h-0 lg:border-r border-gray-200 dark:border-slate-800">
+      {/* Fixed-height column: the editor never grows past the modal body, so the modal never scrolls as
+          a whole — the controls column is the only scroll region and the footer is always pinned. */}
+      <div className="flex h-[min(78dvh,calc(90dvh_-_7rem))] flex-col">
+        <div className="flex flex-1 min-h-0 flex-col-reverse lg:grid lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+          {/* Controls — independently scrollable; the preview stays put while this scrolls */}
+          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto p-5 space-y-6 lg:border-r border-gray-200 dark:border-slate-800">
           <div className="grid grid-cols-1 gap-3">
             <div>
               <label className={sectionLabel}>Report name</label>
@@ -289,6 +342,21 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
             <select value={formId} onChange={(e) => setFormId(e.target.value)} aria-label="Source form" className={`mt-1.5 ${fieldCls}`}>
               {forms.map((f) => <option key={f.formId} value={f.formId}>{f.displayName}</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className={sectionLabel}>Date range</label>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              <select value={rangePreset} onChange={(e) => setRangePreset(e.target.value as RangePreset)} aria-label="Date range" className={`${selCls} flex-1 min-w-[140px]`}>
+                {RANGE_OPTIONS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              {rangePreset !== 'all' && dateFieldOpts.length > 0 && (
+                <select value={rangeField} onChange={(e) => setRangeField(e.target.value)} aria-label="Date range field" className={`${selCls} flex-1 min-w-[140px]`}>
+                  <option value="">Submitted date</option>
+                  {dateFieldOpts.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                </select>
+              )}
+            </div>
           </div>
 
           {linkedFields.length > 0 && (
@@ -359,6 +427,28 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
                 {measureNeedsField && !measureField && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">Choose a field to {measureFn === 'countDistinct' ? 'count uniquely' : measureFn}.</p>}
                 {measureFn !== 'count' && measureFn !== 'countDistinct' && numberFields.length === 0 && <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">This form has no number fields to {measureFn}.</p>}
               </div>
+              {isCartesian && (
+                <div>
+                  <label className={sectionLabel}>Split by <span className="normal-case font-normal text-gray-400">(optional)</span></label>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    <select
+                      value={splittable.some((f) => f.ref === splitField) ? splitField : ''}
+                      onChange={(e) => setSplitField(e.target.value)}
+                      aria-label="Split by field"
+                      className={`${selCls} flex-1 min-w-[140px]`}
+                    >
+                      <option value="">No split</option>
+                      {splittable.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                    </select>
+                    {!!splitField && splitField !== groupField && (
+                      <select value={splitLimit} onChange={(e) => setSplitLimit(Math.max(2, Math.min(8, Number(e.target.value) || 5)))} aria-label="Max series" className={selCls}>
+                        {[2, 3, 4, 5, 6, 7, 8].map((n) => <option key={n} value={n}>Top {n}</option>)}
+                      </select>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-400 dark:text-slate-500 mt-1.5">Adds a second dimension — one colour per value; extras are grouped into “Other”.</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -496,6 +586,37 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
             </div>
           )}
 
+          {viz === 'kpi' && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
+                <input type="checkbox" className="app-accent rounded" checked={sparkline} onChange={(e) => toggleSparkline(e.target.checked)} />
+                Show a mini trend under the number
+              </label>
+              {sparkline && (
+                <div className="flex flex-wrap gap-2 pl-6">
+                  <select
+                    value={groupIsDate ? groupField : '__submitted_at'}
+                    onChange={(e) => setGroupField(e.target.value)}
+                    aria-label="Trend date field"
+                    className={`${selCls} flex-1 min-w-[140px]`}
+                  >
+                    <option value="__submitted_at">Submitted date</option>
+                    {dateFieldOpts.map((f) => <option key={f.ref} value={f.ref}>{f.label}</option>)}
+                  </select>
+                  <select
+                    value={bucket === 'month' ? 'month' : 'day'}
+                    onChange={(e) => setBucket(e.target.value as typeof bucket)}
+                    aria-label="Trend interval"
+                    className={selCls}
+                  >
+                    <option value="day">By day</option>
+                    <option value="month">By month</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
           {isCartesian && (
             <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-slate-300 cursor-pointer">
               <input type="checkbox" className="app-accent rounded" checked={labelsOn} onChange={(e) => setDataLabels(e.target.checked)} />
@@ -579,32 +700,40 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
             )}
             </Section>
           )}
-        </div>
+          </div>
 
-        {/* Live preview — capped + on top on mobile, full right column on desktop */}
-        <div className="p-5 overflow-y-auto bg-gray-50/60 dark:bg-slate-950/40 max-h-[42dvh] lg:max-h-none shrink-0 border-b lg:border-b-0 border-gray-200 dark:border-slate-800">
-          <div className="flex items-center justify-between mb-3">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{name.trim() || 'Live preview'}</h3>
-              {description.trim() && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{description.trim()}</p>}
+          {/* Live preview — pinned in place (top ~40% on mobile, full right column on lg+). It never
+              scrolls with the controls; a tall chart/table scrolls inside its own card only. */}
+          <div className="flex h-[40%] shrink-0 min-h-0 min-w-0 flex-col p-4 sm:p-5 bg-gray-50/60 dark:bg-slate-950/40 border-b lg:border-b-0 border-gray-200 dark:border-slate-800 lg:h-auto">
+            <div className="mb-3 flex shrink-0 items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-white truncate">{name.trim() || 'Live preview'}</h3>
+                {description.trim() && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{description.trim()}</p>}
+              </div>
+              {running && <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />}
             </div>
-            {running && <Loader2 className="h-4 w-4 animate-spin text-gray-400 shrink-0" />}
-          </div>
-          <div className="rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 min-h-[220px] flex flex-col justify-center">
-            {previewErr ? (
-              <p className="py-10 text-center text-sm text-red-500">{previewErr}</p>
-            ) : preview ? (
-              <ReportResultView result={preview} spec={spec} />
-            ) : (
-              <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">Configure the report to see a preview.</p>
-            )}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+              {/* min-h guard: recharts' ResponsiveContainer needs a sized parent — this keeps the chart
+                  area ≥220px even while the modal is animating in or the column is short, and fills the
+                  card so short previews stay vertically centred. */}
+              <div className="flex min-h-[max(100%,220px)] min-w-0 flex-col justify-center p-4">
+                {previewErr ? (
+                  <p className="py-10 text-center text-sm text-red-500">{previewErr}</p>
+                ) : preview ? (
+                  <ReportResultView result={preview} spec={spec} />
+                ) : (
+                  <p className="py-10 text-center text-sm text-gray-400 dark:text-slate-500">Configure the report to see a preview.</p>
+                )}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
-        <Button onClick={handleSave} disabled={!canSave}>{report ? 'Save changes' : 'Create report'}</Button>
+        {/* Footer — outside every scroll region, so Save/Cancel are always visible */}
+        <div className="flex shrink-0 items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 dark:border-slate-800 bg-gray-50/80 dark:bg-white/[0.02]">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={!canSave}>{report ? 'Save changes' : 'Create report'}</Button>
+        </div>
       </div>
     </Modal>
   );

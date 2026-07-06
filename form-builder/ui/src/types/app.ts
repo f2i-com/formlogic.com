@@ -121,6 +121,13 @@ export interface AppReportSpec {
   /** Filter grouped results by the aggregate value. */
   having?: { op: string; value: string | number };
   limit?: number;
+  /** Quick server-side time window; absent/'all' = no constraint (legacy behaviour). `field` defaults to
+   *  '__submitted_at'; a ref that isn't a date-typed field falls back to submitted-at. */
+  dateRange?: { preset: 'all' | '7d' | '30d' | '90d' | 'thisMonth' | 'ytd'; field?: string };
+  /** Second group dimension — bar/line/area with a groupBy ONLY (ignored elsewhere). The top `limit`
+   *  (2–8, default 5) series by total value are kept; the remainder buckets into a literal 'Other'.
+   *  Result rows stay flat ({ label, value, series }) — the renderer pivots by `series`. */
+  seriesBy?: { field: string; limit?: number };
   // ── Presentation (all optional; absent = the default look, so old specs render unchanged) ──
   /** Chart accent colour; unset/'primary' uses the app colour. */
   color?: ReportAccent;
@@ -139,13 +146,16 @@ export interface AppReportSpec {
   horizontal?: boolean;
   /** Client-side series re-sort (covers orders the server can't produce, e.g. label Z→A). */
   seriesOrder?: ReportSeriesOrder;
+  /** KPI with a date-bucketed groupBy: big number = total, with a mini trend rendered underneath. */
+  sparkline?: boolean;
 }
 
 export interface AppReportResult {
   viz: string;
   columns?: Array<{ id: string; label: string }>;
   rows?: Array<Record<string, unknown>>;
-  series?: Array<{ label: string; value: number }>;
+  /** Flat chart rows; `series` is set only when the spec used seriesBy (renderer pivots by it). */
+  series?: Array<{ label: string; value: number; series?: string }>;
   value?: number;
 }
 
@@ -174,8 +184,9 @@ export interface DashboardWidget {
   kind: DashboardWidgetKind;
   /** kind 'report' — the no-code query + chart type (any AppReportSpec viz). */
   spec?: AppReportSpec;
-  /** kind 'list' — a compact recent-records list from one form. */
-  list?: { formId: string; titleField?: string; subtitleField?: string; limit?: number };
+  /** kind 'list' — a compact recent-records list from one form. `metaField` renders a trailing
+   *  meta value per row; `linkToRecords` makes rows navigate to the record (default off). */
+  list?: { formId: string; titleField?: string; subtitleField?: string; metaField?: string; limit?: number; linkToRecords?: boolean };
   /** kind 'text' — a static note / section heading. */
   text?: { body: string };
   // kind 'actions' | 'activity' — app-scope built-ins derived from the app (no extra config).
@@ -187,6 +198,10 @@ export interface DashboardScreen {
   /** Grid column count (default 12). */
   cols?: number;
   widgets: DashboardWidget[];
+  /** Date-range picker visibility: shown when !== false AND at least one report widget is time-aware
+   *  (date-bucketed groupBy or a dateRange). The picker merges its preset into each report widget's
+   *  spec.dateRange before running it. */
+  showRangePicker?: boolean;
 }
 
 export interface AppForm {

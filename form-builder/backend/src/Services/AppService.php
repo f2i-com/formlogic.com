@@ -219,6 +219,68 @@ class AppService
         return $this->getApp($id);
     }
 
+    /**
+     * One-click companion app (e.g. an admin console) over the SAME data: creates a
+     * fresh app and attaches every one of the source app's forms to it. Forms are
+     * shared by form_id (responses live in per-form SQLite), so both apps read and
+     * write the same records. The companion copies ONLY the source's theme (brand
+     * continuity) — members, roles, custom logic/screen, domains, dashboards and
+     * reports are all its own (createApp seeds fresh system roles + the owner
+     * membership + owner permission grants).
+     */
+    public function createCompanionApp(string $sourceAppId, string $ownerId, ?string $name = null): array
+    {
+        $source = $this->getApp($sourceAppId);
+        if (!$source) {
+            throw new \RuntimeException('Source app not found');
+        }
+
+        $companionName = trim((string) ($name ?? ''));
+        if ($companionName === '') {
+            $companionName = $source['name'] . ' Admin';
+        }
+        // apps.name is VARCHAR(255) — keep the derived default (or a pasted name) within it.
+        $companionName = mb_substr($companionName, 0, 255);
+
+        // Atomic: the companion app (createApp already guards against an outer
+        // transaction) and ALL of its form attachments succeed or fail together —
+        // no half-attached companion on a mid-loop failure.
+        $ownTransaction = !$this->mysql->inTransaction();
+        if ($ownTransaction) {
+            $this->mysql->beginTransaction();
+        }
+        try {
+            $companion = $this->createApp([
+                'name' => $companionName,
+                'theme' => $source['theme'] ?? [],
+                'status' => 'draft',
+            ], $ownerId);
+
+            // Attach ALL the source's forms — hidden ones too (an admin console needs
+            // everything). getAppForms is sort_order-ordered and addFormToApp appends,
+            // so the companion keeps the source's nav order and display names.
+            foreach ($this->getAppForms($sourceAppId) as $af) {
+                try {
+                    $this->addFormToApp($companion['id'], $af['formId'], $af['displayName'] ?? null);
+                } catch (\RuntimeException $e) {
+                    // Duplicate attach (defensive — e.g. a concurrent attach to the
+                    // fresh app, or a duplicate join row on the source): skip it.
+                }
+            }
+
+            if ($ownTransaction) {
+                $this->mysql->commit();
+            }
+        } catch (\Exception $e) {
+            if ($ownTransaction && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+
+        return $this->getApp($companion['id']);
+    }
+
     public function updateApp(string $appId, array $data): ?array
     {
         $existing = $this->getApp($appId);

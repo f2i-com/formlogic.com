@@ -21,6 +21,8 @@ class AppReportService
     private const AGG = ['count', 'countDistinct', 'sum', 'avg', 'min', 'max'];
     private const BUCKETS = ['none', 'day', 'month', 'year'];
     private const PSEUDO = ['__submitted_at', '__status'];
+    // dateRange quick presets ('all' persists but adds no query constraint).
+    private const DATE_RANGE_PRESETS = ['all', '7d', '30d', '90d', 'thisMonth', 'ytd'];
     // Presentation-only spec options (rendered client-side; never touch the query).
     private const ACCENT_COLORS = ['primary', 'blue', 'green', 'amber', 'red', 'violet', 'teal'];
     private const NUM_FORMATS = ['plain', 'compact', 'currency', 'percent'];
@@ -200,7 +202,32 @@ class AppReportService
         }
         if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
 
-        return $this->cleanPresentation($spec, $clean);
+        return $this->cleanPresentation($spec, $this->cleanRangeAndSeries($spec, $clean, $refValid));
+    }
+
+    /**
+     * Whitelist the OPTIONAL query additions dateRange + seriesBy using the CALLER's field-ref validator,
+     * so the app save path and the anonymous public path each enforce their own visibility rules (the
+     * public validator already restricts refs to publicRecordFields and forbids joins). Invalid pieces
+     * are dropped, never an error: a bad dateRange.field falls back to the engine's __submitted_at
+     * default (the preset is kept), a bad seriesBy.field drops seriesBy entirely.
+     */
+    private function cleanRangeAndSeries(array $spec, array $clean, callable $refValid): array
+    {
+        if (is_array($spec['dateRange'] ?? null) && in_array($spec['dateRange']['preset'] ?? null, self::DATE_RANGE_PRESETS, true)) {
+            $dr = ['preset' => (string) $spec['dateRange']['preset']];
+            $df = $spec['dateRange']['field'] ?? null;
+            if ($df !== null && $refValid($df)) { $dr['field'] = (string) $df; }
+            $clean['dateRange'] = $dr;
+        }
+        if (is_array($spec['seriesBy'] ?? null) && $refValid($spec['seriesBy']['field'] ?? null)) {
+            $sb = ['field' => (string) $spec['seriesBy']['field']];
+            if (isset($spec['seriesBy']['limit']) && is_numeric($spec['seriesBy']['limit'])) {
+                $sb['limit'] = max(2, min((int) $spec['seriesBy']['limit'], 8));
+            }
+            $clean['seriesBy'] = $sb;
+        }
+        return $clean;
     }
 
     /**
@@ -222,6 +249,7 @@ class AppReportService
         if (isset($spec['target']) && is_numeric($spec['target']) && is_finite((float) $spec['target'])) { $clean['target'] = $spec['target'] + 0; }
         if (is_bool($spec['horizontal'] ?? null)) { $clean['horizontal'] = $spec['horizontal']; }
         if (in_array($spec['seriesOrder'] ?? null, self::SERIES_ORDERS, true)) { $clean['seriesOrder'] = (string) $spec['seriesOrder']; }
+        if (is_bool($spec['sparkline'] ?? null)) { $clean['sparkline'] = $spec['sparkline']; }
         return $clean;
     }
 
@@ -298,10 +326,11 @@ class AppReportService
                 $fid = (string) ($w['list']['formId'] ?? '');
                 if (!isset($formFields[$fid])) { continue; }
                 $list = ['formId' => $fid, 'limit' => max(1, min((int) ($w['list']['limit'] ?? 6), 25))];
-                foreach (['titleField', 'subtitleField'] as $k) {
+                foreach (['titleField', 'subtitleField', 'metaField'] as $k) {
                     $ref = (string) ($w['list'][$k] ?? '');
                     if ($ref !== '' && isset($formFields[$fid][$ref])) { $list[$k] = $ref; }
                 }
+                if (is_bool($w['list']['linkToRecords'] ?? null)) { $list['linkToRecords'] = $w['list']['linkToRecords']; }
                 $clean['list'] = $list;
             } elseif ($kind === 'text') {
                 $clean['text'] = ['body' => $this->clamp($w['text']['body'] ?? null, self::TEXT_BODY_MAX) ?? ''];
@@ -309,7 +338,9 @@ class AppReportService
             // actions/activity carry no extra config.
             $out[] = $clean;
         }
-        return ['version' => 1, 'cols' => $cols, 'widgets' => array_values($out)];
+        $dash = ['version' => 1, 'cols' => $cols, 'widgets' => array_values($out)];
+        if (is_bool($dashboard['showRangePicker'] ?? null)) { $dash['showRangePicker'] = $dashboard['showRangePicker']; }
+        return $dash;
     }
 
     /**
@@ -408,6 +439,6 @@ class AppReportService
 
         if (isset($spec['limit'])) { $clean['limit'] = max(1, min((int) $spec['limit'], 1000)); }
 
-        return ['ok' => true, 'error' => null, 'spec' => $this->cleanPresentation($spec, $clean)];
+        return ['ok' => true, 'error' => null, 'spec' => $this->cleanPresentation($spec, $this->cleanRangeAndSeries($spec, $clean, $refValid))];
     }
 }

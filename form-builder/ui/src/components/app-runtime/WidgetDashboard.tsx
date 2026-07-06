@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { Loader2, Plus, ArrowRight, LayoutGrid } from 'lucide-react';
+import { Activity as ActivityGlyph, AlertCircle, ArrowRight, ChevronRight, Inbox, LayoutGrid, Plus, Zap } from 'lucide-react';
 import { DynamicIcon } from '../ui/DynamicIcon';
 import { ReportResultView } from './ReportResultView';
 import { formatRelativeTime } from '../../lib/utils';
@@ -13,6 +13,25 @@ import {
 export type { WidgetDataForm, WidgetRecord, ActivityRow, WidgetDataDeps } from './widgetData';
 
 const CARD = 'rounded-2xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/50';
+
+// ── Dashboard date-range picker ────────────────────────────────────────────────
+
+type RangePreset = 'all' | '7d' | '30d' | '90d';
+
+const RANGE_PRESETS: Array<{ key: RangePreset; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: '7d', label: '7d' },
+  { key: '30d', label: '30d' },
+  { key: '90d', label: '90d' },
+];
+
+/** A dashboard is range-pickable when a report widget charts time (date-bucketed groupBy) or already
+ *  scopes itself with a dateRange. */
+function isTimeAware(w: DashboardWidget): boolean {
+  if (w.kind !== 'report' || !w.spec) return false;
+  const bucket = w.spec.groupBy?.bucket;
+  return bucket === 'day' || bucket === 'month' || bucket === 'year' || w.spec.dateRange != null;
+}
 
 export interface WidgetDashboardProps extends WidgetDataDeps {
   dashboard: DashboardScreen;
@@ -49,7 +68,21 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
     [dashboard.widgets]
   );
 
-  const data = useWidgetData(widgets, props);
+  // Per-visit range override (no persistence): the picker's preset is merged into every report
+  // widget's spec.dateRange before running — preserving a widget's own dateRange.field, defaulting
+  // '__submitted_at'. 'all' clears the override so the untouched specs run (today's behaviour).
+  const [range, setRange] = useState<RangePreset>('all');
+  const showPicker = dashboard.showRangePicker !== false && widgets.some(isTimeAware);
+  const effectiveWidgets = useMemo(() => {
+    if (range === 'all') return widgets;
+    return widgets.map((w) =>
+      w.kind === 'report' && w.spec
+        ? { ...w, spec: { ...w.spec, dateRange: { preset: range, field: w.spec.dateRange?.field ?? '__submitted_at' } } }
+        : w
+    );
+  }, [widgets, range]);
+
+  const data = useWidgetData(effectiveWidgets, props);
 
   if (widgets.length === 0) {
     return (
@@ -77,14 +110,41 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
 
   return (
     <div className={props.className ?? 'w-full'}>
+      {showPicker && (
+        <div className="mb-3 flex justify-end">
+          <div
+            role="group"
+            aria-label="Date range"
+            className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200/80 bg-white p-0.5 dark:border-slate-700/60 dark:bg-slate-900/50"
+          >
+            {RANGE_PRESETS.map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                aria-pressed={range === r.key}
+                onClick={() => setRange(r.key)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary ${
+                  range === r.key
+                    ? 'bg-gray-900 text-white dark:bg-white dark:text-slate-900'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div style={containerStyle}>
-        {widgets.map((w) => (
+        {effectiveWidgets.map((w) => (
           <div key={w.id} style={cellStyle(w)} className="min-w-0 min-h-0">
             <WidgetView
               widget={w}
               reportResult={data.reportResults[w.id]}
               reportLoading={data.reportLoading}
+              reportRefreshing={data.reportLoading && data.reportResults[w.id] !== undefined}
               listRows={data.listData[w.id]}
+              listLoading={w.kind === 'list' && !!w.list?.formId && !!props.fetchRecent && data.listData[w.id] === undefined}
               activity={data.activity}
               forms={forms}
               submittableForms={props.submittableForms}
@@ -106,7 +166,11 @@ export interface WidgetViewProps {
   widget: DashboardWidget;
   reportResult?: AppReportResult | null;
   reportLoading: boolean;
+  /** True while a widget re-runs (e.g. a range change) but still shows its previous result. */
+  reportRefreshing?: boolean;
   listRows?: WidgetRecord[];
+  /** True while this list widget's rows are still being fetched (skeleton instead of empty state). */
+  listLoading?: boolean;
   activity: ActivityRow[];
   forms: WidgetDataForm[];
   submittableForms?: WidgetDataForm[];
@@ -152,39 +216,62 @@ export function WidgetView(p: WidgetViewProps) {
     body = (
       <div className="flex-1 min-h-0 px-4 pb-4">
         {p.reportLoading && p.reportResult === undefined ? (
-          <div className="h-full flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-gray-300 dark:text-slate-600" /></div>
+          <ReportSkeleton viz={w.spec?.viz} />
         ) : p.reportResult ? (
-          <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill />
+          <div className={`h-full min-h-0 transition-opacity ${p.reportRefreshing ? 'opacity-50' : ''}`}>
+            <ReportResultView result={p.reportResult} spec={w.spec} primaryColor={p.primaryColor} fill />
+          </div>
         ) : (
-          <p className="h-full flex items-center justify-center text-center text-sm text-gray-400 dark:text-slate-500">Couldn&apos;t load this widget.</p>
+          <WidgetEmpty icon={<AlertCircle className="h-6 w-6 opacity-70" />} text="Couldn't load this widget." />
         )}
       </div>
     );
   } else if (w.kind === 'list') {
-    const form = p.forms.find((f) => f.formId === w.list?.formId);
+    const cfg = w.list;
+    const form = p.forms.find((f) => f.formId === cfg?.formId);
     const flds = fieldsOf(form);
     const rows = p.listRows ?? [];
+    // Rows deep-link to the record when the runtime wires it; linkToRecords additionally lets rows
+    // fall through to the form's records view where only that navigation exists. Never a raw href.
+    const clickable = !!cfg && (!!p.onOpenRecord || (cfg.linkToRecords === true && !!p.onOpenRecords));
+    const openRow = (recordId: string) => {
+      if (!cfg) return;
+      if (p.onOpenRecord) p.onOpenRecord(cfg.formId, recordId);
+      else if (cfg.linkToRecords === true) p.onOpenRecords?.(cfg.formId);
+    };
     body = (
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {rows.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-400 dark:text-slate-500">No records yet.</p>
+        {p.listLoading && p.listRows === undefined ? (
+          <ListSkeleton withMeta={!!cfg?.metaField} />
+        ) : rows.length === 0 ? (
+          <WidgetEmpty icon={<Inbox className="h-6 w-6 opacity-70" />} text="No records yet" />
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-slate-800">
             {rows.map((r) => {
-              const title = displayAnswer(flds, r.answers || {}, w.list?.titleField) || autoTitle(flds, r.answers || {});
-              const sub = displayAnswer(flds, r.answers || {}, w.list?.subtitleField) || (r.submittedAt ? formatRelativeTime(r.submittedAt) : '');
+              const title = displayAnswer(flds, r.answers || {}, cfg?.titleField) || autoTitle(flds, r.answers || {});
+              const subField = displayAnswer(flds, r.answers || {}, cfg?.subtitleField);
+              const sub = subField || (r.submittedAt ? formatRelativeTime(r.submittedAt) : '');
+              const meta = displayAnswer(flds, r.answers || {}, cfg?.metaField);
+              const metaTime = cfg?.metaField && subField && r.submittedAt ? formatRelativeTime(r.submittedAt) : '';
               return (
                 <li key={r.id}>
                   <button
                     type="button"
-                    onClick={() => w.list && p.onOpenRecord?.(w.list.formId, r.id)}
-                    disabled={!p.onOpenRecord}
-                    className="flex w-full items-center gap-3 px-2 py-2.5 text-left rounded-lg transition-colors enabled:hover:bg-gray-50 dark:enabled:hover:bg-slate-800/50 enabled:cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                    onClick={() => openRow(r.id)}
+                    disabled={!clickable}
+                    className="group relative flex w-full items-center gap-3 px-2 py-2.5 text-left rounded-lg transition-colors enabled:hover:bg-gray-50 dark:enabled:hover:bg-slate-800/50 enabled:cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{title}</span>
                       {sub && <span className="block truncate text-xs text-gray-400 dark:text-slate-500">{sub}</span>}
                     </span>
+                    {cfg?.metaField && (
+                      <span className="max-w-[40%] shrink-0 text-right">
+                        <span className="block truncate text-sm font-medium tabular-nums text-gray-700 dark:text-slate-200">{meta || '—'}</span>
+                        {metaTime && <span className="block text-[11px] text-gray-400 dark:text-slate-500">{metaTime}</span>}
+                      </span>
+                    )}
+                    {clickable && !cfg?.metaField && <RowChevron />}
                   </button>
                 </li>
               );
@@ -198,7 +285,7 @@ export function WidgetView(p: WidgetViewProps) {
     body = (
       <div className="flex-1 min-h-0 overflow-auto px-4 pb-4">
         {forms.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-400 dark:text-slate-500">No quick actions available.</p>
+          <WidgetEmpty icon={<Zap className="h-6 w-6 opacity-70" />} text="No quick actions available." />
         ) : (
           <div className="flex flex-wrap gap-2">
             {forms.map((f) => (
@@ -223,7 +310,7 @@ export function WidgetView(p: WidgetViewProps) {
     body = (
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
         {p.activity.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-400 dark:text-slate-500">No recent activity.</p>
+          <WidgetEmpty icon={<ActivityGlyph className="h-6 w-6 opacity-70" />} text="No recent activity." />
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-slate-800">
             {p.activity.map((row) => (
@@ -232,7 +319,7 @@ export function WidgetView(p: WidgetViewProps) {
                   type="button"
                   onClick={() => p.onOpenRecord?.(row.formId, row.id)}
                   disabled={!p.onOpenRecord}
-                  className="flex w-full items-center gap-3 px-2 py-2.5 text-left rounded-lg transition-colors enabled:hover:bg-gray-50 dark:enabled:hover:bg-slate-800/50 enabled:cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
+                  className="group relative flex w-full items-center gap-3 px-2 py-2.5 text-left rounded-lg transition-colors enabled:hover:bg-gray-50 dark:enabled:hover:bg-slate-800/50 enabled:cursor-pointer focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
                 >
                   <span className="flex h-8 w-8 flex-none items-center justify-center rounded-lg app-bg-primary-light">
                     <DynamicIcon name={row.icon} className="h-4 w-4 app-text-primary" fallback={<ArrowRight className="h-4 w-4 app-text-primary" />} />
@@ -241,6 +328,7 @@ export function WidgetView(p: WidgetViewProps) {
                     <span className="block truncate text-sm font-medium text-gray-900 dark:text-white">{row.title}</span>
                     <span className="block truncate text-xs text-gray-400 dark:text-slate-500">{row.formName} · {formatRelativeTime(row.submittedAt)}</span>
                   </span>
+                  {p.onOpenRecord && <RowChevron />}
                 </button>
               </li>
             ))}
@@ -255,5 +343,80 @@ export function WidgetView(p: WidgetViewProps) {
       {header}
       {body}
     </div>
+  );
+}
+
+// ── Shared loading / empty states ───────────────────────────────────────────────
+
+/** Hover-only affordance on clickable rows: absolutely positioned so the rest state stays identical. */
+function RowChevron() {
+  return (
+    <ChevronRight
+      aria-hidden="true"
+      className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-x-0.5 -translate-y-1/2 text-gray-400 opacity-0 transition-all duration-150 group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:opacity-100 dark:text-slate-500"
+    />
+  );
+}
+
+/** Quiet empty / error state shared by every widget kind. */
+function WidgetEmpty({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <div className="flex h-full min-h-[72px] flex-col items-center justify-center py-6 text-center text-gray-400 dark:text-slate-500">
+      {icon}
+      <p className="mt-2 text-sm">{text}</p>
+    </div>
+  );
+}
+
+/** Pulsing placeholder shaped like the chart it will become. */
+function ReportSkeleton({ viz }: { viz?: string }) {
+  const tone = 'bg-gray-100 dark:bg-slate-800';
+  if (viz === 'kpi') {
+    return (
+      <div className="flex h-full animate-pulse flex-col items-center justify-center gap-2.5" aria-hidden="true">
+        <div className={`h-9 w-24 rounded-lg ${tone}`} />
+        <div className={`h-2 w-14 rounded ${tone}`} />
+      </div>
+    );
+  }
+  if (viz === 'pie' || viz === 'donut') {
+    return (
+      <div className="flex h-full animate-pulse items-center justify-center" aria-hidden="true">
+        <div className={`h-28 w-28 max-h-[80%] rounded-full ${tone}`} />
+      </div>
+    );
+  }
+  if (viz === 'table') {
+    return (
+      <div className="flex h-full animate-pulse flex-col justify-center gap-2.5 px-1" aria-hidden="true">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className={`h-3 rounded ${tone}`} style={{ width: `${90 - i * 14}%` }} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full animate-pulse items-end gap-2 pb-1" aria-hidden="true">
+      {[45, 70, 55, 85, 60, 35, 75].map((h, i) => (
+        <div key={i} className={`min-h-0 flex-1 rounded-t ${tone}`} style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  );
+}
+
+/** Pulsing placeholder rows while a list widget fetches. */
+function ListSkeleton({ withMeta = false }: { withMeta?: boolean }) {
+  return (
+    <ul className="animate-pulse divide-y divide-gray-100 dark:divide-slate-800" aria-hidden="true">
+      {[0, 1, 2, 3].map((i) => (
+        <li key={i} className="flex items-center gap-3 px-2 py-3">
+          <span className="min-w-0 flex-1">
+            <span className="mb-1.5 block h-3 w-3/5 rounded bg-gray-100 dark:bg-slate-800" />
+            <span className="block h-2.5 w-2/5 rounded bg-gray-100 dark:bg-slate-800" />
+          </span>
+          {withMeta && <span className="h-3 w-10 shrink-0 rounded bg-gray-100 dark:bg-slate-800" />}
+        </li>
+      ))}
+    </ul>
   );
 }
