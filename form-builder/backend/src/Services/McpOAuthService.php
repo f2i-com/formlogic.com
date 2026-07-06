@@ -704,7 +704,7 @@ class McpOAuthService
         }
         $buffer = '';
         $ch = curl_init($url);
-        curl_setopt_array($ch, [
+        $curlOpts = [
             CURLOPT_FOLLOWLOCATION => false, // 3xx is a hard failure — no redirect chasing
             CURLOPT_MAXREDIRS => 0,
             CURLOPT_TIMEOUT => self::CIMD_TIMEOUT_SECONDS,
@@ -717,11 +717,26 @@ class McpOAuthService
                 $buffer .= $chunk;
                 return strlen($buffer) > self::CIMD_MAX_BYTES ? -1 : strlen($chunk); // abort past the cap
             },
-        ]);
+        ];
+        // Vendored CA bundle fallback (same idiom as WebhookService/AIService): without it, PHP curl
+        // builds with no default CA store (Windows/WAMP notably) fail TLS verification on EVERY CIMD
+        // fetch — which surfaced as Claude's "authorization failed" (invalid_client) because the
+        // claude.ai client-metadata document silently could not be fetched. Only applied when the
+        // operator hasn't configured their own curl.cainfo / CURL_CA_BUNDLE (don't override a private CA).
+        $caBundle = __DIR__ . '/../../resources/cacert.pem';
+        if (!ini_get('curl.cainfo') && !getenv('CURL_CA_BUNDLE') && is_file($caBundle)) {
+            $curlOpts[CURLOPT_CAINFO] = $caBundle;
+        }
+        curl_setopt_array($ch, $curlOpts);
         curl_exec($ch);
+        $curlErr = curl_errno($ch) !== 0 ? curl_error($ch) : null;
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         $contentType = strtolower((string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE));
         curl_close($ch);
+        if ($curlErr !== null) {
+            // Surface WHY in the log — a silent null here cost a production debugging round trip.
+            $this->logger?->warning('MCP OAuth: CIMD fetch failed', ['host' => $host, 'error' => $curlErr]);
+        }
         if ($status !== 200 || strlen($buffer) > self::CIMD_MAX_BYTES || !str_contains($contentType, 'json')) {
             return null;
         }
