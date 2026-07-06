@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 
@@ -29,6 +29,7 @@ import {
   TrendingUp,
   Package,
   Boxes,
+  ChevronRight,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
@@ -41,13 +42,15 @@ import { useFormStore } from '../stores/formStore';
 import { toast } from '../stores/toastStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
+import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
-import { formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
+import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormTemplate } from '../data/formTemplates';
+import type { App } from '../types/app';
 
 interface DashboardStats {
   totalResponses: number;
@@ -79,6 +82,41 @@ function QuickActionButton({
         {label}
       </span>
     </button>
+  );
+}
+
+// App accents are user/pack-authored hex values; validate strictly before injecting into an
+// inline CSS custom property (same rule as AppsDashboard / FormsList).
+const isHexColor = (v: string | null | undefined): v is string => !!v && /^#[0-9a-fA-F]{3,8}$/.test(v);
+
+// App identity tile: logo image → curated icon tinted with the app's accent → monogram initial.
+function AppIdentityTile({ app }: { app: App }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showLogo = Boolean(app.logoUrl) && !imgFailed;
+  const icon = app.settings?.icon;
+  const accent = app.theme?.primaryColor;
+  const accented = !showLogo && isHexColor(accent);
+  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
+  return (
+    <div
+      style={accented ? ({ '--fl-a': accent } as CSSProperties) : undefined}
+      className={cn(
+        'flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-lg',
+        showLogo
+          ? 'bg-gray-50 dark:bg-slate-800/60'
+          : accented
+            ? 'bg-[color-mix(in_srgb,var(--fl-a)_11%,transparent)] text-[color:var(--fl-a)] ring-1 ring-inset ring-[color-mix(in_srgb,var(--fl-a)_25%,transparent)] dark:bg-[color-mix(in_srgb,var(--fl-a)_16%,transparent)] dark:text-[color:color-mix(in_srgb,var(--fl-a)_62%,white)]'
+            : 'bg-primary-50 dark:bg-primary-500/10 text-primary-600 dark:text-primary-400'
+      )}
+    >
+      {showLogo ? (
+        <img src={app.logoUrl} alt="" loading="lazy" onError={() => setImgFailed(true)} className="h-full w-full object-cover" />
+      ) : icon ? (
+        <DynamicIcon name={icon} className="h-5 w-5" fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
+      ) : (
+        <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
+      )}
+    </div>
   );
 }
 
@@ -319,6 +357,21 @@ export function Dashboard() {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
+
+  // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
+  // persists across visits, so the section renders instantly on revisit.
+  const { apps, fetchApps } = useAppStore();
+  useEffect(() => {
+    if (storageMode === 'api') fetchApps();
+  }, [storageMode, fetchApps]);
+  const recentApps = useMemo(
+    () => storageMode === 'api'
+      ? [...apps]
+        .sort((a, b) => parseServerDate(b.updatedAt).getTime() - parseServerDate(a.updatedAt).getTime())
+        .slice(0, 4)
+      : [],
+    [apps, storageMode]
+  );
 
   const handleCreateForm = () => {
     setShowTemplateSelector(true);
@@ -658,13 +711,60 @@ export function Dashboard() {
           </div>
         )}
 
+        {/* Apps strip — the user's most recently updated apps, mirroring the Apps page cards. */}
+        {recentApps.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Apps</h2>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/apps')}
+                className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+              >
+                View all
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {recentApps.map((app) => {
+                const formCount = app.navConfig?.length ?? 0;
+                return (
+                  <button
+                    key={app.id}
+                    onClick={() => navigate(`/apps/${app.id}/settings`)}
+                    title={`Manage ${app.name}`}
+                    className={cn(
+                      'flex items-center gap-3 p-4 min-w-0 rounded-xl border text-left group cursor-pointer',
+                      'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
+                      'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
+                    )}
+                  >
+                    <AppIdentityTile app={app} />
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
+                        {app.name}
+                      </span>
+                      <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
+                        {formCount} form{formCount === 1 ? '' : 's'} · <span className="capitalize">{app.status}</span>
+                      </span>
+                    </div>
+                    <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Main Content - Two Column Layout on Desktop */}
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Recent Forms - Takes 2/3 on desktop */}
           <div className="lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Recent forms</h2>
-              {forms.length > 5 && (
+              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">My forms</h2>
+              {forms.length > 0 && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -702,16 +802,31 @@ export function Dashboard() {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
                   return (
-                    <Card key={form.id} className="hover:shadow-md hover:shadow-gray-900/[0.04] transition-all duration-300">
+                    <Card
+                      key={form.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
+                      onClick={() => navigate(`/builder/${form.id}`)}
+                      onKeyDown={(e) => {
+                        // Only act on the card itself — inner buttons handle their own keys.
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          navigate(`/builder/${form.id}`);
+                        }
+                      }}
+                      className="group cursor-pointer hover:shadow-md hover:shadow-gray-900/[0.04] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+                    >
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-4 min-w-0 flex-1">
-                            <div className="p-2.5 bg-primary-50 dark:bg-slate-800 rounded-xl flex-shrink-0 hidden sm:flex">
-                              <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-500 dark:text-slate-400" />
+                            <div className="p-2.5 bg-primary-50 dark:bg-primary-500/10 rounded-xl flex-shrink-0 hidden sm:flex">
+                              <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-600 dark:text-primary-400" />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-semibold text-gray-900 dark:text-white truncate" title={form.title || 'Untitled Form'}>
+                                <h4 className="font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
                                   {form.title || 'Untitled Form'}
                                 </h4>
                                 <Badge
@@ -741,7 +856,10 @@ export function Dashboard() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1 flex-shrink-0">
+                          {/* stopPropagation: the whole row navigates to the builder — inner
+                              actions (and the portal menu, which bubbles through the React
+                              tree to here) must not double-fire that navigation. */}
+                          <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
                             <Button
                               variant="ghost"
                               size="sm"

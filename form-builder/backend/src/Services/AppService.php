@@ -6,6 +6,7 @@ namespace FormLogic\Services;
 
 use FormLogic\Constants\AppPermissions;
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Helpers\CustomLogicSanitizer;
 use FormLogic\Models\App;
 use PDO;
 
@@ -223,12 +224,28 @@ class AppService
      * One-click companion app (e.g. an admin console) over the SAME data: creates a
      * fresh app and attaches every one of the source app's forms to it. Forms are
      * shared by form_id (responses live in per-form SQLite), so both apps read and
-     * write the same records. The companion copies ONLY the source's theme (brand
-     * continuity) — members, roles, custom logic/screen, domains, dashboards and
-     * reports are all its own (createApp seeds fresh system roles + the owner
-     * membership + owner permission grants).
+     * write the same records. The companion ALWAYS copies the source's theme (brand
+     * continuity) and navConfig (the forms are identical, so the nav stays valid).
+     *
+     * Optional copy flags in $options — all default OFF (the original behavior):
+     *  - copyDashboard: copies apps.custom_screen ONLY when it is a widget dashboard
+     *    (kind === 'dashboard'); its widgets reference the shared form ids, so they
+     *    all stay valid on the companion. A sandboxed CODE custom screen is silently
+     *    skipped — code screens can carry app-specific assumptions (slugs, member
+     *    lists, hardcoded ids) that don't hold on a fresh app.
+     *  - copyReports: copies apps.reports verbatim (report specs reference the
+     *    shared form ids).
+     *  - copyLogic: copies apps.custom_logic re-run through CustomLogicSanitizer
+     *    (defense in depth — unknown hooks / oversized scripts are dropped; a bundle
+     *    that sanitizes to no scripts, or is over the size cap, is not copied).
+     *
+     * NEVER copied: members, roles beyond the fresh system roles, custom domains,
+     * slug, status (the companion always starts as a draft) — createApp seeds fresh
+     * system roles + the owner membership + owner permission grants.
+     *
+     * @param array{copyDashboard?: bool, copyReports?: bool, copyLogic?: bool} $options
      */
-    public function createCompanionApp(string $sourceAppId, string $ownerId, ?string $name = null): array
+    public function createCompanionApp(string $sourceAppId, string $ownerId, ?string $name = null, array $options = []): array
     {
         $source = $this->getApp($sourceAppId);
         if (!$source) {
@@ -242,6 +259,33 @@ class AppService
         // apps.name is VARCHAR(255) — keep the derived default (or a pasted name) within it.
         $companionName = mb_substr($companionName, 0, 255);
 
+        $createData = [
+            'name' => $companionName,
+            'theme' => $source['theme'] ?? [],
+            // The companion holds the exact same forms in the same order, so the
+            // source's nav (order/icons/labels) is valid as-is — always carry it.
+            'navConfig' => $source['navConfig'] ?? [],
+            'status' => 'draft',
+        ];
+
+        // Widget dashboards are data (report specs over shared form ids) — safe to
+        // copy verbatim. Anything else (a sandboxed CODE screen) is never copied.
+        if (!empty($options['copyDashboard'])
+            && is_array($source['customScreen'] ?? null)
+            && ($source['customScreen']['kind'] ?? null) === 'dashboard'
+        ) {
+            $createData['customScreen'] = $source['customScreen'];
+        }
+
+        // App-level QuickJS logic: re-sanitize on copy (defense in depth) so a stale
+        // or hand-edited stored bundle can't propagate unknown hooks or junk shape.
+        if (!empty($options['copyLogic']) && !empty($source['customLogic']) && is_array($source['customLogic'])) {
+            $sanitized = CustomLogicSanitizer::sanitize($source['customLogic']);
+            if (!empty($sanitized['scripts']) && CustomLogicSanitizer::withinSizeCap($sanitized)) {
+                $createData['customLogic'] = $sanitized;
+            }
+        }
+
         // Atomic: the companion app (createApp already guards against an outer
         // transaction) and ALL of its form attachments succeed or fail together —
         // no half-attached companion on a mid-loop failure.
@@ -250,11 +294,18 @@ class AppService
             $this->mysql->beginTransaction();
         }
         try {
-            $companion = $this->createApp([
-                'name' => $companionName,
-                'theme' => $source['theme'] ?? [],
-                'status' => 'draft',
-            ], $ownerId);
+            $companion = $this->createApp($createData, $ownerId);
+
+            // Reports are copied verbatim — their specs reference the shared form
+            // ids, which are all attached below in this same transaction. (createApp
+            // has no reports column in its INSERT, so set it here.)
+            if (!empty($options['copyReports']) && !empty($source['reports']) && is_array($source['reports'])) {
+                $stmt = $this->mysql->prepare("UPDATE apps SET reports = :reports WHERE id = :id");
+                $stmt->execute([
+                    'reports' => json_encode(array_values($source['reports'])),
+                    'id' => $companion['id'],
+                ]);
+            }
 
             // Attach ALL the source's forms — hidden ones too (an admin console needs
             // everything). getAppForms is sort_order-ordered and addFormToApp appends,

@@ -225,8 +225,12 @@ class AppController
 
     /**
      * One-click companion (e.g. admin console) app: a NEW app over the SAME forms
-     * and data as the source app. Members, roles, branding and dashboards stay
-     * separate. POST /api/apps/{id}/companion, body { name? }.
+     * and data as the source app. Members, roles and domains stay separate; theme +
+     * nav always carry over, and the optional copy flags bring the source's widget
+     * dashboard / reports / app-level custom logic along (see
+     * AppService::createCompanionApp for the exact semantics — a CODE custom screen
+     * is never copied). POST /api/apps/{id}/companion,
+     * body { name?, copyDashboard?, copyReports?, copyLogic? }.
      */
     public function createCompanion(Request $request, Response $response, array $args): Response
     {
@@ -237,12 +241,20 @@ class AppController
 
         $data = $request->getParsedBody() ?? [];
         $name = is_array($data) && isset($data['name']) && is_string($data['name']) ? trim($data['name']) : '';
+        $options = [
+            'copyDashboard' => is_array($data) && !empty($data['copyDashboard']),
+            'copyReports' => is_array($data) && !empty($data['copyReports']),
+            'copyLogic' => is_array($data) && !empty($data['copyLogic']),
+        ];
 
         $userId = $request->getAttribute('userId');
 
         try {
-            $companion = $this->appService->createCompanionApp($args['id'], $userId, $name !== '' ? $name : null);
-            $this->audit($request, 'app.create_companion', 'app', $companion['id'] ?? '', ['sourceAppId' => $args['id']]);
+            $companion = $this->appService->createCompanionApp($args['id'], $userId, $name !== '' ? $name : null, $options);
+            $this->audit($request, 'app.create_companion', 'app', $companion['id'] ?? '', [
+                'sourceAppId' => $args['id'],
+                'copied' => array_keys(array_filter($options)),
+            ]);
             return $this->jsonResponse($response, ['app' => $companion], 201);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);

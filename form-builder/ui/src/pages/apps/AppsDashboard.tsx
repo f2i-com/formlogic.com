@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload } from 'lucide-react';
+import { Plus, Globe, Trash2, ExternalLink, Search, Package, Plug, Upload, FileText } from 'lucide-react';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { useAppStore } from '../../stores/appStore';
@@ -151,6 +151,8 @@ export function AppsDashboard() {
                   onDelete={() => setDeleteTarget(app)}
                 />
               ))}
+              {/* New-app CTA rides along in the grid (hidden while searching) — same wizard entry as the header button. */}
+              {!searchQuery.trim() && <NewAppCard onClick={() => navigate('/apps/new')} />}
             </div>
             <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" />
           </>
@@ -181,19 +183,22 @@ export function AppsDashboard() {
 
 function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: string | null; onClick: () => void; onDelete: () => void }) {
   const [imgFailed, setImgFailed] = useState(false);
-  // App identity tile: logo image → curated icon on the app's accent → Globe fallback.
+  // App identity tile: logo image → curated icon on the app's accent → monogram initial (muted, on the accent).
   const showLogo = Boolean(app.logoUrl) && !imgFailed;
   const icon = app.settings?.icon;
   const accent = app.theme?.primaryColor;
-  const accented = !showLogo && Boolean(icon) && isHexColor(accent);
+  const accented = !showLogo && isHexColor(accent);
+  const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
+  const formCount = app.navConfig?.length ?? 0;
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      aria-label={`Manage ${app.name}`}
       className={cn(
-        'bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03] p-6',
+        'flex h-full flex-col bg-white dark:bg-slate-900/50 rounded-xl border border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03] p-6',
         'hover:shadow-lg hover:shadow-gray-900/[0.06] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600',
         'focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 outline-none',
         'transition-all duration-200 cursor-pointer group'
@@ -221,9 +226,9 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
                 className="h-full w-full object-cover"
               />
             ) : icon ? (
-              <DynamicIcon name={icon} className="h-5 w-5" fallback={<Globe className="h-5 w-5" />} />
+              <DynamicIcon name={icon} className="h-5 w-5" fallback={<span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>} />
             ) : (
-              <Globe className="h-5 w-5" />
+              <span className="text-sm font-semibold" aria-hidden="true">{monogram}</span>
             )}
           </div>
           <div className="min-w-0">
@@ -233,9 +238,9 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-gray-500 dark:text-slate-500 font-mono truncate max-w-[140px]">/{app.slug}</span>
               {packName && (
-                <Badge variant="info" size="sm">
-                  <Package className="h-3 w-3 mr-1 inline" />
-                  {packName}
+                <Badge variant="info" size="sm" className="max-w-full whitespace-nowrap">
+                  <Package className="h-3 w-3 mr-1 inline shrink-0" />
+                  <span className="truncate" title={packName}>{packName}</span>
                 </Badge>
               )}
             </div>
@@ -254,11 +259,15 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
         <p className="text-sm text-gray-600 dark:text-slate-400 mb-4 line-clamp-2">{app.description}</p>
       )}
 
-      <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-slate-700/40">
-        <span className="text-xs text-gray-400 dark:text-slate-500">
-          Updated {formatRelativeTime(app.updatedAt)}
-        </span>
-        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+      {/* mt-auto pins the meta/actions row to the bottom so cards in a row stay footer-aligned. */}
+      <div className="mt-auto flex items-center justify-between gap-2 pt-4 border-t border-gray-100 dark:border-slate-700/40">
+        <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-slate-500 min-w-0">
+          <FileText className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+          <span className="flex-shrink-0 tabular-nums">{formCount} form{formCount === 1 ? '' : 's'}</span>
+          <span aria-hidden="true">·</span>
+          <span className="truncate">Updated {formatRelativeTime(app.updatedAt)}</span>
+        </div>
+        <div className="flex gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
           {app.status === 'published' && (
             <button
               onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener,noreferrer')}
@@ -278,5 +287,28 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
         </div>
       </div>
     </div>
+  );
+}
+
+/** Dashed "create" tile at the end of the grid — the same wizard entry as the header's Create app button. */
+function NewAppCard({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'group flex h-full min-h-[11rem] flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-dashed p-6',
+        'border-gray-200 dark:border-slate-700/70 text-gray-500 dark:text-slate-400',
+        'hover:border-primary-400 dark:hover:border-primary-500/50 hover:text-primary-600 dark:hover:text-primary-400',
+        'hover:bg-primary-50/50 dark:hover:bg-primary-500/[0.06] motion-safe:transition-colors cursor-pointer',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
+      )}
+    >
+      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
+        <Plus className="h-5 w-5" />
+      </span>
+      <span className="text-sm font-medium">Create app</span>
+      <span className="text-xs text-gray-400 dark:text-slate-500">Group forms into a deployable app</span>
+    </button>
   );
 }

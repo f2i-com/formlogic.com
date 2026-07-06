@@ -620,14 +620,18 @@ function copyableWidgets(widgets: DashboardWidget[], formIds: Set<string>, scope
   });
 }
 
-type CopySourceApp = { id: string; name: string; widgetCount: number };
+type CopySourceApp = { id: string; name: string; sharedForms: number; usable: number; total: number };
 type CopyAppListItem = { id?: string; name?: string; ownerId?: string; customScreen?: CustomScreen | null };
 
 /**
- * "Copy from app…": pick one of the owner's OTHER apps that has a widget dashboard, preview how many
- * of its widgets fit here (form-matched), and on explicit confirm hand back deep copies (fresh ids,
- * layouts preserved) that REPLACE the current draft. List = api.getApps() (ownerId is only present on
- * apps the requester owns); the picked app's dashboard = the owner-scoped api.getApp() detail.
+ * "Copy from app…": pick one of the owner's OTHER apps whose dashboard is COMPATIBLE with this one —
+ * it must share at least one form with the current app AND have at least one widget that survives the
+ * copy (apps with dashboards but zero usable widgets are excluded entirely). Each candidate shows its
+ * shared-form count and usable/total widget counts, sorted by usable desc. On explicit confirm hands
+ * back deep copies (fresh ids, layouts preserved) that REPLACE the current draft. List = api.getApps()
+ * (ownerId is only present on apps the requester owns; the list rows carry the full customScreen);
+ * each candidate's form set = api.getAppForms(); the picked app's dashboard = the owner-scoped
+ * api.getApp() detail (server-fresh at copy time).
  */
 function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onReplace }: {
   currentAppId?: string;
@@ -636,12 +640,14 @@ function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onRepl
   onClose: () => void;
   onReplace: (widgets: DashboardWidget[], skipped: number, sourceName: string) => void;
 }) {
-  const [apps, setApps] = useState<CopySourceApp[] | null>(null); // null = loading
+  const [apps, setApps] = useState<CopySourceApp[] | null>(null); // null = loading (list + compatibility fan-out)
   const [pickedId, setPickedId] = useState('');
   const [detail, setDetail] = useState<{ name: string; widgets: DashboardWidget[] } | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pickSeq = useRef(0);
+
+  const formIds = useMemo(() => new Set(builderForms.map((f) => f.formId)), [builderForms]);
 
   useEffect(() => {
     let cancelled = false;
@@ -650,13 +656,31 @@ function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onRepl
       if (cancelled) return;
       if (res.error) { setError('Could not load your apps.'); setApps([]); return; }
       const list = (res.data?.apps ?? []) as CopyAppListItem[];
-      setApps(list
-        .filter((a) => !!a.id && !!a.ownerId && a.id !== currentAppId
-          && a.customScreen?.kind === 'dashboard' && (a.customScreen.dashboard?.widgets?.length ?? 0) > 0)
-        .map((a) => ({ id: a.id as string, name: a.name || 'Untitled app', widgetCount: a.customScreen?.dashboard?.widgets?.length ?? 0 })));
+      const withDashboard = list.filter((a) => !!a.id && !!a.ownerId && a.id !== currentAppId
+        && a.customScreen?.kind === 'dashboard' && (a.customScreen.dashboard?.widgets?.length ?? 0) > 0);
+      // Compatibility pass: an app qualifies only when it shares >=1 form with this one AND at least
+      // one of its widgets would survive the copy. Form lists load in parallel (same best-effort
+      // pattern as fetchFormAppUsage); an app whose form list fails is treated as incompatible.
+      const formLists = await Promise.allSettled(withDashboard.map((a) => api.getAppForms(a.id as string)));
+      if (cancelled) return;
+      const candidates: CopySourceApp[] = [];
+      withDashboard.forEach((a, i) => {
+        const fl = formLists[i];
+        if (fl.status !== 'fulfilled' || fl.value.error) return;
+        const candidateFormIds = ((fl.value.data?.forms ?? []) as Array<{ formId?: string }>)
+          .map((f) => f.formId).filter((id): id is string => !!id);
+        const sharedForms = candidateFormIds.filter((id) => formIds.has(id)).length;
+        if (sharedForms === 0) return;
+        const widgets = a.customScreen?.dashboard?.widgets ?? [];
+        const usable = copyableWidgets(widgets, formIds, scope).length;
+        if (usable === 0) return;
+        candidates.push({ id: a.id as string, name: a.name || 'Untitled app', sharedForms, usable, total: widgets.length });
+      });
+      candidates.sort((x, y) => (y.usable - x.usable) || (y.sharedForms - x.sharedForms) || x.name.localeCompare(y.name));
+      setApps(candidates);
     })();
     return () => { cancelled = true; };
-  }, [currentAppId]);
+  }, [currentAppId, formIds, scope]);
 
   const pick = async (id: string) => {
     setPickedId(id);
@@ -673,7 +697,6 @@ function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onRepl
     setDetail({ name: app.name || 'Untitled app', widgets: dash.widgets ?? [] });
   };
 
-  const formIds = useMemo(() => new Set(builderForms.map((f) => f.formId)), [builderForms]);
   const usable = useMemo(() => (detail ? copyableWidgets(detail.widgets, formIds, scope) : []), [detail, formIds, scope]);
   const skipped = detail ? detail.widgets.length - usable.length : 0;
   const hereLabel = scope === 'app' ? 'app' : 'dashboard';
@@ -696,13 +719,25 @@ function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onRepl
           {apps === null ? (
             <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-gray-400" /></div>
           ) : apps.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gray-500 dark:text-slate-400">
-              {error ?? 'None of your other apps has a widget dashboard yet — build one there first, then copy it here.'}
-            </p>
+            error ? (
+              <p className="py-4 text-center text-sm text-gray-500 dark:text-slate-400">{error}</p>
+            ) : (
+              <div className="py-4 text-center space-y-1.5">
+                <p className="text-sm font-medium text-gray-700 dark:text-slate-300">No compatible apps to copy from.</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  Dashboards can only be copied between apps that share forms with this {hereLabel} — the widgets
+                  point at those forms' data. Tip: “Create a companion app” (in the app's Forms manager) builds a
+                  second app over these same forms, so its dashboards copy cleanly. Each app runs its own app-level
+                  custom logic and screens; form-level logic travels with the shared forms.
+                </p>
+              </div>
+            )
           ) : (
             <>
               <p className="text-xs text-gray-500 dark:text-slate-400">
-                Pick one of your apps — its dashboard widgets replace this draft. Only widgets whose form is also in this {hereLabel} are copied.
+                Pick one of your apps — its dashboard widgets replace this draft. Only apps that share forms with
+                this {hereLabel} are listed, and only widgets whose form is in this {hereLabel} are copied. Each app
+                runs its own app-level custom logic and screens; form-level logic travels with the shared forms.
               </p>
               <div className="space-y-1.5" role="group" aria-label="Source app">
                 {apps.map((a) => (
@@ -714,7 +749,9 @@ function CopyDashboardModal({ currentAppId, builderForms, scope, onClose, onRepl
                     className={`w-full flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-sm cursor-pointer transition-colors ${pickedId === a.id ? 'app-border-primary app-bg-primary-light app-text-primary' : 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800'}`}
                   >
                     <span className="truncate font-medium">{a.name}</span>
-                    <span className="shrink-0 text-xs text-gray-400 dark:text-slate-500">{a.widgetCount} widget{a.widgetCount === 1 ? '' : 's'}</span>
+                    <span className="shrink-0 text-xs text-gray-400 dark:text-slate-500">
+                      {a.sharedForms} shared form{a.sharedForms === 1 ? '' : 's'} · {a.usable}/{a.total} widget{a.total === 1 ? '' : 's'} will copy
+                    </span>
                   </button>
                 ))}
               </div>

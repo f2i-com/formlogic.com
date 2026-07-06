@@ -767,11 +767,26 @@ class ApiClient {
     });
   }
 
-  /** One-click companion (e.g. admin console) app over the same forms + data. Omitting name defaults to "<App> Admin". */
-  async createCompanionApp(appId: string, name?: string): Promise<ApiResponse<{ app: unknown }>> {
+  /**
+   * One-click companion (e.g. admin console) app over the same forms + data. Omitting name
+   * defaults to "<App> Admin". Optional copy toggles: copyDashboard brings the source's
+   * widget dashboard (customScreen, only when kind === 'dashboard' — the shared forms keep
+   * every widget valid), copyReports its saved reports, copyLogic its app-LEVEL custom
+   * logic. Theme + nav always copy; members, roles, domains, slug and status never do.
+   * Flags are sent only when explicitly set, so the server's defaults govern otherwise.
+   */
+  async createCompanionApp(
+    appId: string,
+    opts?: { name?: string; copyDashboard?: boolean; copyReports?: boolean; copyLogic?: boolean }
+  ): Promise<ApiResponse<{ app: unknown }>> {
+    const body: Record<string, unknown> = {};
+    if (opts?.name) body.name = opts.name;
+    if (typeof opts?.copyDashboard === 'boolean') body.copyDashboard = opts.copyDashboard;
+    if (typeof opts?.copyReports === 'boolean') body.copyReports = opts.copyReports;
+    if (typeof opts?.copyLogic === 'boolean') body.copyLogic = opts.copyLogic;
     return this.request(`/apps/${appId}/companion`, {
       method: 'POST',
-      body: JSON.stringify(name ? { name } : {}),
+      body: JSON.stringify(body),
     });
   }
 

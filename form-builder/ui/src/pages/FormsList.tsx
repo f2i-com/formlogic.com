@@ -23,6 +23,7 @@ import {
   FileText,
   Boxes,
   ChevronRight,
+  Clock,
   Loader2,
   ExternalLink,
   Settings,
@@ -35,7 +36,7 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/Tabs';
 import { EmptyState } from '../components/ui/EmptyState';
-import { FormCardSkeleton } from '../components/ui/Skeleton';
+import { Skeleton } from '../components/ui/Skeleton';
 import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
@@ -109,6 +110,71 @@ function AppIdentityTile({ logoUrl, icon, accent, className, iconClassName }: {
   );
 }
 
+// Lifecycle status → quiet tinted pill with a colored dot. Same token families as Badge
+// (emerald/amber/neutral) but with a dot indicator so status reads at a glance without shouting.
+const STATUS_PILLS: Record<Form['status'], { pill: string; dot: string }> = {
+  published: {
+    pill: 'bg-emerald-50 text-emerald-700 ring-emerald-200/60 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-500/20',
+    dot: 'bg-emerald-500 dark:bg-emerald-400',
+  },
+  draft: {
+    pill: 'bg-amber-50 text-amber-700 ring-amber-200/60 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20',
+    dot: 'bg-amber-500 dark:bg-amber-400',
+  },
+  archived: {
+    pill: 'bg-gray-100 text-gray-600 ring-gray-200/60 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700/50',
+    dot: 'bg-gray-400 dark:bg-slate-500',
+  },
+};
+
+function StatusPill({ status }: { status: Form['status'] }) {
+  const s = STATUS_PILLS[status] ?? STATUS_PILLS.draft;
+  return (
+    <span className={`inline-flex flex-none items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ring-1 ring-inset ${s.pill}`}>
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {status}
+    </span>
+  );
+}
+
+// Loading placeholder mirroring the form card's anatomy (icon tile + two-line header,
+// divided status/meta row, action pair) so the grid doesn't reflow when data lands.
+function FormCardSkeleton() {
+  return (
+    <div className="rounded-xl border border-gray-200/80 dark:border-white/[0.06] bg-white dark:bg-slate-900/50 p-4 sm:p-5">
+      <div className="flex items-start gap-3">
+        <Skeleton className="h-10 w-10 flex-none rounded-lg" />
+        <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-3 w-1/3" />
+        </div>
+        <Skeleton className="h-8 w-8 flex-none rounded-lg" />
+      </div>
+      <div className="mt-4 flex items-center justify-between border-t border-gray-100 dark:border-white/5 pt-3">
+        <Skeleton className="h-[22px] w-20 rounded-full" />
+        <Skeleton className="h-3 w-24" />
+      </div>
+      <div className="mt-3 flex gap-2">
+        <Skeleton className="h-8 flex-1 rounded-lg" />
+        <Skeleton className="h-8 flex-1 rounded-lg" />
+      </div>
+    </div>
+  );
+}
+
+// Dashed shell around empty tabs so they read as a friendly placeholder, not a void.
+const EMPTY_SHELL_CLASS =
+  'rounded-2xl border border-dashed border-gray-300/80 dark:border-slate-700/60 bg-gray-50/50 dark:bg-slate-900/30';
+
+// Soft numeric chip for tab labels — quieter than "(3)" and the numerals stay aligned.
+function TabCount({ n }: { n: number }) {
+  return (
+    <span className="ml-1.5 rounded-full bg-gray-200/70 px-1.5 py-0.5 text-[11px] font-semibold leading-none tabular-nums text-gray-500 dark:bg-slate-600/60 dark:text-slate-300">
+      {n}
+    </span>
+  );
+}
+
 // Extracted outside FormsList so React maintains a stable component identity across renders
 const FormCard = memo(function FormCard({
   form,
@@ -168,34 +234,33 @@ const FormCard = memo(function FormCard({
           onNavigate(`/builder/${form.id}`);
         }
       }}
-      className="cursor-pointer hover:shadow-md hover:shadow-gray-900/[0.04] dark:hover:shadow-black/20 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
+      className="group cursor-pointer transition-colors duration-200 hover:bg-gray-50/70 dark:hover:bg-slate-800/40 hover:border-gray-300 dark:hover:border-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
     >
-      <CardContent>
-        <div className="flex items-start justify-between mb-3 gap-2">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <div className="p-2.5 bg-primary-50 dark:bg-primary-500/10 rounded-lg flex-shrink-0">
-              <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-600 dark:text-primary-500" />
-            </div>
-            <div className="min-w-0">
-              <h3 className="font-medium text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>{form.title || 'Untitled Form'}</h3>
-              <p className="text-xs sm:text-sm text-gray-500 dark:text-slate-500">
-                {(() => { const n = form.fieldCount ?? form.fields?.length ?? 0; return `${n} field${n === 1 ? '' : 's'}`; })()}
-              </p>
-              {packName && (
-                <div className="mt-1.5">
-                  <Badge variant="info" size="sm" className="max-w-full whitespace-nowrap">
-                    <Package className="h-3 w-3 mr-1 inline shrink-0" />
-                    <span className="truncate" title={packName}>{packName}</span>
-                  </Badge>
-                </div>
-              )}
-            </div>
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-primary-50 dark:bg-primary-500/10 group-hover:bg-primary-100 dark:group-hover:bg-primary-500/20 transition-colors">
+            <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-600 dark:text-primary-400" />
           </div>
-          <div className="relative">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[15px] font-semibold leading-snug text-gray-900 dark:text-slate-100 truncate" title={form.title || 'Untitled Form'}>{form.title || 'Untitled Form'}</h3>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">
+              {(() => { const n = form.fieldCount ?? form.fields?.length ?? 0; return `${n} field${n === 1 ? '' : 's'}`; })()}
+            </p>
+            {packName && (
+              <div className="mt-1.5">
+                <Badge variant="info" size="sm" className="max-w-full whitespace-nowrap">
+                  <Package className="h-3 w-3 mr-1 inline shrink-0" />
+                  <span className="truncate" title={packName}>{packName}</span>
+                </Badge>
+              </div>
+            )}
+          </div>
+          <div className="relative flex-none">
             <Button
               ref={triggerRef}
               variant="ghost"
               size="sm"
+              className="h-8 w-8 p-0 -mr-1 -mt-0.5 text-gray-400 dark:text-slate-500"
               aria-label={`Actions for ${form.title || 'Untitled Form'}`}
               aria-haspopup="menu"
               aria-expanded={isMenuOpen}
@@ -344,25 +409,30 @@ const FormCard = memo(function FormCard({
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm">
-          <span className="text-slate-500 truncate">
-            {formatRelativeTime(form.updatedAt)}
-          </span>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Status as its own badge; the count is neutral text so color no longer
-                stands in for lifecycle status. */}
-            <Badge
-              variant={form.status === 'published' ? 'success' : form.status === 'draft' ? 'warning' : 'default'}
-              size="sm"
-              className="capitalize"
+        {/* Status + metadata columns: pill on the left, responses/updated aligned right so the
+            numbers line up card-to-card. Color signals lifecycle only via the pill. */}
+        <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-gray-100 dark:border-white/5 pt-3">
+          <StatusPill status={form.status} />
+          <div className="flex min-w-0 items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
+            <span
+              className="inline-flex flex-none items-center gap-1"
+              title={`${responseCount} response${responseCount === 1 ? '' : 's'}`}
             >
-              {form.status}
-            </Badge>
-            <span className="text-slate-500">{`${responseCount} response${responseCount === 1 ? '' : 's'}`}</span>
+              <Inbox className="h-3.5 w-3.5 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+              <span className="tabular-nums">{responseCount}</span>
+              <span className="sr-only">{` response${responseCount === 1 ? '' : 's'}`}</span>
+            </span>
+            <span
+              className="inline-flex min-w-0 items-center gap-1"
+              title={`Updated ${formatRelativeTime(form.updatedAt)}`}
+            >
+              <Clock className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+              <span className="truncate">{formatRelativeTime(form.updatedAt)}</span>
+            </span>
           </div>
         </div>
 
-        <div className="flex gap-2 mt-3 sm:mt-4">
+        <div className="flex gap-2 mt-3">
           <Button
             variant="outline"
             size="sm"
@@ -658,6 +728,7 @@ export function FormsList() {
       icon={Search}
       title="No forms match your filters"
       description="Try a different search term, or clear the filters to see all your forms."
+      className={EMPTY_SHELL_CLASS}
       action={
         <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
           Clear filters
@@ -749,7 +820,10 @@ export function FormsList() {
         {!selectedAppId && storageMode === 'api' && ((appsLoading && hadAppsHint) || appGroups.length > 0) && (
           <div>
             <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
-              Apps {appsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />}
+              Apps
+              {appsLoading
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />
+                : <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>}
             </h2>
             {appsLoading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" aria-busy="true">
@@ -772,7 +846,7 @@ export function FormsList() {
                     <button
                       key={g.id}
                       onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
-                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50 dark:hover:bg-slate-800 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 text-left group cursor-pointer"
+                      className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50/70 dark:hover:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-600 transition-colors duration-200 text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
                     >
                       <AppIdentityTile
                         logoUrl={g.logoUrl}
@@ -802,8 +876,9 @@ export function FormsList() {
           </div>
         )}
 
-        {/* Search, sort and pack filter */}
-        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row gap-3">
+        {/* Search, sort and pack filter: search grows on the left, the filter controls sit as a
+            right-aligned group on desktop and share one row on mobile. */}
+        <div className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center gap-3">
           <Input
             placeholder={!selectedAppId && appGroups.length > 0 ? 'Search forms and apps...' : 'Search forms...'}
             aria-label="Search forms and apps"
@@ -812,39 +887,41 @@ export function FormsList() {
             leftIcon={<Search className="h-4 w-4" />}
             className="w-full sm:max-w-md"
           />
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
-            aria-label="Sort forms by"
-            className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer w-full sm:w-auto"
-          >
-            <option value="modified">Last Modified</option>
-            <option value="name">Name A-Z</option>
-            <option value="responses">Most Responses</option>
-          </select>
-          {packOptions.length > 0 && (
+          <div className="flex gap-3 sm:ml-auto">
             <select
-              value={packFilter}
-              onChange={(e) => setPackFilter(e.target.value)}
-              aria-label="Filter forms by pack"
-              className="px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-all duration-200 cursor-pointer w-full sm:w-auto"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'modified' | 'name' | 'responses')}
+              aria-label="Sort forms by"
+              className="min-w-0 flex-1 sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
             >
-              <option value="all">All packs</option>
-              {packOptions.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-              <option value="none">Not from a pack</option>
+              <option value="modified">Last Modified</option>
+              <option value="name">Name A-Z</option>
+              <option value="responses">Most Responses</option>
             </select>
-          )}
+            {packOptions.length > 0 && (
+              <select
+                value={packFilter}
+                onChange={(e) => setPackFilter(e.target.value)}
+                aria-label="Filter forms by pack"
+                className="min-w-0 flex-1 sm:flex-none px-3.5 py-2.5 bg-white dark:bg-slate-900/60 border border-gray-300 dark:border-slate-700 rounded-lg text-sm text-gray-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 hover:border-gray-400 dark:hover:border-slate-600 transition-colors duration-200 cursor-pointer"
+              >
+                <option value="all">All packs</option>
+                {packOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+                <option value="none">Not from a pack</option>
+              </select>
+            )}
+          </div>
         </div>
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={(tab) => { setActiveTab(tab); setFormLimit(FORMS_PAGE); }}>
           <TabsList className="mb-4 sm:mb-6 overflow-x-auto flex-nowrap">
-            <TabsTrigger value="all">All ({filteredForms.length})</TabsTrigger>
-            <TabsTrigger value="published">Published ({publishedForms.length})</TabsTrigger>
-            <TabsTrigger value="draft">Drafts ({draftForms.length})</TabsTrigger>
-            <TabsTrigger value="archived">Archived ({archivedForms.length})</TabsTrigger>
+            <TabsTrigger value="all" className="inline-flex items-center">All<TabCount n={filteredForms.length} /></TabsTrigger>
+            <TabsTrigger value="published" className="inline-flex items-center">Published<TabCount n={publishedForms.length} /></TabsTrigger>
+            <TabsTrigger value="draft" className="inline-flex items-center">Drafts<TabCount n={draftForms.length} /></TabsTrigger>
+            <TabsTrigger value="archived" className="inline-flex items-center">Archived<TabCount n={archivedForms.length} /></TabsTrigger>
           </TabsList>
 
           <TabsContent value="all">
@@ -859,11 +936,17 @@ export function FormsList() {
                     <EmptyState
                       icon={Inbox}
                       title="No forms yet"
-                      description="Create your first form to get started"
+                      description="Create your first form from scratch, or start faster with a ready-made pack."
+                      className={EMPTY_SHELL_CLASS}
                       action={
-                        <Button onClick={openNewForm} leftIcon={<Plus className="h-4 w-4" />}>
-                          Create Form
-                        </Button>
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <Button onClick={openNewForm} leftIcon={<Plus className="h-4 w-4" />}>
+                            Create Form
+                          </Button>
+                          <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+                            Browse packs
+                          </Button>
+                        </div>
                       }
                     />
                   )}
@@ -886,6 +969,7 @@ export function FormsList() {
                       icon={Globe}
                       title="No published forms"
                       description="Publish a form to make it available to respondents"
+                      className={EMPTY_SHELL_CLASS}
                     />
                   )}
                 </div>
@@ -907,6 +991,7 @@ export function FormsList() {
                       icon={FileText}
                       title="No drafts"
                       description="Draft forms will appear here while you work on them"
+                      className={EMPTY_SHELL_CLASS}
                     />
                   )}
                 </div>
@@ -928,6 +1013,7 @@ export function FormsList() {
                       icon={Archive}
                       title="No archived forms"
                       description="Archived forms will appear here"
+                      className={EMPTY_SHELL_CLASS}
                     />
                   )}
                 </div>

@@ -23,10 +23,14 @@ use Slim\Psr7\Response as SlimResponse;
  *    same nav order + display names, hidden forms included)
  *  - the source app is untouched (apps row, roles, members, theme, domains)
  *  - the companion has its OWN system roles + owner membership + owner perms, and
- *    copies ONLY the theme (not customLogic / customScreen / domains / status)
+ *    ALWAYS copies theme + navConfig (never members / domains / slug / status)
+ *  - copy options (all default OFF): copyDashboard copies custom_screen ONLY when
+ *    kind === 'dashboard' (a CODE screen source copies nothing); copyReports copies
+ *    apps.reports verbatim; copyLogic re-runs apps.custom_logic through
+ *    CustomLogicSanitizer (invalid hooks dropped, all-invalid bundle not copied)
  *  - name defaulting ('<Source> Admin', 255-char cap) + custom name + blank name
- *  - controller: owner gets 201; a non-owner (and an unknown app id) gets 404 and
- *    no app is created
+ *  - controller: owner gets 201; body copy flags pass through; a non-owner (and an
+ *    unknown app id) gets 404 and no app is created
  *  - a pack-installed form on the source is still attached to the companion
  *
  * Skipped unless a test database is reachable (same setup as AppSharedFormsTest:
@@ -137,9 +141,9 @@ class AppCompanionTest extends TestCase
         return $app['id'];
     }
 
-    private function makeCompanion(string $sourceAppId, string $ownerId, ?string $name = null): array
+    private function makeCompanion(string $sourceAppId, string $ownerId, ?string $name = null, array $options = []): array
     {
-        $companion = self::$apps->createCompanionApp($sourceAppId, $ownerId, $name);
+        $companion = self::$apps->createCompanionApp($sourceAppId, $ownerId, $name, $options);
         $this->appIds[] = $companion['id'];
         return $companion;
     }
@@ -297,17 +301,138 @@ class AppCompanionTest extends TestCase
         $this->assertNotSame($sourceRowBefore['slug'], $companion['slug'], 'companion gets a fresh slug');
     }
 
-    public function testCompanionDoesNotCopyCustomLogicOrCustomScreen(): void
+    public function testOptionsOffCompanionCopiesNoScreenLogicOrReports(): void
     {
+        // Even a COPYABLE widget dashboard (kind === 'dashboard') + valid logic +
+        // reports are left behind when no copy flag is set — the original
+        // theme-and-forms-only behavior is the default.
         $owner = $this->makeUser();
         $source = $this->makeApp($owner, 'Logic App');
-        self::$pdo->prepare("UPDATE apps SET custom_screen = ?, custom_logic = ? WHERE id = ?")
-            ->execute([json_encode(['enabled' => true, 'html' => '<div>x</div>']), json_encode(['version' => 1, 'source' => 'export function onScreenEnter(){}']), $source]);
+        self::$pdo->prepare("UPDATE apps SET custom_screen = ?, custom_logic = ?, reports = ? WHERE id = ?")
+            ->execute([
+                json_encode(['kind' => 'dashboard', 'dashboard' => ['widgets' => [['id' => 'w1', 'type' => 'kpi']]]]),
+                json_encode(['version' => 1, 'runtime' => 'quickjs', 'scripts' => [['id' => 's1', 'hook' => 'onScreenEnter', 'runtime' => 'quickjs', 'source' => 'fl.toast("hi")']]]),
+                json_encode([['id' => 'r1', 'name' => 'Report']]),
+                $source,
+            ]);
 
         $companion = $this->makeCompanion($source, $owner);
 
-        $this->assertSame([], $companion['customScreen'], 'customScreen must not be copied');
-        $this->assertSame([], $companion['customLogic'], 'customLogic must not be copied');
+        $this->assertSame([], $companion['customScreen'], 'customScreen must not be copied by default');
+        $this->assertSame([], $companion['customLogic'], 'customLogic must not be copied by default');
+        $this->assertSame([], $companion['reports'], 'reports must not be copied by default');
+    }
+
+    // -------------------------------------------------------------------------
+    // navConfig always copies (the forms are identical, so the nav stays valid)
+    // -------------------------------------------------------------------------
+
+    public function testCompanionAlwaysCopiesNavConfig(): void
+    {
+        $owner = $this->makeUser();
+        $nav = ['order' => ['form-a', 'form-b'], 'icons' => ['form-a' => 'truck']];
+        $source = $this->makeApp($owner, 'Nav App', ['navConfig' => $nav]);
+
+        $companion = $this->makeCompanion($source, $owner);
+        // assertEquals (not Same): the DB JSON round-trip may reorder assoc keys; values must match exactly.
+        $this->assertEquals($nav, $companion['navConfig'], 'navConfig always carries over — no copy flag needed');
+    }
+
+    // -------------------------------------------------------------------------
+    // Copy options: copyDashboard / copyReports / copyLogic
+    // -------------------------------------------------------------------------
+
+    public function testCopyDashboardCopiesAWidgetDashboardVerbatim(): void
+    {
+        $owner = $this->makeUser();
+        $formId = $this->makeForm($owner, 'Jobs');
+        $source = $this->makeApp($owner, 'Dash App');
+        self::$apps->addFormToApp($source, $formId);
+
+        $screen = [
+            'kind' => 'dashboard',
+            'dashboard' => ['widgets' => [['id' => 'w1', 'type' => 'kpi', 'formId' => $formId, 'title' => 'Jobs today']]],
+        ];
+        self::$pdo->prepare('UPDATE apps SET custom_screen = ? WHERE id = ?')->execute([json_encode($screen), $source]);
+
+        $companion = $this->makeCompanion($source, $owner, null, ['copyDashboard' => true]);
+
+        $this->assertSame($screen, $companion['customScreen'], 'a widget dashboard copies verbatim — its widgets reference the shared form ids');
+        // Exactly its piece: reports and logic stay the companion's own.
+        $this->assertSame([], $companion['reports']);
+        $this->assertSame([], $companion['customLogic']);
+    }
+
+    public function testCopyDashboardSkipsASandboxedCodeScreen(): void
+    {
+        $owner = $this->makeUser();
+        $source = $this->makeApp($owner, 'Code App');
+        self::$pdo->prepare('UPDATE apps SET custom_screen = ? WHERE id = ?')
+            ->execute([json_encode(['enabled' => true, 'html' => '<div>x</div>', 'js' => 'boot()']), $source]);
+
+        $companion = $this->makeCompanion($source, $owner, null, ['copyDashboard' => true]);
+        $this->assertSame([], $companion['customScreen'], 'only kind === dashboard copies — a code custom screen never does');
+    }
+
+    public function testCopyReportsCopiesReportsVerbatim(): void
+    {
+        $owner = $this->makeUser();
+        $formId = $this->makeForm($owner, 'Jobs');
+        $source = $this->makeApp($owner, 'Reports App');
+        self::$apps->addFormToApp($source, $formId);
+
+        $reports = [['id' => 'r1', 'name' => 'Jobs by status', 'formId' => $formId, 'type' => 'bar']];
+        self::$pdo->prepare('UPDATE apps SET reports = ? WHERE id = ?')->execute([json_encode($reports), $source]);
+
+        $companion = $this->makeCompanion($source, $owner, null, ['copyReports' => true]);
+
+        // assertEquals (not Same): the DB JSON round-trip may reorder assoc keys; values must match exactly.
+        $this->assertEquals($reports, $companion['reports']);
+        // Exactly its piece: screen and logic stay the companion's own.
+        $this->assertSame([], $companion['customScreen']);
+        $this->assertSame([], $companion['customLogic']);
+    }
+
+    public function testCopyLogicRunsTheBundleThroughTheSanitizer(): void
+    {
+        $owner = $this->makeUser();
+        $source = $this->makeApp($owner, 'Logic App');
+        $bundle = [
+            'version' => 1,
+            'runtime' => 'node', // forced back to quickjs
+            'scripts' => [
+                ['id' => 'good', 'hook' => 'onScreenEnter', 'runtime' => 'node', 'source' => 'fl.toast("hi")'],
+                ['id' => 'bad', 'hook' => 'onTotallyMadeUpHook', 'source' => 'evil()'], // invalid hook — dropped
+                ['id' => 'empty', 'hook' => 'onAfterSubmit', 'source' => ''],           // empty source — dropped
+            ],
+            'permissions' => ['connector.read', 42], // non-strings dropped
+        ];
+        self::$pdo->prepare('UPDATE apps SET custom_logic = ? WHERE id = ?')->execute([json_encode($bundle), $source]);
+
+        $companion = $this->makeCompanion($source, $owner, null, ['copyLogic' => true]);
+
+        $logic = $companion['customLogic'];
+        $this->assertSame(1, $logic['version'] ?? null);
+        $this->assertSame('quickjs', $logic['runtime'] ?? null);
+        $this->assertCount(1, $logic['scripts'] ?? []);
+        $this->assertSame('good', $logic['scripts'][0]['id']);
+        $this->assertSame('onScreenEnter', $logic['scripts'][0]['hook']);
+        $this->assertSame('quickjs', $logic['scripts'][0]['runtime'], 'runtime is forced to quickjs on copy');
+        $this->assertSame(['connector.read'], $logic['permissions'] ?? null);
+        // Exactly its piece: screen and reports stay the companion's own.
+        $this->assertSame([], $companion['customScreen']);
+        $this->assertSame([], $companion['reports']);
+    }
+
+    public function testCopyLogicWithOnlyInvalidScriptsCopiesNothing(): void
+    {
+        $owner = $this->makeUser();
+        $source = $this->makeApp($owner, 'Bad Logic App');
+        self::$pdo->prepare('UPDATE apps SET custom_logic = ? WHERE id = ?')
+            ->execute([json_encode(['version' => 1, 'scripts' => [['hook' => 'onNope', 'source' => 'x()']]]), $source]);
+
+        $companion = $this->makeCompanion($source, $owner, null, ['copyLogic' => true]);
+        $this->assertSame([], $companion['customLogic'], 'a bundle whose scripts are all invalid is not copied at all');
     }
 
     // -------------------------------------------------------------------------
@@ -410,6 +535,38 @@ class AppCompanionTest extends TestCase
             $formId,
             array_column(self::$apps->getAppForms($r['body']['app']['id']), 'formId')
         );
+    }
+
+    public function testControllerPassesBodyCopyFlagsThrough(): void
+    {
+        $owner = $this->makeUser();
+        $formId = $this->makeForm($owner);
+        $source = $this->makeApp($owner, 'Client App');
+        self::$apps->addFormToApp($source, $formId);
+
+        $screen = ['kind' => 'dashboard', 'dashboard' => ['widgets' => [['id' => 'w1', 'type' => 'kpi', 'formId' => $formId]]]];
+        $reports = [['id' => 'r1', 'name' => 'R', 'formId' => $formId]];
+        self::$pdo->prepare('UPDATE apps SET custom_screen = ?, reports = ? WHERE id = ?')
+            ->execute([json_encode($screen), json_encode($reports), $source]);
+
+        // Flags on: dashboard + reports come along (copyLogic left off).
+        $r = $this->callCreateCompanion($owner, $source, ['copyDashboard' => true, 'copyReports' => true]);
+        if (isset($r['body']['app']['id'])) {
+            $this->appIds[] = $r['body']['app']['id'];
+        }
+        $this->assertSame(201, $r['status']);
+        $this->assertSame($screen, $r['body']['app']['customScreen'] ?? null);
+        $this->assertSame($reports, $r['body']['app']['reports'] ?? null);
+        $this->assertSame([], $r['body']['app']['customLogic'] ?? null);
+
+        // Flags absent: nothing extra copies (the original body { name? } contract).
+        $r2 = $this->callCreateCompanion($owner, $source, []);
+        if (isset($r2['body']['app']['id'])) {
+            $this->appIds[] = $r2['body']['app']['id'];
+        }
+        $this->assertSame(201, $r2['status']);
+        $this->assertSame([], $r2['body']['app']['customScreen'] ?? null);
+        $this->assertSame([], $r2['body']['app']['reports'] ?? null);
     }
 
     public function testControllerNonOwnerGets404AndNoAppIsCreated(): void

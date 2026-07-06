@@ -1,22 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2, Sparkles, Layers } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
+import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
 import { cn } from '../../lib/utils';
+import { api } from '../../lib/api';
+import type { App } from '../../types/app';
 
-const steps = ['App Details', 'Select Forms', 'Review'];
+/** How the new app starts: brand new, over existing forms, or as a companion of another app. */
+type WizardMode = 'fresh' | 'existing' | 'companion';
+
+const stepsForMode = (mode: WizardMode | null): string[] => {
+  if (mode === 'companion') return ['Get started', 'Source app', 'Companion details', 'Review'];
+  if (mode === 'existing') return ['Get started', 'App details', 'Select forms', 'Review'];
+  // 'fresh' — also the preview shown before a mode is chosen.
+  return ['Get started', 'App details', 'Review'];
+};
+
+/** What a candidate source app brings to a companion (dashboard + reports + logic). Form counts come
+ *  from the owner-scoped app-forms endpoint (appFormsMap) — navConfig is NOT a reliable forms source. */
+const appSummary = (app: App) => {
+  const hasDashboard = app.customScreen?.kind === 'dashboard';
+  const widgetCount = hasDashboard ? (app.customScreen?.dashboard?.widgets?.length ?? 0) : 0;
+  const reportCount = app.reports?.length ?? 0;
+  const hasLogic = (app.customLogic?.scripts?.length ?? 0) > 0;
+  return { hasDashboard, widgetCount, reportCount, hasLogic };
+};
 
 export function AppCreateWizard() {
   const navigate = useNavigate();
-  const { createApp } = useAppStore();
+  const { createApp, apps } = useAppStore();
   const { forms, createForm, setActiveForm, refreshForms } = useFormStore();
-  const [step, setStep] = useState(0);
+  const user = useAuthStore((s) => s.user);
 
   // Refresh from the server so the selectable forms reflect reality (the
   // persisted store can be stale — missing forms made on another device, or
@@ -24,6 +45,10 @@ export function AppCreateWizard() {
   useEffect(() => {
     refreshForms();
   }, [refreshForms]);
+  // Same for the apps slice — the companion picker must offer real, current apps.
+  useEffect(() => {
+    useAppStore.getState().fetchApps();
+  }, []);
   const [isCreating, setIsCreating] = useState(false);
 
   // formId → names of apps that already include the form. Picking one of these
@@ -39,15 +64,92 @@ export function AppCreateWizard() {
 
   // Restore an in-progress draft (saved when the user bounced to the form builder
   // via "Create a Form") via lazy initializers — no setState-on-mount.
-  const [draft] = useState<{ name?: string; description?: string; selectedFormIds?: string[] }>(() => {
+  const [draft] = useState<{ name?: string; description?: string; selectedFormIds?: string[]; mode?: string }>(() => {
     try { return JSON.parse(sessionStorage.getItem('appWizardDraft') || '{}'); } catch { return {}; }
+  });
+  const [mode, setMode] = useState<WizardMode | null>(() =>
+    draft.mode === 'fresh' || draft.mode === 'existing' || draft.mode === 'companion' ? draft.mode : null
+  );
+  // A draft only exists after the user bounced out mid-flow; drop them back past
+  // the mode choice (and, for the existing-forms path, straight onto Select forms).
+  const [step, setStep] = useState(() => {
+    if (draft.mode === 'existing' && typeof draft.name === 'string' && draft.name.trim()) return 2;
+    return draft.mode === 'fresh' || draft.mode === 'existing' || draft.mode === 'companion' ? 1 : 0;
   });
   const [name, setName] = useState<string>(typeof draft.name === 'string' ? draft.name : '');
   const [description, setDescription] = useState<string>(typeof draft.description === 'string' ? draft.description : '');
   const [selectedFormIds, setSelectedFormIds] = useState<string[]>(Array.isArray(draft.selectedFormIds) ? draft.selectedFormIds : []);
   const [nameError, setNameError] = useState<string | null>(null);
 
-  const canNext = step === 0 ? name.trim().length > 0 : true;
+  // ── Companion path state ──────────────────────────────────────────────────
+  const [sourceAppId, setSourceAppId] = useState<string | null>(null);
+  const [copyDashboard, setCopyDashboard] = useState(true);
+  const [copyReports, setCopyReports] = useState(true);
+  const [copyLogic, setCopyLogic] = useState(false); // custom code — opt-in
+  // Prefill "<Source> Admin" without ever clobbering a name the user typed.
+  const nameTouchedRef = useRef(false);
+  const lastPrefillRef = useRef<string | null>(null);
+
+  // Only apps the user owns can grow a companion (the server enforces it; don't offer the rest).
+  const ownedApps = apps.filter((a) => !user?.id || !a.ownerId || a.ownerId === user.id);
+  const sourceApp = sourceAppId ? apps.find((a) => a.id === sourceAppId) ?? null : null;
+
+  // REAL form lists per owned app for the companion path. navConfig is NOT a reliable forms source
+  // (pack-provisioned apps can have an empty/other-shaped navConfig, so counts showed 0) — fetch the
+  // truth once from the owner-scoped app-forms endpoint. appId -> [{ formId, displayName }].
+  const [appFormsMap, setAppFormsMap] = useState<Record<string, { formId: string; displayName: string }[]> | null>(null);
+  useEffect(() => {
+    if (mode !== 'companion' || appFormsMap !== null || ownedApps.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.allSettled(ownedApps.map(async (a) => {
+        const r = await api.getAppForms(a.id);
+        const list = (r.data?.forms ?? []) as { formId: string; displayName?: string; formTitle?: string }[];
+        return [a.id, list.map((f) => ({ formId: f.formId, displayName: f.displayName || f.formTitle || 'Untitled' }))] as const;
+      }));
+      if (cancelled) return;
+      const map: Record<string, { formId: string; displayName: string }[]> = {};
+      for (const e of entries) { if (e.status === 'fulfilled') { map[e.value[0]] = [...e.value[1]]; } }
+      setAppFormsMap(map);
+    })();
+    return () => { cancelled = true; };
+  }, [mode, appFormsMap, ownedApps]);
+  /** Loaded form list for an app, or null while fetching. */
+  const formsOf = (appId: string) => appFormsMap?.[appId] ?? null;
+  const sourceSummary = sourceApp ? appSummary(sourceApp) : null;
+  // Effective copy flags — a checkbox only counts when the source has something to copy.
+  const effCopyDashboard = !!sourceSummary?.hasDashboard && copyDashboard;
+  const effCopyReports = (sourceSummary?.reportCount ?? 0) > 0 && copyReports;
+  const effCopyLogic = !!sourceSummary?.hasLogic && copyLogic;
+
+  const steps = stepsForMode(mode);
+
+  const chooseMode = (m: WizardMode) => {
+    setMode(m);
+    // Leaving the companion path with an untouched "<Source> Admin" prefill: clear it
+    // so the details step doesn't open with a name that belongs to another flow.
+    if (m !== 'companion' && !nameTouchedRef.current && name && name === lastPrefillRef.current) {
+      setName('');
+    }
+    setStep(1);
+  };
+
+  const selectSource = (app: App) => {
+    setSourceAppId(app.id);
+    const prefill = `${app.name} Admin`;
+    if (!nameTouchedRef.current || !name.trim() || name === lastPrefillRef.current) {
+      setName(prefill);
+      lastPrefillRef.current = prefill;
+      setNameError(null);
+    }
+  };
+
+  const detailsStep = mode === 'companion' ? 2 : 1; // the step that owns the name field
+  const canNext =
+    step === 0 ? mode !== null :
+    mode === 'companion' && step === 1 ? !!sourceAppId :
+    step === detailsStep ? name.trim().length > 0 :
+    true;
 
   const validateName = () => {
     if (!name.trim()) {
@@ -63,12 +165,18 @@ export function AppCreateWizard() {
   };
 
   const handleCreate = async () => {
+    if (mode === 'companion') {
+      await handleCreateCompanion();
+      return;
+    }
     setIsCreating(true);
     try {
       const app = await createApp({ name, description: description || undefined });
       if (app) {
+        // Only the existing-forms path attaches forms; "Start fresh" adds them later.
+        const formIds = mode === 'existing' ? selectedFormIds : [];
         let failedCount = 0;
-        for (const formId of selectedFormIds) {
+        for (const formId of formIds) {
           const added = await useAppStore.getState().addFormToApp(app.id, formId);
           if (!added) failedCount++;
         }
@@ -87,11 +195,61 @@ export function AppCreateWizard() {
     setIsCreating(false);
   };
 
+  const handleCreateCompanion = async () => {
+    if (!sourceApp) return;
+    setIsCreating(true);
+    try {
+      const trimmed = name.trim();
+      const result = await api.createCompanionApp(sourceApp.id, {
+        name: trimmed || undefined,
+        copyDashboard: effCopyDashboard,
+        copyReports: effCopyReports,
+        copyLogic: effCopyLogic,
+      });
+      const newApp = result.data?.app as { id?: string; name?: string } | undefined;
+      if (result.error || !newApp?.id) {
+        toast.error('Could not create companion app', typeof result.error === 'string' ? result.error : 'Please try again.');
+        setIsCreating(false);
+        return;
+      }
+      toast.success('Companion app created', `"${newApp.name ?? trimmed}" shares ${sourceApp.name}'s forms and data — members, roles and domains stay its own.`);
+      // Refresh the apps slice so the new app exists in the store before we land on its settings.
+      await useAppStore.getState().fetchApps();
+      try { sessionStorage.removeItem('appWizardDraft'); } catch { /* ignore */ }
+      navigate(`/apps/${newApp.id}/settings`);
+      return; // Skip setIsCreating after navigate
+    } catch {
+      toast.error('Could not create companion app', 'An unexpected error occurred. Please try again.');
+    }
+    setIsCreating(false);
+  };
+
   const toggleForm = (formId: string) => {
     setSelectedFormIds((prev) =>
       prev.includes(formId) ? prev.filter((id) => id !== formId) : [...prev, formId]
     );
   };
+
+  const modeCards: Array<{ id: WizardMode; icon: typeof Sparkles; title: string; body: string }> = [
+    {
+      id: 'fresh',
+      icon: Sparkles,
+      title: 'Start fresh',
+      body: 'A brand-new app. Build new forms as you go, or pick forms later.',
+    },
+    {
+      id: 'existing',
+      icon: FileText,
+      title: 'Use existing forms',
+      body: 'Attach forms you already have. Attached forms are shared — every app they belong to reads and writes the same data.',
+    },
+    {
+      id: 'companion',
+      icon: Layers,
+      title: 'Companion of an existing app',
+      body: 'A second app — e.g. an admin console — over another app’s forms and data. Optionally copies its dashboard, reports and logic.',
+    },
+  ];
 
   return (
     <div className="min-h-screen">
@@ -106,34 +264,69 @@ export function AppCreateWizard() {
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
       <div className="max-w-2xl mx-auto">
 
-      {/* Step indicator */}
-      <div className="flex items-center mb-8">
+      {/* Step indicator — numbers-only below sm (labels are hidden sm:inline) so four
+          steps never overflow a 375px screen */}
+      <div className="flex items-center mb-6 sm:mb-8">
         {steps.map((label, i) => (
-          <div key={label} className="flex items-center flex-1 last:flex-none">
-            <div className="flex items-center gap-2">
+          <div key={label} className="flex items-center flex-1 last:flex-none min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <div className={cn(
-                'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all',
+                'w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-sm font-medium transition-all',
                 i < step ? 'bg-primary-600 text-primary-foreground shadow-sm' :
                 i === step ? 'bg-primary-100 dark:bg-primary-500/20 text-primary-700 dark:text-primary-400 ring-2 ring-primary-600' :
                 'bg-gray-100 dark:bg-slate-800 text-gray-400 dark:text-slate-500'
               )}>
                 {i < step ? <Check className="h-4 w-4" /> : i + 1}
               </div>
-              <span className={cn('text-sm hidden sm:inline', i === step ? 'text-gray-900 dark:text-white font-medium' : i < step ? 'text-gray-600 dark:text-slate-300' : 'text-gray-400 dark:text-slate-500')}>{label}</span>
+              <span className={cn('text-sm hidden sm:inline truncate', i === step ? 'text-gray-900 dark:text-white font-medium' : i < step ? 'text-gray-600 dark:text-slate-300' : 'text-gray-400 dark:text-slate-500')}>{label}</span>
             </div>
-            {i < steps.length - 1 && <div className={cn('flex-1 h-px mx-3', i < step ? 'bg-primary-400' : 'bg-gray-200 dark:bg-slate-700')} />}
+            {i < steps.length - 1 && <div className={cn('flex-1 h-px mx-2 sm:mx-3', i < step ? 'bg-primary-400' : 'bg-gray-200 dark:bg-slate-700')} />}
           </div>
         ))}
       </div>
 
-      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">
+      <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-4 sm:p-6">
+        {/* Step 0 — mode choice */}
         {step === 0 && (
+          <div>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">How do you want to start?</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {modeCards.map(({ id, icon: Icon, title, body }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => chooseMode(id)}
+                  className={cn(
+                    // flex-col + justify-start: grid rows stretch the buttons to equal height, and a
+                    // button's default vertical centering would float shorter cards' content lower —
+                    // pinning content to the top keeps every icon/title/body aligned across cards.
+                    'flex flex-col justify-start items-stretch text-left p-4 rounded-xl border transition-all duration-200 cursor-pointer',
+                    mode === id
+                      ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
+                      : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 mb-2">
+                    <div className="w-9 h-9 shrink-0 rounded-lg bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center text-primary-600 dark:text-primary-400">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="text-sm font-medium text-gray-900 dark:text-white leading-snug">{title}</div>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">{body}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Details step — fresh + existing */}
+        {step === 1 && mode !== 'companion' && (
           <div className="space-y-4">
             <Input
               label="App Name *"
               type="text"
               value={name}
-              onChange={(e) => { setName(e.target.value); if (nameError) setNameError(null); }}
+              onChange={(e) => { nameTouchedRef.current = true; setName(e.target.value); if (nameError) setNameError(null); }}
               onBlur={validateName}
               placeholder="My Application"
               error={nameError ?? undefined}
@@ -146,12 +339,16 @@ export function AppCreateWizard() {
               placeholder="What does this app do?"
               rows={3}
             />
+            {mode === 'fresh' && (
+              <p className="text-xs text-gray-400 dark:text-slate-400">You'll add forms after the app is created — build new ones or attach existing forms any time.</p>
+            )}
           </div>
         )}
 
-        {step === 1 && (
+        {/* Select forms — existing-forms path */}
+        {step === 2 && mode === 'existing' && (
           <div>
-            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later. Picking a form that's already in another app shares it — both apps read and write the same data.</p>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Select forms to include in your app. You can add more later. Attaching a form SHARES it and its existing responses with any app it's already in — both apps read and write the same data.</p>
             {forms.length === 0 ? (
               <div className="text-center py-8">
                 <FileText className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
@@ -161,7 +358,7 @@ export function AppCreateWizard() {
                   variant="outline"
                   onClick={async () => {
                     // Stash the wizard draft so it's restored when the user returns.
-                    try { sessionStorage.setItem('appWizardDraft', JSON.stringify({ name, description, selectedFormIds })); } catch { /* ignore */ }
+                    try { sessionStorage.setItem('appWizardDraft', JSON.stringify({ name, description, selectedFormIds, mode })); } catch { /* ignore */ }
                     const form = await createForm('Untitled Form');
                     if (!form) return;
                     setActiveForm(form.id);
@@ -190,9 +387,9 @@ export function AppCreateWizard() {
                       onChange={() => toggleForm(form.id)}
                       className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
+                        <span className="min-w-0 break-words text-sm font-medium text-gray-900 dark:text-white">{form.title}</span>
                         {(formAppUsage[form.id]?.length ?? 0) > 0 && (
                           <span
                             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-400"
@@ -205,7 +402,7 @@ export function AppCreateWizard() {
                       </div>
                       {form.description && <p className="text-xs text-gray-500 dark:text-slate-400">{form.description}</p>}
                     </div>
-                    <span className={cn('ml-auto text-xs px-2 py-0.5 rounded-full', form.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400')}>
+                    <span className={cn('ml-auto flex-shrink-0 text-xs px-2 py-0.5 rounded-full', form.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400')}>
                       {form.status}
                     </span>
                   </label>
@@ -215,42 +412,254 @@ export function AppCreateWizard() {
           </div>
         )}
 
-        {step === 2 && (
+        {/* Source app — companion path */}
+        {step === 1 && mode === 'companion' && (
+          <div>
+            <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">Pick the app to build a companion for. The companion shares ALL of its forms and their responses — both apps read and write the same data.</p>
+            {ownedApps.length === 0 ? (
+              <div className="text-center py-8">
+                <Layers className="h-8 w-8 text-gray-300 dark:text-slate-600 mx-auto mb-3" />
+                <p className="text-gray-400 dark:text-slate-400 mb-1">You don't own an app yet.</p>
+                <p className="text-sm text-gray-400 dark:text-slate-500 mb-4">A companion is a second app over an existing app's forms and data — create your first app with "Start fresh" or "Use existing forms".</p>
+                <Button size="sm" variant="outline" onClick={() => chooseMode('fresh')} leftIcon={<Sparkles className="h-4 w-4" />}>
+                  Start fresh instead
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {ownedApps.map((app) => {
+                  const s = appSummary(app);
+                  return (
+                    <label
+                      key={app.id}
+                      className={cn(
+                        'flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all duration-200',
+                        sourceAppId === app.id
+                          ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
+                          : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="companionSource"
+                        checked={sourceAppId === app.id}
+                        onChange={() => selectSource(app)}
+                        className="mt-1 border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className="min-w-0 break-words text-sm font-medium text-gray-900 dark:text-white">{app.name}</span>
+                          <span className={cn('text-xs px-2 py-0.5 rounded-full capitalize', app.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-gray-100 text-gray-600 dark:bg-gray-500/10 dark:text-gray-400')}>
+                            {app.status}
+                          </span>
+                        </div>
+                        {app.description && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{app.description}</p>}
+                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
+                          {formsOf(app.id) === null ? '…' : formsOf(app.id)!.length} form{formsOf(app.id)?.length === 1 ? '' : 's'}
+                          {' · '}{s.hasDashboard ? `dashboard (${s.widgetCount} widget${s.widgetCount === 1 ? '' : 's'})` : 'no dashboard'}
+                          {' · '}{s.reportCount} saved report{s.reportCount === 1 ? '' : 's'}
+                          {s.hasLogic ? ' · custom logic' : ''}
+                        </p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Companion details — name + what's shared + copy options */}
+        {step === 2 && mode === 'companion' && sourceApp && sourceSummary && (
+          <div className="space-y-4">
+            <Input
+              label="Companion App Name *"
+              type="text"
+              value={name}
+              onChange={(e) => { nameTouchedRef.current = true; setName(e.target.value); if (nameError) setNameError(null); }}
+              onBlur={validateName}
+              placeholder={`${sourceApp.name} Admin`}
+              error={nameError ?? undefined}
+              autoFocus
+            />
+
+            {/* What's shared */}
+            <div className="p-3 rounded-xl bg-violet-50 dark:bg-violet-500/10 border border-violet-100 dark:border-violet-500/20">
+              <p className="text-xs font-medium text-violet-700 dark:text-violet-300 flex items-center gap-1.5 mb-1">
+                <Share2 className="h-3.5 w-3.5" />
+                Shared with {sourceApp.name}
+              </p>
+              <p className="text-xs text-violet-600/90 dark:text-violet-400/90">
+                {formsOf(sourceApp.id) === null
+                  ? 'All of its forms — and every response, past and future. Both apps read and write the same data.'
+                  : `All ${formsOf(sourceApp.id)!.length} form${formsOf(sourceApp.id)!.length === 1 ? '' : 's'} — and every response, past and future. Both apps read and write the same data.`}
+              </p>
+              {(formsOf(sourceApp.id)?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {formsOf(sourceApp.id)!.slice(0, 8).map((item) => (
+                    <span key={item.formId} className="px-1.5 py-0.5 rounded text-xs bg-white/70 dark:bg-slate-900/40 text-violet-700 dark:text-violet-300">{item.displayName}</span>
+                  ))}
+                  {formsOf(sourceApp.id)!.length > 8 && (
+                    <span className="px-1.5 py-0.5 text-xs text-violet-600 dark:text-violet-400">+{formsOf(sourceApp.id)!.length - 8} more</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Copy options */}
+            <div className="space-y-2">
+              <label className={cn('flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors', sourceSummary.hasDashboard ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800' : 'opacity-60 cursor-not-allowed')}>
+                <input
+                  type="checkbox"
+                  checked={effCopyDashboard}
+                  disabled={!sourceSummary.hasDashboard}
+                  onChange={() => setCopyDashboard((v) => !v)}
+                  className="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">Copy dashboard</span>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    {sourceSummary.hasDashboard
+                      ? `Start from a copy of ${sourceApp.name}'s dashboard (${sourceSummary.widgetCount} widget${sourceSummary.widgetCount === 1 ? '' : 's'}). Its widgets keep working — they read the same shared forms.`
+                      : `${sourceApp.name} has no dashboard to copy.`}
+                  </p>
+                </div>
+              </label>
+
+              <label className={cn('flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors', sourceSummary.reportCount > 0 ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800' : 'opacity-60 cursor-not-allowed')}>
+                <input
+                  type="checkbox"
+                  checked={effCopyReports}
+                  disabled={sourceSummary.reportCount === 0}
+                  onChange={() => setCopyReports((v) => !v)}
+                  className="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">Copy saved reports</span>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    {sourceSummary.reportCount > 0
+                      ? `Copies ${sourceSummary.reportCount} saved report${sourceSummary.reportCount === 1 ? '' : 's'} and document${sourceSummary.reportCount === 1 ? '' : 's'} — they run over the shared data.`
+                      : `${sourceApp.name} has no saved reports to copy.`}
+                  </p>
+                </div>
+              </label>
+
+              <label className={cn('flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors', sourceSummary.hasLogic ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800' : 'opacity-60 cursor-not-allowed')}>
+                <input
+                  type="checkbox"
+                  checked={effCopyLogic}
+                  disabled={!sourceSummary.hasLogic}
+                  onChange={() => setCopyLogic((v) => !v)}
+                  className="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+                />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">Copy app logic (custom code)</span>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">
+                    {sourceSummary.hasLogic
+                      ? 'Each app runs its OWN app-level custom logic and custom screens — copying gives this app an independent copy to edit. Form-level logic and the forms’ fields are shared with the data.'
+                      : `${sourceApp.name} has no app-level custom logic to copy.`}
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <p className="text-xs text-gray-400 dark:text-slate-400">Members, roles, custom domains and publishing status are NOT copied — the companion starts as a draft with fresh system roles.</p>
+          </div>
+        )}
+
+        {/* Review — fresh + existing */}
+        {step === steps.length - 1 && mode !== 'companion' && (
           <div className="space-y-4">
             <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-slate-800 rounded-xl">
-              <Globe className="h-10 w-10 text-primary-600 dark:text-primary-400" />
-              <div>
-                <h3 className="font-semibold text-gray-900 dark:text-white tracking-tight">{name}</h3>
+              <Globe className="h-10 w-10 flex-shrink-0 text-primary-600 dark:text-primary-400" />
+              <div className="min-w-0">
+                <h3 className="font-semibold text-gray-900 dark:text-white tracking-tight break-words">{name}</h3>
                 {description && <p className="text-sm text-gray-500 dark:text-slate-400">{description}</p>}
               </div>
             </div>
-            <div>
-              <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Included Forms ({selectedFormIds.length})</h4>
-              {selectedFormIds.length === 0 ? (
-                <p className="text-sm text-gray-400 dark:text-slate-400">No forms selected</p>
-              ) : (
-                <ul className="space-y-1">
-                  {selectedFormIds.map((id) => {
-                    const form = forms.find((f) => f.id === id);
-                    return form ? (
-                      <li key={id} className="text-sm text-gray-600 dark:text-slate-300 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />
-                        {form.title}
-                        {(formAppUsage[id]?.length ?? 0) > 0 && (
-                          <span className="text-xs text-violet-600 dark:text-violet-400" title="Both apps read and write the same data.">shared with {formAppUsage[id].join(', ')}</span>
-                        )}
-                      </li>
-                    ) : null;
-                  })}
-                </ul>
-              )}
-            </div>
+            {mode === 'existing' ? (
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Included Forms ({selectedFormIds.length})</h4>
+                {selectedFormIds.length === 0 ? (
+                  <p className="text-sm text-gray-400 dark:text-slate-400">No forms selected</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {selectedFormIds.map((id) => {
+                      const form = forms.find((f) => f.id === id);
+                      return form ? (
+                        <li key={id} className="text-sm text-gray-600 dark:text-slate-300 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />
+                          {form.title}
+                          {(formAppUsage[id]?.length ?? 0) > 0 && (
+                            <span className="text-xs text-violet-600 dark:text-violet-400" title="Both apps read and write the same data.">shared with {formAppUsage[id].join(', ')}</span>
+                          )}
+                        </li>
+                      ) : null;
+                    })}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400 dark:text-slate-400">No forms yet — you'll build or attach them after the app is created.</p>
+            )}
             <p className="text-xs text-gray-400 dark:text-slate-400">Default roles (Owner, Admin, Member) will be created automatically.</p>
+          </div>
+        )}
+
+        {/* Review — companion */}
+        {step === 3 && mode === 'companion' && sourceApp && sourceSummary && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-slate-800 rounded-xl">
+              <Layers className="h-10 w-10 flex-shrink-0 text-primary-600 dark:text-primary-400" />
+              <div className="min-w-0">
+                <h3 className="font-semibold text-gray-900 dark:text-white tracking-tight break-words">{name}</h3>
+                <p className="text-sm text-gray-500 dark:text-slate-400">Companion of {sourceApp.name}</p>
+              </div>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Shared with {sourceApp.name}</h4>
+              <p className="text-sm text-gray-600 dark:text-slate-300 flex items-start gap-2">
+                <Share2 className="h-4 w-4 mt-0.5 flex-shrink-0 text-violet-500 dark:text-violet-400" />
+                <span>
+                  {formsOf(sourceApp.id) === null
+                    ? 'All of its forms and every response — both apps read and write the same data.'
+                    : `All ${formsOf(sourceApp.id)!.length} form${formsOf(sourceApp.id)!.length === 1 ? '' : 's'} and every response — both apps read and write the same data.`}
+                </span>
+              </p>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-slate-300 mb-2">Copied into the companion</h4>
+              <ul className="space-y-1">
+                <li className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                  <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', effCopyDashboard ? 'bg-primary-500' : 'bg-gray-300 dark:bg-slate-600')} />
+                  {effCopyDashboard ? `Dashboard (${sourceSummary.widgetCount} widget${sourceSummary.widgetCount === 1 ? '' : 's'})` : 'Dashboard — not copied'}
+                </li>
+                <li className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                  <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', effCopyReports ? 'bg-primary-500' : 'bg-gray-300 dark:bg-slate-600')} />
+                  {effCopyReports ? `${sourceSummary.reportCount} saved report${sourceSummary.reportCount === 1 ? '' : 's'}` : 'Saved reports — not copied'}
+                </li>
+                <li className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                  <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', effCopyLogic ? 'bg-primary-500' : 'bg-gray-300 dark:bg-slate-600')} />
+                  {effCopyLogic ? 'App logic (custom code) — the companion gets its own copy to edit' : 'App logic (custom code) — not copied; each app runs its own'}
+                </li>
+                <li className="text-sm text-gray-600 dark:text-slate-300 flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary-500 flex-shrink-0" />
+                  Theme and navigation
+                </li>
+              </ul>
+            </div>
+            <p className="text-xs text-gray-400 dark:text-slate-400">Members, roles and custom domains stay separate; the companion starts as a draft with fresh system roles (Owner, Admin, Member).</p>
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between mt-6">
+      {/* Wizard nav — sticky bottom so Back / Next / Create are ALWAYS visible without
+          scrolling. Mirrors the sticky Header's surface (translucent bg + blur + hairline)
+          so step content scrolls beneath it; the shell's main uses overflow-x-clip (not
+          hidden) precisely so document-level sticky keeps working. Below md it rests on
+          top of the fixed MobileNav (h-16 + safe-area inset) and bleeds to the screen
+          edges; at md+ it pins to the true bottom and carries its own safe-area padding. */}
+      <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-0 z-20 mt-6 -mx-4 px-4 sm:-mx-6 sm:px-6 md:mx-0 md:px-0 pt-3 pb-3 md:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-t border-gray-200/60 dark:border-white/[0.06] flex items-center justify-between gap-3">
         <Button
           variant="ghost"
           onClick={() => setStep(Math.max(0, step - 1))}
@@ -262,7 +671,7 @@ export function AppCreateWizard() {
 
         {step < steps.length - 1 ? (
           <Button
-            onClick={() => { if (step === 0 && !validateName()) return; setStep(step + 1); }}
+            onClick={() => { if (step === detailsStep && !validateName()) return; setStep(step + 1); }}
             disabled={!canNext}
             rightIcon={<ArrowRight className="h-4 w-4" />}
           >
@@ -270,7 +679,7 @@ export function AppCreateWizard() {
           </Button>
         ) : (
           <Button onClick={handleCreate} disabled={isCreating}>
-            {isCreating ? 'Creating...' : 'Create App'}
+            {isCreating ? 'Creating...' : mode === 'companion' ? 'Create Companion App' : 'Create App'}
           </Button>
         )}
       </div>

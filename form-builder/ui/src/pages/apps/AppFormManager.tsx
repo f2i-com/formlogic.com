@@ -230,6 +230,11 @@ export function AppFormManager() {
   const sourceAppName = apps.find((a) => a.id === appId)?.name;
   const [companionName, setCompanionName] = useState('');
   const [companionBusy, setCompanionBusy] = useState(false);
+  // What to copy across: dashboard + saved reports default ON (they stay valid — the forms are
+  // identical), app-level custom logic defaults OFF (custom code is opt-in per app).
+  const [companionCopyDashboard, setCompanionCopyDashboard] = useState(true);
+  const [companionCopyReports, setCompanionCopyReports] = useState(true);
+  const [companionCopyLogic, setCompanionCopyLogic] = useState(false);
   // Prefill "<App> Admin" once the app name is known, but never clobber user input.
   const companionTouchedRef = useRef(false);
   useEffect(() => {
@@ -242,14 +247,19 @@ export function AppFormManager() {
     if (!appId || companionBusy) return;
     setCompanionBusy(true);
     const name = companionName.trim();
-    const result = await api.createCompanionApp(appId, name || undefined);
+    const result = await api.createCompanionApp(appId, {
+      name: name || undefined,
+      copyDashboard: companionCopyDashboard,
+      copyReports: companionCopyReports,
+      copyLogic: companionCopyLogic,
+    });
     const newApp = result.data?.app as { id?: string; name?: string } | undefined;
     if (result.error || !newApp?.id) {
       toast.error('Could not create companion app', typeof result.error === 'string' ? result.error : 'Please try again.');
       setCompanionBusy(false);
       return;
     }
-    toast.success('Companion app created', `"${newApp.name ?? name}" shares this app's forms and data — members, roles and dashboards are its own.`);
+    toast.success('Companion app created', `"${newApp.name ?? name}" shares this app's forms and data — members and roles are its own.`);
     // Refresh the apps slice so the new app exists in the store before we land on its manage page.
     await useAppStore.getState().fetchApps();
     navigate(`/apps/${newApp.id}/settings?tab=manage`);
@@ -441,7 +451,42 @@ export function AppFormManager() {
           Create a companion app
         </h3>
         <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
-          A second app — e.g. an admin console — over these same forms and data. Members, roles, branding and dashboards stay separate.
+          A second app — e.g. an admin console — over these same forms and data. Members and roles stay separate; pick what to bring across below.
+        </p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 mb-2">
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={companionCopyDashboard}
+              onChange={(e) => setCompanionCopyDashboard(e.target.checked)}
+              disabled={companionBusy}
+              className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500/30"
+            />
+            Copy dashboard
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={companionCopyReports}
+              onChange={(e) => setCompanionCopyReports(e.target.checked)}
+              disabled={companionBusy}
+              className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500/30"
+            />
+            Copy saved reports
+          </label>
+          <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={companionCopyLogic}
+              onChange={(e) => setCompanionCopyLogic(e.target.checked)}
+              disabled={companionBusy}
+              className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500/30"
+            />
+            Copy app logic (custom code)
+          </label>
+        </div>
+        <p className="text-xs text-gray-400 dark:text-slate-500 mb-3">
+          Each app runs its own app-level custom logic and screens; form-level logic travels with the shared forms.
         </p>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <input
