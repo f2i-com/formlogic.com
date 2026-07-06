@@ -1,0 +1,31 @@
+# Backend directory hardening — defense in depth for BOTH layouts:
+#  - source checkout served under a generic docroot (e.g. http://localhost/formlogic-app/...):
+#    without this file, backend/.env and storage SQLite files are directly fetchable.
+#  - deployed bundle (this dir shipped as <webroot>/api/): the web-root .htaccess already
+#    funnels/denies, but this file keeps the secrets safe even if that one goes missing.
+#
+# Deliberately FilesMatch-scoped (never "Require all denied"): the bundle's front controller
+# api/public/index.php is reached via an internal rewrite from the web root, and a blanket
+# deny here would block that rewrite target and take the whole API down.
+
+Options -Indexes
+
+<FilesMatch "^\.(env|ht)">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+<FilesMatch "\.(env|sqlite|sqlite3|db|log|lock)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>

@@ -39,7 +39,7 @@ For the default checkout under your web root that's:
 http://localhost/formlogic-app/form-builder/install.php
 ```
 
-The wizard checks requirements, tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding. **Delete `install.php` when done.**
+The wizard checks requirements and file permissions (fixing what it can — including the Linux `qjs` execute bit), tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding, and prints cron lines for the maintenance CLIs. On an already-installed deployment it instead offers an **"Upgrade existing installation"** mode (same guarded migrations as `backend/bin/upgrade.php`; requires `INSTALL_ENABLE=1` since the wizard locks itself once installed). The wizard also ships at the root of the release zip (`install.php` beside `api/`). **Delete `install.php` when done.**
 
 ### Option 2: Install script (Linux / macOS / Git Bash)
 
@@ -255,7 +255,7 @@ Custom app domains (running an app on a customer's own domain) additionally use 
 
 ### Distributable zip (packaged release)
 
-`node scripts/package-dist.mjs` (from the repo root) builds a ready-to-upload release zip in the single-domain layout: the built UI at the zip root, the production-filtered backend under `api/`, plus `INSTALL.txt`, `UPGRADE.txt`, and `VERSION` — output at `dist-package/formlogic-<version>.zip` (flags: `--skip-ui-build`, `--no-install`, `--out <dir>`, `--keep-staging`).
+`node scripts/package-dist.mjs` (from the repo root) builds a ready-to-upload release zip in the single-domain layout: the built UI at the zip root, the production-filtered backend under `api/`, plus the `install.php` wizard, `INSTALL.txt`, `UPGRADE.txt`, and `VERSION` — output at `dist-package/formlogic-<version>.zip` (flags: `--skip-ui-build`, `--no-install`, `--out <dir>`, `--keep-staging`).
 The [package workflow](../.github/workflows/package.yml) runs the same script on every `v*` tag — attaching the zip to the GitHub release — and on demand via *Run workflow*.
 
 ## Tests and checks

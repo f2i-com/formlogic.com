@@ -6,8 +6,10 @@
  *
  *   <zip root>/            the BUILT ui (contents of form-builder/ui/dist: index.html, assets/, .htaccess, ...)
  *   <zip root>/api/        the backend (front controller api/public/index.php), production-filtered
- *   <zip root>/INSTALL.txt fresh-install steps
- *   <zip root>/UPGRADE.txt existing-install steps (api/bin/upgrade.php + docs/UPGRADING.md)
+ *   <zip root>/install.php the browser install/upgrade wizard (form-builder/install.php; it detects
+ *                          the bundle layout via the api/ folder beside it — delete after installing)
+ *   <zip root>/INSTALL.txt fresh-install steps (wizard first, manual fallback)
+ *   <zip root>/UPGRADE.txt existing-install steps (wizard upgrade mode / api/bin/upgrade.php + docs/UPGRADING.md)
  *   <zip root>/VERSION     version string (also copied to <zip root>/api/VERSION)
  *
  * Version resolution: git tag vX.Y.Z at HEAD (stripped "v") when building a tag, else "<short-sha>-<yyyymmdd>".
@@ -74,7 +76,9 @@ const backendDir = path.join(repoRoot, 'form-builder', 'backend');
 // mirrors the e2e.yml "storage dirs" step).
 // ---------------------------------------------------------------------------
 const BACKEND_COPY_DIRS = ['bin', 'config', 'database', 'public', 'resources', 'src'];
-const BACKEND_COPY_FILES = ['composer.json', 'composer.lock', '.env.example'];
+// .htaccess: FilesMatch-scoped secrets deny (defense in depth inside api/ — the web-root
+// .htaccess is the primary guard; this one keeps .env/SQLite safe even without it).
+const BACKEND_COPY_FILES = ['composer.json', 'composer.lock', '.env.example', '.htaccess'];
 const BACKEND_SKELETON_DIRS = [
   'logs',
   'storage/forms',
@@ -185,6 +189,7 @@ This zip contains the complete app in the single-domain layout:
 
   /            the built web app (index.html, assets/, .htaccess, ...)
   /api         the PHP backend (front controller: api/public/index.php)
+  /install.php the browser install/upgrade wizard (DELETE after installing)
   VERSION      this release's version (also at api/VERSION)
 
 Requirements
@@ -196,11 +201,32 @@ Requirements
 - MySQL 8.
 - HTTPS in production: auth uses Secure cookies, so login FAILS over plain HTTP.
 
-Steps
------
+EASIEST: the install wizard
+---------------------------
 1. Upload the CONTENTS of this zip to your site's web root (DocumentRoot).
    (Upload what is INSIDE the zip — index.html must end up at the web root,
    not inside a subfolder.)
+2. Open https://your-domain/install.php in a browser and follow the wizard.
+   The wizard is locked to localhost by default. Installing onto a remote
+   server? Temporarily allow it by adding this line at the TOP of the
+   web-root .htaccess:
+     SetEnv INSTALL_ENABLE 1
+3. The wizard automates the whole setup: it checks the PHP version and
+   extensions, checks + fixes file permissions where it can (api/storage/*,
+   api/logs — printing the exact chown/chmod commands for anything it
+   can't), verifies the qjs script-runtime binary is executable on Linux
+   (restoring the execute bit that zip extraction drops), tests your MySQL
+   connection, writes api/.env with generated secrets, creates the database
+   + schema, verifies api/.env is not web-readable, and finishes with
+   copy-paste cron lines for the maintenance jobs.
+4. DELETE install.php from the web root and remove the SetEnv line from
+   .htaccess again. (The wizard also hard-disables itself once installed,
+   but deleting the file is the guarantee.)
+
+Manual install (no wizard)
+--------------------------
+1. Upload the CONTENTS of this zip to your site's web root (as above) and
+   delete install.php if you won't use it.
 2. Create the backend config: copy api/.env.example to api/.env, then set
      DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD  — your MySQL details
      JWT_SECRET                                      — a long random string
@@ -211,12 +237,23 @@ Steps
    the schema is created automatically on first run).
 4. Make api/storage/ and api/logs/ writable by the web server user
    (e.g. on Linux: chown -R www-data:www-data api/storage api/logs).
-5. Visit the site in a browser — the backend creates/updates its schema on the
+5. On Linux, make sure the qjs script-runtime binary is executable (zip
+   extraction often drops the execute bit):
+     chmod +x api/bin/qjs/qjs-linux-x86_64
+6. Visit the site in a browser — the backend creates/updates its schema on the
    first request. (Or, from a shell on the server: php api/bin/upgrade.php)
-6. Verify: https://your-domain/api/health reports status + storage checks.
-7. Create your account: the sign-up page registers the first user. You can
+7. Verify: https://your-domain/api/health reports status + storage checks.
+8. Create your account: the sign-up page registers the first user. You can
    start from a blank workspace or install a ready-made app from the
    marketplace (Apps -> Create app / Import).
+
+Scheduled tasks (optional but recommended)
+------------------------------------------
+The wizard prints these ready-to-paste; the crontab lines are (use the full
+path to your PHP 8.1+ CLI binary if plain "php" isn't on cron's PATH):
+  * * * * *  php <web-root>/api/bin/webhook-worker.php       # webhook retry delivery (lock-guarded; or run once with --loop as a service)
+  17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php  # nightly offline-sync ledger prune (rows older than 30 days)
+  0 4 * * 1  php <web-root>/api/bin/reconcile.php            # weekly read-only MySQL<->SQLite drift report (--fix applies safe repairs)
 
 Troubleshooting
 ---------------
@@ -229,7 +266,9 @@ Troubleshooting
 - Login does nothing / you are logged straight out: you are on plain HTTP.
   Auth cookies are Secure-only — serve the site over HTTPS.
 - Uploads or app installs fail: api/storage/ is not writable by the web
-  server user (see step 4).
+  server user (see manual step 4 — the wizard reports the exact commands).
+- Form logic / scripts do nothing on Linux: the qjs binary lost its execute
+  bit (see manual step 5 — the wizard fixes this automatically).
 - Blank white page: the zip contents were uploaded into a subfolder. The
   app expects to live at the domain root (index.html next to .htaccess).
 
@@ -237,7 +276,10 @@ Notes
 -----
 - Never expose api/.env, api/storage/ or api/logs/ over HTTP. The shipped
   .htaccess already denies them on Apache; on any other web server replicate
-  those rules (see the comments inside .htaccess).
+  those rules (see the comments inside .htaccess). The wizard self-tests
+  api/.env exposure after installing where it can.
+- Always delete install.php when you are done (it also disables itself once
+  installed, and only ever runs from localhost or with INSTALL_ENABLE=1).
 - Upgrading later? See UPGRADE.txt in the release zip.
 `;
 }
@@ -254,12 +296,29 @@ Full guide: docs/UPGRADING.md in the source repository.
      - api/.env       (your configuration/secrets)
      - api/storage/   (your response databases, uploads, and packs)
    Keeping the existing api/logs/ contents is optional but harmless.
-3. Run the upgrade CLI:
+3. Migrate the database — pick ONE:
+
+   EASIEST — the wizard: open https://your-domain/install.php and choose
+   "Upgrade existing installation". It runs the same guarded, idempotent
+   schema migrations the CLI runs, verifies the core tables, stamps the
+   version, re-checks file permissions + the qjs execute bit, and reminds
+   you of the cron lines. Once installed the wizard locks itself — allow
+   this one run by adding this line at the TOP of the web-root .htaccess:
+     SetEnv INSTALL_ENABLE 1
+   (remove it again — and delete install.php — right after).
+
+   CLI (recommended for big installs, runs before traffic hits the code):
      php api/bin/upgrade.php --app-version=${version}
-   or simply load the site once — pending schema migrations run automatically
-   on the first request. (Without the flag, upgrade.php reads the version to
-   stamp from the api/VERSION file shipped in this zip.)
+   (Without the flag, upgrade.php reads the version to stamp from the
+   api/VERSION file shipped in this zip.)
+
+   Or do nothing — pending schema migrations run automatically on the
+   first request that hits the new code.
+
 4. Verify: https://your-domain/api/health reports ok and the app loads.
+   (From a shell: php api/bin/upgrade.php --check is a read-only report.)
+5. Delete install.php from the web root (this zip ships a fresh copy) and
+   remove any SetEnv INSTALL_ENABLE line you added.
 
 If anything fails, restore the step-1 backup and retry.
 `;
@@ -358,7 +417,14 @@ if (existsSync(path.join(apiDst, 'vendor', 'phpunit'))) {
   fail('dev dependencies leaked into the staged vendor/ (vendor/phpunit exists) — expected --no-dev');
 }
 
-// [5] VERSION + INSTALL.txt + UPGRADE.txt ---------------------------------------
+// [5] Install/upgrade wizard at the zip root -------------------------------------
+step('Staging the install wizard (install.php) at the zip root');
+const installerSrc = path.join(repoRoot, 'form-builder', 'install.php');
+if (!existsSync(installerSrc)) fail('form-builder/install.php not found');
+copyFileSync(installerSrc, path.join(staging, 'install.php'));
+info('copied form-builder/install.php -> install.php (the wizard resolves the bundle layout via the api/ folder beside it)');
+
+// [6] VERSION + INSTALL.txt + UPGRADE.txt ---------------------------------------
 step('Writing VERSION, INSTALL.txt, UPGRADE.txt');
 writeFileSync(path.join(staging, 'VERSION'), `${version}\n`);
 // api/VERSION is what api/bin/upgrade.php falls back to for --app-version stamping.
@@ -366,11 +432,12 @@ writeFileSync(path.join(apiDst, 'VERSION'), `${version}\n`);
 writeFileSync(path.join(staging, 'INSTALL.txt'), installTxt(version));
 writeFileSync(path.join(staging, 'UPGRADE.txt'), upgradeTxt(version));
 
-// [6] Sanity checks on the staged tree ------------------------------------------
+// [7] Sanity checks on the staged tree ------------------------------------------
 step('Verifying the staged tree');
 const mustExist = [
   'index.html',
   '.htaccess',
+  'install.php',
   'api/public/index.php',
   'api/public/.htaccess',
   'api/vendor/autoload.php',
@@ -394,7 +461,7 @@ for (const p of mustNotExist) {
 }
 info(`all ${mustExist.length} required paths present; ${mustNotExist.length} excluded paths confirmed absent`);
 
-// [7] Zip ------------------------------------------------------------------------
+// [8] Zip ------------------------------------------------------------------------
 step('Creating the zip');
 rmSync(zipPath, { force: true });
 if (commandExists('zip', ['-v'])) {
@@ -411,7 +478,7 @@ if (commandExists('zip', ['-v'])) {
 if (!existsSync(zipPath)) fail(`zip was not created at ${zipPath}`);
 const sizeMb = (statSync(zipPath).size / (1024 * 1024)).toFixed(1);
 
-// [8] Report + cleanup --------------------------------------------------------------
+// [9] Report + cleanup --------------------------------------------------------------
 step('Package contents (top 2 levels of the zip root)');
 function listTree(dir, depth, prefix = '  ') {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {

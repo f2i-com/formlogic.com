@@ -19,6 +19,7 @@ A FormLogic release zip is laid out for a single web root (this is the layout th
     bin/upgrade.php                     <- the upgrade CLI described below
     VERSION                             <- version string of the shipped release
   VERSION                               <- same version string, at the zip root
+  install.php                           <- browser install/upgrade wizard (delete after use)
   INSTALL.txt / UPGRADE.txt             <- condensed fresh-install / upgrade steps
 ```
 
@@ -26,8 +27,8 @@ A FormLogic release zip is laid out for a single web root (this is the layout th
 
 There is **no separate migrations folder to run**. The app carries its whole schema lifecycle in
 code (`MySQLConnection::initializeSchema()` + `runMigrations()`), and every step is guarded and
-idempotent (`CREATE TABLE IF NOT EXISTS`, `SHOW COLUMNS`/`SHOW INDEX` before each `ALTER`). Two ways
-to apply it:
+idempotent (`CREATE TABLE IF NOT EXISTS`, `SHOW COLUMNS`/`SHOW INDEX` before each `ALTER`). Three
+ways to apply it:
 
 1. **Automatic** — the web app runs the same schema bootstrap on startup, so the *first request*
    after the new files land migrates the database by itself. Fine for small installs.
@@ -37,6 +38,14 @@ to apply it:
    visibility, a slow first request on big tables). It also verifies the core tables afterwards and
    stamps a `schema_meta` table (`app_version`, `last_upgrade_at`, `upgrade_source`) so the install
    records what it was upgraded to. It is idempotent — running it twice is safe.
+3. **The wizard (`install.php` at the web root, shipped in every release zip)** — for operators
+   without shell access: it detects the existing install (configured `api/.env` + core tables in
+   the database) and offers **"Upgrade existing installation"**, which runs the exact same
+   `initializeSchema()` + `runMigrations()` path, verifies the core tables, and stamps
+   `schema_meta` with `upgrade_source=installer` (version from the shipped `api/VERSION`). It
+   also re-checks file permissions and the Linux `qjs` execute bit. Once installed the wizard
+   locks itself: temporarily add `SetEnv INSTALL_ENABLE 1` at the top of the web-root `.htaccess`
+   to allow the run, then remove the line and delete `install.php`.
 
 ## Upgrade steps
 
@@ -126,6 +135,7 @@ needed — if the app can reach the database, so can the CLI.
   ci && npm run build`) — the release zip ships both pre-built.
 - **Idempotent by design**: every schema step is guarded, so re-running the CLI (or letting the web
   app re-run the same migrations) never double-applies anything.
-- `schema_meta` is only stamped by this CLI (`upgrade_source=cli`); an install that has only ever
+- `schema_meta` is only stamped by deliberate upgrades — `upgrade_source=cli` (this CLI) or
+  `upgrade_source=installer` (the wizard's upgrade mode); an install that has only ever
   auto-migrated via the web app won't have it — `--check` reports that informationally, not as
   drift.

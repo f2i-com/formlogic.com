@@ -72,7 +72,9 @@ test.describe('launch golden paths', () => {
     await page.context().clearCookies();
     await page.evaluate(() => { try { localStorage.clear(); } catch { /* ignore */ } });
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /the form platform with/i })).toBeVisible({ timeout: 20_000 });
+    // The landing hero heading ("Build business apps from forms") — proves logout landed on the
+    // signed-out landing page. Keep in sync with Landing.tsx's <h1>.
+    await expect(page.getByRole('heading', { name: /build business apps/i })).toBeVisible({ timeout: 20_000 });
   });
 
   test('build → publish → submit public response → view', async ({ page }) => {

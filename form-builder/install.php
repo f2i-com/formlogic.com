@@ -2,12 +2,25 @@
 /**
  * FormLogic Installation Wizard
  *
- * A browser-based installer for setting up FormLogic on WAMP/XAMPP/LAMP.
- * Access via your web root + this file's path, e.g.
- *   http://localhost/<your-folder>/form-builder/install.php
- * (for the default checkout: http://localhost/formlogic-app/form-builder/install.php)
+ * A browser-based installer AND upgrader for FormLogic. It runs from either layout:
+ *   - source checkout (WAMP/XAMPP/LAMP): http://localhost/<your-folder>/form-builder/install.php
+ *     (default checkout: http://localhost/formlogic-app/form-builder/install.php)
+ *   - deployed release zip: this file ships at the zip root, beside api/ —
+ *     https://your-domain/install.php
  *
- * IMPORTANT: Delete this file after installation is complete.
+ * Fresh install: checks requirements and file permissions (fixing what it can and printing the
+ * exact commands for what it can't — including the execute bit on the Linux qjs binary, which zip
+ * extraction commonly drops), writes the backend .env with generated secrets, creates the database
+ * + schema, and finishes with copy-paste cron lines for the maintenance CLIs.
+ *
+ * Upgrade: when a configured .env + a database with FormLogic's core tables are detected, the
+ * wizard offers "Upgrade existing installation" — the same guarded, idempotent schema path as
+ * api/bin/upgrade.php (MySQLConnection::initializeSchema + runMigrations), plus the schema_meta
+ * stamp (upgrade_source=installer).
+ *
+ * IMPORTANT: Delete this file after installation is complete. It also hard-disables itself once a
+ * configured .env exists — deliberately re-enable it with INSTALL_ENABLE=1 (e.g. `SetEnv
+ * INSTALL_ENABLE 1` in the web-root .htaccess) to use the upgrade mode, then remove that again.
  */
 
 declare(strict_types=1);
@@ -53,12 +66,31 @@ $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
 $isLocalRequest = in_array($remoteAddr, ['127.0.0.1', '::1', 'localhost'], true);
 
 $installerDenied = null;
+$installerDeniedExtraHtml = '';
+$backendRelName = basename(flBackendDir()); // 'api' (deployed zip) or 'backend' (source checkout)
 if ($alreadyInstalled && !$installEnabled) {
-    $installerDenied = 'FormLogic is already installed. For security, delete form-builder/install.php. '
-        . 'To deliberately re-run setup, set the environment variable INSTALL_ENABLE=1.';
+    $installerDenied = 'FormLogic is already installed. For security the web installer disables itself '
+        . 'once a configured ' . $backendRelName . '/.env exists — delete install.php now. '
+        . 'To deliberately re-run it (e.g. to use the upgrade mode), set the environment variable INSTALL_ENABLE=1.';
+    // The GET page gets the full upgrade story so an operator who lands here knows every path forward.
+    $installerDeniedExtraHtml =
+        '<h2 style="font-size:1.1rem;margin-top:1.5rem">Upgrading an existing installation?</h2>'
+        . '<p>After replacing the files with a new release (keep <code>' . htmlspecialchars($backendRelName, ENT_QUOTES) . '/.env</code>'
+        . ' and <code>' . htmlspecialchars($backendRelName, ENT_QUOTES) . '/storage/</code>!), any of these works:</p><ol>'
+        . '<li>Recommended — the upgrade CLI, from a shell on the server:<br>'
+        . '<code>php ' . htmlspecialchars($backendRelName, ENT_QUOTES) . '/bin/upgrade.php</code></li>'
+        . '<li>Or just load the site once — pending schema migrations run automatically on the first request.</li>'
+        . '<li>Or this wizard&#8217;s upgrade mode: temporarily add <code>SetEnv INSTALL_ENABLE 1</code> at the top of the'
+        . ' web-root <code>.htaccess</code> (Apache), reload this page, run the upgrade — then'
+        . ' <strong>remove that line and delete install.php</strong>.</li></ol>';
 } elseif (!$isLocalRequest && !$installEnabled) {
     $installerDenied = 'For security, run the installer from the server itself (localhost), '
         . 'or set the environment variable INSTALL_ENABLE=1 to allow remote setup.';
+    $installerDeniedExtraHtml =
+        '<p style="margin-top:1rem">Installing over the network (e.g. a release zip uploaded to a remote host)?'
+        . ' Temporarily add this line at the top of the web-root <code>.htaccess</code> (Apache), then reload:</p>'
+        . '<pre style="background:#f1f5f9;padding:8px 12px;border-radius:8px"><code>SetEnv INSTALL_ENABLE 1</code></pre>'
+        . '<p><strong>Remove the line and delete install.php as soon as you are done.</strong></p>';
 }
 if ($installerDenied !== null) {
     http_response_code(403);
@@ -70,7 +102,8 @@ if ($installerDenied !== null) {
         echo '<!doctype html><meta charset="utf-8"><title>Installer disabled</title>'
             . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
             . '<h1 style="font-size:1.4rem">Installer disabled</h1><p>'
-            . htmlspecialchars($installerDenied, ENT_QUOTES) . '</p></body>';
+            . htmlspecialchars($installerDenied, ENT_QUOTES) . '</p>'
+            . $installerDeniedExtraHtml . '</body>';
     }
     exit;
 }
@@ -105,6 +138,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
         case 'run_install':
             echo json_encode(runInstall($_POST));
+            exit;
+
+        case 'detect_install':
+            echo json_encode(detectExistingInstall());
+            exit;
+
+        case 'run_upgrade':
+            echo json_encode(runUpgrade());
             exit;
     }
 
@@ -184,38 +225,68 @@ function checkRequirements(): array
         'help' => $vendorExists ? '' : 'Run: cd backend && composer install',
     ];
 
-    // Write permissions
+    // Write permissions — the wizard tries to FIX what it can first (create missing dirs, loosen
+    // the mode when PHP owns the dir) and prints the exact commands for anything it can't.
     $backendRel = basename(flBackendDir()); // 'api' (deployed) or 'backend' (source)
+    $isWin = stripos(PHP_OS, 'WIN') === 0;
     $dirsToCheck = [
         $backendRel . '/storage/forms',
         $backendRel . '/storage/packs',
         $backendRel . '/storage/uploads',
+        $backendRel . '/storage/pack-screenshots',
         $backendRel . '/logs',
     ];
     foreach ($dirsToCheck as $dir) {
         $fullPath = __DIR__ . '/' . $dir;
+        $fixed = false;
+        if (!is_dir($fullPath) && @mkdir($fullPath, 0750, true)) {
+            $fixed = true;
+        }
+        if (is_dir($fullPath) && !is_writable($fullPath)) {
+            @chmod($fullPath, 0770);
+            $fixed = is_writable($fullPath);
+        }
         $exists = is_dir($fullPath);
         $writable = $exists && is_writable($fullPath);
+        $help = '';
+        if (!$writable) {
+            $help = $isWin
+                ? 'Grant the web server user Modify rights on this folder (Properties > Security).'
+                : 'Run on the server: sudo mkdir -p "' . $fullPath . '" && sudo chown -R www-data "' . $fullPath . '"'
+                    . '  (web user: www-data on Debian/Ubuntu, apache on RHEL — or use: sudo chmod -R 775 "' . $fullPath . '")';
+        }
         $checks['dir_' . str_replace('/', '_', $dir)] = [
             'label' => "Directory: $dir",
             'required' => 'Writable',
-            'current' => !$exists ? 'Does not exist' : ($writable ? 'Writable' : 'Not writable'),
+            'current' => !$exists ? 'Does not exist' : ($writable ? ($fixed ? 'Writable (fixed by the wizard)' : 'Writable') : 'Not writable'),
             'pass' => $writable,
-            'auto_fix' => true,
+            'help' => $help,
         ];
     }
 
-    // FormLogic qjs sandbox binary (server-side runtime)
-    $qjsBin = stripos(PHP_OS, 'WIN') === 0
+    // FormLogic qjs sandbox binary (server-side script runtime). Presence on every platform; on
+    // Linux/macOS ALSO the execute bit — zip extraction commonly drops it — with a chmod attempt
+    // before asking the operator to do it.
+    $qjsBin = $isWin
         ? flBackendDir() . '/bin/qjs/qjs-windows-x86_64.exe'
         : flBackendDir() . '/bin/qjs/qjs-linux-x86_64';
     $qjsExists = file_exists($qjsBin);
+    $qjsFixed = false;
+    if ($qjsExists && !$isWin && !is_executable($qjsBin)) {
+        @chmod($qjsBin, 0755);
+        $qjsFixed = is_executable($qjsBin);
+    }
+    $qjsOk = $qjsExists && ($isWin || is_executable($qjsBin));
     $checks['qjs'] = [
         'label' => 'FormLogic qjs Runtime',
-        'required' => 'Present',
-        'current' => $qjsExists ? 'Present' : 'Missing',
-        'pass' => $qjsExists,
-        'help' => $qjsExists ? '' : 'Vendored under backend/bin/qjs; re-clone the repo or fetch qjs from github.com/quickjs-ng/quickjs',
+        'required' => $isWin ? 'Present' : 'Present & executable',
+        'current' => !$qjsExists
+            ? 'Missing'
+            : ($qjsOk ? ($qjsFixed ? 'Executable (execute bit restored by the wizard)' : 'Present') : 'Present but NOT executable'),
+        'pass' => $qjsOk,
+        'help' => !$qjsExists
+            ? 'Vendored under ' . $backendRel . '/bin/qjs; re-clone the repo or fetch qjs from github.com/quickjs-ng/quickjs'
+            : ($qjsOk ? '' : 'Zip extraction drops the execute bit — run on the server: chmod +x "' . $qjsBin . '"'),
     ];
 
     // Node.js / npm are ONLY needed to BUILD the frontend from source — the deployed bundle ships a
@@ -340,6 +411,7 @@ function runInstall(array $data): array
         $backendDir . '/storage/forms',
         $backendDir . '/storage/packs',
         $backendDir . '/storage/uploads',
+        $backendDir . '/storage/pack-screenshots',
         $backendDir . '/logs',
     ];
     foreach ($dirs as $dir) {
@@ -505,15 +577,8 @@ function runInstall(array $data): array
         }
     }
 
-    // 8. Check FormLogic qjs runtime binary
-    $qjsBin = stripos(PHP_OS, 'WIN') === 0
-        ? $backendDir . '/bin/qjs/qjs-windows-x86_64.exe'
-        : $backendDir . '/bin/qjs/qjs-linux-x86_64';
-    if (!file_exists($qjsBin)) {
-        $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'warn', 'message' => 'Binary not present at backend/bin/qjs — form logic & scripts will be disabled'];
-    } else {
-        $steps[] = ['label' => 'FormLogic qjs runtime', 'status' => 'ok'];
-    }
+    // 8. Check FormLogic qjs runtime binary (on Linux: also fix/report the execute bit)
+    $steps[] = flQjsStep();
 
     // 9. Optionally set up the demo + marketplace catalog (installable sample app packs + example
     //    data) by running the idempotent provisioning script. Best-effort: it needs a ready schema,
@@ -554,6 +619,9 @@ function runInstall(array $data): array
         }
     }
 
+    // 10. Verify the freshly-written .env is not fetchable over HTTP (where testable).
+    $steps[] = flCheckEnvExposure();
+
     $hasErrors = false;
     foreach ($steps as $step) {
         if ($step['status'] === 'error') {
@@ -571,8 +639,375 @@ function runInstall(array $data): array
 }
 
 // ---------------------------------------------------------------------------
+// Shared post-install checks
+// ---------------------------------------------------------------------------
+/**
+ * FormLogic qjs runtime step: presence on every platform, plus the execute bit on Linux/macOS —
+ * zip extraction commonly drops it, so try chmod +x first and only then ask the operator to.
+ */
+function flQjsStep(): array
+{
+    $backendDir = flBackendDir();
+    $isWin = stripos(PHP_OS, 'WIN') === 0;
+    $qjsBin = $isWin
+        ? $backendDir . '/bin/qjs/qjs-windows-x86_64.exe'
+        : $backendDir . '/bin/qjs/qjs-linux-x86_64';
+    if (!file_exists($qjsBin)) {
+        return ['label' => 'FormLogic qjs runtime', 'status' => 'warn',
+            'message' => 'Binary not present at ' . basename($backendDir) . '/bin/qjs — form logic & scripts will be disabled'];
+    }
+    if (!$isWin && !is_executable($qjsBin)) {
+        @chmod($qjsBin, 0755); // zip extraction drops the exec bit
+        if (!is_executable($qjsBin)) {
+            return ['label' => 'FormLogic qjs runtime', 'status' => 'warn',
+                'message' => 'Present but not executable (and chmod from PHP failed) — run on the server: chmod +x "' . $qjsBin . '"'];
+        }
+        return ['label' => 'FormLogic qjs runtime', 'status' => 'ok', 'message' => 'Execute bit was missing — fixed with chmod +x'];
+    }
+    return ['label' => 'FormLogic qjs runtime', 'status' => 'ok'];
+}
+
+/**
+ * Post-install probe: is <backend>/.env fetchable over HTTP? The shipped web-root .htaccess denies
+ * it on Apache (FilesMatch ^\.env plus a rewrite [F] rule), but that only holds when AllowOverride
+ * is honoured — so where a self-request is possible, VERIFY instead of assuming. Non-conclusive
+ * results are reported as 'skip' with the manual check to run.
+ */
+function flCheckEnvExposure(): array
+{
+    $backendRel = basename(flBackendDir());
+    $label = "Check {$backendRel}/.env is not web-readable";
+    if (!file_exists(flBackendDir() . '/.env')) {
+        return ['label' => $label, 'status' => 'skip', 'message' => 'No .env exists yet'];
+    }
+    if (PHP_SAPI === 'cli-server') {
+        // php -S is single-threaded — a self-request would deadlock (and it ignores .htaccess anyway).
+        return ['label' => $label, 'status' => 'skip',
+            'message' => 'Not testable under the PHP built-in server — on Apache the shipped .htaccess denies .env; re-verify after deploying'];
+    }
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if ($host === '' || !function_exists('file_get_contents') || ini_get('allow_url_fopen') != '1') {
+        return ['label' => $label, 'status' => 'skip',
+            'message' => 'Could not self-test here — verify manually that /' . $backendRel . '/.env returns 403/404 (the shipped .htaccess denies it on Apache)'];
+    }
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    $url = $scheme . '://' . $host . $basePath . '/' . $backendRel . '/.env';
+    $ctx = stream_context_create([
+        'http' => ['timeout' => 5, 'ignore_errors' => true, 'follow_location' => 0],
+        // Self-signed certs are common on fresh installs; the probe sends no secrets outbound.
+        'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+    ]);
+    $body = @file_get_contents($url, false, $ctx);
+    $status = 0;
+    if (isset($http_response_header[0]) && preg_match('#^HTTP/\S+\s+(\d{3})#', $http_response_header[0], $m)) {
+        $status = (int) $m[1];
+    }
+    if ($body === false && $status === 0) {
+        return ['label' => $label, 'status' => 'skip',
+            'message' => "Self-test request failed — verify manually that {$url} is NOT served (the shipped .htaccess denies it on Apache)"];
+    }
+    if ($status === 200 && is_string($body) && (str_contains($body, 'JWT_SECRET') || str_contains($body, 'DB_PASSWORD'))) {
+        return ['label' => $label, 'status' => 'warn',
+            'message' => "SECURITY: {$url} is publicly readable! The .htaccess deny rules are not being honoured — "
+                . 'enable AllowOverride All for the web root (Apache) or replicate the deny rules on your web server, then re-run this check'];
+    }
+    return ['label' => $label, 'status' => 'ok', 'message' => "HTTP {$status} — not served"];
+}
+
+// ---------------------------------------------------------------------------
+// Upgrade mode — existing-install detection + the guarded upgrade run
+// ---------------------------------------------------------------------------
+/** The VERSION file shipped with a release: beside the backend (api/VERSION) or at the zip root. */
+function flVersionFile(): ?string
+{
+    foreach ([flBackendDir() . '/VERSION', __DIR__ . '/VERSION'] as $f) {
+        if (is_file($f)) {
+            return $f;
+        }
+    }
+    return null;
+}
+
+/**
+ * Bootstrap the backend the same way public/index.php and bin/upgrade.php do: composer autoloader
+ * + .env (phpdotenv) + config/settings.php. Returns ['config' => array] or ['error' => string].
+ */
+function flBootstrapBackend(): array
+{
+    $backendDir = flBackendDir();
+    $backendRel = basename($backendDir);
+    if (!is_file($backendDir . '/vendor/autoload.php')) {
+        return ['error' => "Composer dependencies missing ({$backendRel}/vendor). The release zip ships them; "
+            . 'in a source checkout run: cd backend && composer install'];
+    }
+    require_once $backendDir . '/vendor/autoload.php';
+    if (class_exists(\Dotenv\Dotenv::class) && is_file($backendDir . '/.env')) {
+        \Dotenv\Dotenv::createImmutable($backendDir)->safeLoad();
+    }
+    try {
+        $config = require $backendDir . '/config/settings.php';
+    } catch (\Throwable $e) {
+        // settings.php fails hard on unsafe production config (placeholder JWT_SECRET / default
+        // DB_PASSWORD) — the app itself would refuse to boot too, so surface it.
+        return ['error' => 'Configuration error: ' . $e->getMessage() . " — fix {$backendRel}/.env, then retry."];
+    }
+    return ['config' => $config];
+}
+
+/**
+ * Load the shared helpers from bin/upgrade.php (formlogicUpgrade*). Under the web SAPI its runnable
+ * tail is skipped by its own guard, so requiring it only defines the functions — the wizard and the
+ * CLI literally share one implementation (core-table list, version resolution, table probes).
+ */
+function flLoadUpgradeHelpers(): bool
+{
+    $file = flBackendDir() . '/bin/upgrade.php';
+    if (!is_file($file) || !is_file(flBackendDir() . '/vendor/autoload.php')) {
+        return false;
+    }
+    // Belt-and-suspenders: the guard in bin/upgrade.php already skips its runnable tail under a
+    // web SAPI, but the constant makes "definitions only" explicit in EVERY SAPI (incl. CLI tests).
+    if (!defined('FORMLOGIC_UPGRADE_NO_RUN')) {
+        define('FORMLOGIC_UPGRADE_NO_RUN', true);
+    }
+    require_once $file;
+    return function_exists('formlogicUpgradeCoreTables')
+        && function_exists('formlogicUpgradeTableExists')
+        && function_exists('formlogicUpgradeResolveVersion');
+}
+
+/**
+ * Detect an upgrade candidate: a configured .env AND a reachable database that already has
+ * FormLogic's core tables. Feeds the mode chooser in the UI.
+ */
+function detectExistingInstall(): array
+{
+    $backendRel = basename(flBackendDir());
+    $detect = [
+        'configured' => file_exists(flBackendDir() . '/.env'),
+        'backendRel' => $backendRel,
+        'dbOk' => false,
+        'dbName' => '',
+        'dbError' => null,
+        'coreTablesPresent' => 0,
+        'coreTablesTotal' => 0,
+        'stampedVersion' => null,
+        'shippedVersion' => null,
+        'isUpgrade' => false,
+    ];
+    $versionFile = flVersionFile();
+    if ($versionFile !== null) {
+        $v = trim((string) @file_get_contents($versionFile));
+        $detect['shippedVersion'] = $v !== '' ? $v : null;
+    }
+    $boot = flBootstrapBackend();
+    if (isset($boot['error'])) {
+        $detect['dbError'] = $boot['error'];
+        return $detect;
+    }
+    $detect['dbName'] = (string) ($boot['config']['settings']['mysql']['database'] ?? '');
+    try {
+        $mysql = new \FormLogic\Database\MySQLConnection($boot['config']['settings']['mysql']);
+        $pdo = $mysql->getConnection();
+        $pdo->query('SELECT 1');
+        $detect['dbOk'] = true;
+    } catch (\Throwable $e) {
+        $detect['dbError'] = "Database unreachable with the credentials in {$backendRel}/.env"
+            . ' — check DB_HOST / DB_DATABASE / DB_USERNAME / DB_PASSWORD.';
+        return $detect;
+    }
+    if (flLoadUpgradeHelpers()) {
+        $core = formlogicUpgradeCoreTables();
+        $detect['coreTablesTotal'] = count($core);
+        foreach ($core as $table) {
+            if (formlogicUpgradeTableExists($pdo, $table)) {
+                $detect['coreTablesPresent']++;
+            }
+        }
+        if (formlogicUpgradeTableExists($pdo, 'schema_meta')) {
+            try {
+                $stmt = $pdo->query("SELECT meta_value FROM schema_meta WHERE meta_key = 'app_version'");
+                $v = $stmt ? $stmt->fetchColumn() : false;
+                if (is_string($v) && $v !== '' && $v !== 'unknown') {
+                    $detect['stampedVersion'] = $v;
+                }
+            } catch (\Throwable $e) {
+                // informational only
+            }
+        }
+    }
+    $detect['isUpgrade'] = $detect['configured'] && $detect['dbOk'] && $detect['coreTablesPresent'] > 0;
+    return $detect;
+}
+
+/**
+ * Upgrade an existing installation: the SAME guarded, idempotent schema path the app runs on boot
+ * and bin/upgrade.php runs from a shell (MySQLConnection::initializeSchema + runMigrations),
+ * followed by core-table verification and the schema_meta stamp — here with
+ * upgrade_source='installer' so the install records HOW it was upgraded. Never touches .env,
+ * storage/, or any user data.
+ */
+function runUpgrade(): array
+{
+    $steps = [];
+    $backendDir = flBackendDir();
+    $backendRel = basename($backendDir);
+
+    if (!file_exists($backendDir . '/.env')) {
+        $steps[] = ['label' => 'Load configuration', 'status' => 'error',
+            'message' => "No {$backendRel}/.env found — nothing to upgrade. Run a fresh install instead."];
+        return ['success' => false, 'steps' => $steps, 'message' => 'No existing configuration found.'];
+    }
+
+    $boot = flBootstrapBackend();
+    if (isset($boot['error'])) {
+        $steps[] = ['label' => 'Load configuration', 'status' => 'error', 'message' => $boot['error']];
+        return ['success' => false, 'steps' => $steps, 'message' => 'Could not bootstrap the backend.'];
+    }
+    $steps[] = ['label' => "Load configuration ({$backendRel}/.env + config/settings.php)", 'status' => 'ok'];
+
+    if (!flLoadUpgradeHelpers()) {
+        $steps[] = ['label' => 'Load upgrade helpers', 'status' => 'error',
+            'message' => "{$backendRel}/bin/upgrade.php is missing or incompatible — re-upload the release files, "
+                . "or run from a shell: php {$backendRel}/bin/upgrade.php"];
+        return ['success' => false, 'steps' => $steps, 'message' => 'Upgrade helpers unavailable.'];
+    }
+
+    $mysqlCfg = $boot['config']['settings']['mysql'];
+    $mysql = new \FormLogic\Database\MySQLConnection($mysqlCfg);
+    try {
+        $pdo = $mysql->getConnection();
+        $pdo->query('SELECT 1');
+    } catch (\Throwable $e) {
+        $steps[] = ['label' => 'Connect to database', 'status' => 'error',
+            'message' => sprintf(
+                "Database unreachable (%s:%s / '%s' as '%s') — check the DB_* values in %s/.env. "
+                . 'The upgrade migrates an existing database; it does not create one.',
+                $mysqlCfg['host'],
+                $mysqlCfg['port'],
+                $mysqlCfg['database'],
+                $mysqlCfg['username'],
+                $backendRel
+            )];
+        return ['success' => false, 'steps' => $steps, 'message' => 'Database unreachable.'];
+    }
+    $steps[] = ['label' => sprintf("Connect to database '%s'", $mysqlCfg['database']), 'status' => 'ok'];
+
+    if (!formlogicUpgradeTableExists($pdo, 'users')) {
+        $steps[] = ['label' => 'Existing schema', 'status' => 'warn',
+            'message' => 'No core tables found — this will initialize a fresh schema in the configured database'];
+    }
+
+    // The migration proper. Big tables can take a while — don't let PHP time out mid-migration.
+    @set_time_limit(0);
+    try {
+        $mysql->initializeSchema();
+        $steps[] = ['label' => 'Ensure base schema', 'status' => 'ok', 'message' => 'MySQLConnection::initializeSchema()'];
+        $mysql->runMigrations();
+        $steps[] = ['label' => 'Run migrations', 'status' => 'ok',
+            'message' => 'MySQLConnection::runMigrations() — every step is guarded; already-applied steps are no-ops'];
+    } catch (\Throwable $e) {
+        // Strip file paths and internal details (both Unix "/path" and Windows "C:\path")
+        $msg = preg_replace('#\sin\s+(?:/|[A-Za-z]:\\\\).*$#s', '', $e->getMessage());
+        $steps[] = ['label' => 'Schema migration', 'status' => 'error',
+            'message' => 'Migration failed: ' . trim(substr((string) $msg, 0, 300))];
+        return ['success' => false, 'steps' => $steps,
+            'message' => 'Migration failed — check the server logs; restore your backup if needed. Re-running is safe (idempotent).'];
+    }
+
+    // Verify the same core-table list the CLI verifies.
+    $coreTables = formlogicUpgradeCoreTables();
+    $missing = [];
+    foreach ($coreTables as $table) {
+        if (!formlogicUpgradeTableExists($pdo, $table)) {
+            $missing[] = $table;
+        }
+    }
+    $total = count($coreTables);
+    if ($missing !== []) {
+        $steps[] = ['label' => 'Verify core tables', 'status' => 'error',
+            'message' => sprintf('%d/%d present — missing: %s', $total - count($missing), $total, implode(', ', $missing))];
+        return ['success' => false, 'steps' => $steps, 'message' => 'Core tables missing after migration.'];
+    }
+    $steps[] = ['label' => 'Verify core tables', 'status' => 'ok', 'message' => "{$total}/{$total} present"];
+
+    // Stamp schema_meta exactly the way bin/upgrade.php does — but with upgrade_source='installer'.
+    try {
+        [$version, $versionSource] = formlogicUpgradeResolveVersion([], flVersionFile());
+        $previousVersion = null;
+        if (formlogicUpgradeTableExists($pdo, 'schema_meta')) {
+            try {
+                $stmt = $pdo->query("SELECT meta_value FROM schema_meta WHERE meta_key = 'app_version'");
+                $v = $stmt ? $stmt->fetchColumn() : false;
+                $previousVersion = (is_string($v) && $v !== '') ? $v : null;
+            } catch (\Throwable $e) {
+                $previousVersion = null;
+            }
+        }
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                meta_key VARCHAR(64) NOT NULL PRIMARY KEY,
+                meta_value TEXT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Y-m-d H:i:s');
+        $stamp = $pdo->prepare(
+            'INSERT INTO schema_meta (meta_key, meta_value) VALUES (:k, :v)
+             ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)'
+        );
+        // 'unknown' never overwrites a previously-stamped real version (mirrors the CLI).
+        $keptPrevious = ($version === 'unknown' && $previousVersion !== null && $previousVersion !== 'unknown');
+        $stampedVersion = $keptPrevious ? $previousVersion : $version;
+        $stamp->execute(['k' => 'app_version', 'v' => $stampedVersion]);
+        $stamp->execute(['k' => 'last_upgrade_at', 'v' => $now]);
+        $stamp->execute(['k' => 'upgrade_source', 'v' => 'installer']);
+        $sourceLabel = $keptPrevious
+            ? 'kept the existing stamp — no VERSION file shipped'
+            : ($versionSource === 'file' ? 'from the VERSION file' : "no VERSION file — stamped 'unknown'");
+        $steps[] = ['label' => 'Stamp schema_meta', 'status' => 'ok',
+            'message' => sprintf('app_version=%s (%s), upgrade_source=installer', $stampedVersion, $sourceLabel)];
+    } catch (\Throwable $e) {
+        $steps[] = ['label' => 'Stamp schema_meta', 'status' => 'warn',
+            'message' => 'Could not stamp (non-fatal — the schema itself is upgraded)'];
+    }
+
+    // Post-upgrade permission/security checks (a new zip's files may have reset them).
+    $steps[] = flQjsStep();
+    $steps[] = flCheckEnvExposure();
+
+    $hasErrors = false;
+    foreach ($steps as $step) {
+        if ($step['status'] === 'error') {
+            $hasErrors = true;
+            break;
+        }
+    }
+
+    return [
+        'success' => !$hasErrors,
+        'steps' => $steps,
+        'message' => $hasErrors
+            ? 'Upgrade completed with errors.'
+            : "Upgrade complete — idempotent, safe to re-run. Verify from a shell with: php {$backendRel}/bin/upgrade.php --check",
+    ];
+}
+
+// ---------------------------------------------------------------------------
 // HTML output
 // ---------------------------------------------------------------------------
+// Template context.
+$backendRelHtml = htmlspecialchars(basename(flBackendDir()), ENT_QUOTES);
+$backendAbsHtml = htmlspecialchars(str_replace('\\', '/', flBackendDir()), ENT_QUOTES);
+$isBundle = (flUiDir() === null); // deployed release zip (prebuilt SPA at the web root, backend at api/)
+$canSeedDemo = file_exists(flBackendDir() . '/scripts/provision-demo.php'); // not shipped in the release zip
+$defaultCors = 'http://localhost:5173';
+if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
+    // Single-domain deploy: the SPA calls /api on the SAME origin — default CORS to this site.
+    $defaultCors = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http')
+        . '://' . $_SERVER['HTTP_HOST'];
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -642,13 +1077,46 @@ function runInstall(array $data): array
   </div>
 
   <?php if ($alreadyInstalled): ?>
-  <div class="alert alert-warn">
-    <strong>FormLogic appears to be already installed.</strong> A configured <code>backend/.env</code> file was found.
-    You can continue to reconfigure, or delete this file (<code>install.php</code>) for security.
+  <!-- Mode chooser: an existing installation was detected -->
+  <div class="card" id="mode-chooser">
+    <h2><span class="step-num">!</span> Existing installation detected</h2>
+    <p style="font-size:14px;color:#475569;margin-bottom:12px;">
+      A configured <code><?= $backendRelHtml ?>/.env</code> was found. Choose what to do:
+    </p>
+    <div id="detect-summary" class="alert alert-info" style="font-size:13px;">Inspecting the existing installation&hellip;</div>
+    <div class="btn-group">
+      <button class="btn btn-primary" id="btn-mode-upgrade" onclick="chooseMode('upgrade')">Upgrade existing installation</button>
+      <button class="btn btn-secondary" id="btn-mode-fresh" onclick="chooseMode('fresh')">Fresh install / reconfigure</button>
+    </div>
+    <p class="help-text" style="margin-top:10px;">
+      <strong>Upgrade</strong> keeps your data and configuration and only applies this release's database
+      schema changes — the same guarded, idempotent migrations <code>php <?= $backendRelHtml ?>/bin/upgrade.php</code>
+      runs. <strong>Fresh install</strong> walks through the full setup (database, secrets, .env).
+    </p>
+  </div>
+
+  <!-- Upgrade mode -->
+  <div class="card hidden" id="step-upgrade">
+    <h2><span class="step-num">&uarr;</span> Upgrade</h2>
+    <div class="alert alert-warn" style="font-size:13px;">
+      <strong>Back up first.</strong> Dump the database and copy <code><?= $backendRelHtml ?>/.env</code> +
+      <code><?= $backendRelHtml ?>/storage/</code> somewhere safe before upgrading (see docs/UPGRADING.md).
+    </div>
+    <p style="font-size:13px;color:#64748b;margin-bottom:16px;">
+      This runs the same schema path the app itself uses on boot (<code>initializeSchema()</code> + guarded
+      <code>runMigrations()</code>), verifies the core tables, and stamps <code>schema_meta</code>
+      (<code>upgrade_source=installer</code>). Your <code>.env</code>, uploads, and response data are not
+      touched. Idempotent — safe to run more than once.
+    </p>
+    <button class="btn btn-primary" onclick="runUpgrade()" id="btn-upgrade">Run Upgrade</button>
+    <div id="upgrade-progress" class="hidden" style="margin-top:20px;">
+      <ul class="steps-list" id="upgrade-steps"></ul>
+    </div>
+    <div id="upgrade-result" class="hidden" style="margin-top:16px;"></div>
   </div>
   <?php endif; ?>
 
-  <!-- Step 1: Requirements -->
+  <!-- Step 1: Requirements (always shown — the permission/qjs checks matter for upgrades too) -->
   <div class="card" id="step-requirements">
     <h2><span class="step-num">1</span> System Requirements</h2>
     <div id="req-loading" style="text-align:center;padding:20px;">
@@ -663,6 +1131,9 @@ function runInstall(array $data): array
       <div id="req-message" style="margin-top:16px;"></div>
     </div>
   </div>
+
+  <!-- Fresh-install flow (hidden until chosen when an existing installation was detected) -->
+  <div id="fresh-flow" class="<?= $alreadyInstalled ? 'hidden' : '' ?>">
 
   <!-- Step 2: Database -->
   <div class="card" id="step-database">
@@ -703,14 +1174,18 @@ function runInstall(array $data): array
     <h2><span class="step-num">3</span> Application Settings</h2>
     <div class="form-group">
       <label for="cors_origin">Frontend URL (CORS Origin)</label>
-      <input type="text" id="cors_origin" value="http://localhost:5173" />
-      <p class="help-text">The URL where the frontend dev server runs. Change if using a different port.</p>
+      <input type="text" id="cors_origin" value="<?= htmlspecialchars($defaultCors, ENT_QUOTES) ?>" />
+      <p class="help-text"><?= $isBundle
+          ? 'Single-domain deploy: the app calls /api on the same origin, so this site\'s own URL (pre-filled) is correct.'
+          : 'The URL where the frontend dev server runs. Change if using a different port.' ?></p>
     </div>
+    <?php if ($canSeedDemo): ?>
     <div class="checkbox-group">
       <input type="checkbox" id="seed_demo" checked />
       <label for="seed_demo" style="font-size:13px;">Set up the demo &amp; marketplace — installs the ready-made sample app packs and seeds example data</label>
     </div>
     <p class="help-text" style="margin-top:6px;">Recommended. Populates the marketplace with installable apps and a no-signup live demo. Needs Composer dependencies installed first; if it can't run now, you'll get a one-line command to do it later.</p>
+    <?php endif; ?>
     <?php if ($alreadyInstalled): ?>
     <div class="checkbox-group">
       <input type="checkbox" id="overwrite_env" />
@@ -734,9 +1209,11 @@ function runInstall(array $data): array
     <div id="install-result" class="hidden" style="margin-top:16px;"></div>
   </div>
 
-  <!-- Step 5: Next Steps (shown after install) -->
+  </div><!-- /fresh-flow -->
+
+  <!-- Final: Next Steps (shown after a successful install OR upgrade) -->
   <div class="card hidden" id="step-next">
-    <h2><span class="step-num">5</span> Next Steps</h2>
+    <h2><span class="step-num">&#10003;</span> Next Steps</h2>
     <div class="alert alert-success">
       FormLogic has been configured. Follow the steps below to finish setup.
     </div>
@@ -753,14 +1230,24 @@ function runInstall(array $data): array
         </li>
         <li id="ns-demo" class="hidden">
           Set up the demo &amp; marketplace (installs the sample app packs and seeds example data):<br>
-          <code>cd <?php echo htmlspecialchars(basename(flBackendDir()), ENT_QUOTES); ?> && php scripts/provision-demo.php</code>
+          <code>cd <?= $backendRelHtml ?> && php scripts/provision-demo.php</code>
         </li>
         <li id="ns-wasm" class="hidden">
-          The FormLogic qjs runtime binary is missing. It is vendored in the repo
-          under <code>backend/bin/qjs/</code> — re-clone the repository, or fetch a
-          static <code>qjs</code> build from
+          The FormLogic qjs runtime binary is missing. It is vendored
+          under <code><?= $backendRelHtml ?>/bin/qjs/</code> — re-upload the release files
+          (or re-clone the repository), or fetch a static <code>qjs</code> build from
           <code>github.com/quickjs-ng/quickjs</code> for your platform.
         </li>
+        <?php if ($isBundle): ?>
+        <li>
+          Verify the API: open <a href="api/health" target="_blank"><code>/api/health</code></a> on this site —
+          it should report <code>"status":"ok"</code> plus storage checks.
+        </li>
+        <li>
+          <a href="./" target="_blank">Open your site</a> and create your account — the sign-up page
+          registers the first user. (Auth cookies are Secure-only: login requires HTTPS in production.)
+        </li>
+        <?php else: ?>
         <li>
           Start the backend API server:<br>
           <code>cd backend && php -S localhost:8080 -t public</code>
@@ -772,19 +1259,161 @@ function runInstall(array $data): array
         <li>
           Open <a href="http://localhost:5173" target="_blank">http://localhost:5173</a> and create your account.
         </li>
+        <?php endif; ?>
       </ol>
     </div>
+
+    <div class="next-steps" style="margin-top:16px;">
+      <h3>Scheduled tasks (optional but recommended)</h3>
+      <p style="font-size:13px;color:#64748b;margin:0 0 10px;">
+        Add these to the crontab on the server (<code>crontab -e</code> on Linux). If plain
+        <code>php</code> isn't on cron's PATH, use the full path to the PHP <em>CLI</em> binary
+        (find it with <code>which php</code> — it must be PHP 8.1+ with the same extensions as the
+        web PHP). On Windows, use Task Scheduler to run the same commands.
+      </p>
+      <ol style="padding-left:20px;font-size:13px;">
+        <li style="margin-bottom:10px;">
+          <strong>Webhook retries</strong> — re-delivers failed webhook events with exponential backoff.
+          Safe to run every minute (a lock file prevents overlapping runs):<br>
+          <code>* * * * * php <?= $backendAbsHtml ?>/bin/webhook-worker.php &gt;&gt; /var/log/formlogic-webhooks.log 2&gt;&amp;1</code><br>
+          <span class="help-text">No cron on your host? Run it continuously instead:
+          <code>php <?= $backendRelHtml ?>/bin/webhook-worker.php --loop</code> (sleeps 60s between passes).</span>
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Offline-sync ledger cleanup</strong> — nightly prune of idempotency rows older than
+          30 days (replayed offline submissions no longer need them):<br>
+          <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; /var/log/formlogic-idempotency.log 2&gt;&amp;1</code>
+        </li>
+        <li>
+          <strong>Data drift report</strong> — weekly read-only consistency check between MySQL and the
+          per-form response databases (exit 1 = drift found; review the log, then run it manually with
+          <code>--fix</code> to apply the safe repairs):<br>
+          <code>0 4 * * 1 php <?= $backendAbsHtml ?>/bin/reconcile.php &gt;&gt; /var/log/formlogic-reconcile.log 2&gt;&amp;1</code>
+        </li>
+      </ol>
+    </div>
+
     <div class="alert alert-warn" style="margin-top:16px;">
-      <strong>Security:</strong> Delete <code>install.php</code> after you're done to prevent unauthorized reconfiguration.
+      <strong>Security — delete this file.</strong> Delete <code>install.php</code> from the web root now
+      that setup is complete. The wizard also hard-disables itself once a configured
+      <code><?= $backendRelHtml ?>/.env</code> exists (re-running it then requires deliberately setting
+      <code>INSTALL_ENABLE=1</code>), but deleting the file is the guarantee. If you added
+      <code>SetEnv INSTALL_ENABLE 1</code> to your <code>.htaccess</code> for this session, remove that line too.
     </div>
   </div>
 </div>
 
 <script>
 const CSRF_TOKEN = <?= json_encode($csrfToken) ?>;
+const ALREADY_INSTALLED = <?= json_encode($alreadyInstalled) ?>;
 
-// Check requirements on page load
-document.addEventListener('DOMContentLoaded', checkRequirements);
+// Check requirements on page load; when an existing install was detected, inspect it too.
+document.addEventListener('DOMContentLoaded', () => {
+  checkRequirements();
+  if (ALREADY_INSTALLED) detectInstall();
+});
+
+// ---- Mode chooser (existing installation only) ----------------------------
+function chooseMode(mode) {
+  const upgradeCard = document.getElementById('step-upgrade');
+  const freshFlow = document.getElementById('fresh-flow');
+  if (!upgradeCard || !freshFlow) return;
+  const upgrade = mode === 'upgrade';
+  upgradeCard.classList.toggle('hidden', !upgrade);
+  freshFlow.classList.toggle('hidden', upgrade);
+  const btnUp = document.getElementById('btn-mode-upgrade');
+  const btnFresh = document.getElementById('btn-mode-fresh');
+  if (btnUp) btnUp.className = 'btn ' + (upgrade ? 'btn-primary' : 'btn-secondary');
+  if (btnFresh) btnFresh.className = 'btn ' + (upgrade ? 'btn-secondary' : 'btn-primary');
+}
+
+function detectInstall() {
+  const el = document.getElementById('detect-summary');
+  if (!el) return;
+  post('detect_install').then(d => {
+    const parts = [];
+    parts.push('Configuration: ' + (d.configured ? esc(d.backendRel) + '/.env found' : 'no ' + esc(d.backendRel) + '/.env'));
+    if (d.dbError) {
+      parts.push('Database: ' + esc(d.dbError));
+    } else if (d.dbOk) {
+      parts.push('Database "' + esc(d.dbName) + '": reachable — ' + d.coreTablesPresent + '/' + d.coreTablesTotal + ' core tables present');
+      parts.push('Installed version: ' + esc(d.stampedVersion || 'not stamped yet')
+        + (d.shippedVersion ? ' &middot; this release: ' + esc(d.shippedVersion) : ''));
+    }
+    if (d.isUpgrade) {
+      el.className = 'alert alert-success';
+      parts.push('<strong>Recommended: Upgrade existing installation</strong> — keeps all data, applies only schema changes.');
+      chooseMode('upgrade');
+    } else {
+      el.className = 'alert alert-warn';
+      parts.push('<strong>No upgradable database found</strong> — a fresh install / reconfigure is probably what you want.');
+      chooseMode('fresh');
+    }
+    el.innerHTML = parts.join('<br>');
+  }).catch(() => {
+    el.className = 'alert alert-warn';
+    el.textContent = 'Could not inspect the existing installation — choose a mode below.';
+  });
+}
+
+// ---- Shared step-list rendering (install + upgrade) ------------------------
+function renderStepList(stepsList, steps) {
+  stepsList.innerHTML = '';
+  const flags = { needComposer: false, needNpm: false, needWasm: false };
+  for (const step of steps) {
+    const li = document.createElement('li');
+    let icon = '';
+    if (step.status === 'ok') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#16a34a"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+    else if (step.status === 'error') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#dc2626"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
+    else if (step.status === 'warn') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#d97706"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>';
+    else icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#94a3b8"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>';
+
+    let text = esc(step.label);
+    if (step.message) text += ' <span style="color:#64748b;font-size:12px;">— ' + esc(step.message) + '</span>';
+    li.innerHTML = icon + '<span>' + text + '</span>';
+    stepsList.appendChild(li);
+
+    if (step.label && step.label.includes('Composer') && step.status === 'warn') flags.needComposer = true;
+    if (step.label && step.label.includes('npm') && step.status === 'warn') flags.needNpm = true;
+    if (step.label && step.label.includes('qjs') && step.status === 'warn') flags.needWasm = true;
+  }
+  return flags;
+}
+
+// ---- Upgrade runner ---------------------------------------------------------
+function runUpgrade() {
+  const btn = document.getElementById('btn-upgrade');
+  const progressDiv = document.getElementById('upgrade-progress');
+  const stepsList = document.getElementById('upgrade-steps');
+  const resultDiv = document.getElementById('upgrade-result');
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Upgrading...';
+  progressDiv.classList.remove('hidden');
+  stepsList.innerHTML = '<li><div class="spinner step-icon"></div> Running the upgrade...</li>';
+  resultDiv.classList.add('hidden');
+
+  post('run_upgrade').then(result => {
+    btn.disabled = false;
+    btn.innerHTML = 'Run Upgrade';
+    const flags = renderStepList(stepsList, result.steps || []);
+    resultDiv.classList.remove('hidden');
+    if (result.success) {
+      resultDiv.innerHTML = '<div class="alert alert-success">' + esc(result.message) + '</div>';
+      const nextCard = document.getElementById('step-next');
+      if (flags.needWasm) document.getElementById('ns-wasm').classList.remove('hidden');
+      nextCard.classList.remove('hidden');
+      nextCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      resultDiv.innerHTML = '<div class="alert alert-error">' + esc(result.message) + '</div>';
+    }
+  }).catch(() => {
+    btn.disabled = false;
+    btn.innerHTML = 'Run Upgrade';
+    resultDiv.classList.remove('hidden');
+    resultDiv.innerHTML = '<div class="alert alert-error">Request failed. Check the browser console for details.</div>';
+  });
+}
 
 function esc(str) {
   const d = document.createElement('div');
@@ -895,26 +1524,7 @@ function runInstall() {
     btn.disabled = false;
     btn.innerHTML = 'Run Installation';
 
-    // Render steps
-    stepsList.innerHTML = '';
-    let needComposer = false, needNpm = false, needWasm = false;
-    for (const step of result.steps) {
-      const li = document.createElement('li');
-      let icon = '';
-      if (step.status === 'ok') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#16a34a"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
-      else if (step.status === 'error') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#dc2626"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>';
-      else if (step.status === 'warn') icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#d97706"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>';
-      else icon = '<svg class="step-icon" viewBox="0 0 20 20" fill="#94a3b8"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>';
-
-      let text = esc(step.label);
-      if (step.message) text += ' <span style="color:#64748b;font-size:12px;">— ' + esc(step.message) + '</span>';
-      li.innerHTML = icon + '<span>' + text + '</span>';
-      stepsList.appendChild(li);
-
-      if (step.label && step.label.includes('Composer') && step.status === 'warn') needComposer = true;
-      if (step.label && step.label.includes('npm') && step.status === 'warn') needNpm = true;
-      if (step.label && step.label.includes('qjs') && step.status === 'warn') needWasm = true;
-    }
+    const flags = renderStepList(stepsList, result.steps || []);
 
     // Show result
     resultDiv.classList.remove('hidden');
@@ -923,10 +1533,10 @@ function runInstall() {
       // Show next steps
       const nextCard = document.getElementById('step-next');
       nextCard.classList.remove('hidden');
-      if (needComposer) document.getElementById('ns-composer').classList.remove('hidden');
-      if (needNpm) document.getElementById('ns-npm').classList.remove('hidden');
+      if (flags.needComposer) document.getElementById('ns-composer').classList.remove('hidden');
+      if (flags.needNpm) document.getElementById('ns-npm').classList.remove('hidden');
       if (result.demoManual) document.getElementById('ns-demo').classList.remove('hidden');
-      if (needWasm) document.getElementById('ns-wasm').classList.remove('hidden');
+      if (flags.needWasm) document.getElementById('ns-wasm').classList.remove('hidden');
       nextCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
       resultDiv.innerHTML = '<div class="alert alert-error">' + esc(result.message) + '</div>';
