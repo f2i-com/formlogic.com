@@ -1032,7 +1032,7 @@ $app->post('/api/packs/describe', function ($request, $response) use ($container
     return $container->get(PackController::class)->describe($request, $response);
 })->add($authRequired);
 
-// Application Package import: multipart .formlogic-app ZIP archive OR a signed JSON envelope.
+// Application Package import: multipart .formlogic ZIP archive OR a signed JSON envelope.
 // The server verifies the signature and stamps trust (client-supplied trust is never used).
 $app->post('/api/application-packages/import', function ($request, $response) use ($container) {
     return $container->get(PackController::class)->importSigned($request, $response);
@@ -1356,7 +1356,7 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->get('/{id}/export', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportApp($request, $response, $getArgs($request));
     });
-    // Same, but as a downloadable .formlogic-app.json attachment (for API users).
+    // Same, but as a downloadable .formlogic.json attachment (for API users).
     $group->get('/{id}/export/download', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppDownload($request, $response, $getArgs($request));
     });
@@ -1364,7 +1364,7 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     $group->get('/{id}/export/signed', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppSigned($request, $response, $getArgs($request));
     });
-    // Full .formlogic-app ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
+    // Full .formlogic ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
     $group->get('/{id}/export/package', function ($request, $response) use ($container, $getArgs) {
         return $container->get(PackController::class)->exportAppArchive($request, $response, $getArgs($request));
     });

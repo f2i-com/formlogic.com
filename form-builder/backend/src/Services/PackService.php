@@ -472,7 +472,7 @@ class PackService
     }
 
     /**
-     * Export an app as a full .formlogic-app ARCHIVE (spec §29): a ZIP bundling
+     * Export an app as a full .formlogic ARCHIVE (spec §29): a ZIP bundling
      *   manifest.json  — the ApplicationPackageManifest (id/name/version/description + a content hash)
      *   pack.json      — the existing exportApp() payload (the atomic importer's source of truth)
      *   quickjs/customLogic.json — the app's sandboxed QuickJS bundle, if any
@@ -583,7 +583,7 @@ class PackService
     }
 
     /**
-     * Import a .formlogic-app ARCHIVE (the inverse of exportApplicationPackage). Opens the ZIP, validates
+     * Import a .formlogic ARCHIVE (the inverse of exportApplicationPackage). Opens the ZIP, validates
      * EVERY entry with the shared PackFileService zip-slip + zip-bomb guard, then — when signature.json is
      * present — verifies the detached signature over the CANONICAL manifest.json and enforces the manifest's
      * per-entry sha256 hashes for pack.json AND every envelope file the importer will consume (quickjs/

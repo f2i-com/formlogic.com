@@ -353,6 +353,8 @@ export function Dashboard() {
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
   // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is part of.
   const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
+  // formId → the app slug it belongs to (cloud mode), so Preview can open the form IN its app.
+  const [appSlugOfForm, setAppSlugOfForm] = useState<Record<string, string>>({});
   const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
@@ -536,18 +538,30 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (storageMode !== 'api') { if (!cancelled) setAppOfForm({}); return; }
+      if (storageMode !== 'api') { if (!cancelled) { setAppOfForm({}); setAppSlugOfForm({}); } return; }
       const res = await api.getApps();
-      const apps = (res.data?.apps || []) as Array<{ id: string; name: string }>;
+      const apps = (res.data?.apps || []) as Array<{ id: string; name: string; slug?: string | null }>;
       const map: Record<string, string> = {};
+      const slugMap: Record<string, string> = {};
       await Promise.all(apps.map(async (a) => {
         const fr = await api.getAppForms(a.id);
-        for (const f of (fr.data?.forms || []) as Array<{ formId: string }>) { map[f.formId] = a.name; }
+        for (const f of (fr.data?.forms || []) as Array<{ formId: string }>) {
+          map[f.formId] = a.name;
+          if (a.slug) slugMap[f.formId] = a.slug;
+        }
       }));
-      if (!cancelled) setAppOfForm(map);
+      if (!cancelled) { setAppOfForm(map); setAppSlugOfForm(slugMap); }
     })();
     return () => { cancelled = true; };
   }, [storageMode]);
+
+  // Preview a form in a NEW TAB and IN CONTEXT: an in-app form opens the app runtime at that form;
+  // a standalone form opens the fillable form itself (?form=1 shows the form even with a custom screen).
+  const previewForm = useCallback((formId: string) => {
+    const slug = appSlugOfForm[formId];
+    const url = slug ? `/app/${slug}/form/${formId}` : `/preview/${formId}?form=1`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [appSlugOfForm]);
 
   // Get recent forms
   const recentForms = [...forms]
@@ -874,7 +888,7 @@ export function Dashboard() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => navigate(`/preview/${form.id}`)}
+                              onClick={() => previewForm(form.id)}
                               title="Preview form"
                               aria-label="Preview form"
                               className="hidden sm:flex text-slate-400 hover:text-gray-700 dark:hover:text-white"
@@ -906,7 +920,7 @@ export function Dashboard() {
                               formTitle={form.title}
                               onDelete={() => setDeleteTarget({ id: form.id, title: form.title })}
                               onEdit={() => navigate(`/builder/${form.id}`)}
-                              onPreview={() => navigate(`/preview/${form.id}`)}
+                              onPreview={() => previewForm(form.id)}
                               onAnalytics={() => navigate(`/analytics/${form.id}`)}
                               onViewData={() => navigate(`/responses/${form.id}`)}
                               onShare={() => setEmbedModalForm({ id: form.id, title: form.title })}

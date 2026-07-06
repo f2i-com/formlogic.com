@@ -849,7 +849,7 @@ class ApiClient {
     return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'DELETE' });
   }
 
-  /** Export the app as a signed .formlogic-app package (payload + Ed25519 signature + capabilities). */
+  /** Export the app as a signed .formlogic package (payload + Ed25519 signature + capabilities). */
   async exportAppSignedPackage(appId: string): Promise<ApiResponse<Record<string, unknown>>> {
     return this.request(`/apps/${appId}/export/signed`);
   }
@@ -1364,7 +1364,7 @@ class ApiClient {
     return this.request('/packs/describe', { method: 'POST', body: JSON.stringify(body) });
   }
 
-  /** Download a whole app as a full .formlogic-app ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
+  /** Download a whole app as a full .formlogic ARCHIVE (ZIP: manifest + pack + quickjs + signature). */
   async exportAppPackageArchive(appId: string, filename = 'application'): Promise<void> {
     const response = await fetch(`${this.baseUrl}/apps/${appId}/export/package`, { credentials: 'include' });
     if (!response.ok) {
@@ -1377,14 +1377,14 @@ class ApiClient {
     const downloadUrl = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = `${filename}.formlogic-app`;
+    link.download = `${filename}.formlogic`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(downloadUrl);
   }
 
-  /** Import a .formlogic-app ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust. */
+  /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust. */
   async importApplicationPackage(file: File): Promise<ApiResponse<ApplicationPackageImportResult>> {
     const formData = new FormData();
     formData.append('file', file);

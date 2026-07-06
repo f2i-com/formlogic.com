@@ -1,4 +1,4 @@
-// FormLogic Application Package (.formlogic-app) — type definitions.
+// FormLogic Application Package (.formlogic) — type definitions.
 //
 // An Application Package is the portable, runtime-aware superset of today's Pack
 // (spec §29): the app + forms + screens + dashboards + reports, PLUS the new

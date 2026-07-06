@@ -17,7 +17,7 @@ use PDO;
 use PHPUnit\Framework\TestCase;
 
 /**
- * ApplicationPackage (.formlogic-app ARCHIVE) export → import round-trip against a real DB (#19/#20):
+ * ApplicationPackage (.formlogic ARCHIVE) export → import round-trip against a real DB (#19/#20):
  * a signed ZIP re-imports as a fresh owner-scoped app; a tampered signature is rejected; a zip carrying a
  * path-traversal entry is rejected by the shared PackFileService zip-slip guard. Skipped without a test DB.
  */

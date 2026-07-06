@@ -76,7 +76,7 @@ class PackController
 
     /**
      * GET /api/apps/{id}/export/package
-     * Export an app as a full .formlogic-app ARCHIVE (ZIP): manifest.json + pack.json + quickjs/ +
+     * Export an app as a full .formlogic ARCHIVE (ZIP): manifest.json + pack.json + quickjs/ +
      * assets/ + optional launch/native + a detached signature.json. Streamed as application/zip.
      */
     public function exportAppArchive(Request $request, Response $response, array $args): Response
@@ -115,7 +115,7 @@ class PackController
             return $response
                 ->withHeader('Content-Type', 'application/zip')
                 ->withHeader('Content-Length', (string) strlen($data))
-                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic-app"');
+                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic"');
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
@@ -130,7 +130,7 @@ class PackController
     /**
      * POST /api/application-packages/import
      * Import a full Application Package. Content-negotiated:
-     *   - multipart file upload → a .formlogic-app ZIP archive (verified + extracted server-side)
+     *   - multipart file upload → a .formlogic ZIP archive (verified + extracted server-side)
      *   - JSON body { package, signature, alg, keyId } | { pack } → a signed/flat envelope
      * The SERVER verifies the signature and stamps trust — a client-supplied trust level is never used.
      */
@@ -141,7 +141,7 @@ class PackController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
 
-        // ── Path A: multipart ZIP upload (.formlogic-app archive) ──────────────────────────────
+        // ── Path A: multipart ZIP upload (.formlogic archive) ──────────────────────────────────
         $uploaded = $request->getUploadedFiles()['file'] ?? null;
         if ($uploaded !== null) {
             if ($uploaded->getError() !== UPLOAD_ERR_OK) {
@@ -511,7 +511,7 @@ class PackController
 
     /**
      * GET /api/apps/{id}/export/download
-     * Same as export, but streams the pack as a downloadable .formlogic-app.json attachment (for API users).
+     * Same as export, but streams the pack as a downloadable .formlogic.json attachment (for API users).
      */
     public function exportAppDownload(Request $request, Response $response, array $args): Response
     {
@@ -533,7 +533,7 @@ class PackController
             $response->getBody()->write((string) json_encode($pack, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return $response
                 ->withHeader('Content-Type', 'application/json')
-                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic-app.json"');
+                ->withHeader('Content-Disposition', 'attachment; filename="' . $slug . '.formlogic.json"');
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\Exception $e) {

@@ -18,7 +18,7 @@ use Psr\Http\Message\ServerRequestInterface;
 use Slim\Psr7\Response as SlimResponse;
 
 /**
- * Signed .formlogic-app ENVELOPE integrity (#1) + present-but-invalid JSON signature policy (#9).
+ * Signed .formlogic ENVELOPE integrity (#1) + present-but-invalid JSON signature policy (#9).
  *
  * The detached signature now covers the CANONICAL manifest.json, which carries a sha256 of EVERY archive
  * entry (manifest.entries). So the importer must reject a tampered pack.json / quickjs/customLogic.json /
@@ -150,7 +150,7 @@ class SignedEnvelopePackageTest extends TestCase
     }
 
     /**
-     * Build a CORRECTLY signed .formlogic-app archive from the given { entryName => bytes } map, mirroring
+     * Build a CORRECTLY signed .formlogic archive from the given { entryName => bytes } map, mirroring
      * PackService::exportApplicationPackage: hash each entry, embed the hashes in manifest.entries, and sign
      * the canonical manifest. Tamper tests re-open the returned zip and mutate a single entry afterwards.
      *

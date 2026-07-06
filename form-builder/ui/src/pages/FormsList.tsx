@@ -185,6 +185,7 @@ const FormCard = memo(function FormCard({
   onMenuToggle,
   onMenuClose,
   onNavigate,
+  onPreview,
   onDuplicate,
   onEmbed,
   onDelete,
@@ -198,6 +199,8 @@ const FormCard = memo(function FormCard({
   onMenuToggle: (id: string, rect: DOMRect) => void;
   onMenuClose: () => void;
   onNavigate: (path: string) => void;
+  /** In-app forms open the real app runtime at this form (new tab); standalone forms use /preview. */
+  onPreview: (id: string) => void;
   onDuplicate: (id: string) => void;
   onEmbed: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
@@ -324,7 +327,7 @@ const FormCard = memo(function FormCard({
                     <Pencil className="h-4 w-4" /> Edit
                   </button>
                   <button
-                    onClick={() => { onNavigate(`/preview/${form.id}`); onMenuClose(); }}
+                    onClick={() => { onPreview(form.id); onMenuClose(); }}
                     role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
@@ -445,7 +448,7 @@ const FormCard = memo(function FormCard({
             variant="primary"
             size="sm"
             className="flex-1"
-            onClick={(e) => { e.stopPropagation(); onNavigate(`/preview/${form.id}`); }}
+            onClick={(e) => { e.stopPropagation(); onPreview(form.id); }}
           >
             Preview
           </Button>
@@ -588,12 +591,23 @@ export function FormsList() {
     return () => { cancelled = true; };
   }, [storageMode]);
 
-  // formId → its app (for grouping standalone vs in-app forms).
+  // formId → its app (for grouping standalone vs in-app forms, and app-context preview).
   const formToApp = useMemo(() => {
-    const map: Record<string, { id: string; name: string }> = {};
-    for (const g of appGroups) for (const fid of g.formIds) map[fid] = { id: g.id, name: g.name };
+    const map: Record<string, { id: string; name: string; slug: string | null }> = {};
+    for (const g of appGroups) for (const fid of g.formIds) map[fid] = { id: g.id, name: g.name, slug: g.slug };
     return map;
   }, [appGroups]);
+
+  // Preview IN CONTEXT, always in a NEW TAB:
+  //  • a form that lives in an app opens the real app runtime AT that form — the owner sees it exactly
+  //    as members do and can roam the whole app;
+  //  • a standalone form opens the fillable FORM itself (?form=1 shows the form even when it has a
+  //    custom screen — the screen keeps its own preview in the Studio).
+  const handlePreview = useCallback((formId: string) => {
+    const slug = formToApp[formId]?.slug;
+    const url = slug ? `/app/${slug}/form/${formId}` : `/preview/${formId}?form=1`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [formToApp]);
 
   // The forms to show in the current view: a drilled-in app's forms, or top-level standalone forms.
   // While apps are still loading at the top level, filter with the membership cached from the last
@@ -748,6 +762,7 @@ export function FormsList() {
       onMenuToggle={handleMenuToggle}
       onMenuClose={handleMenuClose}
       onNavigate={handleNavigate}
+      onPreview={handlePreview}
       onDuplicate={handleDuplicate}
       onEmbed={handleEmbed}
       onDelete={handleDelete}

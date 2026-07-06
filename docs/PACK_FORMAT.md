@@ -3,7 +3,7 @@
 A **pack** is a single JSON document that bundles forms, apps, screens, scripts, and roles into a
 portable, self-contained unit. It powers three things:
 
-- **App export/import** — download a whole app as `<slug>.formlogic-app.json` and re-import it ([docs/API.md](API.md), App settings → Manage → Export).
+- **App export/import** — download a whole app as `<slug>.formlogic.json` and re-import it ([docs/API.md](API.md), App settings → Manage → Export).
 - **The pack marketplace / templates** — publish and install reusable bundles.
 - **The AI App Builder + MCP** — the shape an AI assembles when it builds an app.
 

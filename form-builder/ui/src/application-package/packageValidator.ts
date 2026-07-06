@@ -1,6 +1,6 @@
 // Application Package validation (MVP: shape + safety, no signature yet).
 //
-// Validates the .formlogic-app envelope before it is handed to the existing
+// Validates the .formlogic envelope before it is handed to the existing
 // atomic Pack importer. Signature verification, marketplace trust levels, and
 // full asset extraction are later milestones (spec §29.6/§30.3); this pass just
 // makes sure the manifest is well-formed and nothing obviously abusive (path

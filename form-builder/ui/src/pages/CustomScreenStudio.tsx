@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, Wand2, Loader2, Save, Play, Sparkles, PanelRightClose, PanelRightOpen, FileCode2, FilePlus2, LayoutTemplate, FolderUp } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { ScreenFilesEditor } from '../components/custom-screen/ScreenFilesEditor';
+import { readUploadedScreenFiles } from '../components/custom-screen/screenFileUpload';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { bundleScreenFiles, type ScreenFile } from '../lib/screenCompile';
 import { toast } from '../stores/toastStore';
@@ -17,10 +18,17 @@ const STARTER: ScreenFile[] = [
   { path: 'index.ts', content: '// window.FormLogic is the SDK: submit(answers), records(), currentUser(), context().\n// Import other files with relative paths, e.g. import { greet } from "./util";\nconst app = document.getElementById("app")!;\napp.innerHTML = "<h1>Hello from TypeScript</h1>";\n' },
 ];
 
+const BLANK: ScreenFile[] = [
+  { path: 'index.html', content: '<!-- Build your screen here — window.FormLogic is the SDK (submit, records, context). -->\n' },
+];
+
+const START_CARD =
+  'rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 text-left shadow-sm hover:border-primary-400 dark:hover:border-primary-500/60 hover:shadow-md transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950';
+
 function toFiles(cs: CustomScreen): ScreenFile[] {
   if (cs.files && cs.files.length) return cs.files.map((f) => ({ ...f }));
   const src = cs.ts ?? cs.js ?? '';
-  if (!(cs.html || cs.css || src)) return STARTER.map((f) => ({ ...f }));
+  if (!(cs.html || cs.css || src)) return [];
   return [
     { path: 'index.html', content: cs.html ?? '' },
     { path: 'styles.css', content: cs.css ?? '' },
@@ -35,16 +43,20 @@ export default function CustomScreenStudio() {
   const [fields, setFields] = useState<Array<{ id: string; label: string; type: string }>>([]);
   const [prompt, setPrompt] = useState('');
   const [meta, setMeta] = useState<CustomScreen>({ enabled: true }); // publicRecords + whitelist
-  const [files, setFiles] = useState<ScreenFile[]>(() => STARTER.map((f) => ({ ...f })));
+  // No auto-seeded starter: an empty list means "no custom code yet" and renders the start screen.
+  const [files, setFiles] = useState<ScreenFile[]>([]);
   const [preview, setPreview] = useState<CustomScreen>({ enabled: true });
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [screenLoaded, setScreenLoaded] = useState(false);
   const [compileError, setCompileError] = useState<string | null>(null);
   // The AI "Describe the screen" panel is opt-in (default: just the editor), separate from AI_ENABLED.
   const [showAi, setShowAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
   const previewTimer = useRef<number | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const aiAvailable = useAiAvailable();
   useDocumentTitle(`Custom screen — ${title || 'Form'}`);
 
@@ -53,6 +65,7 @@ export default function CustomScreenStudio() {
     let cancelled = false;
     api.getForm(formId).then((res) => {
       if (cancelled) return;
+      setScreenLoaded(true);
       const form = res.data?.form;
       if (!form) return;
       setTitle(form.title || '');
@@ -79,6 +92,24 @@ export default function CustomScreenStudio() {
   };
 
   const onFilesChange = (nextFiles: ScreenFile[]) => { setFiles(nextFiles); setDirty(true); rebuild(nextFiles); };
+
+  /** An explicit starting choice (blank / starter / upload) — drops the user into the normal editor. */
+  const startWith = (next: ScreenFile[]) => { setFiles(next); setDirty(true); rebuild(next); };
+
+  const onUpload = async (picked: File[]) => {
+    if (!picked.length) return;
+    try {
+      const { files: uploaded, skipped } = await readUploadedScreenFiles(picked);
+      if (!uploaded.length) {
+        toast.error('No usable files found', skipped.length ? skipped.slice(0, 4).join('; ') : 'Pick text files such as index.html, styles.css or index.ts.');
+        return;
+      }
+      if (skipped.length) toast.info(`Skipped ${skipped.length} file${skipped.length === 1 ? '' : 's'}`, skipped.slice(0, 4).join('; ') + (skipped.length > 4 ? ' …' : ''));
+      startWith(uploaded);
+    } catch {
+      toast.error('Could not read the selected files.');
+    }
+  };
 
   const generate = async () => {
     if (!prompt.trim() || generating) return;
@@ -118,10 +149,14 @@ export default function CustomScreenStudio() {
         <button onClick={() => navigate(-1)} className="text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <div className="min-w-0 flex items-center gap-2">
-          <span className="font-semibold text-gray-900 dark:text-white truncate">Custom Screen</span>
-          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
-          <span className="text-sm text-gray-400 dark:text-slate-500 truncate hidden sm:inline">· {title}</span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-gray-900 dark:text-white truncate">Custom Screen</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">Beta</span>
+          </div>
+          <p className="text-[11px] leading-tight text-gray-400 dark:text-slate-500 truncate hidden sm:block">
+            {title ? `A coded frontend for “${title}”` : 'A coded frontend for this form'} — HTML, CSS &amp; TypeScript over the FormLogic SDK
+          </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setPreviewOpen((v) => !v)} leftIcon={previewOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />} title={previewOpen ? 'Hide preview' : 'Show preview'}>
@@ -138,6 +173,7 @@ export default function CustomScreenStudio() {
       <div className={`flex-1 min-h-0 grid grid-cols-1 ${previewOpen ? 'lg:grid-cols-2' : ''}`}>
         {/* Editor */}
         <div className="min-h-0 flex flex-col border-r border-gray-200 dark:border-slate-800">
+          {(files.length > 0 || (aiAvailable && showAi)) && (
           <div className="p-4 space-y-3 border-b border-gray-200 dark:border-slate-800">
             {aiAvailable && showAi ? (
               <>
@@ -158,11 +194,12 @@ export default function CustomScreenStudio() {
                   </Button>
                 </div>
               </>
-            ) : aiAvailable ? (
+            ) : aiAvailable && files.length > 0 ? (
               <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
                 <Sparkles className="h-3.5 w-3.5" /> Generate with AI
               </button>
             ) : null}
+            {files.length > 0 && (
             <div className="pt-1 space-y-2">
               <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
                 <input
@@ -214,19 +251,86 @@ export default function CustomScreenStudio() {
                 </div>
               )}
             </div>
+            )}
           </div>
+          )}
 
-          {/* Multi-file editor */}
-          <p className="mx-3 mb-1 mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400/90">
-            Custom code screens are <strong>trusted, app-wide frontends</strong>. The SDK only exposes data
-            the viewer is permitted to see, but the screen&apos;s own code can contain labels or form IDs you
-            author. For strict per-role structure hiding, prefer the no-code widget dashboard.
-          </p>
-          <ScreenFilesEditor files={files} onChange={onFilesChange} sdk="form" />
-          {compileError && (
-            <div className="mx-3 mb-3 px-3 py-2 text-xs rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 font-mono">
-              {compileError}
+          {!screenLoaded ? (
+            <div className="flex-1 flex items-center justify-center">
+              <Loader2 className="h-6 w-6 animate-spin text-primary-500" />
             </div>
+          ) : files.length === 0 ? (
+            /* Empty state: nothing saved yet — pick an explicit starting point. */
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <div className="max-w-xl mx-auto px-6 py-12 text-center">
+                <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center">
+                  <FileCode2 className="h-7 w-7 text-primary-600 dark:text-primary-400" />
+                </div>
+                <h2 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">No custom code yet</h2>
+                <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">
+                  Replace the standard form page with your own HTML, CSS &amp; TypeScript frontend — it reads
+                  and submits this form&apos;s data through the FormLogic SDK.
+                </p>
+                <div className="mt-8 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                  <button type="button" onClick={() => startWith(BLANK.map((f) => ({ ...f })))} className={START_CARD}>
+                    <FilePlus2 className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Start blank</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">An empty index.html — build everything yourself.</span>
+                  </button>
+                  <button type="button" onClick={() => startWith(STARTER.map((f) => ({ ...f })))} className={START_CARD}>
+                    <LayoutTemplate className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Use starter template</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">A tiny HTML + CSS + TypeScript scaffold wired to the SDK.</span>
+                  </button>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className={START_CARD}>
+                    <FolderUp className="h-5 w-5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-white">Upload files or folder</span>
+                    <span className="mt-0.5 block text-xs text-gray-500 dark:text-slate-400">Import existing .html / .css / .ts files.</span>
+                  </button>
+                </div>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5">
+                  <button type="button" onClick={() => folderInputRef.current?.click()} className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 cursor-pointer">
+                    <FolderUp className="h-3.5 w-3.5" aria-hidden="true" /> Upload a whole folder
+                  </button>
+                  {aiAvailable && !showAi && (
+                    <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">
+                      <Sparkles className="h-3.5 w-3.5" aria-hidden="true" /> Generate with AI
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".html,.htm,.css,.js,.ts,.tsx,.jsx,.json,.svg,.md,.txt"
+                  className="hidden"
+                  onChange={(e) => { const picked = e.currentTarget.files ? Array.from(e.currentTarget.files) : []; e.currentTarget.value = ''; void onUpload(picked); }}
+                />
+                {/* webkitdirectory is not in React's input typings — set it via the ref. */}
+                <input
+                  ref={(el) => { folderInputRef.current = el; el?.setAttribute('webkitdirectory', ''); }}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => { const picked = e.currentTarget.files ? Array.from(e.currentTarget.files) : []; e.currentTarget.value = ''; void onUpload(picked); }}
+                />
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Multi-file editor */}
+              <p className="mx-3 mb-1 mt-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400/90">
+                Custom code screens are <strong>trusted, app-wide frontends</strong>. The SDK only exposes data
+                the viewer is permitted to see, but the screen&apos;s own code can contain labels or form IDs you
+                author. For strict per-role structure hiding, prefer the no-code widget dashboard.
+              </p>
+              <ScreenFilesEditor files={files} onChange={onFilesChange} sdk="form" />
+              {compileError && (
+                <div className="mx-3 mb-3 px-3 py-2 text-xs rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-700 dark:text-red-300 font-mono">
+                  {compileError}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -239,7 +343,9 @@ export default function CustomScreenStudio() {
                 <CustomScreenRuntime key="preview" screen={preview} formId={formId!} formTitle={title} fields={fields} className="w-full h-full border-0" />
               ) : (
                 <div className="h-full flex items-center justify-center text-center px-6">
-                  <p className="text-sm text-gray-400 dark:text-slate-500">Edit the files on the left — the live preview appears here.</p>
+                  <p className="text-sm text-gray-400 dark:text-slate-500">
+                    {files.length === 0 ? 'Pick a starting point on the left — the live preview appears here.' : 'Edit the files on the left — the live preview appears here.'}
+                  </p>
                 </div>
               )}
             </div>

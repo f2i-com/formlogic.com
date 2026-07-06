@@ -117,7 +117,7 @@ FormLogic SDK
   Developer/AI-facing hooks, components, and utilities for building custom screens and app frontends.
 
 FormLogic Application Package
-  Portable .formlogic-app bundle containing app manifest, forms, screens, reports, logic, assets, translations, and native config.
+  Portable .formlogic bundle containing app manifest, forms, screens, reports, logic, assets, translations, and native config.
 
 FormLogic Native Runtime
   Tauri v2 Android-first runtime that loads FormLogic apps and exposes approved native connectors.
@@ -389,7 +389,7 @@ FormLogic API sync
 ## Application package mode
 
 ```txt
-MineCab.formlogic-app
+MineCab.formlogic
   ↓
 Import/install into FormLogic
   ↓
@@ -1781,13 +1781,13 @@ Application Package
 Suggested file extension:
 
 ```txt
-.formlogic-app
+.formlogic
 ```
 
 Example:
 
 ```txt
-MineCab.formlogic-app
+MineCab.formlogic
 ```
 
 This is the portable app unit for the future.
@@ -1836,10 +1836,10 @@ The existing pack system can evolve into Application Packages rather than being 
 
 ## 29.2 Package structure
 
-Suggested `.formlogic-app` archive:
+Suggested `.formlogic` archive:
 
 ```txt
-MineCab.formlogic-app
+MineCab.formlogic
 ├── manifest.json
 ├── forms.json
 ├── screens.json
@@ -1934,7 +1934,7 @@ Example:
 ## 29.4 Package import flow
 
 ```txt
-Upload MineCab.formlogic-app
+Upload MineCab.formlogic
   ↓
 Validate manifest
   ↓
@@ -1956,7 +1956,7 @@ Open Deploy & Share
 ```txt
 Existing FormLogic app
   ↓
-Export as .formlogic-app
+Export as .formlogic
   ↓
 Include forms, roles, dashboards, reports, QuickJS, SDK screens, assets, native config
   ↓
@@ -3762,7 +3762,7 @@ Runtime budget
 Fields:
 
 ```txt
-Export as .formlogic-app
+Export as .formlogic
 Include demo data
 Include assets
 Include SDK screens
@@ -3959,7 +3959,7 @@ No custom screen generation yet.
 Define:
 
 ```txt
-.formlogic-app format
+.formlogic format
 manifest.json
 forms/screens/reports/roles/quickjs/assets/native config
 import/export rules
@@ -4139,7 +4139,7 @@ Enable/disable native runtime.
 Configure connector capabilities.
 Configure SDK.
 Configure QuickJS logic.
-Export .formlogic-app package.
+Export .formlogic package.
 Copy/open domain.
 ```
 
@@ -4287,7 +4287,7 @@ Failures are visible and retryable.
 Add:
 
 ```txt
-MineCab.formlogic-app
+MineCab.formlogic
 MineCab forms
 roles
 dashboards
@@ -4379,7 +4379,7 @@ Start with hooks:
 ## Task 3 — add Application Package spec/types
 
 ```txt
-Define .formlogic-app.
+Define .formlogic.
 Add package manifest type.
 Add package validator.
 Map current pack format to future app package format.
@@ -4726,7 +4726,7 @@ QuickJS maps that data into the workflow.
 SDK screens make the app feel custom-built.
 Submissions sync into FormLogic.
 Supervisors see reports and dashboards.
-The whole thing can be exported/imported as MineCab.formlogic-app.
+The whole thing can be exported/imported as MineCab.formlogic.
 ```
 
 That is the strongest version of the vision.
@@ -4847,7 +4847,7 @@ The biggest SDK rule:
 
 The biggest package rule:
 
-> **A full business app should be exportable/importable as a `.formlogic-app` Application Package.**
+> **A full business app should be exportable/importable as a `.formlogic` Application Package.**
 
 The biggest marketplace rule:
 

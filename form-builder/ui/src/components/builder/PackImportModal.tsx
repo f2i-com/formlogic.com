@@ -56,7 +56,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
 
   // Upload state
   const [uploadedPack, setUploadedPack] = useState<PackData | null>(null);
-  // A dropped .formlogic-app ARCHIVE (binary ZIP) can't be parsed client-side — held for direct import.
+  // A dropped .formlogic ARCHIVE (binary ZIP) can't be parsed client-side — held for direct import.
   const [pendingArchiveFile, setPendingArchiveFile] = useState<File | null>(null);
   // A parsed signed/application-package ENVELOPE (JSON) — the whole thing is sent so the server verifies it.
   const [signedEnvelope, setSignedEnvelope] = useState<Record<string, unknown> | null>(null);
@@ -366,9 +366,10 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
       return;
     }
 
-    // A .formlogic-app that is NOT a .json is the new ARCHIVE (binary ZIP) — held for direct import
-    // (the server verifies + extracts it). If it turns out to be JSON text, route it as an envelope.
-    if (lower.endsWith('.formlogic-app')) {
+    // A .formlogic (or legacy .formlogic-app) that is NOT a .json is the new ARCHIVE (binary ZIP) —
+    // held for direct import (the server verifies + extracts it). If it turns out to be JSON text,
+    // route it as an envelope.
+    if (lower.endsWith('.formlogic') || lower.endsWith('.formlogic-app')) {
       (async () => {
         try {
           const text = await file.text();
@@ -388,7 +389,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     }
 
     if (!lower.endsWith('.json')) {
-      setUploadError('Only .json, .zip and .formlogic-app files are accepted.');
+      setUploadError('Only .json, .zip and .formlogic files are accepted.');
       return;
     }
 
@@ -422,7 +423,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
     setImporting(true);
     try {
       // Three import shapes, all landing at the same result overlay:
-      //  1. a .formlogic-app ARCHIVE → server verifies + extracts the ZIP
+      //  1. a .formlogic ARCHIVE → server verifies + extracts the ZIP
       //  2. a signed/application-package ENVELOPE → server verifies the signature
       //  3. a flat pack → the classic import path (back-compat)
       const response = pendingArchiveFile
@@ -945,7 +946,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".json,.zip,.formlogic-app"
+                  accept=".json,.zip,.formlogic,.formlogic-app"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ''; }}
                   className="hidden"
                 />
@@ -998,7 +999,7 @@ export function PackImportModal({ isOpen, onClose, initialTab }: PackImportModal
                     <div className="flex items-center gap-2 mt-3">
                       <Badge variant="default" size="sm">.json</Badge>
                       <Badge variant="default" size="sm">.zip</Badge>
-                      <Badge variant="default" size="sm">.formlogic-app</Badge>
+                      <Badge variant="default" size="sm">.formlogic</Badge>
                     </div>
                   </div>
                 )}

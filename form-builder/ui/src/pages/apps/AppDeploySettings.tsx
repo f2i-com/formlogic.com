@@ -59,12 +59,12 @@ export function AppDeploySettings() {
     const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = href;
-    a.download = `${app.slug}.formlogic-app.json`;
+    a.download = `${app.slug}.formlogic.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(href);
-    toast.success('Package exported', 'Signed .formlogic-app downloaded.');
+    toast.success('Package exported', 'Signed .formlogic downloaded.');
   };
 
   const [exportingArchive, setExportingArchive] = useState(false);
@@ -72,9 +72,9 @@ export function AppDeploySettings() {
     if (!appId || !app || exportingArchive) return;
     setExportingArchive(true);
     try {
-      // Full .formlogic-app ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
+      // Full .formlogic ARCHIVE (ZIP): manifest + pack + quickjs + assets + detached signature.
       await api.exportAppPackageArchive(appId, app.slug);
-      toast.success('Package exported', 'Downloaded a .formlogic-app archive.');
+      toast.success('Package exported', 'Downloaded a .formlogic archive.');
     } catch (err) {
       toast.error('Export failed', err instanceof Error ? err.message : undefined);
     } finally {
@@ -265,8 +265,8 @@ export function AppDeploySettings() {
           </div>
           <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
             Export this app (forms, screens, reports, roles, and app logic) as a signed
-            <span className="font-mono"> .formlogic-app</span> package — portable, and verifiable against FormLogic's key.
-            The <span className="font-mono">.formlogic-app</span> archive additionally bundles the QuickJS logic and any assets as a ZIP.
+            <span className="font-mono"> .formlogic</span> package — portable, and verifiable against FormLogic's key.
+            The <span className="font-mono">.formlogic</span> archive additionally bundles the QuickJS logic and any assets as a ZIP.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={handleExportPackage} isLoading={exporting} disabled={exporting} leftIcon={<Download className="h-4 w-4" />}>

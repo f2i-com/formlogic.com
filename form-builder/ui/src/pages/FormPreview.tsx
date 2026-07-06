@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '../components/ui/Button';
@@ -21,6 +21,10 @@ import type { FormField } from '../types/form';
 export default function FormPreview() {
   const { formId } = useParams<{ formId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // ?form=1 previews the fillable FORM even when the form has a custom screen/dashboard — the "Preview"
+  // eye on a standalone form shows the form itself (the screen has its own /forms/:id/screen preview).
+  const forceForm = searchParams.get('form') === '1';
   const { getForm, loadFullForm } = useFormStore();
   const { previewDevice, setPreviewDevice, previewMode, setPreviewMode } = useUIStore();
 
@@ -117,7 +121,7 @@ export default function FormPreview() {
   }
 
   // A section-screen widget dashboard replaces the default form in preview (owner → live data).
-  if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
+  if (!forceForm && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
     return (
       <div className="min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
         <div className="max-w-6xl mx-auto">
@@ -135,7 +139,7 @@ export default function FormPreview() {
   }
 
   // A custom screen replaces the default form in preview too (owner context → live data).
-  if (form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
+  if (!forceForm && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
     return (
       <div className="h-dvh w-full bg-white dark:bg-slate-950">
         <CustomScreenRuntime

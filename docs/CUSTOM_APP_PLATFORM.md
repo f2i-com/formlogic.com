@@ -97,7 +97,7 @@ every submission** — client logic is a UX layer only.
 Owners edit app logic in **Deploy & share → App logic (QuickJS)** (`components/apps/AppLogicPanel.tsx`):
 add/enable/delete scripts, set per-script + app-wide permissions, and **Test run** each script against
 a sample ctx in the real QuickJS host before saving (persists via `PUT /api/apps/{id}` → sanitizer).
-The whole app can be exported as a signed `.formlogic-app` from the **Application package** card (see the
+The whole app can be exported as a signed `.formlogic` from the **Application package** card (see the
 [Application Package Format](#application-package-format) section).
 
 ### Deferred
@@ -257,7 +257,7 @@ vehicle adapters.
 
 ## Application Package Format
 
-*(.formlogic-app)* Status: **implemented** — types, validator, signed export, full ZIP-archive export + verified import. Spec §29.
+*(.formlogic)* Status: **implemented** — types, validator, signed export, full ZIP-archive export + verified import. Spec §29.
 
 An Application Package is the portable, runtime-aware superset of a Pack: the app + forms + screens
 + dashboards + reports, plus custom app-logic, launch/native config, and assets. The existing Pack
@@ -285,7 +285,7 @@ Routes:
 - `GET /api/apps/{id}/export/signed` → `{ package, signature, alg, keyId, trust, capabilities }` (signed
   by `SigningService`; `trust` is `official` under Ed25519, `local-only` under the HS256 fallback that no
   third party can verify).
-- `GET /api/apps/{id}/export/package` → the full **`.formlogic-app` ZIP** (`manifest.json` + `pack.json`
+- `GET /api/apps/{id}/export/package` → the full **`.formlogic` ZIP** (`manifest.json` + `pack.json`
   + `quickjs/` + optional `launch.json`/`native.json` + `assets/` + detached `signature.json`), streamed
   as `application/zip`.
 - `POST /api/application-packages/import` — a multipart ZIP **or** a JSON `{ package, signature, alg }`
@@ -309,7 +309,7 @@ Routes:
 
 #### Import verification (`PackService::importApplicationPackage`)
 
-Order of operations for a `.formlogic-app` ZIP:
+Order of operations for a `.formlogic` ZIP:
 
 1. **Zip-slip + zip-bomb guard** over every entry (`PackFileService::assertSafeArchive`) before
    anything is read.
