@@ -50,7 +50,7 @@ import { ScreenModal } from '../components/custom-screen/ScreenModal';
 import { AIFormGenerator, type AIGenerateResult } from '../components/builder/AIFormGenerator';
 import { ThemeEditor } from '../components/builder/ThemeEditor';
 import { PublishPackDialog } from '../components/builder/PublishPackDialog';
-import { type PackData } from '../lib/api';
+import { api, type PackData } from '../lib/api';
 import { useAuthStore } from '../stores/authStore';
 import { FormSettingsModal } from '../components/builder/FormSettingsPanel';
 import { FormVersionHistory } from '../components/builder/FormVersionHistory';
@@ -395,10 +395,35 @@ export default function FormBuilder() {
     toast.success('Saved', 'Form saved successfully');
   }, [form, updateForm]);
 
+  // If this form belongs to an app, Preview opens the real app runtime AT this form (cloud mode only)
+  // so it's seen in context; otherwise the standalone fillable-form preview. Looked up once per form.
+  const [previewAppSlug, setPreviewAppSlug] = useState<string | null>(null);
+  useEffect(() => {
+    if (storageMode !== 'api' || !formId) { setPreviewAppSlug(null); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await api.getApps();
+      const apps = (res.data?.apps || []) as Array<{ id: string; slug?: string | null }>;
+      for (const a of apps) {
+        if (!a.slug) continue;
+        const fr = await api.getAppForms(a.id);
+        const inApp = ((fr.data?.forms || []) as Array<{ formId: string }>).some((f) => f.formId === formId);
+        if (inApp) { if (!cancelled) setPreviewAppSlug(a.slug); return; }
+      }
+      if (!cancelled) setPreviewAppSlug(null);
+    })();
+    return () => { cancelled = true; };
+  }, [storageMode, formId]);
+
+  // Open Preview in a NEW TAB, in context: in-app form → the app runtime at this form; standalone form
+  // → the fillable form itself (?form=1 shows the form even when it has a custom screen).
   const handlePreview = useCallback(() => {
     if (!form) return;
-    navigate(`/preview/${form.id}`);
-  }, [form, navigate]);
+    const url = previewAppSlug
+      ? `/app/${previewAppSlug}/form/${form.id}`
+      : `/preview/${form.id}?form=1`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [form, previewAppSlug]);
 
   // Deletion is destructive (it also strips conditional logic / calculations on other
   // fields that reference this one) and there's no in-session undo, so confirm first.
@@ -685,8 +710,8 @@ export default function FormBuilder() {
             {form.logicScript && <span className="ml-1 h-2 w-2 rounded-full bg-green-500" />}
           </Button>
 
-          {/* Preview */}
-          <Button variant="outline" size="sm" onClick={() => navigate(`/preview/${form.id}`)} title="Preview" aria-label="Preview form">
+          {/* Preview — opens in a new tab, in app context when the form belongs to an app */}
+          <Button variant="outline" size="sm" onClick={handlePreview} title="Preview (opens in a new tab)" aria-label="Preview form">
             <Eye className="h-4 w-4" />
             <span className="hidden xl:inline ml-2">Preview</span>
           </Button>
@@ -1080,6 +1105,7 @@ export default function FormBuilder() {
           formId={form.id}
           formTitle={form.title}
           fields={(form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+          accent={form.theme?.primaryColor}
         />
       )}
 
