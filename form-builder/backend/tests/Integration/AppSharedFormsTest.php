@@ -156,6 +156,25 @@ class AppSharedFormsTest extends TestCase
     // Shared attach + shared response backing
     // -------------------------------------------------------------------------
 
+    public function testGetAllAppsReturnsRealFormCount(): void
+    {
+        // The apps LIST payload must carry the true attached-form count — list UIs were deriving it
+        // from navConfig.length, which is empty on pack-provisioned apps (the "0 forms" bug).
+        $owner = $this->makeUser();
+        $appId = $this->makeApp($owner, 'Counted App');
+        $emptyApp = $this->makeApp($owner, 'Empty App');
+        self::$apps->addFormToApp($appId, $this->makeForm($owner, 'F1'));
+        self::$apps->addFormToApp($appId, $this->makeForm($owner, 'F2'));
+        self::$apps->addFormToApp($appId, $this->makeForm($owner, 'F3'));
+
+        $byId = [];
+        foreach (self::$apps->getAllApps($owner) as $a) {
+            $byId[$a['id']] = $a;
+        }
+        $this->assertSame(3, $byId[$appId]['formCount'] ?? null, 'formCount reflects app_forms, not navConfig');
+        $this->assertSame(0, $byId[$emptyApp]['formCount'] ?? null);
+    }
+
     public function testFormAttachedToTwoAppsSharesTheSameResponseBacking(): void
     {
         $owner = $this->makeUser();

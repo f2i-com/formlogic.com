@@ -59,6 +59,9 @@ export interface App {
   /** Optional sandboxed QuickJS app-logic (onBeforeSubmit / onConnectorEvent / …). Owner-authored;
    *  runs client-side to describe safe effects — the backend stays authoritative on submit. */
   customLogic?: CustomAppLogicBundle;
+  /** REAL attached-form count from the apps list endpoint (app_forms). Use this for list displays —
+   *  navConfig.length is NOT a forms count (empty on pack-provisioned apps). */
+  formCount?: number;
   createdAt: string;
   updatedAt: string;
 }

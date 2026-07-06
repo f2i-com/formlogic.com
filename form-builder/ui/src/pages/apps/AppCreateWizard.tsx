@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2, Sparkles, 
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAuthStore } from '../../stores/authStore';
+import { useUIStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -38,6 +39,10 @@ export function AppCreateWizard() {
   const { createApp, apps } = useAppStore();
   const { forms, createForm, setActiveForm, refreshForms } = useFormStore();
   const user = useAuthStore((s) => s.user);
+  // The SAME store state that sizes the fixed Sidebar (w-16/w-64) and offsets the
+  // shell's <main> (ml-16/ml-64) — the fixed wizard nav mirrors it so its content
+  // column stays aligned with the page column in both sidebar states.
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
 
   // Refresh from the server so the selectable forms reflect reality (the
   // persisted store can be stale — missing forms made on another device, or
@@ -455,7 +460,7 @@ export function AppCreateWizard() {
                         </div>
                         {app.description && <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{app.description}</p>}
                         <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
-                          {formsOf(app.id) === null ? '…' : formsOf(app.id)!.length} form{formsOf(app.id)?.length === 1 ? '' : 's'}
+                          {formsOf(app.id)?.length ?? app.formCount ?? '…'} form{(formsOf(app.id)?.length ?? app.formCount) === 1 ? '' : 's'}
                           {' · '}{s.hasDashboard ? `dashboard (${s.widgetCount} widget${s.widgetCount === 1 ? '' : 's'})` : 'no dashboard'}
                           {' · '}{s.reportCount} saved report{s.reportCount === 1 ? '' : 's'}
                           {s.hasLogic ? ' · custom logic' : ''}
@@ -653,38 +658,65 @@ export function AppCreateWizard() {
         )}
       </div>
 
-      {/* Wizard nav — sticky bottom so Back / Next / Create are ALWAYS visible without
-          scrolling. Mirrors the sticky Header's surface (translucent bg + blur + hairline)
-          so step content scrolls beneath it; the shell's main uses overflow-x-clip (not
-          hidden) precisely so document-level sticky keeps working. Below md it rests on
-          top of the fixed MobileNav (h-16 + safe-area inset) and bleeds to the screen
-          edges; at md+ it pins to the true bottom and carries its own safe-area padding. */}
-      <div className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-0 z-20 mt-6 -mx-4 px-4 sm:-mx-6 sm:px-6 md:mx-0 md:px-0 pt-3 pb-3 md:pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-t border-gray-200/60 dark:border-white/[0.06] flex items-center justify-between gap-3">
-        <Button
-          variant="ghost"
-          onClick={() => setStep(Math.max(0, step - 1))}
-          disabled={step === 0}
-          leftIcon={<ArrowLeft className="h-4 w-4" />}
-        >
-          Back
-        </Button>
+      {/* Clearance spacer — the wizard nav below is FIXED (out of flow), so the last
+          in-flow controls need explicit room to scroll clear of it. Below md the shell's
+          main already pads 5rem+safe-area for the MobileNav; the bar adds ~4rem on top,
+          and h-12 (+ the wrapper's own p-4) covers it with ~1rem to spare. At md+ only
+          the ~4rem+safe-area bar overlays, cleared by 3.5rem+safe-area + sm:p-6/lg:p-8. */}
+      <div aria-hidden className="h-12 md:h-[calc(3.5rem+env(safe-area-inset-bottom))]" />
+    </div>
+    </div>
 
-        {step < steps.length - 1 ? (
-          <Button
-            onClick={() => { if (step === detailsStep && !validateName()) return; setStep(step + 1); }}
-            disabled={!canNext}
-            rightIcon={<ArrowRight className="h-4 w-4" />}
-          >
-            Next
-          </Button>
-        ) : (
-          <Button onClick={handleCreate} disabled={isCreating}>
-            {isCreating ? 'Creating...' : mode === 'companion' ? 'Create Companion App' : 'Create App'}
-          </Button>
+      {/* Wizard nav — FIXED to the viewport so Back / Next / Create can NEVER be moved
+          by scrolling (sticky detached at its flow position: the shell's mobile bottom
+          padding sat below it, so at full scroll the bar rode up; rubber-band overscroll
+          moved it too). No ancestor creates a fixed containing block (no transform /
+          filter / backdrop-filter / contain anywhere above — main's overflow-x-clip
+          doesn't re-root fixed), so this pins to the true viewport, exactly like the
+          MobileNav itself. Below md it sits flush on top of the fixed MobileNav
+          (h-16 + safe-area); at md+ it pins to the bottom with its own safe-area
+          padding and starts at the sidebar's right edge — mirroring main's ml-16/ml-64
+          from the same uiStore state, with the same 300ms collapse transition. The
+          inner wrappers replicate main's content gutters (px-4/sm:px-6/lg:px-8) and
+          the wizard's max-w-2xl column so the buttons align with the page content.
+          z-20: above step content, below the sidebar (z-40), MobileNav (z-50) and
+          modal/toast layers. */}
+      <div
+        className={cn(
+          'fixed left-0 right-0 z-20 bottom-[calc(4rem+env(safe-area-inset-bottom))] md:bottom-0',
+          sidebarCollapsed ? 'md:left-16' : 'md:left-64',
+          'transition-all duration-300',
+          'pt-3 pb-3 md:pb-[calc(0.75rem+env(safe-area-inset-bottom))]',
+          'bg-white/95 dark:bg-slate-900/70 backdrop-blur-xl border-t border-gray-200/60 dark:border-white/[0.06]'
         )}
+      >
+        <div className="px-4 sm:px-6 lg:px-8">
+          <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+            <Button
+              variant="ghost"
+              onClick={() => setStep(Math.max(0, step - 1))}
+              disabled={step === 0}
+              leftIcon={<ArrowLeft className="h-4 w-4" />}
+            >
+              Back
+            </Button>
+
+            {step < steps.length - 1 ? (
+              <Button
+                onClick={() => { if (step === detailsStep && !validateName()) return; setStep(step + 1); }}
+                disabled={!canNext}
+                rightIcon={<ArrowRight className="h-4 w-4" />}
+              >
+                Next
+              </Button>
+            ) : (
+              <Button onClick={handleCreate} disabled={isCreating}>
+                {isCreating ? 'Creating...' : mode === 'companion' ? 'Create Companion App' : 'Create App'}
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
-    </div>
     </div>
   );
 }

@@ -728,7 +728,8 @@ export function Dashboard() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {recentApps.map((app) => {
-                const formCount = app.navConfig?.length ?? 0;
+                // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
+                const formCount = app.formCount ?? app.navConfig?.length ?? 0;
                 return (
                   <button
                     key={app.id}

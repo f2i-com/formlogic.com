@@ -189,7 +189,9 @@ function AppCard({ app, packName, onClick, onDelete }: { app: App; packName: str
   const accent = app.theme?.primaryColor;
   const accented = !showLogo && isHexColor(accent);
   const monogram = (app.name?.trim().charAt(0) || '?').toUpperCase();
-  const formCount = app.navConfig?.length ?? 0;
+  // Real count from the list endpoint; navConfig is only a stale-cache fallback (it can be empty
+  // on pack-provisioned apps — the "0 forms" bug).
+  const formCount = app.formCount ?? app.navConfig?.length ?? 0;
   return (
     <div
       role="button"

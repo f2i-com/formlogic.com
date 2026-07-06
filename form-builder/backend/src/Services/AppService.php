@@ -23,8 +23,13 @@ class AppService
 
     public function getAllApps(string $userId): array
     {
+        // form_count subquery: the REAL number of attached forms for list displays. navConfig is NOT a
+        // reliable source (pack-provisioned apps can have an empty/other-shaped navConfig — showing
+        // "0 forms" in the Apps list), and per-app follow-up requests don't scale to 36 demo apps.
         $stmt = $this->mysql->prepare("
-            SELECT DISTINCT a.* FROM apps a
+            SELECT DISTINCT a.*,
+                   (SELECT COUNT(*) FROM app_forms af WHERE af.app_id = a.id) AS form_count
+            FROM apps a
             LEFT JOIN app_users au ON au.app_id = a.id AND au.user_id = :user_id
             WHERE a.owner_id = :owner_id OR au.user_id = :user_id2
             ORDER BY a.updated_at DESC
@@ -33,7 +38,9 @@ class AppService
 
         $apps = [];
         while ($row = $stmt->fetch()) {
-            $apps[] = App::fromArray($row)->toArray();
+            $app = App::fromArray($row)->toArray();
+            $app['formCount'] = (int) ($row['form_count'] ?? 0);
+            $apps[] = $app;
         }
         return $apps;
     }
