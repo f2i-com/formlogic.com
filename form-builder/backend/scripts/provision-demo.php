@@ -51,35 +51,14 @@ $mysqlConn = new MySQLConnection($conf);
 $pdo = $mysqlConn->getConnection();
 $sqlite = new SQLiteConnection(__DIR__ . '/../' . ($_ENV['SQLITE_STORAGE_PATH'] ?? 'storage/forms'));
 
-// Idempotent: ensure the marketplace-thumbnail column exists on dev/existing DBs (schema.sql has
-// it for fresh installs; migrate.php is left alone here).
-$colStmt = $pdo->prepare(
-    "SELECT 1 FROM information_schema.columns
-     WHERE table_schema = :db AND table_name = 'pack_catalog' AND column_name = 'screenshot' LIMIT 1"
-);
-$colStmt->execute(['db' => $conf['database']]);
-if (!$colStmt->fetchColumn()) {
-    $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshot` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `icon`");
-    echo "  added pack_catalog.screenshot column\n";
-}
-$col2Stmt = $pdo->prepare(
-    "SELECT 1 FROM information_schema.columns
-     WHERE table_schema = :db AND table_name = 'pack_catalog' AND column_name = 'screenshots' LIMIT 1"
-);
-$col2Stmt->execute(['db' => $conf['database']]);
-if (!$col2Stmt->fetchColumn()) {
-    $pdo->exec("ALTER TABLE `pack_catalog` ADD COLUMN `screenshots` json DEFAULT NULL AFTER `screenshot`");
-    echo "  added pack_catalog.screenshots column\n";
-}
-$col3Stmt = $pdo->prepare(
-    "SELECT 1 FROM information_schema.columns
-     WHERE table_schema = :db AND table_name = 'apps' AND column_name = 'reports' LIMIT 1"
-);
-$col3Stmt->execute(['db' => $conf['database']]);
-if (!$col3Stmt->fetchColumn()) {
-    $pdo->exec("ALTER TABLE `apps` ADD COLUMN `reports` json DEFAULT NULL");
-    echo "  added apps.reports column\n";
-}
+// Bring the schema fully current BEFORE touching anything: the same guarded, idempotent
+// initializeSchema() + runMigrations() the web app runs on boot. This script used to keep its own
+// ad-hoc column ensures (screenshot/screenshots/reports) — that whack-a-mole broke the moment a
+// fresh install imported a stale database/schema.sql and provisioned before the first web request
+// (pack_catalog.item_type missing → publishPack fatal). One canonical path, no drift.
+echo "Ensuring schema + migrations are current...\n";
+$mysqlConn->initializeSchema();
+$mysqlConn->runMigrations();
 
 $forms = new FormService($mysqlConn, $sqlite);
 $apps = new AppService($mysqlConn, $forms);
