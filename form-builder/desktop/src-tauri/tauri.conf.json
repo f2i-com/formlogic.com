@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FormLogic Desktop",
+  "version": "0.1.0",
+  "identifier": "com.f2i",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "FormLogic Desktop",
+        "width": 720,
+        "height": 560,
+        "minWidth": 480,
+        "minHeight": 360,
+        "resizable": true,
+        "fullscreen": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Local models, flows, plugins, and hardware for FormLogic apps",
+    "longDescription": "FormLogic Desktop is a tray-resident desktop app that manages local models, flows, plugins, and hardware for FormLogic apps — running local AI services (Ollama, ComfyUI, custom Python) and exposing them to FormLogic and the flow editor via a localhost API."
+  },
+  "plugins": {}
+}

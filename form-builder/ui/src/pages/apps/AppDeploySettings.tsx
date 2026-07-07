@@ -8,6 +8,8 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { CustomDomainsPanel } from '../../components/apps/CustomDomainsPanel';
 import { AppLogicPanel } from '../../components/apps/AppLogicPanel';
+import { FlowsPanel } from '../../components/apps/FlowsPanel';
+import { DesktopStatusPanel } from '../../components/desktop/DesktopStatusPanel';
 import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
@@ -254,8 +256,14 @@ export function AppDeploySettings() {
         {/* Custom domains */}
         <CustomDomainsPanel appId={appId!} appSlug={app.slug} />
 
+        {/* FormLogic Desktop (local companion: plugins, pairing, aokie connector) */}
+        <DesktopStatusPanel />
+
         {/* App logic (QuickJS) */}
         <AppLogicPanel appId={appId!} initialLogic={app.customLogic} />
+
+        {/* FormLogic Flows (event-driven automations, docs/FORMLOGIC_FLOWS.md) */}
+        <FlowsPanel appId={appId!} appSlug={app.slug} />
 
         {/* Application package */}
         <div className="bg-white dark:bg-slate-900/50 rounded-2xl border border-gray-200/80 dark:border-slate-700/60 p-6">

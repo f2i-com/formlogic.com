@@ -482,6 +482,183 @@ class MySQLConnection
                 INDEX idx_status (status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ");
+
+        $this->createFlowTables($pdo);
+    }
+
+    /**
+     * FormLogic Flows (docs/FORMLOGIC_FLOWS.md §2): flow library, event bindings, the reserve-first
+     * run log, and the paired-desktop registry. Shared by initializeSchema() (fresh installs) and
+     * runMigrations() (existing installs) — every statement is CREATE TABLE IF NOT EXISTS. Key types
+     * mirror the live apps/forms/users tables (VARCHAR(36) UUIDs).
+     */
+    private function createFlowTables(PDO $pdo): void
+    {
+        // Flow definitions: engine 'f2i', WorkflowGraph-compatible flow_json, UNIQUE(app_id, slug).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_definitions (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                name VARCHAR(255) NOT NULL,
+                slug VARCHAR(128) NOT NULL,
+                description TEXT,
+                engine VARCHAR(20) NOT NULL DEFAULT 'f2i',
+                flow_json JSON NOT NULL,
+                input_schema JSON NULL,
+                output_schema JSON NULL,
+                node_capabilities JSON NULL,
+                version INT NOT NULL DEFAULT 1,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY unique_app_flow_slug (app_id, slug),
+                INDEX idx_flow_owner (owner_user_id),
+                INDEX idx_flow_app (app_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Event bindings: app/form/connector event → flow, JSON columns per flow-binding.schema.json.
+        // app_id is NULLable: a binding with app_id NULL + form_id set is a WORKSPACE binding on a
+        // standalone form (owned via the bound flow's owner_user_id — see FlowService form bindings).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS app_flow_bindings (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NULL,
+                form_id VARCHAR(36) NULL,
+                connector_id VARCHAR(64) NULL,
+                flow_definition_id VARCHAR(36) NOT NULL,
+                event_name VARCHAR(150) NOT NULL,
+                mode ENUM('sync','async','background','manual') NOT NULL DEFAULT 'async',
+                condition_json JSON NULL,
+                input_map_json JSON NULL,
+                output_actions_json JSON NULL,
+                timeout_ms INT NOT NULL DEFAULT 30000,
+                retry_policy_json JSON NULL,
+                fallback_policy_json JSON NULL,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                sort_order INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
+                FOREIGN KEY (flow_definition_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
+                INDEX idx_afb_app (app_id),
+                INDEX idx_afb_flow (flow_definition_id),
+                INDEX idx_afb_event (app_id, event_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Run log: UNIQUE idempotency_key is the cross-tab/browser dedupe gate (reserve-first,
+        // mirroring app_submission_idempotency). binding_id keeps history when a binding is deleted.
+        // app_id is NULLable (workspace-flow runs); runtime/claimed_by record which runner
+        // ('browser'|'desktop') claimed a 'queued' run (queued→running exactly once).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_run_logs (
+                id VARCHAR(36) PRIMARY KEY,
+                app_id VARCHAR(36) NULL,
+                form_id VARCHAR(36) NULL,
+                response_id VARCHAR(36) NULL,
+                binding_id VARCHAR(36) NULL,
+                flow_definition_id VARCHAR(36) NOT NULL,
+                trigger_event VARCHAR(150) NOT NULL,
+                correlation_id VARCHAR(150) NOT NULL,
+                idempotency_key VARCHAR(255) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'running',
+                runtime VARCHAR(20) NULL,
+                claimed_by VARCHAR(120) NULL,
+                input_snapshot_json JSON NULL,
+                result_json JSON NULL,
+                output_actions_json JSON NULL,
+                error_json JSON NULL,
+                started_at TIMESTAMP NULL,
+                finished_at TIMESTAMP NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                FOREIGN KEY (flow_definition_id) REFERENCES flow_definitions(id) ON DELETE CASCADE,
+                FOREIGN KEY (binding_id) REFERENCES app_flow_bindings(id) ON DELETE SET NULL,
+                UNIQUE KEY uniq_flow_run_idem (idempotency_key),
+                INDEX idx_frl_app (app_id),
+                INDEX idx_frl_flow (flow_definition_id),
+                INDEX idx_frl_binding (binding_id),
+                INDEX idx_frl_status (app_id, status),
+                INDEX idx_frl_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Flow KV storage: small persistent key/value state for flows (owner + optional app +
+        // scope like 'flow:<slug>' or 'app'). app_id uses '' (empty string) — NOT NULL — for the
+        // workspace scope so the UNIQUE key actually dedupes (MySQL UNIQUE ignores NULLs); there is
+        // deliberately no FK on app_id for that reason (FlowKvService validates app ownership).
+        // Caps enforced in FlowKvService: value ≤ 64 KiB, ≤ 500 keys per (owner, app, scope).
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS flow_kv (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NOT NULL DEFAULT '',
+                scope VARCHAR(64) NOT NULL,
+                k VARCHAR(190) NOT NULL,
+                v MEDIUMTEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_flow_kv (owner_user_id, app_id, scope, k),
+                INDEX idx_flow_kv_scope (owner_user_id, app_id, scope)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Paired FormLogic Desktop installs; upserted on successful pairing (per user + instance).
+        // api_key_id ties a connection minted via the OAuth device-link flow to the scoped flk_ key
+        // it was issued (revoking the connection revokes that key). No FK: api_keys is created later
+        // in runMigrations(), so a constraint here would fail during a fresh initializeSchema().
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_connections (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                device_name VARCHAR(255) NOT NULL,
+                desktop_instance_id VARCHAR(128) NOT NULL,
+                api_key_id VARCHAR(36) NULL,
+                last_seen_at TIMESTAMP NULL,
+                capabilities_json JSON NULL,
+                trusted_origins_json JSON NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_desktop_instance (owner_user_id, desktop_instance_id),
+                INDEX idx_desktop_owner (owner_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // Remote command relay (docs/API.md §connector:relay): a web member enqueues a connector
+        // command for a paired desktop runtime; the desktop long-polls, claims (pending→claimed
+        // exactly-once) and completes. Reserve-first on the UNIQUE idempotency_key. status lifecycle
+        // pending → claimed → done|failed, or pending → expired past expires_at.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS desktop_commands (
+                id VARCHAR(36) PRIMARY KEY,
+                owner_user_id VARCHAR(36) NOT NULL,
+                app_id VARCHAR(36) NULL,
+                connector_id VARCHAR(64) NOT NULL,
+                command VARCHAR(96) NOT NULL,
+                payload_json JSON NULL,
+                idempotency_key VARCHAR(255) NOT NULL,
+                status ENUM('pending','claimed','done','failed','expired') NOT NULL DEFAULT 'pending',
+                result_json JSON NULL,
+                error_json JSON NULL,
+                requested_by_user_id VARCHAR(36) NOT NULL,
+                claimed_by VARCHAR(120) NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                claimed_at TIMESTAMP NULL,
+                finished_at TIMESTAMP NULL,
+                expires_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                UNIQUE KEY uniq_desktop_command_idem (idempotency_key),
+                INDEX idx_desktop_command_poll (owner_user_id, status, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /**
@@ -859,6 +1036,7 @@ class MySQLConnection
                 scopes JSON NOT NULL,
                 code_challenge VARCHAR(128) NOT NULL,
                 resource VARCHAR(500) NULL,
+                device_label VARCHAR(120) NULL,
                 expires_at TIMESTAMP NOT NULL,
                 used_at TIMESTAMP NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1030,5 +1208,74 @@ class MySQLConnection
         } catch (\Throwable $e) {
             // Table not present yet on some ordering — the CREATE TABLE above includes the index.
         }
+
+        // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
+        // initializeSchema so fresh and migrated schemas match byte-for-byte).
+        $this->createFlowTables($pdo);
+
+        // Flows v1 (workspace scope + queued/claim lifecycle) for installs whose flow tables
+        // predate it. The CREATEs above already carry these on a fresh DB; each ALTER below is
+        // guarded so it only fires on the old shape.
+        // 1) app_flow_bindings.app_id NOT NULL → NULL (workspace bindings on standalone forms).
+        $col = $pdo->query("SHOW COLUMNS FROM app_flow_bindings LIKE 'app_id'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && strtoupper((string) ($col['Null'] ?? '')) === 'NO') {
+            $pdo->exec("ALTER TABLE app_flow_bindings MODIFY COLUMN app_id VARCHAR(36) NULL");
+        }
+        // 2) flow_run_logs.app_id NOT NULL → NULL (workspace-flow runs carry no app).
+        $col = $pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'app_id'")->fetch(PDO::FETCH_ASSOC);
+        if ($col && strtoupper((string) ($col['Null'] ?? '')) === 'NO') {
+            $pdo->exec("ALTER TABLE flow_run_logs MODIFY COLUMN app_id VARCHAR(36) NULL");
+        }
+        // 3) flow_run_logs.runtime + claimed_by (which runner claimed a queued run).
+        if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'runtime'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN runtime VARCHAR(20) NULL AFTER status");
+        }
+        if ($pdo->query("SHOW COLUMNS FROM flow_run_logs LIKE 'claimed_by'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE flow_run_logs ADD COLUMN claimed_by VARCHAR(120) NULL AFTER runtime");
+        }
+        // desktop_connections.api_key_id (OAuth device-link → minted flk_ key) for installs that
+        // predate the OAuth linking flow. Fresh installs already carry it (createFlowTables above).
+        if ($pdo->query("SHOW COLUMNS FROM desktop_connections LIKE 'api_key_id'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE desktop_connections ADD COLUMN api_key_id VARCHAR(36) NULL AFTER desktop_instance_id");
+        }
+        // mcp_oauth_codes.device_label carries the sanitized ?device= label from the desktop
+        // OAuth device-link consent through to the token exchange (names the minted key/connection).
+        if ($pdo->query("SHOW TABLES LIKE 'mcp_oauth_codes'")->rowCount() > 0
+            && $pdo->query("SHOW COLUMNS FROM mcp_oauth_codes LIKE 'device_label'")->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE mcp_oauth_codes ADD COLUMN device_label VARCHAR(120) NULL AFTER resource");
+        }
+
+        // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
+        $this->seedFirstPartyOAuthClients($pdo);
+    }
+
+    /**
+     * Static, first-party OAuth clients seeded into mcp_oauth_clients (idempotent INSERT IGNORE on
+     * the client_id_hash PK). Currently: the "formlogic-desktop" PUBLIC native client (no secret,
+     * PKCE S256 required) whose token exchange mints a scoped flk_ API key rather than an MCP
+     * session — see McpOAuthService::DESKTOP_CLIENT_ID. The registered loopback redirect URIs are
+     * matched port-agnostically (RFC 8252 §7.3), so any ephemeral port the desktop binds is accepted.
+     */
+    public function seedFirstPartyOAuthClients(PDO $pdo): void
+    {
+        if ($pdo->query("SHOW TABLES LIKE 'mcp_oauth_clients'")->rowCount() === 0) {
+            return; // table not created yet on this ordering — nothing to seed
+        }
+        $clientId = \FormLogic\Services\McpOAuthService::DESKTOP_CLIENT_ID;
+        $redirects = json_encode([
+            'http://127.0.0.1/callback',
+            'http://localhost/callback',
+        ]);
+        $stmt = $pdo->prepare("
+            INSERT IGNORE INTO mcp_oauth_clients
+                (client_id_hash, client_id, secret_hash, token_endpoint_auth_method, client_name, client_uri, redirect_uris, is_cimd, fetched_at, created_at)
+            VALUES (:h, :cid, NULL, 'none', :name, NULL, :redirects, 0, NULL, NOW())
+        ");
+        $stmt->execute([
+            'h' => hash('sha256', $clientId),
+            'cid' => $clientId,
+            'name' => 'FormLogic Desktop',
+            'redirects' => $redirects,
+        ]);
     }
 }

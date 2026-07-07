@@ -35,6 +35,24 @@ class McpOAuthService
     private const CLIENT_ID_PREFIX = 'mcpc_';
     private const CLIENT_SECRET_PREFIX = 'mcps_';
 
+    /**
+     * The static first-party PUBLIC native client (seeded in MySQLConnection::seedFirstPartyOAuthClients).
+     * FormLogic Desktop links an account via this client's authorization-code + PKCE flow; the token
+     * exchange mints a long-lived SCOPED flk_ API key (McpOAuthController::token) instead of an MCP
+     * session, tied to a desktop_connections row. Any other client keeps the unchanged MCP flow.
+     */
+    public const DESKTOP_CLIENT_ID = 'formlogic-desktop';
+
+    /**
+     * The scope vocabulary the desktop client may request — DISTINCT from the MCP session scopes.
+     * These are ApiKeyService scopes (the minted flk_ key holds exactly the granted subset):
+     *   flows:read/flows:write drive the Flows runtime headless; responses:read/write/manage let the
+     *   runtime read (list_responses + match-based updates LIST), submit, and update an app's records
+     *   when applying onConnectorEvent effects + flow output actions; connector:relay claims/completes
+     *   the remote connector commands a web member enqueues.
+     */
+    public const DESKTOP_SCOPES = ['flows:read', 'flows:write', 'responses:read', 'responses:write', 'responses:manage', 'connector:relay'];
+
     /** CIMD (client-metadata-document) fetch limits: SSRF-guarded, 5s, 64KB, JSON only, no redirects. */
     private const CIMD_CACHE_TTL = 300;
     private const CIMD_MAX_BYTES = 65536;
@@ -126,6 +144,48 @@ class McpOAuthService
     public static function supportedScopes(): array
     {
         return array_merge(McpTokenService::ALL_SCOPES, ['offline_access']);
+    }
+
+    /** True for the static first-party FormLogic Desktop client (device-link → scoped API key). */
+    public static function isDesktopClient(string $clientId): bool
+    {
+        return $clientId === self::DESKTOP_CLIENT_ID;
+    }
+
+    /**
+     * The scope vocabulary + default a given client draws from. The desktop client uses the
+     * ApiKeyService DESKTOP_SCOPES; every other client keeps the unchanged MCP session scopes.
+     * @return array{0: array, 1: array} [supportedScopes, defaultWhenNoneRequested]
+     */
+    private static function scopePolicyForClient(string $clientId): array
+    {
+        if (self::isDesktopClient($clientId)) {
+            return [self::DESKTOP_SCOPES, self::DESKTOP_SCOPES];
+        }
+        return [self::supportedScopes(), McpTokenService::DEFAULT_SCOPES];
+    }
+
+    /** Human-readable labels for the consent screen (falls back to the raw scope for unknowns). */
+    public static function scopeLabels(array $scopes): array
+    {
+        $map = [
+            'apps:read' => 'Read your apps',
+            'apps:write' => 'Create and edit apps',
+            'forms:read' => 'Read your forms',
+            'forms:write' => 'Create and edit forms',
+            'screens:write' => 'Edit app screens',
+            'responses:read' => 'Read form submissions',
+            'responses:write' => 'Submit form responses',
+            'offline_access' => 'Stay connected (refresh access)',
+            'flows:read' => 'Read your flows, bindings and runs',
+            'flows:write' => 'Run and complete flows',
+            'connector:relay' => 'Act as a desktop runtime for connector commands',
+        ];
+        $out = [];
+        foreach ($scopes as $scope) {
+            $out[$scope] = $map[$scope] ?? $scope;
+        }
+        return $out;
     }
 
     // ── Discovery documents ──
@@ -349,7 +409,8 @@ class McpOAuthService
         if ($resource !== '' && $resource !== $expectedResource) {
             return $err('invalid_target', 'resource must be ' . $expectedResource);
         }
-        $scopes = $this->grantedScopes((string) ($p['scope'] ?? ''));
+        [$supported, $default] = self::scopePolicyForClient($client['clientId']);
+        $scopes = $this->grantedScopes((string) ($p['scope'] ?? ''), $supported, $default);
         if ($scopes === null) {
             return $err('invalid_scope', 'None of the requested scopes are supported');
         }
@@ -360,6 +421,9 @@ class McpOAuthService
             'scopes' => $scopes,
             'codeChallenge' => $challenge,
             'resource' => $expectedResource,
+            // Sanitized device label from ?device= — carried through consent to the token exchange so
+            // a desktop-minted key/connection can be named "FormLogic Desktop on <device>". null otherwise.
+            'device' => $this->cleanText($p['device'] ?? null, 100),
         ];
     }
 
@@ -367,14 +431,14 @@ class McpOAuthService
      * Mint a one-time authorization code bound to client + redirect_uri + PKCE challenge + user +
      * scopes + resource (+ optional app narrowing). <=60s TTL, single use, stored hashed.
      */
-    public function mintCode(string $userId, string $clientId, string $redirectUri, array $scopes, string $codeChallenge, string $resource, ?string $appId): string
+    public function mintCode(string $userId, string $clientId, string $redirectUri, array $scopes, string $codeChallenge, string $resource, ?string $appId, ?string $deviceLabel = null): string
     {
         $this->purgeExpired();
         $raw = self::CODE_PREFIX . bin2hex(random_bytes(24));
         $stmt = $this->db()->prepare("
             INSERT INTO mcp_oauth_codes
-                (id, code_hash, client_id, user_id, app_id, redirect_uri, scopes, code_challenge, resource, expires_at, created_at)
-            VALUES (:id, :h, :cid, :uid, :app, :redirect, :scopes, :challenge, :resource, :exp, :now)
+                (id, code_hash, client_id, user_id, app_id, redirect_uri, scopes, code_challenge, resource, device_label, expires_at, created_at)
+            VALUES (:id, :h, :cid, :uid, :app, :redirect, :scopes, :challenge, :resource, :device, :exp, :now)
         ");
         $stmt->execute([
             'id' => $this->uuid(),
@@ -386,6 +450,7 @@ class McpOAuthService
             'scopes' => json_encode(array_values($scopes)),
             'challenge' => $codeChallenge,
             'resource' => $resource,
+            'device' => $deviceLabel,
             'exp' => date('Y-m-d H:i:s', time() + self::CODE_TTL),
             'now' => date('Y-m-d H:i:s'),
         ]);
@@ -441,6 +506,7 @@ class McpOAuthService
             'appId' => $row['app_id'] !== null ? (string) $row['app_id'] : null,
             'scopes' => is_array($scopes) ? $scopes : McpTokenService::DEFAULT_SCOPES,
             'resource' => (string) $row['resource'],
+            'deviceLabel' => isset($row['device_label']) && $row['device_label'] !== null ? (string) $row['device_label'] : null,
         ];
     }
 
@@ -582,18 +648,20 @@ class McpOAuthService
      * grants the builder defaults (an access token with zero MCP scopes would be useless). Returns
      * null when scopes were requested but none are supported (invalid_scope).
      */
-    private function grantedScopes(string $scopeParam): ?array
+    private function grantedScopes(string $scopeParam, ?array $supported = null, ?array $default = null): ?array
     {
+        $supported ??= self::supportedScopes();
+        $default ??= McpTokenService::DEFAULT_SCOPES;
         $requested = array_values(array_filter(explode(' ', trim($scopeParam)), static fn ($s) => $s !== ''));
         if ($requested === []) {
-            return McpTokenService::DEFAULT_SCOPES;
+            return $default;
         }
-        $granted = array_values(array_intersect($requested, self::supportedScopes()));
+        $granted = array_values(array_intersect($requested, $supported));
         if ($granted === []) {
             return null;
         }
         if ($granted === ['offline_access']) {
-            return array_merge(McpTokenService::DEFAULT_SCOPES, ['offline_access']);
+            return array_merge($default, ['offline_access']);
         }
         return $granted;
     }

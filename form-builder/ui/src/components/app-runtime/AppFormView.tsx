@@ -25,7 +25,10 @@ import { LocationField } from '../ui/LocationField';
 import { NigoDashboard } from '../builder/NigoDashboard';
 import { useConditionalLogic } from '../../hooks/useFormLogic';
 import { CustomScreenRuntime } from '../custom-screen/CustomScreenRuntime';
+import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
+import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
+import { dispatchFormEvent } from '../../client-runtime/flows/flowDispatcher';
 import type { FormField as FormFieldType, CustomScreen } from '../../types/form';
 import type { CustomAppLogicBundle } from '../../types/customAppLogic';
 
@@ -840,12 +843,17 @@ export function AppFormView() {
   const applyLogicValues = useCallback((patch: Record<string, unknown>) => {
     setAnswers((prev) => ({ ...prev, ...patch }));
   }, []);
-  const { runScreenEnter, runBeforeSubmit, runAfterSubmit } = useCustomAppLogic({
+  const { enabled: logicEnabled, runScreenEnter, runBeforeSubmit, runAfterSubmit, runConnectorEvent } = useCustomAppLogic({
     formId,
     applyValues: applyLogicValues,
     // The loaded form's own logic bundle (form-scoped scripts run only here).
     formCustomLogic: (form?.customLogic ?? null) as CustomAppLogicBundle | null,
   });
+
+  // FormLogic Desktop events (e.g. aokie.call.incoming over SSE, or the mock simulator)
+  // feed the SAME onConnectorEvent pipeline as request-chained results. Inert unless the
+  // app has enabled logic scripts.
+  useDesktopConnectorEvents({ appSlug, enabled: logicEnabled, runConnectorEvent });
 
   // Fire onScreenEnter when the user opens a form. A script may request connector data
   // (native/mock), which the host chains into onConnectorEvent to prefill fields.
@@ -906,10 +914,18 @@ export function AppFormView() {
         return;
       }
       for (const w of before.warnings) toast.warning(w);
-      await createResponse(formId, submissionData);
+      const created = await createResponse(formId, submissionData);
       setSubmitted(true);
       // onAfterSubmit: advisory (success toast / follow-up). Fire-and-forget.
       void runAfterSubmit(submissionData);
+      // FormLogic Flows: feed form.submitted through the flow dispatcher (bindings with
+      // event 'form.submitted' reserve-first, execute, and log). Fire-and-forget.
+      const createdId = (created as { id?: unknown } | null | undefined)?.id;
+      void dispatchFormEvent('form.submitted', {
+        formId,
+        responseId: typeof createdId === 'string' ? createdId : undefined,
+        answers: submissionData,
+      });
     } catch (err) {
       // Mirror the public-form path: a failure only means "not submitted" when we
       // are ONLINE (a real server rejection). When offline, the service worker's
@@ -1021,6 +1037,35 @@ export function AppFormView() {
         </div>
       </div>
     );
+  }
+
+  // A host-rendered SDK (React) screen from the trusted registry takes over the form view
+  // (mirrors AppHomeScreen) — unless the viewer stepped through to the real form. When new
+  // records are allowed, the same fallback pill as code screens offers the step-through.
+  {
+    const cs = form?.customScreen as (CustomScreen | undefined);
+    if (cs?.enabled && cs.kind === 'sdk' && cs.sdkScreen?.screenId && !showFormView) {
+      const allowNew = !!cs.allowNewResponses && canSubmit(formId);
+      return (
+        <div className="relative h-full min-h-[60vh]">
+          <SdkScreenRuntime
+            screenId={cs.sdkScreen.screenId}
+            params={{ ...(cs.sdkScreen.params ?? {}), formId }}
+          />
+          {allowNew && (
+            <button
+              type="button"
+              onClick={() => setShowFormView(true)}
+              className={`app-btn-primary fixed right-5 z-20 inline-flex cursor-pointer items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold shadow-lg motion-safe:transition-transform motion-safe:hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 app-ring-primary focus-visible:ring-offset-2 ${(config.app?.settings as { hideNav?: boolean } | undefined)?.hideNav ? 'bottom-[4.5rem]' : 'bottom-5'}`}
+              style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+            >
+              <Plus className="h-4 w-4" />
+              New {(runtimeForm?.displayName || 'record').toLowerCase().replace(/s$/, '')}
+            </button>
+          )}
+        </div>
+      );
+    }
   }
 
   // A section-screen widget dashboard (host-rendered recharts, app-scoped data) takes over the form

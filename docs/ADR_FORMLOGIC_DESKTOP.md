@@ -1,0 +1,31 @@
+# ADR: F2I Desktop becomes FormLogic Desktop
+
+**Date:** 2026-07-07 · **Status:** Accepted · **Repos:** `izuc/formlogic-app`, `f2i-com/f2i-web`, `izuc/aokie`
+
+## Decision
+
+The F2I desktop companion (`f2i-web/desktop`, Tauri 2, `127.0.0.1:17872`) is rebranded and evolved into **FormLogic Desktop** — the single local capability layer for the FormLogic product family. Aokie ceases to be a standalone desktop product: its native phone/dongle capabilities become the **Aokie Desktop Plugin** hosted by FormLogic Desktop, and its user experience becomes the **Aokie Receptionist for FormLogic** app package. The F2I flow engine is surfaced inside FormLogic as **FormLogic Flows**.
+
+```
+F2I               = parent/company/technology brand
+FormLogic         = main product platform
+FormLogic Desktop = installed local companion (models, plugins, hardware, flows)
+FormLogic Flows   = F2I flow engine integrated into FormLogic
+Aokie             = a FormLogic app + a FormLogic Desktop plugin
+```
+
+## Rationale
+
+Three disconnected products (FormLogic, F2I, Aokie) confuse users and triplicate platform work (auth, records, dashboards, roles, packaging). FormLogic already has the platform primitives (apps, forms, connectors with typed errors + permission grants, signed packages, marketplace, dashboards); the desktop companion already has the local-service/security machinery; Aokie already has the native stack. Composition beats parallel maintenance.
+
+## Repo layout (decided 2026-07-07, hybrid)
+
+FormLogic Desktop's source lives **in `izuc/formlogic-app` at `form-builder/desktop`** (moved from `f2i-web/desktop` so the platform, desktop companion, flows, and app packages version together). `f2i-com/f2i-web` keeps the F2I flow-builder product (ui/api/cli) — its web UI only gained the dual companion-id matcher. `izuc/aokie` stays separate (large native stack, heavy CI) behind the versioned stdio plugin contract.
+
+## Consequences
+
+- **Compatibility:** port 17872 and bundle identifier `com.f2i` are kept (existing installs keep working and keep their data dir). Health gains `companion:"formlogic-desktop"` with `legacyCompanion:"f2i-companion"`; both web UIs accept either id for 1–2 releases. Old *deployed* F2I web builds that match only the legacy id must be redeployed alongside the Desktop update.
+- **Internal names stay:** crate `f2i-companion`, `F2I_SERVER_*` env vars, `f2i-core` remain; only user-facing strings change.
+- **Security:** privileged local capabilities move behind an origin-bound pairing-token model (see `docs/FORMLOGIC_DESKTOP.md` §3), extending — not replacing — the existing origin guard.
+- **Aokie legacy app** remains building (via `aokie-core`) as a developer/admin fallback until the plugin + FormLogic app reach feature parity for core flows.
+- **Contracts** live canonically in `formlogic-app/docs/{FORMLOGIC_DESKTOP,DESKTOP_PLUGIN_SDK,AOKIE_PLUGIN_CONTRACT,FORMLOGIC_FLOWS}.md` + `docs/contracts/*.schema.json`; the other repos carry pointer docs + local schema copies for their tests.

@@ -37,11 +37,18 @@ export function effectRequiredPermission(effect: CustomAppLogicEffect): string |
       return 'storage.local';
     case 'formlogic.submitResponse':
       return 'formlogic.responses.write';
+    case 'formlogic.updateResponse':
+      // Updates are writes too — one grant covers create + update (spec §33).
+      return 'formlogic.responses.write';
     case 'formlogic.listResponses':
       return 'formlogic.responses.read';
     case 'connector.request':
       // e.g. connector.vehicle.status.read  (command itself may contain a dot)
       return `connector.${effect.connectorId}.${effect.command}`;
+    case 'flow.run':
+      // FormLogic Flows (docs/FORMLOGIC_FLOWS.md §5): covered by 'flow.<slug>.run',
+      // 'flow.*.run', or the bare grant-all 'flow.run' (see grantCovers).
+      return `flow.${effect.flow}.run`;
     default:
       return null;
   }
@@ -63,9 +70,22 @@ export function isDefaultSafeEffect(effect: CustomAppLogicEffect): boolean {
 function grantCovers(grant: string, required: string): boolean {
   if (grant === '*') return true;
   if (grant === required) return true;
+  // FormLogic Flows: the bare 'flow.run' grant covers every flow ('flow.<slug>.run').
+  if (grant === 'flow.run' && required.startsWith('flow.') && required.endsWith('.run')) {
+    return true;
+  }
   if (grant.endsWith('.*')) {
     const prefix = grant.slice(0, -2); // strip '.*'
     return required === prefix || required.startsWith(prefix + '.');
+  }
+  // Inner wildcard segments ('flow.*.run'): '*' matches exactly one dot segment.
+  // Flow slugs contain no dots, so 'flow.*.run' covers any single flow.
+  if (grant.includes('*')) {
+    const g = grant.split('.');
+    const r = required.split('.');
+    if (g.length === r.length) {
+      return g.every((seg, i) => seg === '*' || seg === r[i]);
+    }
   }
   return false;
 }

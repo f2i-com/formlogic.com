@@ -29,6 +29,10 @@ export type CustomAppLogicPermission =
   | 'ui.navigate'
   | 'ui.setValues'
   | 'ui.reject'
+  // FormLogic Flows (docs/FORMLOGIC_FLOWS.md §5): bare 'flow.run' grants every flow;
+  // 'flow.<slug>.run' one flow; 'flow.*.run' every flow via the wildcard segment.
+  | 'flow.run'
+  | `flow.${string}.run`
   | `connector.${string}.${string}`
   | `${string}.*`;
 
@@ -58,6 +62,12 @@ export interface CustomAppLogicInput {
   answers?: Record<string, unknown>;
   values?: Record<string, unknown>;
   params?: Record<string, unknown>;
+  /**
+   * Read-only snapshot of this app's logic storage (the keys previously written via
+   * `storage.set` effects), injected by the trusted host so scripts can implement
+   * guards (e.g. idempotency-key dedupe) without any live IO in the sandbox.
+   */
+  storage?: Record<string, unknown>;
   meta?: {
     appSlug?: string;
     appId?: string;
@@ -85,10 +95,32 @@ export type CustomAppLogicEffect =
       query?: Record<string, unknown>;
     }
   | {
+      /**
+       * Update an existing response. Scripts rarely know response ids, so the trusted
+       * host also accepts a `match` ({field, value} over recent answers) to locate the
+       * row; `upsert: true` creates the row when no match exists (e.g. SMS threads).
+       */
+      type: 'formlogic.updateResponse';
+      formKey: string;
+      responseId?: string;
+      match?: { field: string; value: unknown };
+      answers: Record<string, unknown>;
+      upsert?: boolean;
+    }
+  | {
       type: 'connector.request';
       connectorId: string;
       command: string;
       payload?: unknown;
+    }
+  | {
+      /** Run a FormLogic Flow by slug (docs/FORMLOGIC_FLOWS.md §5). Sync feeds the flow
+       *  result back through onConnectorEvent; async/background just reserve+queue. */
+      type: 'flow.run';
+      flow: string;
+      mode?: 'sync' | 'async';
+      timeoutMs?: number;
+      input?: Record<string, unknown>;
     }
   | { type: 'storage.get'; key: string }
   | { type: 'storage.set'; key: string; value: unknown }

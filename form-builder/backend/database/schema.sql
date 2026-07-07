@@ -10,6 +10,7 @@
 --   (then re-add this header)
 --
 
+
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
@@ -36,7 +37,7 @@ CREATE TABLE `api_keys` (
   `is_active` tinyint(1) DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_api_keys_hash` (`key_hash`),
+  UNIQUE KEY `idx_api_keys_hash` (`key_hash`),
   KEY `idx_api_keys_user` (`user_id`),
   CONSTRAINT `api_keys_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -44,10 +45,10 @@ CREATE TABLE `api_keys` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `api_tokens` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `user_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `token_hash` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `token_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `last_used_at` timestamp NULL DEFAULT NULL,
   `expires_at` timestamp NULL DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -86,6 +87,36 @@ CREATE TABLE `app_domains` (
   KEY `idx_app_domains_status` (`status`),
   CONSTRAINT `app_domains_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
   CONSTRAINT `app_domains_ibfk_2` FOREIGN KEY (`owner_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `app_flow_bindings` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `connector_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `event_name` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `mode` enum('sync','async','background','manual') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'async',
+  `condition_json` json DEFAULT NULL,
+  `input_map_json` json DEFAULT NULL,
+  `output_actions_json` json DEFAULT NULL,
+  `timeout_ms` int NOT NULL DEFAULT '30000',
+  `retry_policy_json` json DEFAULT NULL,
+  `fallback_policy_json` json DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `sort_order` int DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `form_id` (`form_id`),
+  KEY `idx_afb_app` (`app_id`),
+  KEY `idx_afb_flow` (`flow_definition_id`),
+  KEY `idx_afb_event` (`app_id`,`event_name`),
+  CONSTRAINT `app_flow_bindings_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `app_flow_bindings_ibfk_2` FOREIGN KEY (`form_id`) REFERENCES `forms` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `app_flow_bindings_ibfk_3` FOREIGN KEY (`flow_definition_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -241,10 +272,10 @@ CREATE TABLE `apps` (
   `theme` json DEFAULT NULL,
   `nav_config` json DEFAULT NULL,
   `custom_screen` mediumtext COLLATE utf8mb4_unicode_ci,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `reports` json DEFAULT NULL,
   `custom_logic` mediumtext COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `slug` (`slug`),
   KEY `idx_owner_id` (`owner_id`),
@@ -263,9 +294,9 @@ CREATE TABLE `audit_log` (
   `resource_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `details` text COLLATE utf8mb4_unicode_ci,
   `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `integrity_hash` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `sequence_number` bigint unsigned DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_audit_sequence_number` (`sequence_number`),
   KEY `idx_audit_user_id` (`user_id`),
@@ -283,9 +314,132 @@ CREATE TABLE `audit_sequence` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_commands` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `connector_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `command` varchar(96) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `payload_json` json DEFAULT NULL,
+  `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('pending','claimed','done','failed','expired') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `result_json` json DEFAULT NULL,
+  `error_json` json DEFAULT NULL,
+  `requested_by_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `claimed_by` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `claimed_at` timestamp NULL DEFAULT NULL,
+  `finished_at` timestamp NULL DEFAULT NULL,
+  `expires_at` timestamp NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_desktop_command_idem` (`idempotency_key`),
+  KEY `app_id` (`app_id`),
+  KEY `idx_desktop_command_poll` (`owner_user_id`,`status`,`created_at`),
+  CONSTRAINT `desktop_commands_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `desktop_commands_ibfk_2` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `desktop_connections` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `desktop_instance_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `api_key_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `last_seen_at` timestamp NULL DEFAULT NULL,
+  `capabilities_json` json DEFAULT NULL,
+  `trusted_origins_json` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_desktop_instance` (`owner_user_id`,`desktop_instance_id`),
+  KEY `idx_desktop_owner` (`owner_user_id`),
+  CONSTRAINT `desktop_connections_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `flow_definitions` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `slug` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `engine` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'f2i',
+  `flow_json` json NOT NULL,
+  `input_schema` json DEFAULT NULL,
+  `output_schema` json DEFAULT NULL,
+  `node_capabilities` json DEFAULT NULL,
+  `version` int NOT NULL DEFAULT '1',
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `unique_app_flow_slug` (`app_id`,`slug`),
+  KEY `idx_flow_owner` (`owner_user_id`),
+  KEY `idx_flow_app` (`app_id`),
+  CONSTRAINT `flow_definitions_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `flow_definitions_ibfk_2` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `flow_kv` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `owner_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '',
+  `scope` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `k` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `v` mediumtext COLLATE utf8mb4_unicode_ci,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_flow_kv` (`owner_user_id`,`app_id`,`scope`,`k`),
+  KEY `idx_flow_kv_scope` (`owner_user_id`,`app_id`,`scope`),
+  CONSTRAINT `flow_kv_ibfk_1` FOREIGN KEY (`owner_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `flow_run_logs` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `response_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `binding_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `flow_definition_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `trigger_event` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `correlation_id` varchar(150) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `idempotency_key` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'running',
+  `runtime` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `claimed_by` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `input_snapshot_json` json DEFAULT NULL,
+  `result_json` json DEFAULT NULL,
+  `output_actions_json` json DEFAULT NULL,
+  `error_json` json DEFAULT NULL,
+  `started_at` timestamp NULL DEFAULT NULL,
+  `finished_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_flow_run_idem` (`idempotency_key`),
+  KEY `idx_frl_app` (`app_id`),
+  KEY `idx_frl_flow` (`flow_definition_id`),
+  KEY `idx_frl_binding` (`binding_id`),
+  KEY `idx_frl_status` (`app_id`,`status`),
+  KEY `idx_frl_created` (`created_at`),
+  CONSTRAINT `flow_run_logs_ibfk_1` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `flow_run_logs_ibfk_2` FOREIGN KEY (`flow_definition_id`) REFERENCES `flow_definitions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `flow_run_logs_ibfk_3` FOREIGN KEY (`binding_id`) REFERENCES `app_flow_bindings` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `form_analytics` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `form_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `date` date NOT NULL,
   `views` int DEFAULT '0',
   `starts` int DEFAULT '0',
@@ -301,13 +455,13 @@ CREATE TABLE `form_analytics` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `form_versions` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `form_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `version` int NOT NULL,
   `data` json NOT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `created_by` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `changelog` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `created_by` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `changelog` text COLLATE utf8mb4_unicode_ci,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_form_version` (`form_id`,`version`),
   KEY `idx_form_id` (`form_id`),
@@ -317,11 +471,11 @@ CREATE TABLE `form_versions` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `forms` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `user_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `title` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
-  `status` enum('draft','published','archived') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'draft',
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `status` enum('draft','published','archived') COLLATE utf8mb4_unicode_ci DEFAULT 'draft',
   `field_count` int unsigned DEFAULT '0',
   `response_count` int unsigned DEFAULT NULL,
   `settings` json DEFAULT NULL,
@@ -338,6 +492,7 @@ CREATE TABLE `forms` (
   KEY `idx_user_id` (`user_id`),
   KEY `idx_status` (`status`),
   KEY `idx_created_at` (`created_at`),
+  KEY `idx_user_updated` (`user_id`,`updated_at`,`id`),
   CONSTRAINT `forms_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -370,6 +525,7 @@ CREATE TABLE `mcp_oauth_codes` (
   `scopes` json NOT NULL,
   `code_challenge` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL,
   `resource` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `device_label` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `expires_at` timestamp NOT NULL,
   `used_at` timestamp NULL DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -434,8 +590,6 @@ CREATE TABLE `pack_catalog` (
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `icon` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `screenshot` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `screenshots` json DEFAULT NULL,
   `tags` json DEFAULT NULL,
   `category` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `item_type` enum('application_package','connector','theme','widget','quickjs_library','sdk_component','template') COLLATE utf8mb4_unicode_ci DEFAULT 'application_package',
@@ -554,7 +708,7 @@ CREATE TABLE `payments` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `rate_limits` (
-  `bucket` char(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `bucket` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `window_start` bigint NOT NULL,
   `hits` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`bucket`,`window_start`),
@@ -579,12 +733,12 @@ CREATE TABLE `response_links` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `response_metadata` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `form_id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `status` enum('draft','submitted','reviewed','approved','rejected','archived') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT 'submitted',
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('draft','submitted','reviewed','approved','rejected','archived') COLLATE utf8mb4_unicode_ci DEFAULT 'submitted',
   `submitted_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `ip_address` varchar(45) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `user_agent` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_agent` text COLLATE utf8mb4_unicode_ci,
   `completion_time` int DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_form_id` (`form_id`),
@@ -614,13 +768,13 @@ CREATE TABLE `system_meta` (
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `users` (
-  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `password_hash` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `token_version` int NOT NULL DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `token_version` int NOT NULL DEFAULT '0',
   `cloud_until` datetime DEFAULT NULL,
   `plan` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'personal',
   PRIMARY KEY (`id`),
@@ -640,10 +794,10 @@ CREATE TABLE `webhook_deliveries` (
   `duration_ms` int DEFAULT NULL,
   `success` tinyint(1) DEFAULT '0',
   `error_message` text COLLATE utf8mb4_unicode_ci,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `attempt` int DEFAULT '0',
   `next_retry_at` timestamp NULL DEFAULT NULL,
   `status` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'success',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_deliveries_webhook_id` (`webhook_id`),
   KEY `idx_deliveries_created_at` (`created_at`),

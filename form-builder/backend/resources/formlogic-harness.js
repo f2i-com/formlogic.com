@@ -199,7 +199,10 @@
       meta: (job.context && job.context.meta) || {},
       db: makeModule("db", ["setField", "getField", "setStatus", "addTag"]),
       utils: makeModule("utils", ["uuid", "now", "nowMs", "hash", "formatDate"]),
-      http: makeModule("http", ["get", "post", "put", "patch", "delete", "request"])
+      http: makeModule("http", ["get", "post", "put", "patch", "delete", "request"]),
+      // FormLogic Flows: ctx.flows.run(slug, input?) records a queued-run intent on the PHP
+      // side (capture-only; enqueued after the response persists — never executed here).
+      flows: makeModule("flows", ["run"])
     };
 
     var onSubmit;

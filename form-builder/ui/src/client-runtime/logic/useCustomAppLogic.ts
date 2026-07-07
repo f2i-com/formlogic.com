@@ -10,9 +10,34 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { toast } from '../../stores/toastStore';
 import { getConnectorClient } from '../connectors/nativeConnectorClient';
+import { runFlowBySlug } from '../flows/flowDispatcher';
 import type { AppLogicEffectHandlers } from './appLogicEffects';
 import { runHook, type AppLogicHookOutcome } from './appLogicHost';
 import type { CustomAppLogicBundle, CustomAppLogicHookName, CustomAppLogicInput } from '../../types/customAppLogic';
+
+// Backoff schedule for the updateResponse match lookup (~6s worst case; the last 0
+// means "final attempt, no trailing sleep"). Exported for tests.
+export const UPDATE_MATCH_RETRY_DELAYS_MS: readonly number[] = [400, 800, 1600, 3200, 0];
+
+/**
+ * Find a response id whose answers[field] === value, retrying on the given backoff
+ * schedule. Submits ride the offline-first queue, so a follow-up event (call.answered
+ * ~1s after call.incoming) can arrive before the original row is server-visible —
+ * events outrunning writes is normal, and this absorbs it. Exported for tests.
+ */
+export async function findResponseIdByMatch(
+  fetchRows: () => Promise<Array<{ id?: unknown; answers?: Record<string, unknown> }>>,
+  match: { field: string; value: unknown },
+  delays: readonly number[] = UPDATE_MATCH_RETRY_DELAYS_MS
+): Promise<string | null> {
+  for (const delayMs of delays) {
+    const rows = await fetchRows();
+    const hit = rows.find((r) => r?.answers && r.answers[match.field] === match.value);
+    if (hit && typeof hit.id === 'string') return hit.id;
+    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return null;
+}
 
 const NOOP_OUTCOME: AppLogicHookOutcome = {
   ran: 0, rejected: false, warnings: [], values: {}, deniedPermissions: [], errors: [],
@@ -55,6 +80,12 @@ export interface CustomAppLogicApi {
   runBeforeSubmit: (answers: Record<string, unknown>) => Promise<AppLogicHookOutcome>;
   /** Run onAfterSubmit (advisory: toasts / navigation). */
   runAfterSubmit: (answers: Record<string, unknown>) => Promise<AppLogicHookOutcome>;
+  /**
+   * Run onConnectorEvent for an EXTERNALLY-delivered connector event (a FormLogic
+   * Desktop SSE envelope, or a mock simulator push) — the SAME pipeline the host chains
+   * after a connector.request effect, so scripts see one event shape either way.
+   */
+  runConnectorEvent: (event: Record<string, unknown>) => Promise<AppLogicHookOutcome>;
 }
 
 export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseCustomAppLogicOptions): CustomAppLogicApi {
@@ -77,11 +108,41 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
         else toast.info(message);
       },
       connectorRequest: (connectorId, command, payload) => connector.request(connectorId, command, payload),
+      // flow.run effect (docs/FORMLOGIC_FLOWS.md §5): runs a FormLogic Flow through the
+      // dispatcher (reserve-first run log, browser executor, output pipeline).
+      flowRun: (flow, options) => runFlowBySlug(flow, options),
       submitResponse: async (formKey, answers) => {
-        // formId IS the key in this runtime; resolve defensively through config.
         const state = useAppRuntimeStore.getState();
-        const target = state.config?.forms.find((f) => f.formId === formKey)?.formId ?? formKey;
-        return state.createResponse(target, answers);
+        return state.createResponse(resolveFormKey(formKey), answers);
+      },
+      // Update by explicit responseId or a {field, value} match over recent answers. The
+      // lookup runs HERE in the trusted host (viewer session + permissions) — the sandbox
+      // only ever described the intent. `upsert` creates the row when nothing matches
+      // (e.g. an SMS thread seen for the first time).
+      //
+      // The match lookup RETRIES briefly: submits ride the offline-first queue, so a
+      // follow-up event (call.answered ~1s after call.incoming) can arrive before the
+      // original row is server-visible. Events outrunning writes is normal — absorb it.
+      updateResponse: async (formKey, target, answers, options) => {
+        const state = useAppRuntimeStore.getState();
+        const formId = resolveFormKey(formKey);
+        let responseId = target.responseId;
+        if (!responseId && target.match) {
+          responseId =
+            (await findResponseIdByMatch(
+              async () =>
+                (await state.fetchResponses(formId, { limit: 100 })) as Array<{
+                  id?: unknown;
+                  answers?: Record<string, unknown>;
+                }>,
+              target.match
+            )) ?? undefined;
+        }
+        if (!responseId) {
+          if (options?.upsert) return state.createResponse(formId, answers);
+          throw new Error('no matching response to update');
+        }
+        return state.updateResponse(formId, responseId, { answers });
       },
       storageGet: (key) => {
         try { const v = localStorage.getItem(logicStorageKey(key)); return v == null ? null : JSON.parse(v); } catch { return null; }
@@ -110,14 +171,18 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
   }, [formId]);
 
   const run = useCallback(
-    async (hook: CustomAppLogicHookName, answers: Record<string, unknown>): Promise<AppLogicHookOutcome> => {
+    async (
+      hook: CustomAppLogicHookName,
+      answers: Record<string, unknown>,
+      event?: unknown
+    ): Promise<AppLogicHookOutcome> => {
       const appBundle = useAppRuntimeStore.getState().config?.app.customLogic;
       const bundle = mergeBundles(appBundle, formBundleRef.current);
       if (!bundle) return NOOP_OUTCOME;
       return runHook({
         bundle,
         hook,
-        input: { answers, values: answers, meta: buildMeta() },
+        input: { answers, values: answers, meta: buildMeta(), event, storage: readLogicStorageSnapshot() },
         handlers,
       });
     },
@@ -129,10 +194,54 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
     runScreenEnter: useCallback(() => run('onScreenEnter', {}), [run]),
     runBeforeSubmit: useCallback((answers) => run('onBeforeSubmit', answers), [run]),
     runAfterSubmit: useCallback((answers) => run('onAfterSubmit', answers), [run]),
+    runConnectorEvent: useCallback((event) => run('onConnectorEvent', {}, event), [run]),
   };
 }
 
 function logicStorageKey(key: string): string {
   const appId = useAppRuntimeStore.getState().config?.app.id ?? 'app';
   return `formlogic-applogic-${appId}-${key}`;
+}
+
+/**
+ * Resolve an app-logic form key to a real form id. Pack-shipped scripts can't know the
+ * post-import UUIDs, so the runtime display name is accepted as a stable key ('Calls',
+ * 'Transcript Turns', …) alongside a real formId. Falls back to the raw key (server
+ * authorization still applies).
+ */
+function resolveFormKey(formKey: string): string {
+  const forms = useAppRuntimeStore.getState().config?.forms ?? [];
+  const hit = forms.find((f) => f.formId === formKey) ?? forms.find((f) => f.displayName === formKey);
+  return hit?.formId ?? formKey;
+}
+
+const LOGIC_STORAGE_SNAPSHOT_CAP = 200;
+
+/**
+ * Snapshot this app's logic storage (keys written via storage.set effects) so scripts can
+ * read their own guards (idempotency dedupe, counters) from `ctx.storage` — the sandbox
+ * itself has no live IO. Bounded, never throws.
+ */
+function readLogicStorageSnapshot(): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  try {
+    const appId = useAppRuntimeStore.getState().config?.app.id ?? 'app';
+    const prefix = `formlogic-applogic-${appId}-`;
+    let taken = 0;
+    for (let i = 0; i < localStorage.length && taken < LOGIC_STORAGE_SNAPSHOT_CAP; i++) {
+      const full = localStorage.key(i);
+      if (!full || !full.startsWith(prefix)) continue;
+      const raw = localStorage.getItem(full);
+      if (raw == null) continue;
+      try {
+        out[full.slice(prefix.length)] = JSON.parse(raw);
+      } catch {
+        continue; // non-JSON junk under our prefix — skip
+      }
+      taken += 1;
+    }
+  } catch {
+    // Storage unavailable (privacy mode) — scripts just see an empty snapshot.
+  }
+  return out;
 }

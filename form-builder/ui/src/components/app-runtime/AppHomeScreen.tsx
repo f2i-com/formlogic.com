@@ -1,9 +1,12 @@
+import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { AppCustomScreenRuntime } from '../custom-screen/AppCustomScreenRuntime';
 import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { AppDashboardHome } from './AppDashboardHome';
 import { safeAppNavTarget } from '../../lib/screenNav';
+import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
+import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
 
 /**
  * The app's landing page. A sandboxed custom code screen takes over when present; otherwise the home
@@ -13,7 +16,16 @@ import { safeAppNavTarget } from '../../lib/screenNav';
 export function AppHomeScreen() {
   const navigate = useNavigate();
   const config = useAppRuntimeStore((s) => s.config);
+  const appSlug = useAppRuntimeStore((s) => s.appSlug);
   const cs = config?.app?.customScreen;
+
+  // Desktop events (aokie.call.incoming etc.) reach app-wide onConnectorEvent scripts on
+  // the home screen too — a receptionist app must react while the dashboard is open, not
+  // only inside a form. No form fields here, so value patches are a no-op; toasts and
+  // response submissions still apply. Inert unless the app has enabled logic scripts.
+  const noopApplyValues = useCallback(() => {}, []);
+  const { enabled: logicEnabled, runConnectorEvent } = useCustomAppLogic({ applyValues: noopApplyValues });
+  useDesktopConnectorEvents({ appSlug, enabled: logicEnabled, runConnectorEvent });
 
   if (!config) return null;
 

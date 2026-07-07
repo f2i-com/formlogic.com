@@ -1,0 +1,896 @@
+// FormLogic Flows editor — properties panel for the selected node.
+//
+// Edits the selected node's `data` fields per its catalog spec. Field widgets: text / number /
+// select / boolean, a plain textarea (templates/prompts), a "QuickJS sandboxed" monospace editor
+// for code fields, a JSON/selector monospace editor for structured fields, and the Flows-specific
+// FORM PICKER, FILTERS editor and CONNECTOR pickers. Every panel shows the node's one-line
+// description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
+// Nothing here executes — it only mutates the stored graph.
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
+import { Plus, Search, Trash2 } from 'lucide-react';
+import { Button } from '../../ui/Button';
+import { Switch } from '../../ui/Switch';
+import { CodeEditor } from '../../ui/CodeEditor';
+import { ErrorBoundary } from '../../ErrorBoundary';
+import {
+  getNodeSpec,
+  evalShowIf,
+  effectiveNodeData,
+  EMPTY_FLOW_EDITOR_CONTEXT,
+  type FlowEditorContext,
+  type NodePropertySpec,
+} from './nodeCatalog';
+import { filterForms, formsForContext, shouldSearch } from './formPicker';
+import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
+
+type MonacoEditor = import('monaco-editor').editor.IStandaloneCodeEditor;
+
+/** Insert `text` at an input/textarea's caret via the native value setter so React's onChange fires. */
+function insertIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const next = el.value.slice(0, start) + text + el.value.slice(end);
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  const caret = start + text.length;
+  requestAnimationFrame(() => {
+    try { el.focus(); el.setSelectionRange(caret, caret); } catch { /* field detached */ }
+  });
+}
+
+/** Does a stored field value read as "set"? (drives showIf's never-hide-a-configured-field safety.) */
+function fieldHasValue(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return v.trim() !== '';
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as Record<string, unknown>).length > 0;
+  return true;
+}
+
+/** Common Aokie call fields offered as one-click Trigger inputs when the flow is app-scoped. */
+const AOKIE_QUICK_INPUTS: Array<{ name: string; example: string }> = [
+  { name: 'callerPhone', example: '+61400000000' },
+  { name: 'callId', example: 'call_123' },
+  { name: 'callerName', example: 'Alex Smith' },
+  { name: 'transcript', example: 'Caller: Hi…' },
+];
+
+const INPUT_CLS =
+  'w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
+const MONO_CLS = INPUT_CLS + ' font-mono text-xs';
+const LABEL_CLS = 'block text-xs font-medium text-gray-600 dark:text-slate-300 mb-1';
+const HELP_CLS = 'mt-1 text-[11px] leading-snug text-gray-400 dark:text-slate-500';
+const LINK_CLS =
+  'text-[11px] font-medium text-primary-600 dark:text-primary-400 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded';
+
+/** A form the picker can offer, with its fields for the filter / answers helpers. */
+export interface FlowFormOption {
+  id: string;
+  title: string;
+  fields: Array<{ id: string; label: string }>;
+}
+
+const FILTER_OP_OPTIONS: { value: FlowFilterOp; label: string }[] = [
+  { value: 'eq', label: 'equals' },
+  { value: 'neq', label: 'not equals' },
+  { value: 'contains', label: 'contains' },
+  { value: 'gt', label: 'greater than' },
+  { value: 'lt', label: 'less than' },
+  { value: 'in', label: 'one of' },
+];
+
+/** Is this a structured (JSON/selector) code field vs. a QuickJS code field? */
+function isJsonField(p: NodePropertySpec): boolean {
+  return p.type === 'code' && !p.quickjs;
+}
+
+/** Turn a stored value into the string a code/text field shows. */
+function toInput(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2);
+}
+
+/** Parse a JSON-field input: valid JSON stays typed; anything else is a raw string (selector). */
+function parseJsonField(raw: string): unknown {
+  const t = raw.trim();
+  if (t === '') return undefined;
+  if (/^[{[]|^-?\d|^(true|false|null)$|^"/.test(t)) {
+    try {
+      return JSON.parse(t);
+    } catch {
+      /* fall through — treat as raw selector string */
+    }
+  }
+  return raw;
+}
+
+/** The static form id a form-picker value points at (a real id, not empty and not a `$` selector). */
+function staticFormId(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' && !value.startsWith('$') ? value : null;
+}
+
+interface NodePropertiesProps {
+  nodeId: string;
+  type: string;
+  data: Record<string, unknown>;
+  onPatch: (patch: Record<string, unknown>) => void;
+  onDelete: () => void;
+  /** The author's forms (for the form picker + field helpers). */
+  forms: FlowFormOption[];
+  /** App/connector context (drives the connector pickers). */
+  context: FlowEditorContext;
+  /** Selectors this node can reference (from the Trigger + prior nodes), shown as copyable chips. */
+  insertHints?: string[];
+}
+
+// ── Flows-specific widgets ─────────────────────────────────────────────────────────────────
+
+/** A searchable typeahead over a list of forms (workspace flows / apps with many forms). */
+function FormCombobox({
+  options,
+  value,
+  onChange,
+}: {
+  options: FlowFormOption[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selected = options.find((f) => f.id === value) ?? null;
+  const results = useMemo(() => filterForms(options, query).slice(0, 30), [options, query]);
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={open ? query : selected?.title ?? ''}
+          placeholder={selected ? selected.title : 'Search your forms…'}
+          onFocus={() => { setOpen(true); setQuery(''); }}
+          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); (e.target as HTMLInputElement).blur(); } }}
+          className={INPUT_CLS + ' pl-8'}
+          role="combobox"
+          aria-expanded={open}
+          aria-label="Search your forms"
+        />
+      </div>
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-lg"
+        >
+          {results.length === 0 ? (
+            <li className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No forms match "{query}".</li>
+          ) : (
+            results.map((f) => (
+              <li key={f.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={f.id === value}
+                  onMouseDown={(e) => { e.preventDefault(); onChange(f.id); setOpen(false); }}
+                  className={cnRow(f.id === value)}
+                >
+                  {f.title}
+                </button>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function cnRow(active: boolean): string {
+  return (
+    'flex w-full items-center px-3 py-1.5 text-left text-sm transition-colors ' +
+    (active
+      ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
+      : 'text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800')
+  );
+}
+
+/**
+ * Form picker (the "too many forms" fix): app-scoped flows get ONLY their app's forms as a short
+ * labelled list; workspace flows (or apps with many forms) get a searchable typeahead. A "dynamic
+ * value" escape hatch (a form id or a $selector) stays available as a secondary option.
+ */
+function FormPickerField({
+  spec,
+  value,
+  forms,
+  context,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  forms: FlowFormOption[];
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const raw = typeof value === 'string' ? value : '';
+  const options = useMemo(() => formsForContext(forms, context), [forms, context]);
+  const knownIds = options.map((f) => f.id);
+  const [dynamic, setDynamic] = useState(raw !== '' && !knownIds.includes(raw));
+  const searchable = shouldSearch(options, context);
+
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      {dynamic ? (
+        <input
+          type="text"
+          value={raw}
+          placeholder="form id or $inputs.formId"
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS + ' font-mono text-xs'}
+        />
+      ) : searchable ? (
+        <FormCombobox options={options} value={raw} onChange={(id) => onChange(id || undefined)} />
+      ) : (
+        <select
+          value={knownIds.includes(raw) ? raw : ''}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS + ' cursor-pointer'}
+        >
+          <option value="">Select a form…</option>
+          {options.map((f) => (
+            <option key={f.id} value={f.id}>{f.title}</option>
+          ))}
+        </select>
+      )}
+      <div className="mt-1 flex items-center justify-between gap-2">
+        {spec.help && <p className={HELP_CLS + ' mt-0 flex-1'}>{spec.help}</p>}
+        <button type="button" className={LINK_CLS + ' flex-none'} onClick={() => setDynamic((d) => !d)}>
+          {dynamic ? 'Pick from a list' : 'Use a dynamic value'}
+        </button>
+      </div>
+    </label>
+  );
+}
+
+/** Trigger node: declare/rename/remove the named inputs the flow receives from its binding. */
+function TriggerInputsField({
+  spec,
+  value,
+  context,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const rows = Array.isArray(value)
+    ? value
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+        .map((r) => ({
+          name: typeof r.name === 'string' ? r.name : '',
+          example: typeof r.example === 'string' ? r.example : '',
+        }))
+    : [];
+
+  const commit = (next: typeof rows) =>
+    onChange(next.length === 0 ? undefined : next.map((r) => (r.example ? { name: r.name, example: r.example } : { name: r.name })));
+  const setRow = (i: number, patch: Partial<(typeof rows)[number]>) => commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addRow = (name = '', example = '') => commit([...rows, { name, example }]);
+  const removeRow = (i: number) => commit(rows.filter((_, j) => j !== i));
+
+  const existing = new Set(rows.map((r) => r.name));
+  const quickAdds = context.appScoped ? AOKIE_QUICK_INPUTS.filter((q) => !existing.has(q.name)) : [];
+
+  return (
+    <div className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <div className="space-y-2">
+        {rows.map((row, i) => (
+          <div key={i} className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-2 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[11px] text-gray-400 dark:text-slate-500">$inputs.</span>
+              <input
+                type="text"
+                value={row.name}
+                placeholder="callerPhone"
+                onChange={(e) => setRow(i, { name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })}
+                className={INPUT_CLS + ' min-w-0 flex-1 font-mono text-xs'}
+                aria-label="Input name"
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Remove input"
+                className="flex-none rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 dark:hover:bg-slate-700"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <input
+              type="text"
+              value={row.example}
+              placeholder="example value (optional, used for test runs)"
+              onChange={(e) => setRow(i, { example: e.target.value })}
+              className={INPUT_CLS + ' text-xs'}
+              aria-label="Example value"
+            />
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => addRow()}
+        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:border-primary-300 hover:text-primary-600 dark:hover:border-primary-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add an input
+      </button>
+      {quickAdds.length > 0 && (
+        <div className="mt-2">
+          <p className="mb-1 text-[10px] font-medium text-gray-400 dark:text-slate-500">Common call fields:</p>
+          <div className="flex flex-wrap gap-1">
+            {quickAdds.map((q) => (
+              <button
+                key={q.name}
+                type="button"
+                onClick={() => addRow(q.name, q.example)}
+                className="inline-flex items-center gap-1 rounded-full border border-gray-200 dark:border-slate-600 px-2 py-0.5 font-mono text-[10px] text-gray-600 dark:text-slate-300 hover:border-primary-300 hover:text-primary-600 dark:hover:border-primary-500/40"
+              >
+                <Plus className="h-2.5 w-2.5" /> {q.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </div>
+  );
+}
+
+/** Filters editor: rows of { field, op, value }, ANDed. */
+function FiltersField({
+  spec,
+  value,
+  formFields,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  formFields: Array<{ id: string; label: string }> | null;
+  onChange: (value: unknown) => void;
+}) {
+  const rows = Array.isArray(value)
+    ? value
+        .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+        .map((r) => ({
+          field: typeof r.field === 'string' ? r.field : '',
+          op: (typeof r.op === 'string' ? r.op : 'eq') as FlowFilterOp,
+          value: typeof r.value === 'string' ? r.value : r.value == null ? '' : String(r.value),
+        }))
+    : [];
+
+  const commit = (next: typeof rows) => onChange(next.length === 0 ? undefined : next);
+  const setRow = (i: number, patch: Partial<(typeof rows)[number]>) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addRow = () => commit([...rows, { field: '', op: 'eq' as FlowFilterOp, value: '' }]);
+  const removeRow = (i: number) => commit(rows.filter((_, j) => j !== i));
+
+  return (
+    <div className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <div className="space-y-2">
+        {rows.map((row, i) => (
+          <div key={i} className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-800/40 p-2 space-y-1.5">
+            {formFields ? (
+              <select
+                value={formFields.some((f) => f.id === row.field) ? row.field : ''}
+                onChange={(e) => setRow(i, { field: e.target.value })}
+                className={INPUT_CLS + ' cursor-pointer'}
+                aria-label="Filter field"
+              >
+                <option value="">Select a field…</option>
+                {formFields.map((f) => (
+                  <option key={f.id} value={f.id}>{f.label || f.id}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={row.field}
+                placeholder="field id"
+                onChange={(e) => setRow(i, { field: e.target.value })}
+                className={INPUT_CLS + ' font-mono text-xs'}
+                aria-label="Filter field id"
+              />
+            )}
+            <div className="flex items-center gap-1.5">
+              <select
+                value={row.op}
+                onChange={(e) => setRow(i, { op: e.target.value as FlowFilterOp })}
+                className={INPUT_CLS + ' w-28 flex-none cursor-pointer'}
+                aria-label="Filter operator"
+              >
+                {FILTER_OP_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={row.value}
+                placeholder="value or $selector"
+                onChange={(e) => setRow(i, { value: e.target.value })}
+                className={INPUT_CLS + ' min-w-0 flex-1'}
+                aria-label="Filter value"
+              />
+              <button
+                type="button"
+                onClick={() => removeRow(i)}
+                aria-label="Remove filter"
+                className="flex-none rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500 dark:hover:bg-slate-700"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={addRow}
+        className="mt-2 inline-flex items-center gap-1 rounded-lg border border-dashed border-gray-300 dark:border-slate-600 px-2.5 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:border-primary-300 hover:text-primary-600 dark:hover:border-primary-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add filter
+      </button>
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </div>
+  );
+}
+
+/** Connector id picker: a select of context-available connectors, else free text. */
+function ConnectorField({
+  spec,
+  value,
+  context,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const raw = typeof value === 'string' ? value : '';
+  const ids = context.connectors.map((c) => c.id);
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      {ids.length > 0 ? (
+        <select
+          value={raw}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS + ' cursor-pointer'}
+        >
+          <option value="">Select a connector…</option>
+          {ids.map((id) => (
+            <option key={id} value={id}>{id}</option>
+          ))}
+          {raw !== '' && !ids.includes(raw) && <option value={raw}>{raw}</option>}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={raw}
+          placeholder={spec.placeholder}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS}
+        />
+      )}
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+/** Connector command picker: an input with a datalist of the selected connector's known commands. */
+function ConnectorCommandField({
+  nodeId,
+  spec,
+  value,
+  connectorId,
+  context,
+  onChange,
+}: {
+  nodeId: string;
+  spec: NodePropertySpec;
+  value: unknown;
+  connectorId: unknown;
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const raw = typeof value === 'string' ? value : '';
+  const commands = context.connectors.find((c) => c.id === connectorId)?.commands ?? [];
+  const listId = `connector-cmds-${nodeId}`;
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <input
+        type="text"
+        value={raw}
+        placeholder={spec.placeholder}
+        list={commands.length > 0 ? listId : undefined}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        className={INPUT_CLS}
+      />
+      {commands.length > 0 && (
+        <datalist id={listId}>
+          {commands.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+      )}
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+/** Append-a-field helper under an answers editor: a datalist of the form's field ids. */
+function AnswersFieldAdder({
+  nodeId,
+  fields,
+  answers,
+  onChange,
+}: {
+  nodeId: string;
+  fields: Array<{ id: string; label: string }>;
+  answers: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [pick, setPick] = useState('');
+  const listId = `answer-fields-${nodeId}`;
+  const add = (fieldId: string) => {
+    const id = fieldId.trim();
+    if (id === '') return;
+    // Only extend when answers is empty or already an object (never clobber a raw selector string).
+    const base = answers && typeof answers === 'object' && !Array.isArray(answers) ? (answers as Record<string, unknown>) : answers == null ? {} : null;
+    if (base && !(id in base)) onChange({ ...base, [id]: '' });
+    setPick('');
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="text"
+        value={pick}
+        list={listId}
+        placeholder="add a field id…"
+        onChange={(e) => setPick(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(pick); } }}
+        className={INPUT_CLS + ' font-mono text-xs'}
+        aria-label="Add an answer field"
+      />
+      <datalist id={listId}>
+        {fields.map((f) => (
+          <option key={f.id} value={f.id}>{f.label || f.id}</option>
+        ))}
+      </datalist>
+      <Button type="button" variant="outline" size="sm" onClick={() => add(pick)} className="flex-none">Add</Button>
+    </div>
+  );
+}
+
+/**
+ * A real code editor (Monaco) for `code`-type fields (condition/logic_block expressions, JSON /
+ * selector bodies, the output value). Keeps the "QuickJS sandboxed" / "JSON / selectors"
+ * affordances, registers itself as the active selector-insert target on focus, and falls back to a
+ * monospace textarea if Monaco can't mount (offline chunk, worker failure).
+ */
+function CodeField({
+  spec,
+  value,
+  onChange,
+  setInserter,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  setInserter: (fn: ((text: string) => void) | null) => void;
+}) {
+  const json = isJsonField(spec);
+  const language = spec.language ?? (spec.quickjs ? 'javascript' : json ? 'json' : 'javascript');
+  const text = toInput(value);
+  const handle = (v: string) => onChange(json ? parseJsonField(v) : v);
+
+  const fallback = (
+    <textarea
+      value={text}
+      placeholder={spec.placeholder}
+      rows={6}
+      spellCheck={false}
+      onChange={(e) => handle(e.target.value)}
+      className={MONO_CLS + ' resize-y'}
+    />
+  );
+
+  const onEditorMount = (editor: MonacoEditor) => {
+    editor.onDidFocusEditorText(() => {
+      setInserter((toInsert) => {
+        const sel = editor.getSelection();
+        if (sel) editor.executeEdits('insert-selector', [{ range: sel, text: toInsert, forceMoveMarkers: true }]);
+        editor.focus();
+      });
+    });
+  };
+
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>
+        {spec.label}
+        {spec.quickjs && (
+          <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:bg-sky-500/15 dark:text-sky-300">
+            QuickJS sandboxed
+          </span>
+        )}
+        {json && (
+          <span className="ml-2 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 dark:bg-slate-700 dark:text-slate-300">
+            JSON / selectors
+          </span>
+        )}
+      </span>
+      <ErrorBoundary fallback={fallback}>
+        <div className="overflow-hidden rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-900" style={{ height: 156 }}>
+          <CodeEditor value={text} onChange={handle} language={language} height="100%" onMount={onEditorMount} />
+        </div>
+      </ErrorBoundary>
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+function Field({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  if (spec.type === 'boolean') {
+    return (
+      <div className="flex items-center justify-between">
+        <span className={LABEL_CLS + ' mb-0'}>{spec.label}</span>
+        <Switch checked={!!value} onChange={(v) => onChange(v)} label={spec.label} size="sm" />
+      </div>
+    );
+  }
+
+  if (spec.type === 'select') {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <select
+          value={typeof value === 'string' ? value : (spec.default as string) ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          className={INPUT_CLS + ' cursor-pointer'}
+        >
+          {spec.options?.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      </label>
+    );
+  }
+
+  if (spec.type === 'number') {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <input
+          type="number"
+          value={typeof value === 'number' ? value : ''}
+          placeholder={spec.placeholder}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+          className={INPUT_CLS}
+        />
+        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      </label>
+    );
+  }
+
+  if (spec.type === 'textarea') {
+    return (
+      <label className="block">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <textarea
+          value={toInput(value)}
+          placeholder={spec.placeholder}
+          rows={3}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          className={INPUT_CLS + ' resize-y'}
+        />
+        {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+      </label>
+    );
+  }
+
+  // text
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      <input
+        type="text"
+        value={typeof value === 'string' ? value : ''}
+        placeholder={spec.placeholder}
+        onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+        className={INPUT_CLS}
+      />
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
+/**
+ * Variable picker: the selectors this node can reference ($inputs.* / $event / $nodes.*), grouped.
+ * Clicking a chip inserts it at the focused field's cursor (plain input/textarea OR the Monaco code
+ * editor); with nothing focused it copies to the clipboard. mousedown is prevented so the click
+ * never steals focus from the field being edited.
+ */
+function InsertHints({ hints, onInsert }: { hints: string[]; onInsert: (h: string) => 'inserted' | 'copied' }) {
+  const [flash, setFlash] = useState<{ h: string; kind: 'inserted' | 'copied' } | null>(null);
+  if (hints.length === 0) return null;
+  const groups = [
+    { label: 'Inputs', items: hints.filter((h) => h.startsWith('$inputs.')) },
+    { label: 'Event', items: hints.filter((h) => h === '$event') },
+    { label: 'Node outputs', items: hints.filter((h) => h.startsWith('$nodes.')) },
+  ].filter((g) => g.items.length > 0);
+  const activate = (h: string) => {
+    const kind = onInsert(h);
+    setFlash({ h, kind });
+    setTimeout(() => setFlash((f) => (f?.h === h ? null : f)), 1200);
+  };
+  return (
+    <div className="rounded-lg border border-gray-200/80 dark:border-slate-700/60 bg-white/60 dark:bg-slate-800/40 p-2 space-y-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">
+        Insert a value
+      </p>
+      {groups.map((g) => (
+        <div key={g.label}>
+          <p className="mb-1 text-[9px] font-medium uppercase tracking-wide text-gray-400 dark:text-slate-600">{g.label}</p>
+          <div className="flex flex-wrap gap-1">
+            {g.items.map((h) => (
+              <button
+                key={h}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => activate(h)}
+                title="Insert at cursor (or copy)"
+                className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 hover:bg-primary-100 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200"
+              >
+                {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted!' : 'copied!') : h}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, context = EMPTY_FLOW_EDITOR_CONTEXT, insertHints = [] }: NodePropertiesProps) {
+  const spec = getNodeSpec(type);
+  // The selected form's fields power the filter-field select + the answers datalist (static form only).
+  const formId = staticFormId(data.form);
+  const selectedForm = formId ? forms.find((f) => f.id === formId) ?? null : null;
+  const formFields = selectedForm?.fields ?? null;
+
+  // Selector-insert target: the last-focused code editor / text field. Chips insert there, else copy.
+  const activeInsertRef = useRef<((text: string) => void) | null>(null);
+  const setInserter = useCallback((fn: ((text: string) => void) | null) => { activeInsertRef.current = fn; }, []);
+  useEffect(() => { activeInsertRef.current = null; }, [nodeId]); // reset when the selection changes
+  const insertOrCopy = useCallback((h: string): 'inserted' | 'copied' => {
+    const fn = activeInsertRef.current;
+    if (fn) { fn(h); return 'inserted'; }
+    void navigator.clipboard?.writeText(h).catch(() => {});
+    return 'copied';
+  }, []);
+  // Track focus of a plain text field so chip-insert lands at its caret (Monaco fields self-register).
+  const onPanelFocus = useCallback((e: FocusEvent) => {
+    const t = e.target as HTMLElement;
+    const el = t as HTMLInputElement | HTMLTextAreaElement;
+    const isText = (t.tagName === 'INPUT' && (el.type === 'text' || el.type === '')) || t.tagName === 'TEXTAREA';
+    if (isText && !t.closest('.monaco-editor')) activeInsertRef.current = (text: string) => insertIntoInput(el, text);
+  }, []);
+
+  // showIf: hide a property whose predicate fails — unless it already holds a value (never hide config).
+  const effective = spec ? effectiveNodeData(spec, data) : data;
+  const visibleProps = spec ? spec.properties.filter((p) => evalShowIf(p.showIf, effective) || fieldHasValue(data[p.key])) : [];
+
+  return (
+    <div className="flex h-full min-h-0 w-72 flex-none flex-col border-l border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40">
+      <div className="flex items-center justify-between border-b border-gray-200/80 dark:border-slate-700/60 px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-gray-900 dark:text-white">{spec?.label ?? type}</p>
+          <p className="truncate font-mono text-[11px] text-gray-400 dark:text-slate-500">{nodeId} · {type}</p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete node">
+          <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-500" />
+        </Button>
+      </div>
+
+      {/* key={nodeId} remounts the field widgets (form-picker mode, adders) when the selection changes. */}
+      <div key={nodeId} onFocus={onPanelFocus} className="min-h-0 flex-1 overflow-y-auto p-3 space-y-3.5">
+        {spec ? (
+          <>
+            <p className="text-xs text-gray-500 dark:text-slate-400">{spec.description}</p>
+            {spec.output && (
+              <p className="rounded-lg bg-gray-100/80 dark:bg-slate-800/60 px-2.5 py-1.5 text-[11px] leading-snug text-gray-500 dark:text-slate-400">
+                <span className="font-semibold text-gray-600 dark:text-slate-300">Output:</span> {spec.output}
+              </p>
+            )}
+            {spec.capability && (
+              <p className="rounded-lg bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                Requires the <span className="font-mono">{spec.capability}</span> capability — declare it in the flow's node capabilities.
+              </p>
+            )}
+            {type !== 'input' && <InsertHints hints={insertHints} onInsert={insertOrCopy} />}
+            {visibleProps.length === 0 ? (
+              <p className="text-xs text-gray-400 dark:text-slate-500">This node has no editable settings.</p>
+            ) : (
+              visibleProps.map((p) => {
+                const onChange = (value: unknown) => onPatch({ [p.key]: value });
+                if (p.type === 'triggerInputs') {
+                  return <TriggerInputsField key={p.key} spec={p} value={data[p.key]} context={context} onChange={onChange} />;
+                }
+                if (p.type === 'form') {
+                  return <FormPickerField key={p.key} spec={p} value={data[p.key]} forms={forms} context={context} onChange={onChange} />;
+                }
+                if (p.type === 'filters') {
+                  return <FiltersField key={p.key} spec={p} value={data[p.key]} formFields={formFields} onChange={onChange} />;
+                }
+                if (p.type === 'connector') {
+                  return <ConnectorField key={p.key} spec={p} value={data[p.key]} context={context} onChange={onChange} />;
+                }
+                if (p.type === 'connectorCommand') {
+                  return (
+                    <ConnectorCommandField
+                      key={p.key}
+                      nodeId={nodeId}
+                      spec={p}
+                      value={data[p.key]}
+                      connectorId={data.connectorId}
+                      context={context}
+                      onChange={onChange}
+                    />
+                  );
+                }
+                if (p.type === 'code') {
+                  const codeField = <CodeField key={p.key} spec={p} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;
+                  if (p.key === 'answers' && formFields && formFields.length > 0) {
+                    return (
+                      <div key={p.key} className="space-y-1.5">
+                        {codeField}
+                        <AnswersFieldAdder nodeId={nodeId} fields={formFields} answers={data[p.key]} onChange={onChange} />
+                      </div>
+                    );
+                  }
+                  return codeField;
+                }
+                return <Field key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
+              })
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-gray-500 dark:text-slate-400">
+            Unknown node type <span className="font-mono">{type}</span> — authored in the full F2I editor. It is kept as-is but has no
+            settings form here.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

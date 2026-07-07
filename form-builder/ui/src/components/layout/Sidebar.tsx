@@ -3,7 +3,7 @@ import {
   LayoutDashboard,
   FileText,
   Plus,
-  Settings,
+  Workflow,
   ChevronLeft,
   ChevronRight,
   Boxes,
@@ -33,7 +33,8 @@ export function Sidebar({ offline = false }: { offline?: boolean }) {
     { path: '/forms', icon: FileText, label: 'My Forms' },
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
-    { path: '/settings', icon: Settings, label: 'Settings' },
+    // Settings moved into the profile menu (Header); Flows is now a first-class section.
+    { path: '/flows', icon: Workflow, label: 'Flows' },
   ];
 
   return (

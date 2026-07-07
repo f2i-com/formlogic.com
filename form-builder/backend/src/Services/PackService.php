@@ -110,6 +110,7 @@ class PackService
 
             // 3. Create each app
             $appSummary = [];
+            $appIdByPackId = [];
             foreach ($packData['apps'] ?? [] as $packApp) {
                 // App settings: strip the author's notifications, remap landingPage (@pack:->UUID),
                 // and defer defaultRoleId until roles exist (carried as defaultRoleName).
@@ -151,6 +152,7 @@ class PackService
                 $app = $this->appService->createApp($appData, $userId);
                 $appId = $app['id'];
                 $createdAppIds[] = $appId;
+                $appIdByPackId[(string) $packApp['packAppId']] = $appId;
 
                 // 4. Add forms to app with remapped IDs, preserving order + visibility + per-form settings.
                 $memberForms = $packApp['forms'] ?? [];
@@ -243,7 +245,11 @@ class PackService
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }
 
-            // 6. Record the installation
+            // 6. FormLogic Flows: flow definitions + event bindings for the imported app(s), created
+            //    inside the SAME transaction with @pack: form refs remapped to the new form ids.
+            $this->importPackFlows($packData, $appIdByPackId, $formIdMap, $userId);
+
+            // 7. Record the installation
             $installationId = $this->generateUuid();
             $meta = $packData['packMeta'];
             $stmt = $this->mysql->prepare("
@@ -287,6 +293,200 @@ class PackService
 
             throw $e;
         }
+    }
+
+    /**
+     * FormLogic Flows: create flow_definitions + app_flow_bindings for imported apps (called INSIDE
+     * importPack's transaction so a failed flow insert rolls the whole import back). Re-runs the
+     * FlowService sanitizers (defense in depth over validatePack) and remaps @pack:<packFormId>
+     * references — the binding's formId and every outputActions[].form — to the new form ids.
+     * Raw (non-@pack:) form refs from a pack are never trusted: the binding formId is dropped and
+     * an action pointing at an unknown pack form fails the import loudly.
+     *
+     * @param array<string,string> $appIdByPackId packAppId => new app id
+     * @param array<string,string> $formIdMap     packFormId => new form id
+     */
+    private function importPackFlows(array $packData, array $appIdByPackId, array $formIdMap, string $userId): void
+    {
+        $packFlows = is_array($packData['flows'] ?? null) ? $packData['flows'] : [];
+        $packBindings = is_array($packData['flowBindings'] ?? null) ? $packData['flowBindings'] : [];
+        if (empty($packFlows) && empty($packBindings)) {
+            return;
+        }
+        $firstAppId = array_values($appIdByPackId)[0] ?? null;
+        if ($firstAppId === null) {
+            throw new \RuntimeException('Pack flows require at least one app');
+        }
+        $resolveApp = function (mixed $packAppId) use ($appIdByPackId, $firstAppId): string {
+            if (!is_string($packAppId) || $packAppId === '') {
+                return $firstAppId;
+            }
+            return $appIdByPackId[$packAppId]
+                ?? throw new \RuntimeException("Flow references unknown packAppId '{$packAppId}'");
+        };
+
+        // Flows first (bindings reference them by slug within their app).
+        $flowIdBySlug = []; // "<appId>|<slug>" => flow id
+        foreach ($packFlows as $packFlow) {
+            if (!is_array($packFlow)) {
+                continue;
+            }
+            $appId = $resolveApp($packFlow['packAppId'] ?? null);
+            $slug = FlowService::sanitizeSlug($packFlow['slug'] ?? null);
+            $flowJson = FlowService::sanitizeFlowJson($packFlow['flowJson'] ?? ['nodes' => [], 'edges' => []]);
+            // Node-level form refs (formlogic_list/submit/update nodes carry data.form/formId as
+            // '@pack:<packFormId>') are remapped like binding formIds; an unknown ref fails loudly.
+            $flowJson = $this->remapFlowJsonFormRefs($flowJson, $formIdMap, $slug);
+            $nodeCaps = null;
+            if (is_array($packFlow['nodeCapabilities'] ?? null)) {
+                $caps = array_values(array_filter($packFlow['nodeCapabilities'], static fn ($c) => is_string($c) && $c !== '' && strlen($c) <= 128));
+                $nodeCaps = $caps !== [] ? array_slice($caps, 0, 64) : null;
+            }
+            $flowId = $this->generateUuid();
+            $stmt = $this->mysql->prepare("
+                INSERT INTO flow_definitions
+                    (id, owner_user_id, app_id, name, slug, description, engine, flow_json, input_schema, output_schema, node_capabilities, version, enabled)
+                VALUES
+                    (:id, :owner, :app, :name, :slug, :descr, 'f2i', :flow_json, :input_schema, :output_schema, :node_caps, 1, :enabled)
+            ");
+            $stmt->execute([
+                'id' => $flowId,
+                'owner' => $userId,
+                'app' => $appId,
+                'name' => (string) ($packFlow['name'] ?? $slug),
+                'slug' => $slug,
+                'descr' => isset($packFlow['description']) && is_string($packFlow['description']) ? substr($packFlow['description'], 0, 2000) : null,
+                'flow_json' => json_encode($flowJson),
+                'input_schema' => is_array($packFlow['inputSchema'] ?? null) ? json_encode($packFlow['inputSchema']) : null,
+                'output_schema' => is_array($packFlow['outputSchema'] ?? null) ? json_encode($packFlow['outputSchema']) : null,
+                'node_caps' => $nodeCaps !== null ? json_encode($nodeCaps) : null,
+                'enabled' => (array_key_exists('enabled', $packFlow) ? (bool) $packFlow['enabled'] : true) ? 1 : 0,
+            ]);
+            $flowIdBySlug[$appId . '|' . $slug] = $flowId;
+        }
+
+        foreach ($packBindings as $packBinding) {
+            if (!is_array($packBinding)) {
+                continue;
+            }
+            $appId = $resolveApp($packBinding['packAppId'] ?? null);
+            $clean = FlowService::sanitizeBinding($packBinding);
+            $flowId = $flowIdBySlug[$appId . '|' . $clean['flow']]
+                ?? throw new \RuntimeException("Flow binding references unknown flow '{$clean['flow']}'");
+
+            // Binding formId: only @pack: refs are honored (never trust a raw UUID from a pack).
+            $formId = null;
+            $fRef = $packBinding['formId'] ?? null;
+            if (is_string($fRef) && str_starts_with($fRef, '@pack:')) {
+                $formId = $formIdMap[substr($fRef, 6)]
+                    ?? throw new \RuntimeException("Flow binding references unknown packFormId '" . substr($fRef, 6) . "'");
+            }
+
+            // outputActions[].form: remap @pack: refs; an unknown ref fails loudly, a raw id is dropped.
+            $actions = $clean['outputActions'];
+            if ($actions !== null) {
+                foreach ($actions as &$action) {
+                    $ref = $action['form'] ?? null;
+                    if (is_string($ref) && str_starts_with($ref, '@pack:')) {
+                        $action['form'] = $formIdMap[substr($ref, 6)]
+                            ?? throw new \RuntimeException("Flow binding output action references unknown packFormId '" . substr($ref, 6) . "'");
+                    } elseif ($ref !== null) {
+                        unset($action['form']);
+                    }
+                }
+                unset($action);
+            }
+
+            $connectorId = (isset($packBinding['connectorId']) && is_string($packBinding['connectorId']) && $packBinding['connectorId'] !== '')
+                ? substr($packBinding['connectorId'], 0, 64) : null;
+
+            $stmt = $this->mysql->prepare("
+                INSERT INTO app_flow_bindings
+                    (id, app_id, form_id, connector_id, flow_definition_id, event_name, mode, condition_json,
+                     input_map_json, output_actions_json, timeout_ms, retry_policy_json, fallback_policy_json, enabled, sort_order)
+                VALUES
+                    (:id, :app, :form, :connector, :flow, :event, :mode, :cond, :input_map, :actions, :timeout, :retry, :fallback, :enabled, :sort)
+            ");
+            $stmt->execute([
+                'id' => $this->generateUuid(),
+                'app' => $appId,
+                'form' => $formId,
+                'connector' => $connectorId,
+                'flow' => $flowId,
+                'event' => $clean['event'],
+                'mode' => $clean['mode'],
+                'cond' => $clean['condition'] !== null ? json_encode($clean['condition']) : null,
+                'input_map' => $clean['inputMap'] !== null ? json_encode($clean['inputMap']) : null,
+                'actions' => $actions !== null ? json_encode($actions) : null,
+                'timeout' => $clean['timeoutMs'],
+                'retry' => $clean['retryPolicy'] !== null ? json_encode($clean['retryPolicy']) : null,
+                'fallback' => $clean['fallbackPolicy'] !== null ? json_encode($clean['fallbackPolicy']) : null,
+                'enabled' => $clean['enabled'] ? 1 : 0,
+                'sort' => (int) ($packBinding['sortOrder'] ?? 0),
+            ]);
+        }
+    }
+
+    /**
+     * Remap '@pack:<packFormId>' form references inside a flow graph's node data (the
+     * `form` / `formId` keys used by formlogic_list_responses / formlogic_submit_response /
+     * formlogic_update_response nodes) to the freshly created form ids. An unknown ref fails
+     * the import loudly — a flow silently pointing at a missing form would only fail at run
+     * time. Non-@pack strings pass through untouched (selectors like '$inputs.formId').
+     *
+     * @param array<string,string> $formIdMap packFormId => new form id
+     */
+    private function remapFlowJsonFormRefs(array $flowJson, array $formIdMap, string $flowSlug): array
+    {
+        foreach ($flowJson['nodes'] as &$node) {
+            if (!is_array($node) || !is_array($node['data'] ?? null)) {
+                continue;
+            }
+            foreach (['form', 'formId'] as $key) {
+                $ref = $node['data'][$key] ?? null;
+                if (is_string($ref) && str_starts_with($ref, '@pack:')) {
+                    $node['data'][$key] = $formIdMap[substr($ref, 6)]
+                        ?? throw new \RuntimeException(
+                            "Flow '{$flowSlug}' node '" . ($node['id'] ?? '?') . "' references unknown packFormId '" . substr($ref, 6) . "'"
+                        );
+                }
+            }
+        }
+        unset($node);
+        return $flowJson;
+    }
+
+    /**
+     * Inverse of remapFlowJsonFormRefs for export: rewrite real form ids in flow node data to
+     * portable '@pack:<key>' refs. A ref to a form outside the exported set is left for the
+     * caller's leak scrub only if unknown — since flows are app-scoped and the export covers
+     * every member form, unknown refs are dropped to avoid leaking foreign UUIDs.
+     *
+     * @param array<string,string> $realToPackKey real form id => packFormId
+     */
+    private function packifyFlowJsonFormRefs(array $flowJson, array $realToPackKey): array
+    {
+        if (!is_array($flowJson['nodes'] ?? null)) {
+            return $flowJson;
+        }
+        foreach ($flowJson['nodes'] as &$node) {
+            if (!is_array($node) || !is_array($node['data'] ?? null)) {
+                continue;
+            }
+            foreach (['form', 'formId'] as $key) {
+                $ref = $node['data'][$key] ?? null;
+                if (!is_string($ref) || $ref === '' || str_starts_with($ref, '@pack:') || str_starts_with($ref, '$')) {
+                    continue;
+                }
+                if (isset($realToPackKey[$ref])) {
+                    $node['data'][$key] = '@pack:' . $realToPackKey[$ref];
+                } else {
+                    unset($node['data'][$key]); // foreign/unknown id — never leak it
+                }
+            }
+        }
+        unset($node);
+        return $flowJson;
     }
 
     /**
@@ -465,10 +665,123 @@ class PackService
             'apps' => [$packApp],
         ];
 
+        // FormLogic Flows: export the app's flow library + bindings with @pack: form refs.
+        [$packFlows, $packFlowBindings] = $this->packifyFlows($appId, $realToPackKey);
+        if (!empty($packFlows)) {
+            $pack['flows'] = $packFlows;
+        }
+        if (!empty($packFlowBindings)) {
+            $pack['flowBindings'] = $packFlowBindings;
+        }
+
         // Fail fast with a clear message if the app exceeds pack size caps.
         $this->validatePack($pack);
 
         return $pack;
+    }
+
+    /**
+     * Export an app's flow definitions + bindings as portable pack entries. Form references (the
+     * binding's formId + outputActions[].form) are rewritten to @pack:<key>; a binding whose formId
+     * points outside the app is dropped, and an action's foreign form ref is stripped — real UUIDs
+     * never leak into a pack (mirrors packifyFieldReferences).
+     *
+     * @param array<string,string> $realToPackKey real form id => packFormId (slug)
+     * @return array{0: array[], 1: array[]} [flows, flowBindings]
+     */
+    private function packifyFlows(string $appId, array $realToPackKey): array
+    {
+        $flowStmt = $this->mysql->prepare("SELECT * FROM flow_definitions WHERE app_id = :a ORDER BY created_at ASC, id ASC");
+        $flowStmt->execute(['a' => $appId]);
+        $flowRows = $flowStmt->fetchAll();
+        if (empty($flowRows)) {
+            return [[], []];
+        }
+
+        $packFlows = [];
+        foreach ($flowRows as $fr) {
+            $flowJson = json_decode((string) $fr['flow_json'], true);
+            $entry = [
+                'slug' => $fr['slug'],
+                'name' => $fr['name'],
+                'engine' => $fr['engine'],
+                // Node-level form refs become portable '@pack:<key>' (inverse of the import remap).
+                'flowJson' => is_array($flowJson)
+                    ? $this->packifyFlowJsonFormRefs($flowJson, $realToPackKey)
+                    : ['nodes' => [], 'edges' => []],
+                'enabled' => (bool) $fr['enabled'],
+            ];
+            if (!empty($fr['description'])) {
+                $entry['description'] = $fr['description'];
+            }
+            foreach (['input_schema' => 'inputSchema', 'output_schema' => 'outputSchema', 'node_capabilities' => 'nodeCapabilities'] as $col => $key) {
+                if (!empty($fr[$col])) {
+                    $decoded = json_decode((string) $fr[$col], true);
+                    if (is_array($decoded)) {
+                        $entry[$key] = $decoded;
+                    }
+                }
+            }
+            $packFlows[] = $entry;
+        }
+
+        $bStmt = $this->mysql->prepare("
+            SELECT b.*, f.slug AS flow_slug
+            FROM app_flow_bindings b
+            JOIN flow_definitions f ON f.id = b.flow_definition_id
+            WHERE b.app_id = :a
+            ORDER BY b.sort_order ASC, b.created_at ASC, b.id ASC
+        ");
+        $bStmt->execute(['a' => $appId]);
+
+        $packBindings = [];
+        foreach ($bStmt->fetchAll() as $row) {
+            $entry = [
+                'flow' => $row['flow_slug'],
+                'event' => $row['event_name'],
+                'mode' => $row['mode'],
+                'timeoutMs' => (int) $row['timeout_ms'],
+                'enabled' => (bool) $row['enabled'],
+                'sortOrder' => (int) $row['sort_order'],
+            ];
+            if (!empty($row['form_id'])) {
+                if (!isset($realToPackKey[$row['form_id']])) {
+                    continue; // binding on a form outside the app — never leak the UUID
+                }
+                $entry['formId'] = '@pack:' . $realToPackKey[$row['form_id']];
+            }
+            if (!empty($row['connector_id'])) {
+                $entry['connectorId'] = $row['connector_id'];
+            }
+            foreach (['condition_json' => 'condition', 'input_map_json' => 'inputMap', 'retry_policy_json' => 'retryPolicy', 'fallback_policy_json' => 'fallbackPolicy'] as $col => $key) {
+                if (!empty($row[$col])) {
+                    $decoded = json_decode((string) $row[$col], true);
+                    if (is_array($decoded)) {
+                        $entry[$key] = $decoded;
+                    }
+                }
+            }
+            if (!empty($row['output_actions_json'])) {
+                $actions = json_decode((string) $row['output_actions_json'], true);
+                if (is_array($actions)) {
+                    foreach ($actions as &$action) {
+                        $ref = $action['form'] ?? null;
+                        if (is_string($ref) && $ref !== '') {
+                            if (isset($realToPackKey[$ref])) {
+                                $action['form'] = '@pack:' . $realToPackKey[$ref];
+                            } else {
+                                unset($action['form']); // foreign form — strip, never leak
+                            }
+                        }
+                    }
+                    unset($action);
+                    $entry['outputActions'] = array_values($actions);
+                }
+            }
+            $packBindings[] = $entry;
+        }
+
+        return [$packFlows, $packBindings];
     }
 
     /**
@@ -1359,6 +1672,82 @@ class PackService
                     if ($json !== false && strlen($json) > $cap) {
                         throw new \RuntimeException("App '{$app['packAppId']}' {$key} exceeds " . ($cap / 1024) . "KB limit");
                     }
+                }
+            }
+        }
+
+        // FormLogic Flows (docs/FORMLOGIC_FLOWS.md §6): optional flows[] + flowBindings[]. Enforced
+        // with the SAME FlowService sanitizers as the owner CRUD API so a pack can never smuggle a
+        // flow/binding the API would reject (slug pattern, graph shape + 256KB cap, event pattern,
+        // mode enum, outputAction whitelist, timeout bounds, 16KB per-column caps).
+        $seenFlowSlugs = [];
+        if (isset($packData['flows'])) {
+            if (!is_array($packData['flows'])) {
+                throw new \RuntimeException('Pack flows must be an array');
+            }
+            if (count($packData['flows']) > 20) {
+                throw new \RuntimeException('Pack cannot contain more than 20 flows');
+            }
+            if (empty($packData['flows']) === false && empty($packData['apps'])) {
+                throw new \RuntimeException('Pack flows require at least one app');
+            }
+            foreach ($packData['flows'] as $i => $flow) {
+                if (!is_array($flow)) {
+                    throw new \RuntimeException("Flow at index {$i} must be an object");
+                }
+                try {
+                    $slug = FlowService::sanitizeSlug($flow['slug'] ?? null);
+                    $flowJson = FlowService::sanitizeFlowJson($flow['flowJson'] ?? ['nodes' => [], 'edges' => []]);
+                } catch (\InvalidArgumentException $e) {
+                    throw new \RuntimeException("Flow at index {$i}: " . $e->getMessage());
+                }
+                if (empty($flow['name']) || !is_string($flow['name'])) {
+                    throw new \RuntimeException("Flow '{$slug}' is missing name");
+                }
+                // Node-level '@pack:' form refs must point at forms declared in THIS pack
+                // (mirrors the binding formId check below; the importer remaps them).
+                foreach ($flowJson['nodes'] as $node) {
+                    if (!is_array($node) || !is_array($node['data'] ?? null)) {
+                        continue;
+                    }
+                    foreach (['form', 'formId'] as $key) {
+                        $ref = $node['data'][$key] ?? null;
+                        if (is_string($ref) && str_starts_with($ref, '@pack:') && !isset($seenFormIds[substr($ref, 6)])) {
+                            throw new \RuntimeException("Flow '{$slug}' node '" . ($node['id'] ?? '?') . "' references unknown packFormId '" . substr($ref, 6) . "'");
+                        }
+                    }
+                }
+                if (isset($seenFlowSlugs[$slug])) {
+                    throw new \RuntimeException("Duplicate flow slug: '{$slug}'");
+                }
+                $seenFlowSlugs[$slug] = true;
+            }
+        }
+        if (isset($packData['flowBindings'])) {
+            if (!is_array($packData['flowBindings'])) {
+                throw new \RuntimeException('Pack flowBindings must be an array');
+            }
+            if (count($packData['flowBindings']) > 40) {
+                throw new \RuntimeException('Pack cannot contain more than 40 flow bindings');
+            }
+            if (empty($packData['flowBindings']) === false && empty($packData['apps'])) {
+                throw new \RuntimeException('Pack flow bindings require at least one app');
+            }
+            foreach ($packData['flowBindings'] as $i => $binding) {
+                if (!is_array($binding)) {
+                    throw new \RuntimeException("Flow binding at index {$i} must be an object");
+                }
+                try {
+                    $clean = FlowService::sanitizeBinding($binding);
+                } catch (\InvalidArgumentException $e) {
+                    throw new \RuntimeException("Flow binding at index {$i}: " . $e->getMessage());
+                }
+                if (!isset($seenFlowSlugs[$clean['flow']])) {
+                    throw new \RuntimeException("Flow binding at index {$i} references unknown flow '{$clean['flow']}'");
+                }
+                $fRef = $binding['formId'] ?? null;
+                if (is_string($fRef) && str_starts_with($fRef, '@pack:') && !isset($seenFormIds[substr($fRef, 6)])) {
+                    throw new \RuntimeException("Flow binding at index {$i} references unknown packFormId '" . substr($fRef, 6) . "'");
                 }
             }
         }

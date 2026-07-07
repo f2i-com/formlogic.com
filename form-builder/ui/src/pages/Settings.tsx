@@ -400,6 +400,11 @@ export function Settings() {
     { id: 'responses:manage', label: 'Responses: Manage', description: 'Update and delete responses' },
     { id: 'webhooks:read', label: 'Webhooks: Read', description: 'List webhooks' },
     { id: 'webhooks:write', label: 'Webhooks: Write', description: 'Create, update, delete webhooks' },
+    // FormLogic Desktop / Flows headless runtime. The "Connect account" flow in FormLogic Desktop
+    // mints a key with these automatically; offered here for anyone who prefers to paste one manually.
+    { id: 'flows:read', label: 'Flows: Read', description: 'Read flows, bindings, runs and KV (FormLogic Desktop)' },
+    { id: 'flows:write', label: 'Flows: Write', description: 'Claim and complete flow runs, write KV (FormLogic Desktop)' },
+    { id: 'connector:relay', label: 'Connector: Relay', description: 'Act as a desktop runtime for relayed connector commands (FormLogic Desktop)' },
   ];
 
   return (

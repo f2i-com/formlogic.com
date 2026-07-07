@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/flow-run-request.schema.json",
+  "title": "Flow run request",
+  "description": "Body of POST /api/flows/run on FormLogic Desktop (future desktop runner) AND the browser runner's internal run descriptor. Also the shape FormLogic records when creating a flow_run_logs row. Canonical copy: formlogic-app/docs/contracts/.",
+  "type": "object",
+  "required": ["appContext", "correlationId", "idempotencyKey"],
+  "properties": {
+    "flowId": {
+      "type": "string",
+      "description": "flow_definitions.slug. Either flowId or inline flowJson is required.",
+      "maxLength": 128
+    },
+    "flowJson": {
+      "type": "object",
+      "description": "Inline flow graph (WorkflowGraph-compatible: { nodes: [{id,type,data,position?}], edges: [{source,target,sourceHandle?,targetHandle?}] })."
+    },
+    "appContext": {
+      "type": "object",
+      "required": ["appSlug"],
+      "properties": {
+        "appId": { "type": ["integer", "string"] },
+        "appSlug": { "type": "string", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "inputs": { "type": "object" },
+    "capabilities": {
+      "type": "array",
+      "description": "Capabilities the flow needs (e.g. model.llm.local, formlogic.responses.read/write, connector.aokie.*). The runner refuses to start a flow requesting capabilities the caller's grants do not cover.",
+      "items": { "type": "string", "maxLength": 128 },
+      "maxItems": 64,
+      "uniqueItems": true
+    },
+    "timeoutMs": { "type": "integer", "minimum": 250, "maximum": 300000 },
+    "correlationId": { "type": "string", "minLength": 1, "maxLength": 150 },
+    "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 255 }
+  },
+  "anyOf": [
+    { "required": ["flowId"] },
+    { "required": ["flowJson"] }
+  ],
+  "additionalProperties": false
+}

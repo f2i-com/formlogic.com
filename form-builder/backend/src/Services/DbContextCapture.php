@@ -30,6 +30,12 @@ class DbContextCapture
         'archived',
     ];
 
+    // ctx.flows.run() intents (docs/FORMLOGIC_FLOWS.md §11): recorded here, enqueued as 'queued'
+    // flow_run_logs rows AFTER the response persists (never executed inside the script sandbox).
+    private const MAX_FLOW_RUNS = 3;
+    private const MAX_FLOW_INPUT_BYTES = 16384; // 16 KB per intent input (run snapshot cap is 64 KB)
+    private const FLOW_SLUG_PATTERN = '/^[a-z][a-z0-9-]{1,127}$/';
+
     /** @var array<string, mixed> */
     private array $fields = [];
 
@@ -39,6 +45,9 @@ class DbContextCapture
     private ?string $status = null;
 
     private int $totalValueBytes = 0;
+
+    /** @var array<int, array{slug: string, input?: array}> */
+    private array $flowRuns = [];
 
     /**
      * @param array<string, mixed> $initialAnswers The submitted answers, so ctx.db.getField()
@@ -149,6 +158,48 @@ class DbContextCapture
     }
 
     /**
+     * Record a ctx.flows.run(slug, input?) intent. Max 3 per execution, one per slug (the
+     * server-side idempotency key 'script:<responseId>:<slug>' would dedupe repeats anyway),
+     * input capped at 16 KB. Returns the guest-visible reply.
+     *
+     * @return array{queued: bool, error?: string}
+     */
+    public function addFlowRun(string $slug, mixed $input = null): array
+    {
+        if (!preg_match(self::FLOW_SLUG_PATTERN, $slug)) {
+            return ['queued' => false, 'error' => 'invalid flow slug'];
+        }
+        foreach ($this->flowRuns as $existing) {
+            if ($existing['slug'] === $slug) {
+                return ['queued' => false, 'error' => 'flow already queued this submission'];
+            }
+        }
+        if (count($this->flowRuns) >= self::MAX_FLOW_RUNS) {
+            return ['queued' => false, 'error' => 'flow run limit reached (max ' . self::MAX_FLOW_RUNS . ' per submission)'];
+        }
+
+        $intent = ['slug' => $slug];
+        if (is_array($input)) {
+            $encoded = json_encode($input);
+            if ($encoded === false || strlen($encoded) > self::MAX_FLOW_INPUT_BYTES) {
+                return ['queued' => false, 'error' => 'flow input exceeds the 16KB limit'];
+            }
+            $intent['input'] = $input;
+        }
+        $this->flowRuns[] = $intent;
+        return ['queued' => true];
+    }
+
+    /**
+     * Get all captured ctx.flows.run() intents
+     * @return array<int, array{slug: string, input?: array}>
+     */
+    public function getFlowRuns(): array
+    {
+        return $this->flowRuns;
+    }
+
+    /**
      * Get all captured fields
      * @return array<string, mixed>
      */
@@ -184,5 +235,6 @@ class DbContextCapture
         $this->tags = [];
         $this->status = null;
         $this->totalValueBytes = 0;
+        $this->flowRuns = [];
     }
 }

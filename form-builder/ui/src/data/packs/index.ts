@@ -27,6 +27,7 @@ import { venueOpsPack } from './venueOpsPack';
 import { fleetFlowPack } from './fleetFlowPack';
 import { sitePulsePack } from './sitePulsePack';
 import { agriLogPack } from './agriLogPack';
+import { aokieReceptionistPack } from './aokieReceptionistPack';
 
 export interface PackCatalogEntry {
   id: string;
@@ -347,5 +348,16 @@ export const packCatalog: PackCatalogEntry[] = [
     appCount: agriLogPack.apps?.length ?? 0,
     icon: 'Tractor',
     pack: agriLogPack as unknown as PackData,
+  },
+  {
+    id: 'aokie-receptionist',
+    name: 'Aokie Receptionist',
+    description:
+      'An AI phone receptionist powered by FormLogic Desktop and the Aokie Bluetooth phone bridge: live call console with answer/hang-up/speak controls, automatic call, transcript and SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks via starter FormLogic Flows. Includes 10 forms and 1 app.',
+    tags: ['receptionist', 'phone', 'aokie', 'desktop', 'flows'],
+    formCount: aokieReceptionistPack.forms.length,
+    appCount: aokieReceptionistPack.apps?.length ?? 0,
+    icon: 'PhoneCall',
+    pack: aokieReceptionistPack as unknown as PackData,
   },
 ];

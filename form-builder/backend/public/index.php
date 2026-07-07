@@ -188,7 +188,8 @@ $container->set(ResponseService::class, function (Container $c) {
         $c->get(FormLogicRuntime::class),
         $c->get(LoggerInterface::class),
         $c->get(WebhookService::class),
-        $c->get(FileStorageService::class)
+        $c->get(FileStorageService::class),
+        $c->get(\FormLogic\Services\FlowService::class)
     );
 });
 
@@ -378,7 +379,10 @@ $container->set(\FormLogic\Controllers\McpOAuthController::class, function (Cont
         $c->get(\FormLogic\Services\McpOAuthService::class),
         $c->get(\FormLogic\Services\AppService::class),
         $c->get(AuditService::class),
-        $c->get(LoggerInterface::class)
+        $c->get(LoggerInterface::class),
+        // Desktop device-link: token exchange mints a scoped flk_ key tied to a desktop connection.
+        $c->get(ApiKeyService::class),
+        $c->get(\FormLogic\Services\FlowService::class)
     );
 });
 
@@ -468,6 +472,42 @@ $container->set(\FormLogic\Controllers\AppDomainController::class, function (Con
         $c->get(\FormLogic\Services\AppDomainService::class),
         $c->get(AppService::class),
         $c->get(LoggerInterface::class)
+    );
+});
+
+// FormLogic Flows: flow library + bindings + run log + desktop-connection registry.
+$container->set(\FormLogic\Services\FlowService::class, function (Container $c) {
+    return new \FormLogic\Services\FlowService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\FlowController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FlowController(
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(AppService::class),
+        $c->get(AppUserService::class),
+        // Deleting an OAuth-linked desktop connection revokes its scoped flk_ key.
+        $c->get(ApiKeyService::class)
+    );
+});
+// Remote command relay: web member → paired desktop runtime (connector commands).
+$container->set(\FormLogic\Services\DesktopCommandService::class, function (Container $c) {
+    return new \FormLogic\Services\DesktopCommandService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\ConnectorCommandController::class, function (Container $c) {
+    return new \FormLogic\Controllers\ConnectorCommandController(
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        $c->get(AppService::class),
+        $c->get(AppUserService::class)
+    );
+});
+// Flow KV storage: small persistent key/value state for flows (owner + runtime surfaces).
+$container->set(\FormLogic\Services\FlowKvService::class, function (Container $c) {
+    return new \FormLogic\Services\FlowKvService($c->get(MySQLConnection::class));
+});
+$container->set(\FormLogic\Controllers\FlowKvController::class, function (Container $c) {
+    return new \FormLogic\Controllers\FlowKvController(
+        $c->get(\FormLogic\Services\FlowKvService::class),
+        $c->get(AppService::class),
+        $c->get(AppUserService::class)
     );
 });
 
@@ -816,6 +856,24 @@ $app->group('/api/forms/{id}/webhooks', function (RouteCollectorProxy $group) us
     });
     $group->get('/{webhookId}/deliveries', function ($request, $response) use ($container, $getArgs) {
         return $container->get(WebhookController::class)->getDeliveries($request, $response, $getArgs($request));
+    });
+})->add($authRequired);
+
+// Form flow-bindings (protected — form owner only): bind the owner's WORKSPACE flows to a
+// standalone form's events (e.g. 'form.submitted'); rows live in app_flow_bindings with
+// app_id NULL. App-attached forms keep using /api/apps/{id}/flow-bindings.
+$app->group('/api/forms/{id}/flow-bindings', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listFormBindings($request, $response, $getArgs($request));
+    });
+    $group->post('', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->createFormBinding($request, $response, $getArgs($request));
+    });
+    $group->put('/{bindingId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->updateFormBinding($request, $response, $getArgs($request));
+    });
+    $group->delete('/{bindingId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteFormBinding($request, $response, $getArgs($request));
     });
 })->add($authRequired);
 
@@ -1394,6 +1452,77 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->delete('/forms/{formId}/webhooks/{webhookId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ExternalApiController::class)->deleteWebhook($request, $response, $getArgs($request));
     })->add($webhooksWriteAuth);
+
+    // FormLogic Flows (flows:read / flows:write) — the headless surface FormLogic Desktop uses:
+    // read flows/bindings, poll queued runs, claim (queued→running exactly once), complete,
+    // and read/write flow KV. Same owner-scoped controller methods as the session routes
+    // (ApiKeyMiddleware sets the userId attribute).
+    $flowsReadAuth = new ApiKeyMiddleware($apiKeyService, ['flows:read'], $rateLimiter);
+    $flowsWriteAuth = new ApiKeyMiddleware($apiKeyService, ['flows:write'], $rateLimiter);
+
+    $group->get('/flows', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerFlows($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->get('/flow-bindings', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerBindings($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->get('/flow-runs', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerRuns($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->get('/flow-runs/queued', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerQueuedRuns($request, $response);
+    })->add($flowsReadAuth);
+
+    // Owner-scoped reserve — FormLogic Desktop's dispatcher reserves event-driven runs here with
+    // the SAME idempotency keys the browser dispatcher uses (flow:<binding>:<event key>), so the
+    // UNIQUE ledger makes desktop-vs-browser execution exactly-once.
+    $group->post('/flow-runs', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->reserveOwnerRun($request, $response);
+    })->add($flowsWriteAuth);
+
+    // Owner app custom-logic bundles — lets Desktop apply onConnectorEvent scripts headless.
+    $group->get('/app-logic', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->ownerAppLogic($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
+    })->add($flowsWriteAuth);
+
+    $group->patch('/flow-runs/{runId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->completeOwnerRun($request, $response, $getArgs($request));
+    })->add($flowsWriteAuth);
+
+    $group->get('/flow-kv', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerGet($request, $response);
+    })->add($flowsReadAuth);
+
+    $group->put('/flow-kv', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerPut($request, $response);
+    })->add($flowsWriteAuth);
+
+    $group->delete('/flow-kv', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
+    })->add($flowsWriteAuth);
+
+    // Remote command relay (connector:relay) — the desktop runtime long-polls for pending connector
+    // commands its members enqueued, claims one (pending→claimed exactly-once) and completes it.
+    $connectorRelayAuth = new ApiKeyMiddleware($apiKeyService, ['connector:relay'], $rateLimiter);
+
+    $group->get('/connector-commands/pending', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->pending($request, $response);
+    })->add($connectorRelayAuth);
+
+    $group->post('/connector-commands/{id}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->claim($request, $response, $getArgs($request));
+    })->add($connectorRelayAuth);
+
+    $group->post('/connector-commands/{id}/complete', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->complete($request, $response, $getArgs($request));
+    })->add($connectorRelayAuth);
 })->add($apiRateLimiter);
 
 // Audit verification route (admin, protected — restricted to platform owner)
@@ -1480,6 +1609,43 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
     });
     $group->delete('/{id}/domains/{domainId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\AppDomainController::class)->delete($request, $response, $getArgs($request));
+    });
+
+    // FormLogic Flows (owner-gated): flow library, event bindings, run history, test runs.
+    $group->get('/{id}/flows', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listFlows($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/flows', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->createFlow($request, $response, $getArgs($request));
+    });
+    $group->get('/{id}/flows/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->getFlow($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}/flows/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->updateFlow($request, $response, $getArgs($request));
+    });
+    $group->delete('/{id}/flows/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteFlow($request, $response, $getArgs($request));
+    });
+    // Records a 'running' run log (trigger_event 'test') and returns it; execution is client-side.
+    $group->post('/{id}/flows/{flowId}/test-run', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->testRun($request, $response, $getArgs($request));
+    });
+    $group->get('/{id}/flow-bindings', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listBindings($request, $response, $getArgs($request));
+    });
+    $group->post('/{id}/flow-bindings', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->createBinding($request, $response, $getArgs($request));
+    });
+    $group->put('/{id}/flow-bindings/{bindingId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->updateBinding($request, $response, $getArgs($request));
+    });
+    $group->delete('/{id}/flow-bindings/{bindingId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteBinding($request, $response, $getArgs($request));
+    });
+    // Run history (paginated, newest first; filter by flowId / bindingId / status).
+    $group->get('/{id}/flow-runs', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listRuns($request, $response, $getArgs($request));
     });
 
     // App form management
@@ -1580,8 +1746,77 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
 // Rate limiter for app runtime submissions (30 per minute per IP, same as public submission)
 $appSubmissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'app_submission');
 
+// Rate limiter for flow-run reserve/complete (60 per minute; keyed by user so IP rotation can't bypass it)
+$flowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'flow_run', true);
+
+// Rate limiter for connector-command enqueue (30 per minute; keyed by user).
+$connectorRelayRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'connector_relay', true);
+
+// Desktop connections: the per-user registry of paired FormLogic Desktop installs (upsert on
+// desktop_instance_id; owner-only list/delete).
+$app->get('/api/desktop-connections', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\FlowController::class)->listDesktopConnections($request, $response);
+})->add($authRequired);
+$app->post('/api/desktop-connections', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\FlowController::class)->upsertDesktopConnection($request, $response);
+})->add($authRequired);
+$app->delete('/api/desktop-connections/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\FlowController::class)->deleteDesktopConnection($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// FormLogic Flows — WORKSPACE scope: app-independent flows owned by the user (auth like
+// /api/forms; slug uniqueness per owner enforced in FlowService since MySQL UNIQUE ignores
+// the NULL app_id).
+$app->group('/api/flows', function (RouteCollectorProxy $group) use ($container, $getArgs) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listWorkspaceFlows($request, $response);
+    });
+    $group->post('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->createWorkspaceFlow($request, $response);
+    });
+    $group->get('/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->getWorkspaceFlow($request, $response, $getArgs($request));
+    });
+    $group->put('/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->updateWorkspaceFlow($request, $response, $getArgs($request));
+    });
+    $group->delete('/{flowId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteWorkspaceFlow($request, $response, $getArgs($request));
+    });
+})->add($authRequired);
+
+// Owner-wide run history + queued/claim/complete across every flow the user owns (workspace +
+// app flows) — the same lifecycle FormLogic Desktop drives over /api/v1 with an API key.
+$app->group('/api/flow-runs', function (RouteCollectorProxy $group) use ($container, $getArgs, $flowRunRateLimiter) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerRuns($request, $response);
+    });
+    $group->get('/queued', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listOwnerQueuedRuns($request, $response);
+    });
+    $group->post('/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->claimOwnerRun($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter);
+    $group->patch('/{runId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->completeOwnerRun($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter);
+})->add($authRequired);
+
+// Flow KV storage (owner surface): GET one entry / list a scope, PUT upsert, DELETE one key.
+$app->group('/api/flow-kv', function (RouteCollectorProxy $group) use ($container, $flowRunRateLimiter) {
+    $group->get('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerGet($request, $response);
+    });
+    $group->put('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerPut($request, $response);
+    })->add($flowRunRateLimiter);
+    $group->delete('', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
+    })->add($flowRunRateLimiter);
+})->add($authRequired);
+
 // App Runtime routes (public-facing, auth required for most)
-$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $cloudWriteGate) {
+$app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $appSubmissionRateLimiter, $flowRunRateLimiter, $connectorRelayRateLimiter, $cloudWriteGate) {
     // PWA manifest (public, no auth)
     $group->get('/manifest.json', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->manifest($request, $response, $getArgs($request));
@@ -1633,6 +1868,42 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
     // Batch: run many specs in one round (a widget dashboard fetches all its charts at once).
     $group->post('/reports/run-batch', function ($request, $response) use ($container, $getArgs) {
         return $container->get(AppPublicController::class)->runReportBatch($request, $response, $getArgs($request));
+    })->add($authRequired);
+
+    // FormLogic Flows runtime: enabled definitions + bindings for the browser runner (member-gated;
+    // no owner-only fields), and the reserve-first run log (rate-limited like reports run).
+    $group->get('/flows', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->runtimeFlows($request, $response, $getArgs($request));
+    })->add($authRequired);
+    $group->post('/flow-runs', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->reserveRun($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter)->add($authRequired);
+    $group->patch('/flow-runs/{runId}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->completeRun($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter)->add($authRequired);
+    // Queued-run lifecycle: list claimable runs, then claim one (queued→running exactly once;
+    // 409 when another runtime — browser tab or FormLogic Desktop — got there first).
+    $group->get('/flow-runs/queued', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->queuedRuns($request, $response, $getArgs($request));
+    })->add($authRequired);
+    $group->post('/flow-runs/{runId}/claim', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->claimRun($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter)->add($authRequired);
+    // Flow KV (runtime surface): the app-shared store, member-gated + rate-limited like flow-runs.
+    $group->get('/flow-kv', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->runtimeGet($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter)->add($authRequired);
+    $group->put('/flow-kv', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowKvController::class)->runtimePut($request, $response, $getArgs($request));
+    })->add($flowRunRateLimiter)->add($authRequired);
+
+    // Remote command relay (web side): a member enqueues a connector command for the owner's paired
+    // desktop runtime (member + connector.<id>.<command> grant gated), and reads the result back.
+    $group->post('/connector-commands', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->enqueue($request, $response, $getArgs($request));
+    })->add($connectorRelayRateLimiter)->add($authRequired);
+    $group->get('/connector-commands/{id}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->getCommand($request, $response, $getArgs($request));
     })->add($authRequired);
 
     // File upload for app forms — gated on the form owner's cloud access.

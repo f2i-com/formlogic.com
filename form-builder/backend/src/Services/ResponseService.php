@@ -17,6 +17,7 @@ class ResponseService
     private ?FormLogicRuntime $runtime;
     private ?WebhookService $webhookService;
     private ?FileStorageService $fileStorageService;
+    private ?FlowService $flowService;
     private LoggerInterface $logger;
     private ?FormLogicService $formLogicService = null;
 
@@ -26,7 +27,8 @@ class ResponseService
         ?FormLogicRuntime $runtime = null,
         ?LoggerInterface $logger = null,
         ?WebhookService $webhookService = null,
-        ?FileStorageService $fileStorageService = null
+        ?FileStorageService $fileStorageService = null,
+        ?FlowService $flowService = null
     ) {
         $this->mysql = $mysql->getConnection();
         $this->sqlite = $sqlite;
@@ -34,6 +36,7 @@ class ResponseService
         $this->logger = $logger ?? new NullLogger();
         $this->webhookService = $webhookService;
         $this->fileStorageService = $fileStorageService;
+        $this->flowService = $flowService;
     }
 
     /** Lazily resolve the FormLogic engine (no-arg service). */
@@ -889,6 +892,25 @@ class ResponseService
                 'responseId' => $id,
                 'error' => $postErr->getMessage(),
             ]);
+        }
+
+        // 9. FormLogic Flows: enqueue 'queued' runs for enabled form.submitted bindings (app +
+        // workspace) and for ctx.flows.run() intents the onSubmit script recorded. Best-effort —
+        // the response is durably saved, so a flow-enqueue failure must never surface as a 500
+        // (and the UNIQUE idempotency keys make any retry-driven replay a no-op).
+        if ($this->flowService !== null) {
+            try {
+                $this->flowService->enqueueSubmissionBindings($formId, $id, $data['answers'] ?? []);
+                if ($scriptResult !== null && $scriptResult->success && $scriptResult->flowRuns !== []) {
+                    $this->flowService->enqueueScriptFlowRuns($formId, $id, $scriptResult->flowRuns);
+                }
+            } catch (\Throwable $flowErr) {
+                $this->logger->error('Flow enqueue failed after response create', [
+                    'formId' => $formId,
+                    'responseId' => $id,
+                    'error' => $flowErr->getMessage(),
+                ]);
+            }
         }
 
         return $createdResponse ?? [

@@ -19,6 +19,14 @@ class ApiKeyService
         'responses:manage',
         'webhooks:read',
         'webhooks:write',
+        // FormLogic Flows (docs/FORMLOGIC_FLOWS.md): read = flows/bindings/runs/queued + KV reads;
+        // write = claim/complete runs + KV writes. This is the surface FormLogic Desktop uses headless.
+        'flows:read',
+        'flows:write',
+        // Remote command relay (docs/API.md §connector:relay): the desktop runtime long-polls,
+        // claims and completes connector commands a web member enqueued. Held by the flk_ key the
+        // OAuth device-link flow mints.
+        'connector:relay',
     ];
 
     public function __construct(MySQLConnection $db)

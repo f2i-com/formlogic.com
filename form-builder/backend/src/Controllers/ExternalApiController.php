@@ -148,8 +148,13 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
         }
 
-        if ($form['status'] !== 'published') {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is not accepting responses'], 403);
+        // authorizeForm() already proved the API key's owner can write this form, so this is an
+        // owner PROGRAMMATIC write (e.g. FormLogic Desktop populating an app's internal Calls form),
+        // not a public submission. App-internal forms are typically 'draft' at the form level, so we
+        // only block an explicitly ARCHIVED (retired) form here — the public/anon endpoints
+        // (ResponseController, AppPublicController) still require 'published'.
+        if (($form['status'] ?? '') === 'archived') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is archived and not accepting responses'], 403);
         }
 
         // Check form closure and quota limits (same checks as public endpoint)
@@ -243,8 +248,10 @@ class ExternalApiController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
         }
 
-        if ($form['status'] !== 'published') {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is not accepting responses'], 403);
+        // Owner programmatic batch write (see submitResponse): allow draft app-internal forms,
+        // block only an archived form. Public endpoints still require 'published'.
+        if (($form['status'] ?? '') === 'archived') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Form is archived and not accepting responses'], 403);
         }
 
         // Check form closure and quota limits
@@ -417,6 +424,13 @@ class ExternalApiController
 
         // Validate answers if provided
         if (isset($data['answers']) && is_array($data['answers'])) {
+            // PATCH semantics: callers (API clients, FormLogic Desktop app-logic + flow output
+            // actions) send only the fields they change. Merge the patch over the STORED answers
+            // before validating so a partial update like {status, ended_at} isn't rejected for
+            // omitting an unrelated required field. Mirrors AppPublicController::updateResponseById.
+            $existing = $this->responseService->getResponse($args['formId'], $args['id']);
+            $existingAnswers = is_array($existing['answers'] ?? null) ? $existing['answers'] : [];
+            $data['answers'] = array_merge($existingAnswers, $data['answers']);
             // Drop calculated/unknown-field answers before validating/persisting.
             $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
             $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));

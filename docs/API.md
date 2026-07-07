@@ -49,6 +49,9 @@ Authorization: Bearer flk_xxxxxxxxxxxxxxxxxxxx
 | `responses:manage` | Update / delete responses |
 | `webhooks:read` | List webhooks |
 | `webhooks:write` | Create / update / delete webhooks |
+| `flows:read` | List flows + flow bindings, read run history, poll claimable queued runs, read flow KV |
+| `flows:write` | Claim queued flow runs, complete runs, write/delete flow KV |
+| `connector:relay` | Act as a desktop runtime: long-poll for pending connector commands, claim + complete them |
 
 Grant only what each integration needs (e.g. a kiosk that only submits needs just
 `responses:write`).
@@ -82,6 +85,55 @@ Grant only what each integration needs (e.g. a kiosk that only submits needs jus
 | `POST` | `/forms/{formId}/webhooks` | `webhooks:write` |
 | `PUT` | `/forms/{formId}/webhooks/{webhookId}` | `webhooks:write` |
 | `DELETE` | `/forms/{formId}/webhooks/{webhookId}` | `webhooks:write` |
+
+### FormLogic Flows (headless runtime — used by FormLogic Desktop)
+
+See `docs/FORMLOGIC_FLOWS.md` for the full flow model (queued→claim lifecycle, KV, workspace scope).
+All paths are owner-scoped: a key only ever sees flows/bindings/runs of flows its owner owns.
+
+| Method | Path | Scope |
+|---|---|---|
+| `GET` | `/flows` (`?appId=` / `?workspace=1`) | `flows:read` |
+| `GET` | `/flow-bindings` (`?formId=`) | `flows:read` |
+| `GET` | `/flow-runs` (`?flowId=&status=&appId=&page=&limit=`) | `flows:read` |
+| `GET` | `/flow-runs/queued` | `flows:read` |
+| `POST` | `/flow-runs/{runId}/claim` — `{runtime:'browser'\|'desktop', instanceId?}`; `409` if already claimed | `flows:write` |
+| `PATCH` | `/flow-runs/{runId}` — complete: `{status, result?, error?}`; `409` if already finalized | `flows:write` |
+| `GET` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:read` |
+| `PUT` | `/flow-kv` — `{scope, k, v, appId?}` (value ≤ 64 KiB, ≤ 500 keys/scope) | `flows:write` |
+| `DELETE` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:write` |
+
+### Remote command relay (`connector:relay`) — desktop runtime side
+
+A web member enqueues a connector command (e.g. an Aokie call action) for the app owner's paired
+FormLogic Desktop runtime running on another machine; the desktop long-polls for pending commands,
+claims one (`pending → claimed`, exactly-once) and completes it (`claimed → done|failed`). The web
+member reads the result via the app-runtime endpoint below. Pending commands **expire 60 s** after
+they are created (swept to `expired` on the next poll). All paths are owner-scoped: a key only ever
+sees commands for the apps its owner owns.
+
+| Method | Path | Scope |
+|---|---|---|
+| `GET` | `/connector-commands/pending` (`?since=<commandId>&wait=<ms ≤ 25000>&limit=`) — long-poll; returns as soon as any pending exist, else after `wait` | `connector:relay` |
+| `POST` | `/connector-commands/{id}/claim` — `{instanceId?}`; `409` if already claimed or expired | `connector:relay` |
+| `POST` | `/connector-commands/{id}/complete` — `{status:'done'\|'failed', result?, error?}`; `409` if not in the claimed state | `connector:relay` |
+
+The **enqueue** + **read** side is a session-authed app-runtime surface (not `/api/v1`), used by the
+web UI:
+
+| Method | Path | Auth |
+|---|---|---|
+| `POST` | `/api/app/{slug}/connector-commands` — `{connectorId, command, payload?, idempotencyKey?}` → `{commandId, status}` | session; app **member** AND `connector.<connectorId>.<command>` role grant (rate-limited `connector_relay`, 30/min) |
+| `GET` | `/api/app/{slug}/connector-commands/{id}` → `{command}` (status/result/error) | session; app member |
+
+Reserve-first on `idempotencyKey`: a duplicate enqueue returns the existing command (`200` with
+`idempotent:true`). The `connector.<connectorId>.<command>` gate is the SAME permission the in-app
+connector client checks — a per-connector wildcard `connector.<connectorId>.*` or the bare
+`connector.<connectorId>` grant also satisfies it, and the app owner always passes.
+
+**Cleanup cron note:** pending commands are expired opportunistically on each poll; a periodic sweep
+should also call `DesktopCommandService::expireStale()` (no argument = global) to reap commands from
+owners whose desktop never polls.
 
 ---
 

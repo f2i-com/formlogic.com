@@ -58,6 +58,7 @@ const Dashboard = lazyWithRetry(() => import('./pages/Dashboard').then(m => ({ d
 const FormsList = lazyWithRetry(() => import('./pages/FormsList').then(m => ({ default: m.FormsList })));
 const Settings = lazyWithRetry(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const Doctor = lazyWithRetry(() => import('./pages/Doctor').then(m => ({ default: m.Doctor })));
+const FlowsWorkspace = lazyWithRetry(() => import('./pages/flows/FlowsWorkspace').then(m => ({ default: m.FlowsWorkspace })));
 const Billing = lazyWithRetry(() => import('./pages/Billing').then(m => ({ default: m.Billing })));
 const FormBuilder = lazyWithRetry(() => import('./pages/FormBuilder'));
 const FormPreview = lazyWithRetry(() => import('./pages/FormPreview'));
@@ -306,6 +307,7 @@ function AppRoutes() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/forms" element={<FormsList />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/flows" element={<FlowsWorkspace />} />
           <Route path="/doctor" element={<Doctor />} />
           <Route path="/billing" element={<Billing />} />
           <Route path="/analytics/:formId" element={<FormAnalytics />} />
@@ -352,6 +354,7 @@ function AppRoutes() {
       <Route element={<AppShell />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/forms" element={<FormsList />} />
+        <Route path="/flows" element={<FlowsWorkspace />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/doctor" element={<Doctor />} />
         <Route path="/billing" element={<Billing />} />

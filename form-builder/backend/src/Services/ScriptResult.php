@@ -20,6 +20,8 @@ class ScriptResult
         public readonly mixed $computed = null,
         public readonly int $instructionCount = 0,
         public readonly int $executionTimeMs = 0,
+        /** ctx.flows.run() intents ([{slug, input?}]) — enqueued by ResponseService post-persist. */
+        public readonly array $flowRuns = [],
     ) {}
 
     /**
@@ -40,6 +42,7 @@ class ScriptResult
         ?string $status = null,
         int $instructionCount = 0,
         int $executionTimeMs = 0,
+        array $flowRuns = [],
     ): self {
         return new self(
             success: true,
@@ -49,6 +52,7 @@ class ScriptResult
             status: $status,
             instructionCount: $instructionCount,
             executionTimeMs: $executionTimeMs,
+            flowRuns: $flowRuns,
         );
     }
 
@@ -103,6 +107,7 @@ class ScriptResult
             'computed' => $this->computed,
             'instructionCount' => $this->instructionCount,
             'executionTimeMs' => $this->executionTimeMs,
+            'flowRuns' => $this->flowRuns,
         ];
     }
 }

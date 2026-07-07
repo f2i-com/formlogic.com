@@ -69,12 +69,54 @@ class PackCapabilities
             }
         }
 
+        // FormLogic Flows: surface every node capability a packaged flow declares (they gate what
+        // the runner may do — model.llm.local, formlogic.responses.write, connector.aokie.*, …) and
+        // any connector a binding's outputActions reach, so the pre-install review shows them.
+        $flows = is_array($packData['flows'] ?? null) ? $packData['flows'] : [];
+        $flowBindings = is_array($packData['flowBindings'] ?? null) ? $packData['flowBindings'] : [];
+        foreach ($flows as $fl) {
+            if (!is_array($fl)) {
+                continue;
+            }
+            foreach ((is_array($fl['nodeCapabilities'] ?? null) ? $fl['nodeCapabilities'] : []) as $cap) {
+                if (is_string($cap) && $cap !== '') {
+                    $permissions[$cap] = true;
+                    if (strncmp($cap, 'connector.', 10) === 0) {
+                        $rest = substr($cap, 10);
+                        $dot = strpos($rest, '.');
+                        $connectors[$dot !== false ? substr($rest, 0, $dot) : $rest] = true;
+                    }
+                }
+            }
+        }
+        foreach ($flowBindings as $b) {
+            if (!is_array($b)) {
+                continue;
+            }
+            if (is_string($b['connectorId'] ?? null) && $b['connectorId'] !== '') {
+                $connectors[$b['connectorId']] = true;
+            }
+            foreach ((is_array($b['outputActions'] ?? null) ? $b['outputActions'] : []) as $action) {
+                if (!is_array($action) || ($action['type'] ?? '') !== 'connector.request') {
+                    continue;
+                }
+                $cid = is_string($action['connectorId'] ?? null) ? $action['connectorId'] : '';
+                if ($cid !== '') {
+                    $connectors[$cid] = true;
+                    $cmd = is_string($action['command'] ?? null) && $action['command'] !== '' ? $action['command'] : '*';
+                    $permissions['connector.' . $cid . '.' . $cmd] = true;
+                }
+            }
+        }
+
         return [
             'forms' => count($forms),
             'apps' => count($apps),
             'hasScreens' => $hasScreens,
             'hasCustomLogic' => $logicScripts > 0,
             'logicScripts' => $logicScripts,
+            'flows' => count($flows),
+            'flowBindings' => count($flowBindings),
             'connectors' => array_values(array_keys($connectors)),
             'permissions' => array_values(array_keys($permissions)),
         ];

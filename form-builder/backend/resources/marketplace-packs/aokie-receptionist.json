@@ -1,0 +1,3558 @@
+{
+  "id": "aokie-receptionist",
+  "name": "Aokie Receptionist",
+  "description": "An AI phone receptionist powered by FormLogic Desktop and the Aokie Bluetooth phone bridge: live call console with answer/hang-up/speak controls, automatic call, transcript and SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks via starter FormLogic Flows. Includes 10 forms and 1 app.",
+  "tags": [
+    "receptionist",
+    "phone",
+    "aokie",
+    "desktop",
+    "flows"
+  ],
+  "icon": "PhoneCall",
+  "pack": {
+    "formatVersion": 1,
+    "packMeta": {
+      "id": "aokie-receptionist",
+      "name": "Aokie Receptionist",
+      "description": "An AI phone receptionist over FormLogic Desktop: raw call and SMS records land automatically from the Aokie Bluetooth phone bridge, starter FormLogic Flows look up callers, summarise calls and draft SMS replies, and a Live Call screen gives the operator answer / hang-up / speak controls. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.",
+      "version": "1.0.0",
+      "author": "FormLogic",
+      "tags": [
+        "receptionist",
+        "phone",
+        "aokie",
+        "desktop",
+        "flows"
+      ]
+    },
+    "forms": [
+      {
+        "packFormId": "customers",
+        "title": "Customers",
+        "icon": "Users",
+        "description": "A customer the receptionist can recognise by phone number, with preferences and notes.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "name",
+            "type": "short_text",
+            "label": "Name",
+            "required": true,
+            "properties": {
+              "placeholder": "Full name"
+            }
+          },
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": true,
+            "properties": {
+              "placeholder": "+61 400 000 000"
+            }
+          },
+          {
+            "id": "email",
+            "type": "email",
+            "label": "Email",
+            "required": false,
+            "properties": {
+              "placeholder": "you@example.com"
+            }
+          },
+          {
+            "id": "preferred_service",
+            "type": "short_text",
+            "label": "Preferred Service",
+            "required": false,
+            "properties": {
+              "placeholder": "What they usually book or order"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "active",
+                  "label": "Active",
+                  "value": "active"
+                },
+                {
+                  "id": "vip",
+                  "label": "VIP",
+                  "value": "vip"
+                },
+                {
+                  "id": "inactive",
+                  "label": "Inactive",
+                  "value": "inactive"
+                },
+                {
+                  "id": "blocked",
+                  "label": "Blocked",
+                  "value": "blocked"
+                }
+              ]
+            }
+          },
+          {
+            "id": "last_call_at",
+            "type": "date",
+            "label": "Last Call",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {
+              "placeholder": "Preferences, context for the receptionist…"
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Customers",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:customers",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "VIP customers",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:customers",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "vip"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "Status share",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:customers",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 6
+                }
+              },
+              {
+                "id": "c2",
+                "title": "New customers over time",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:customers",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "month"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 12
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Recent customers",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:customers",
+                  "titleField": "name",
+                  "subtitleField": "phone",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "calls",
+        "title": "Calls",
+        "icon": "PhoneCall",
+        "description": "One row per phone call. Created and updated automatically by the app logic from aokie.call.* events; flows add the summary.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "call_id",
+            "type": "short_text",
+            "label": "Call ID",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "caller_phone",
+            "type": "phone",
+            "label": "Caller Phone",
+            "required": true,
+            "properties": {
+              "placeholder": "+61 400 000 000"
+            }
+          },
+          {
+            "id": "caller_name",
+            "type": "short_text",
+            "label": "Caller Name",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "customer_link",
+            "type": "linked_record",
+            "label": "Customer",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:customers"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "incoming",
+                  "label": "Incoming",
+                  "value": "incoming"
+                },
+                {
+                  "id": "answered",
+                  "label": "Answered",
+                  "value": "answered"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "missed",
+                  "label": "Missed",
+                  "value": "missed"
+                },
+                {
+                  "id": "failed",
+                  "label": "Failed",
+                  "value": "failed"
+                }
+              ]
+            }
+          },
+          {
+            "id": "started_at",
+            "type": "short_text",
+            "label": "Started At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "answered_at",
+            "type": "short_text",
+            "label": "Answered At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "ended_at",
+            "type": "short_text",
+            "label": "Ended At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "duration_seconds",
+            "type": "number",
+            "label": "Duration (seconds)",
+            "required": false,
+            "properties": {
+              "min": 0
+            }
+          },
+          {
+            "id": "summary",
+            "type": "long_text",
+            "label": "Summary",
+            "required": false,
+            "properties": {
+              "placeholder": "Written by the Call Summary flow after the call ends."
+            }
+          },
+          {
+            "id": "intent",
+            "type": "dropdown",
+            "label": "Intent",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "booking",
+                  "label": "Booking",
+                  "value": "booking"
+                },
+                {
+                  "id": "order",
+                  "label": "Order",
+                  "value": "order"
+                },
+                {
+                  "id": "question",
+                  "label": "Question",
+                  "value": "question"
+                },
+                {
+                  "id": "message",
+                  "label": "Message",
+                  "value": "message"
+                },
+                {
+                  "id": "other",
+                  "label": "Other",
+                  "value": "other"
+                }
+              ]
+            }
+          },
+          {
+            "id": "sentiment",
+            "type": "dropdown",
+            "label": "Sentiment",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "positive",
+                  "label": "Positive",
+                  "value": "positive"
+                },
+                {
+                  "id": "neutral",
+                  "label": "Neutral",
+                  "value": "neutral"
+                },
+                {
+                  "id": "negative",
+                  "label": "Negative",
+                  "value": "negative"
+                }
+              ]
+            }
+          },
+          {
+            "id": "follow_up_required",
+            "type": "checkbox",
+            "label": "Follow-up",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "yes",
+                  "label": "Follow-up required",
+                  "value": "yes"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "sdk",
+          "sdkScreen": {
+            "screenId": "aokie-live-call",
+            "title": "Live Call"
+          }
+        }
+      },
+      {
+        "packFormId": "transcript-turns",
+        "title": "Transcript Turns",
+        "icon": "MessagesSquare",
+        "description": "Final transcript turns streamed from the Aokie plugin during a call (one row per aokie.call.turn.final event).",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "call_id",
+            "type": "short_text",
+            "label": "Call ID",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "call_link",
+            "type": "linked_record",
+            "label": "Call",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:calls"
+            }
+          },
+          {
+            "id": "turn_index",
+            "type": "number",
+            "label": "Turn",
+            "required": false,
+            "properties": {
+              "min": 0,
+              "step": 1
+            }
+          },
+          {
+            "id": "speaker",
+            "type": "dropdown",
+            "label": "Speaker",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "caller",
+                  "label": "Caller",
+                  "value": "caller"
+                },
+                {
+                  "id": "aokie",
+                  "label": "Aokie",
+                  "value": "aokie"
+                },
+                {
+                  "id": "operator",
+                  "label": "Operator",
+                  "value": "operator"
+                },
+                {
+                  "id": "system",
+                  "label": "System",
+                  "value": "system"
+                }
+              ]
+            }
+          },
+          {
+            "id": "text",
+            "type": "long_text",
+            "label": "Text",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "timestamp",
+            "type": "short_text",
+            "label": "Timestamp",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "confidence",
+            "type": "number",
+            "label": "Confidence",
+            "required": false,
+            "properties": {
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            }
+          },
+          {
+            "id": "source",
+            "type": "dropdown",
+            "label": "Source",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "stt",
+                  "label": "Speech-to-text",
+                  "value": "stt"
+                },
+                {
+                  "id": "operator",
+                  "label": "Operator",
+                  "value": "operator"
+                },
+                {
+                  "id": "flow",
+                  "label": "Flow",
+                  "value": "flow"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Turns logged",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:transcript-turns",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Calls covered",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:transcript-turns",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "countDistinct",
+                    "field": "call_id"
+                  }
+                }
+              },
+              {
+                "id": "c1",
+                "title": "Speaker share",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:transcript-turns",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "speaker",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 4
+                }
+              },
+              {
+                "id": "c2",
+                "title": "Turns over time",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:transcript-turns",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "day"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 14
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Latest turns",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:transcript-turns",
+                  "titleField": "text",
+                  "subtitleField": "speaker",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "sms-threads",
+        "title": "SMS Threads",
+        "icon": "MessageCircle",
+        "description": "One row per phone number the business texts with; upserted automatically when messages arrive.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": true,
+            "properties": {
+              "placeholder": "+61 400 000 000"
+            }
+          },
+          {
+            "id": "display_name",
+            "type": "short_text",
+            "label": "Display Name",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "last_message_at",
+            "type": "short_text",
+            "label": "Last Message At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "unread_count",
+            "type": "number",
+            "label": "Unread",
+            "required": false,
+            "properties": {
+              "min": 0,
+              "step": 1
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "active",
+                  "label": "Active",
+                  "value": "active"
+                },
+                {
+                  "id": "archived",
+                  "label": "Archived",
+                  "value": "archived"
+                },
+                {
+                  "id": "blocked",
+                  "label": "Blocked",
+                  "value": "blocked"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Threads",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-threads",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Active threads",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-threads",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "active"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "Thread status",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-threads",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 4
+                }
+              },
+              {
+                "id": "c2",
+                "title": "New threads over time",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-threads",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "month"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 12
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Recent threads",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:sms-threads",
+                  "titleField": "phone",
+                  "subtitleField": "display_name",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "sms-messages",
+        "title": "SMS Messages",
+        "icon": "MessageSquare",
+        "description": "Every inbound and outbound SMS. Inbound rows land automatically; AI reply drafts wait for approval before sending.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "message_id",
+            "type": "short_text",
+            "label": "Message ID",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "thread_link",
+            "type": "linked_record",
+            "label": "Thread",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:sms-threads"
+            }
+          },
+          {
+            "id": "phone",
+            "type": "phone",
+            "label": "Phone Number",
+            "required": true,
+            "properties": {
+              "placeholder": "+61 400 000 000"
+            }
+          },
+          {
+            "id": "direction",
+            "type": "dropdown",
+            "label": "Direction",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "inbound",
+                  "label": "Inbound",
+                  "value": "inbound"
+                },
+                {
+                  "id": "outbound",
+                  "label": "Outbound",
+                  "value": "outbound"
+                }
+              ]
+            }
+          },
+          {
+            "id": "body",
+            "type": "long_text",
+            "label": "Message",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "timestamp",
+            "type": "short_text",
+            "label": "Timestamp",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "received",
+                  "label": "Received",
+                  "value": "received"
+                },
+                {
+                  "id": "draft",
+                  "label": "Draft",
+                  "value": "draft"
+                },
+                {
+                  "id": "queued",
+                  "label": "Queued",
+                  "value": "queued"
+                },
+                {
+                  "id": "sent",
+                  "label": "Sent",
+                  "value": "sent"
+                },
+                {
+                  "id": "failed",
+                  "label": "Failed",
+                  "value": "failed"
+                }
+              ]
+            }
+          },
+          {
+            "id": "is_ai_reply",
+            "type": "checkbox",
+            "label": "AI Reply",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "yes",
+                  "label": "Drafted by the AI receptionist",
+                  "value": "yes"
+                }
+              ]
+            }
+          },
+          {
+            "id": "approval_status",
+            "type": "dropdown",
+            "label": "Approval",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "not_required",
+                  "label": "Not required",
+                  "value": "not_required"
+                },
+                {
+                  "id": "pending_approval",
+                  "label": "Pending approval",
+                  "value": "pending_approval"
+                },
+                {
+                  "id": "approved",
+                  "label": "Approved",
+                  "value": "approved"
+                },
+                {
+                  "id": "rejected",
+                  "label": "Rejected",
+                  "value": "rejected"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Messages",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Inbound",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "direction",
+                      "op": "eq",
+                      "value": "inbound"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k3",
+                "title": "Pending approvals",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "approval_status",
+                      "op": "eq",
+                      "value": "pending_approval"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k4",
+                "title": "AI drafts",
+                "layout": {
+                  "x": 9,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "is_ai_reply",
+                      "op": "has",
+                      "value": "yes"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "By status",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "c2",
+                "title": "Messages over time",
+                "layout": {
+                  "x": 6,
+                  "y": 1,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "day"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 14
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Latest messages",
+                "layout": {
+                  "x": 0,
+                  "y": 4,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:sms-messages",
+                  "titleField": "body",
+                  "subtitleField": "phone",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "appointments",
+        "title": "Appointments",
+        "icon": "CalendarClock",
+        "description": "Bookings taken over the phone, by SMS, manually, or created by a flow.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "customer_link",
+            "type": "linked_record",
+            "label": "Customer",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:customers"
+            }
+          },
+          {
+            "id": "service",
+            "type": "short_text",
+            "label": "Service",
+            "required": true,
+            "properties": {
+              "placeholder": "What is being booked"
+            }
+          },
+          {
+            "id": "date",
+            "type": "date",
+            "label": "Date",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "time",
+            "type": "time",
+            "label": "Time",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "requested",
+                  "label": "Requested",
+                  "value": "requested"
+                },
+                {
+                  "id": "confirmed",
+                  "label": "Confirmed",
+                  "value": "confirmed"
+                },
+                {
+                  "id": "completed",
+                  "label": "Completed",
+                  "value": "completed"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                },
+                {
+                  "id": "no-show",
+                  "label": "No-show",
+                  "value": "no-show"
+                }
+              ]
+            }
+          },
+          {
+            "id": "source",
+            "type": "dropdown",
+            "label": "Source",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "call",
+                  "label": "Call",
+                  "value": "call"
+                },
+                {
+                  "id": "sms",
+                  "label": "SMS",
+                  "value": "sms"
+                },
+                {
+                  "id": "manual",
+                  "label": "Manual",
+                  "value": "manual"
+                },
+                {
+                  "id": "flow",
+                  "label": "Flow",
+                  "value": "flow"
+                }
+              ]
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Notes",
+            "required": false,
+            "properties": {}
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Appointments",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Confirmed",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "confirmed"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "By source",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "source",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 4
+                }
+              },
+              {
+                "id": "c2",
+                "title": "By status",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "c3",
+                "title": "Bookings by month",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "date",
+                    "bucket": "month"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 12
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Upcoming & recent",
+                "layout": {
+                  "x": 6,
+                  "y": 3,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:appointments",
+                  "titleField": "service",
+                  "subtitleField": "status",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "orders",
+        "title": "Orders",
+        "icon": "ShoppingBag",
+        "description": "Orders captured by the receptionist over the phone or by SMS.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "customer_link",
+            "type": "linked_record",
+            "label": "Customer",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:customers"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "new",
+                  "label": "New",
+                  "value": "new"
+                },
+                {
+                  "id": "confirmed",
+                  "label": "Confirmed",
+                  "value": "confirmed"
+                },
+                {
+                  "id": "ready",
+                  "label": "Ready",
+                  "value": "ready"
+                },
+                {
+                  "id": "delivered",
+                  "label": "Delivered",
+                  "value": "delivered"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "id": "source",
+            "type": "dropdown",
+            "label": "Source",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "call",
+                  "label": "Call",
+                  "value": "call"
+                },
+                {
+                  "id": "sms",
+                  "label": "SMS",
+                  "value": "sms"
+                },
+                {
+                  "id": "manual",
+                  "label": "Manual",
+                  "value": "manual"
+                },
+                {
+                  "id": "flow",
+                  "label": "Flow",
+                  "value": "flow"
+                }
+              ]
+            }
+          },
+          {
+            "id": "total",
+            "type": "number",
+            "label": "Total ($)",
+            "required": false,
+            "properties": {
+              "min": 0,
+              "placeholder": "0.00"
+            }
+          },
+          {
+            "id": "notes",
+            "type": "long_text",
+            "label": "Order Details",
+            "required": false,
+            "properties": {}
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Orders",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Revenue",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "sum",
+                    "field": "total"
+                  }
+                }
+              },
+              {
+                "id": "k3",
+                "title": "Avg order",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "avg",
+                    "field": "total"
+                  }
+                }
+              },
+              {
+                "id": "k4",
+                "title": "Open orders",
+                "layout": {
+                  "x": 9,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "new"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "By status",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "c2",
+                "title": "Revenue over time",
+                "layout": {
+                  "x": 6,
+                  "y": 1,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "month"
+                  },
+                  "measure": {
+                    "fn": "sum",
+                    "field": "total"
+                  },
+                  "seriesSort": "label",
+                  "limit": 12
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Recent orders",
+                "layout": {
+                  "x": 0,
+                  "y": 4,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:orders",
+                  "titleField": "notes",
+                  "subtitleField": "status",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "follow-up-tasks",
+        "title": "Follow-up Tasks",
+        "icon": "ClipboardCheck",
+        "description": "Callbacks and follow-ups — created by the receptionist or automatically by the missed-call and call-summary flows.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "customer_link",
+            "type": "linked_record",
+            "label": "Customer",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:customers"
+            }
+          },
+          {
+            "id": "call_link",
+            "type": "linked_record",
+            "label": "Call",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:calls"
+            }
+          },
+          {
+            "id": "summary",
+            "type": "short_text",
+            "label": "Task",
+            "required": true,
+            "properties": {
+              "placeholder": "What needs to happen"
+            }
+          },
+          {
+            "id": "due_at",
+            "type": "date",
+            "label": "Due",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "open",
+                  "label": "Open",
+                  "value": "open"
+                },
+                {
+                  "id": "in_progress",
+                  "label": "In progress",
+                  "value": "in_progress"
+                },
+                {
+                  "id": "done",
+                  "label": "Done",
+                  "value": "done"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "id": "assignee",
+            "type": "short_text",
+            "label": "Assignee",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "priority",
+            "type": "dropdown",
+            "label": "Priority",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "low",
+                  "label": "Low",
+                  "value": "low"
+                },
+                {
+                  "id": "medium",
+                  "label": "Medium",
+                  "value": "medium"
+                },
+                {
+                  "id": "high",
+                  "label": "High",
+                  "value": "high"
+                },
+                {
+                  "id": "urgent",
+                  "label": "Urgent",
+                  "value": "urgent"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Open tasks",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:follow-up-tasks",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "open"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Done",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:follow-up-tasks",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "done"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "By priority",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:follow-up-tasks",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "priority",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 4
+                }
+              },
+              {
+                "id": "c2",
+                "title": "By status",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:follow-up-tasks",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 5
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Latest tasks",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:follow-up-tasks",
+                  "titleField": "summary",
+                  "subtitleField": "status",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "flow-runs",
+        "title": "Flow Runs",
+        "icon": "Workflow",
+        "description": "A human-readable mirror of notable flow runs (the authoritative run log lives in the Flows panel).",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "run_id",
+            "type": "short_text",
+            "label": "Run ID",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "flow_name",
+            "type": "short_text",
+            "label": "Flow",
+            "required": true,
+            "properties": {
+              "placeholder": "Flow name/slug"
+            }
+          },
+          {
+            "id": "trigger_event",
+            "type": "short_text",
+            "label": "Trigger Event",
+            "required": false,
+            "properties": {
+              "placeholder": "aokie.call.ended"
+            }
+          },
+          {
+            "id": "status",
+            "type": "dropdown",
+            "label": "Status",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "done",
+                  "label": "Done",
+                  "value": "done"
+                },
+                {
+                  "id": "error",
+                  "label": "Error",
+                  "value": "error"
+                },
+                {
+                  "id": "timeout",
+                  "label": "Timeout",
+                  "value": "timeout"
+                },
+                {
+                  "id": "cancelled",
+                  "label": "Cancelled",
+                  "value": "cancelled"
+                }
+              ]
+            }
+          },
+          {
+            "id": "started_at",
+            "type": "short_text",
+            "label": "Started At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "finished_at",
+            "type": "short_text",
+            "label": "Finished At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "error",
+            "type": "long_text",
+            "label": "Error",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "call_link",
+            "type": "linked_record",
+            "label": "Call",
+            "required": false,
+            "properties": {
+              "targetFormId": "@pack:calls"
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Runs logged",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:flow-runs",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Errors",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:flow-runs",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "error"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "c1",
+                "title": "Status share",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:flow-runs",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 4
+                }
+              },
+              {
+                "id": "c2",
+                "title": "Runs by flow",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 6,
+                  "h": 2
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:flow-runs",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "flow_name",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Recent runs",
+                "layout": {
+                  "x": 0,
+                  "y": 3,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:flow-runs",
+                  "titleField": "flow_name",
+                  "subtitleField": "status",
+                  "limit": 6
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "packFormId": "hardware-events",
+        "title": "Hardware Events",
+        "icon": "Bluetooth",
+        "description": "Dongle/phone bridge problems recorded automatically from aokie.hardware.error events. The section screen is the Device Setup console.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "event_id",
+            "type": "short_text",
+            "label": "Event ID",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "event_name",
+            "type": "short_text",
+            "label": "Event",
+            "required": true,
+            "properties": {
+              "placeholder": "aokie.hardware.error"
+            }
+          },
+          {
+            "id": "severity",
+            "type": "dropdown",
+            "label": "Severity",
+            "required": true,
+            "properties": {
+              "options": [
+                {
+                  "id": "info",
+                  "label": "Info",
+                  "value": "info"
+                },
+                {
+                  "id": "warning",
+                  "label": "Warning",
+                  "value": "warning"
+                },
+                {
+                  "id": "error",
+                  "label": "Error",
+                  "value": "error"
+                }
+              ]
+            }
+          },
+          {
+            "id": "message",
+            "type": "long_text",
+            "label": "Message",
+            "required": true,
+            "properties": {}
+          },
+          {
+            "id": "dongle_id",
+            "type": "short_text",
+            "label": "Dongle",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "occurred_at",
+            "type": "short_text",
+            "label": "Occurred At",
+            "required": false,
+            "properties": {}
+          },
+          {
+            "id": "payload_json",
+            "type": "long_text",
+            "label": "Raw Payload",
+            "required": false,
+            "properties": {}
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "sdk",
+          "sdkScreen": {
+            "screenId": "aokie-pairing",
+            "title": "Device Setup"
+          }
+        }
+      }
+    ],
+    "apps": [
+      {
+        "packAppId": "aokie-receptionist",
+        "name": "Aokie Receptionist",
+        "description": "AI phone receptionist over FormLogic Desktop: live call console, automatic call/SMS records, caller lookup, call summaries, SMS reply drafts and follow-up tasks — with the Aokie Bluetooth phone bridge doing the hardware work. Runs headless in FormLogic Desktop; open this app anywhere to monitor it.",
+        "settings": {
+          "icon": "PhoneCall",
+          "appKind": "staff"
+        },
+        "theme": {
+          "primaryColor": "#0ea5e9",
+          "backgroundColor": "#0f172a",
+          "textColor": "#f8fafc",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "forms": [
+          {
+            "packFormId": "calls",
+            "displayName": "Calls",
+            "sortOrder": 1,
+            "isVisible": true
+          },
+          {
+            "packFormId": "customers",
+            "displayName": "Customers",
+            "sortOrder": 2,
+            "isVisible": true
+          },
+          {
+            "packFormId": "sms-messages",
+            "displayName": "Messages",
+            "sortOrder": 3,
+            "isVisible": true
+          },
+          {
+            "packFormId": "sms-threads",
+            "displayName": "SMS Threads",
+            "sortOrder": 4,
+            "isVisible": true
+          },
+          {
+            "packFormId": "appointments",
+            "displayName": "Appointments",
+            "sortOrder": 5,
+            "isVisible": true
+          },
+          {
+            "packFormId": "orders",
+            "displayName": "Orders",
+            "sortOrder": 6,
+            "isVisible": true
+          },
+          {
+            "packFormId": "follow-up-tasks",
+            "displayName": "Follow-ups",
+            "sortOrder": 7,
+            "isVisible": true
+          },
+          {
+            "packFormId": "transcript-turns",
+            "displayName": "Transcript Turns",
+            "sortOrder": 8,
+            "isVisible": true
+          },
+          {
+            "packFormId": "flow-runs",
+            "displayName": "Flow Runs",
+            "sortOrder": 9,
+            "isVisible": true
+          },
+          {
+            "packFormId": "hardware-events",
+            "displayName": "Device Setup",
+            "sortOrder": 10,
+            "isVisible": true
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "k1",
+                "title": "Today's calls",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "__submitted_at",
+                      "op": "today"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k2",
+                "title": "Missed calls",
+                "layout": {
+                  "x": 3,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "missed"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k3",
+                "title": "Bookings",
+                "layout": {
+                  "x": 6,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:appointments",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k4",
+                "title": "Orders",
+                "layout": {
+                  "x": 9,
+                  "y": 0,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:orders",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "k5",
+                "title": "Avg call (sec)",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "avg",
+                    "field": "duration_seconds"
+                  }
+                }
+              },
+              {
+                "id": "k6",
+                "title": "Open follow-ups",
+                "layout": {
+                  "x": 3,
+                  "y": 1,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:follow-up-tasks",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "status",
+                      "op": "eq",
+                      "value": "open"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k7",
+                "title": "Pending SMS approvals",
+                "layout": {
+                  "x": 6,
+                  "y": 1,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:sms-messages",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "filters": [
+                    {
+                      "field": "approval_status",
+                      "op": "eq",
+                      "value": "pending_approval"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "k8",
+                "title": "Customers",
+                "layout": {
+                  "x": 9,
+                  "y": 1,
+                  "w": 3,
+                  "h": 1
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:customers",
+                  "viz": "kpi",
+                  "measure": {
+                    "fn": "count"
+                  }
+                }
+              },
+              {
+                "id": "c1",
+                "title": "Calls by status",
+                "layout": {
+                  "x": 0,
+                  "y": 2,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "bar",
+                  "groupBy": {
+                    "field": "status",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "value",
+                  "sort": "desc",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "c2",
+                "title": "Calls over time",
+                "layout": {
+                  "x": 6,
+                  "y": 2,
+                  "w": 6,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "area",
+                  "groupBy": {
+                    "field": "__submitted_at",
+                    "bucket": "day"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "seriesSort": "label",
+                  "limit": 14
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Recent calls",
+                "layout": {
+                  "x": 0,
+                  "y": 5,
+                  "w": 4,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:calls",
+                  "titleField": "caller_phone",
+                  "subtitleField": "status",
+                  "limit": 6
+                }
+              },
+              {
+                "id": "ac1",
+                "title": "Recent activity",
+                "layout": {
+                  "x": 4,
+                  "y": 5,
+                  "w": 4,
+                  "h": 3
+                },
+                "kind": "activity"
+              },
+              {
+                "id": "c3",
+                "title": "Call intent share",
+                "layout": {
+                  "x": 8,
+                  "y": 5,
+                  "w": 4,
+                  "h": 3
+                },
+                "kind": "report",
+                "spec": {
+                  "formId": "@pack:calls",
+                  "viz": "donut",
+                  "groupBy": {
+                    "field": "intent",
+                    "bucket": "none"
+                  },
+                  "measure": {
+                    "fn": "count"
+                  },
+                  "limit": 5
+                }
+              },
+              {
+                "id": "act1",
+                "title": "Quick actions",
+                "layout": {
+                  "x": 0,
+                  "y": 8,
+                  "w": 12,
+                  "h": 1
+                },
+                "kind": "actions"
+              }
+            ]
+          }
+        },
+        "customLogic": {
+          "version": 1,
+          "runtime": "quickjs",
+          "strictPermissions": true,
+          "permissions": [
+            "formlogic.responses.write",
+            "storage.local",
+            "ui.toast",
+            "flow.*.run",
+            "connector.aokie.dongle.list",
+            "connector.aokie.dongle.getPreferred",
+            "connector.aokie.dongle.setPreferred",
+            "connector.aokie.dongle.installDriver",
+            "connector.aokie.dongle.diagnostics",
+            "connector.aokie.phone.status",
+            "connector.aokie.phone.startPairing",
+            "connector.aokie.phone.stopPairing",
+            "connector.aokie.phone.listPaired",
+            "connector.aokie.call.current",
+            "connector.aokie.call.answer",
+            "connector.aokie.call.reject",
+            "connector.aokie.call.hangup",
+            "connector.aokie.call.operatorSpeak",
+            "connector.aokie.sms.threads",
+            "connector.aokie.sms.thread",
+            "connector.aokie.sms.send"
+          ],
+          "scripts": [
+            {
+              "id": "aokie-call-incoming",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Log a Calls row the moment a call rings (deduped on the event idempotencyKey).",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.incoming') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('incoming:' + ev.correlationId));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var phone = String(d.callerPhone || d.from || '');\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.submitResponse', formKey: 'Calls', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        caller_phone: phone,\n        caller_name: String(d.callerName || ''),\n        status: 'incoming',\n        started_at: String(ev.occurredAt || '')\n      } },\n      { type: 'ui.toast', level: 'info', message: 'Incoming call' + (phone ? ' from ' + phone : '') }\n    ]\n  };\n}"
+            },
+            {
+              "id": "aokie-call-answered",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Mark the Calls row answered.",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.answered') return {};\n  var d = ev.data || {};\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls',\n        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },\n        answers: { status: 'answered', answered_at: String(ev.occurredAt || '') } }\n    ]\n  };\n}"
+            },
+            {
+              "id": "aokie-call-turn",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Store each final transcript turn.",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.turn.final') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('turn:' + ev.correlationId + ':' + d.turn));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var speaker = String(d.speaker || 'caller');\n  if (speaker === 'bot') speaker = 'aokie';\n  if (['caller', 'aokie', 'operator', 'system'].indexOf(speaker) < 0) speaker = 'system';\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.submitResponse', formKey: 'Transcript Turns', answers: {\n        call_id: String(d.callId || ev.correlationId || ''),\n        turn_index: Number(d.turn || 0),\n        speaker: speaker,\n        text: String(d.text || ''),\n        timestamp: String(ev.occurredAt || ''),\n        source: 'stt'\n      } }\n    ]\n  };\n}"
+            },
+            {
+              "id": "aokie-call-ended",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Finalise the Calls row (status / ended_at / duration).",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.call.ended') return {};\n  var d = ev.data || {};\n  var outcome = String(d.outcome || d.status || '');\n  var status = outcome === 'missed' ? 'missed' : (outcome === 'failed' ? 'failed' : 'completed');\n  return {\n    effects: [\n      { type: 'formlogic.updateResponse', formKey: 'Calls',\n        match: { field: 'call_id', value: String(d.callId || ev.correlationId || '') },\n        answers: {\n          status: status,\n          ended_at: String(ev.occurredAt || ''),\n          duration_seconds: Number(d.durationSeconds || 0)\n        } }\n    ]\n  };\n}"
+            },
+            {
+              "id": "aokie-sms-received",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Upsert the SMS thread and store the inbound message.",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.sms.received') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('sms:' + ev.correlationId));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var phone = String(d.from || d.phone || '');\n  var thread = { phone: phone, last_message_at: String(ev.occurredAt || ''), status: 'active' };\n  if (d.displayName) thread.display_name = String(d.displayName);\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.updateResponse', formKey: 'SMS Threads', upsert: true,\n        match: { field: 'phone', value: phone }, answers: thread },\n      { type: 'formlogic.submitResponse', formKey: 'Messages', answers: {\n        message_id: String(d.messageId || ev.idempotencyKey || ''),\n        phone: phone,\n        direction: 'inbound',\n        body: String(d.body || ''),\n        timestamp: String(ev.occurredAt || ''),\n        status: 'received',\n        approval_status: 'not_required'\n      } },\n      { type: 'ui.toast', level: 'info', message: 'New SMS' + (phone ? ' from ' + phone : '') }\n    ]\n  };\n}"
+            },
+            {
+              "id": "aokie-hardware-error",
+              "hook": "onConnectorEvent",
+              "runtime": "quickjs",
+              "description": "Record hardware problems (single writer — the hardware-error-alert flow only toasts).",
+              "source": "function run(ctx) {\n  var ev = ctx.event || {};\n  if (ev.name !== 'aokie.hardware.error') return {};\n  var d = ev.data || {};\n  var key = 'seen-' + String(ev.idempotencyKey || ('hw:' + ev.correlationId));\n  if (ctx.storage && ctx.storage[key]) return {};\n  var severity = String(d.severity || 'error');\n  if (['info', 'warning', 'error'].indexOf(severity) < 0) severity = 'error';\n  return {\n    effects: [\n      { type: 'storage.set', key: key, value: 1 },\n      { type: 'formlogic.submitResponse', formKey: 'Device Setup', answers: {\n        event_id: String(ev.idempotencyKey || ''),\n        event_name: String(d.event || ev.name || ''),\n        severity: severity,\n        message: String(d.message || ''),\n        dongle_id: String(d.dongleId || ''),\n        occurred_at: String(ev.occurredAt || ''),\n        payload_json: JSON.stringify(d)\n      } },\n      { type: 'ui.toast', level: 'error', message: 'Aokie hardware issue: ' + String(d.message || 'see Device Setup') }\n    ]\n  };\n}"
+            }
+          ]
+        },
+        "roles": [
+          {
+            "name": "Receptionist",
+            "description": "Front-desk staff: operate calls, send approved SMS, manage customers, bookings, orders and follow-ups.",
+            "permissions": [
+              {
+                "packFormId": "calls",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "calls",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "calls",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "transcript-turns",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "transcript-turns",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "sms-threads",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "sms-threads",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "sms-threads",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "sms-messages",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "sms-messages",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "sms-messages",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "customers",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "customers",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "customers",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "appointments",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "appointments",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointments",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "orders",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "orders",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "orders",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "follow-up-tasks",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "follow-up-tasks",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "follow-up-tasks",
+                "permission": "edit_responses"
+              },
+              {
+                "packFormId": "flow-runs",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "flow-runs",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "hardware-events",
+                "permission": "submit_responses"
+              },
+              {
+                "packFormId": "hardware-events",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.call.current"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.call.answer"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.call.reject"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.call.hangup"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.call.operatorSpeak"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.sms.threads"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.sms.send"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.phone.status"
+              },
+              {
+                "packFormId": null,
+                "permission": "connector.aokie.dongle.list"
+              },
+              {
+                "packFormId": null,
+                "permission": "flow.*.run"
+              }
+            ]
+          },
+          {
+            "name": "Viewer",
+            "description": "Managers/observers: dashboards, calls and messages read-only. No hardware control, no flow editing.",
+            "permissions": [
+              {
+                "packFormId": "calls",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "transcript-turns",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "sms-threads",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "sms-messages",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "customers",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "appointments",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "orders",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "follow-up-tasks",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "flow-runs",
+                "permission": "view_all_responses"
+              },
+              {
+                "packFormId": "hardware-events",
+                "permission": "view_all_responses"
+              }
+            ]
+          }
+        ],
+        "reports": [
+          {
+            "reportId": "calls-by-status",
+            "kind": "chart",
+            "name": "Calls by status",
+            "description": "Answered vs missed vs failed call counts.",
+            "spec": {
+              "formId": "@pack:calls",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "calls-over-time",
+            "kind": "chart",
+            "name": "Calls over time",
+            "description": "Daily call volume.",
+            "spec": {
+              "formId": "@pack:calls",
+              "viz": "line",
+              "groupBy": {
+                "field": "__submitted_at",
+                "bucket": "day"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "order-revenue",
+            "kind": "chart",
+            "name": "Order revenue",
+            "description": "Total revenue captured through receptionist orders.",
+            "spec": {
+              "formId": "@pack:orders",
+              "viz": "kpi",
+              "measure": {
+                "fn": "sum",
+                "field": "total"
+              }
+            }
+          },
+          {
+            "reportId": "follow-ups-by-status",
+            "kind": "chart",
+            "name": "Follow-ups by status",
+            "description": "Open vs done follow-up tasks.",
+            "spec": {
+              "formId": "@pack:follow-up-tasks",
+              "viz": "bar",
+              "groupBy": {
+                "field": "status"
+              },
+              "measure": {
+                "fn": "count"
+              }
+            }
+          },
+          {
+            "reportId": "receptionist-overview",
+            "kind": "document",
+            "name": "Receptionist overview",
+            "description": "Call volume, outcomes and follow-up workload at a glance.",
+            "blocks": [
+              {
+                "kind": "text",
+                "title": "Receptionist performance overview",
+                "body": "This report summarises phone traffic handled by the Aokie receptionist: call volume and outcomes, revenue captured through phone orders, and the follow-up workload the calls generate."
+              },
+              {
+                "kind": "report",
+                "reportId": "calls-by-status",
+                "caption": "Call outcomes."
+              },
+              {
+                "kind": "report",
+                "reportId": "calls-over-time",
+                "caption": "Daily call volume."
+              },
+              {
+                "kind": "report",
+                "reportId": "order-revenue",
+                "caption": "Revenue captured on the phone."
+              },
+              {
+                "kind": "report",
+                "reportId": "follow-ups-by-status",
+                "caption": "Follow-up workload."
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "flows": [
+      {
+        "name": "Incoming Caller Lookup",
+        "slug": "incoming-caller-lookup",
+        "description": "Sync live-call decision (2-4s budget): match the caller phone against Customers and produce a personalised greeting. Falls back to the binding fallbackReply on timeout.",
+        "nodeCapabilities": [
+          "formlogic.responses.read"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input"
+            },
+            {
+              "id": "customers",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:customers",
+                "limit": 200
+              }
+            },
+            {
+              "id": "match",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var rows = nodes.customers || [];\n  var hit = null;\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (phone && String(a.phone || '') === phone) { hit = rows[i]; break; }\n  }\n  var name = hit ? String((hit.answers || {}).name || '') : '';\n  return {\n    found: !!hit,\n    customerId: hit ? hit.id : null,\n    name: name,\n    greeting: hit\n      ? 'Hi ' + name + ', thanks for calling back. Are you calling about your last booking or something new?'\n      : 'Thanks for calling. How can I help you today?'\n  };\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "greeting": "$nodes.match.greeting",
+                  "found": "$nodes.match.found",
+                  "customerId": "$nodes.match.customerId",
+                  "name": "$nodes.match.name"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "customers"
+            },
+            {
+              "source": "customers",
+              "target": "match"
+            },
+            {
+              "source": "match",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Call Summary + Follow-up",
+        "slug": "call-summary-follow-up",
+        "description": "Async after aokie.call.ended: summarise the transcript turns with the local LLM, write the summary onto the Calls row, and raise a Follow-up Task when the model asks for one. Raw status/duration updates are done by the app logic, not this flow.",
+        "nodeCapabilities": [
+          "model.llm.local",
+          "formlogic.responses.read",
+          "formlogic.responses.write"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input"
+            },
+            {
+              "id": "calls",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:calls",
+                "limit": 200
+              }
+            },
+            {
+              "id": "turns",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:transcript-turns",
+                "limit": 200
+              }
+            },
+            {
+              "id": "context",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var callRows = nodes.calls || [];\n  var call = null;\n  for (var i = 0; i < callRows.length; i++) {\n    var a = (callRows[i] && callRows[i].answers) || {};\n    if (callId && String(a.call_id || '') === callId) { call = callRows[i]; break; }\n  }\n  var turnRows = nodes.turns || [];\n  var lines = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      lines.push(String(t.speaker || 'caller') + ': ' + String(t.text || ''));\n    }\n  }\n  return { responseId: call ? call.id : null, transcript: lines.join('\\n') };\n})()"
+              }
+            },
+            {
+              "id": "summary",
+              "type": "llm_chat",
+              "data": {
+                "system": "You are the note-taker for a small-business phone receptionist. Be brief and factual.",
+                "prompt": "Summarise this phone call in at most two sentences. Then on a new line write \"FOLLOW-UP: yes\" if the business must contact the caller again, otherwise \"FOLLOW-UP: no\".\n\nTranscript:\n{{nodes.context.transcript}}",
+                "maxTokens": 220
+              }
+            },
+            {
+              "id": "decide",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var content = String(((nodes.summary || {}).content) || '').trim();\n  var summary = content || 'Call ended (no transcript summary available).';\n  return {\n    responseId: (nodes.context || {}).responseId || null,\n    hasCall: !!((nodes.context || {}).responseId),\n    callUpdate: { summary: summary },\n    followUpRequired: /FOLLOW-UP:\\s*yes/i.test(content),\n    followUpTask: {\n      summary: 'Follow up after call: ' + summary.slice(0, 140),\n      status: 'open',\n      priority: 'medium'\n    }\n  };\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "responseId": "$nodes.decide.responseId",
+                  "hasCall": "$nodes.decide.hasCall",
+                  "callUpdate": "$nodes.decide.callUpdate",
+                  "followUpRequired": "$nodes.decide.followUpRequired",
+                  "followUpTask": "$nodes.decide.followUpTask"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "calls"
+            },
+            {
+              "source": "calls",
+              "target": "turns"
+            },
+            {
+              "source": "turns",
+              "target": "context"
+            },
+            {
+              "source": "context",
+              "target": "summary"
+            },
+            {
+              "source": "summary",
+              "target": "decide"
+            },
+            {
+              "source": "decide",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "SMS Auto Reply Draft",
+        "slug": "sms-auto-reply-draft",
+        "description": "Async after aokie.sms.received: draft a reply with the local LLM and store it as an outbound Messages row with approval_status pending_approval — a human approves before anything is sent.",
+        "nodeCapabilities": [
+          "model.llm.local",
+          "formlogic.responses.write"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input"
+            },
+            {
+              "id": "draft",
+              "type": "llm_chat",
+              "data": {
+                "system": "You draft short, friendly SMS replies for a small-business receptionist. Reply with the SMS text only — no preamble.",
+                "prompt": "Draft a reply to this SMS from {{inputs.from}}:\n\n{{inputs.body}}",
+                "maxTokens": 120
+              }
+            },
+            {
+              "id": "build",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var text = String(((nodes.draft || {}).content) || '').trim();\n  return {\n    hasDraft: !!text,\n    draftMessage: {\n      phone: String(inputs.from || ''),\n      direction: 'outbound',\n      body: text,\n      status: 'draft',\n      is_ai_reply: ['yes'],\n      approval_status: 'pending_approval'\n    }\n  };\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "hasDraft": "$nodes.build.hasDraft",
+                  "draftMessage": "$nodes.build.draftMessage"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "draft"
+            },
+            {
+              "source": "draft",
+              "target": "build"
+            },
+            {
+              "source": "build",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Missed Call Follow-up",
+        "slug": "missed-call-follow-up",
+        "description": "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task. Pure — no models, no hardware.",
+        "nodeCapabilities": [
+          "formlogic.responses.write"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input"
+            },
+            {
+              "id": "task",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  return {\n    task: {\n      summary: 'Missed call' + (phone ? ' from ' + phone : '') + ' - call back',\n      status: 'open',\n      priority: 'high'\n    }\n  };\n})()"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "task": "$nodes.task.task"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "task"
+            },
+            {
+              "source": "task",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Hardware Error Alert",
+        "slug": "hardware-error-alert",
+        "description": "Background on aokie.hardware.error: surface a toast. The Hardware Events record itself is written by the app logic (single-writer rule) — this flow deliberately writes nothing.",
+        "nodeCapabilities": [],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input"
+            },
+            {
+              "id": "note",
+              "type": "template",
+              "data": {
+                "template": "Aokie hardware issue: {{inputs.message}}"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output"
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "note"
+            },
+            {
+              "source": "note",
+              "target": "out"
+            }
+          ]
+        }
+      }
+    ],
+    "flowBindings": [
+      {
+        "flow": "incoming-caller-lookup",
+        "event": "aokie.call.incoming",
+        "connectorId": "aokie",
+        "mode": "sync",
+        "timeoutMs": 3000,
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "callerPhone": "$event.data.callerPhone",
+          "from": "$event.data.from"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.toast",
+            "message": "Caller greeting: {{result.greeting}}"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue",
+          "fallbackReply": "Thanks for calling! One moment while I pull up your details."
+        },
+        "sortOrder": 1
+      },
+      {
+        "flow": "call-summary-follow-up",
+        "event": "aokie.call.ended",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 60000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? Number(event.data.durationSeconds || 0) > 5 : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.updateResponse",
+            "form": "@pack:calls",
+            "when": "$result.hasCall",
+            "responseId": "$result.responseId",
+            "answers": "$result.callUpdate"
+          },
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:follow-up-tasks",
+            "when": "$result.followUpRequired",
+            "answers": "$result.followUpTask"
+          }
+        ],
+        "retryPolicy": {
+          "maxAttempts": 2,
+          "backoff": "exponential"
+        },
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 2
+      },
+      {
+        "flow": "sms-auto-reply-draft",
+        "event": "aokie.sms.received",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 30000,
+        "inputMap": {
+          "from": "$event.data.from",
+          "body": "$event.data.body"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:sms-messages",
+            "when": "$result.hasDraft",
+            "answers": "$result.draftMessage"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 3
+      },
+      {
+        "flow": "missed-call-follow-up",
+        "event": "aokie.call.ended",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 15000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? (String(event.data.outcome || '') === 'missed' || String(event.data.status || '') === 'missed') : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "callerPhone": "$event.data.callerPhone",
+          "from": "$event.data.from"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.submitResponse",
+            "form": "@pack:follow-up-tasks",
+            "answers": "$result.task"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 4
+      },
+      {
+        "flow": "hardware-error-alert",
+        "event": "aokie.hardware.error",
+        "connectorId": "aokie",
+        "mode": "background",
+        "timeoutMs": 10000,
+        "inputMap": {
+          "message": "$event.data.message",
+          "dongleId": "$event.data.dongleId"
+        },
+        "outputActions": [
+          {
+            "type": "formlogic.toast",
+            "message": "Aokie hardware issue: {{event.data.message}}"
+          }
+        ],
+        "fallbackPolicy": {
+          "onError": "log_and_continue"
+        },
+        "sortOrder": 5
+      }
+    ]
+  }
+}

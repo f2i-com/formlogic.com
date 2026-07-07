@@ -60,8 +60,8 @@ declare const FormLogic: FlAppSdk;
 
 let compilerConfigured = false;
 
-export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height }: CodeEditorProps) {
-  const onMount: OnMount = useCallback((_editor, m) => {
+export default function MonacoEditorImpl({ value, onChange, language = 'typescript', sdk = 'form', height, onMount: onMountProp }: CodeEditorProps) {
+  const onMount: OnMount = useCallback((editor, m) => {
     const ts = m.languages.typescript;
     if (!compilerConfigured) {
       ts.typescriptDefaults.setCompilerOptions({
@@ -76,7 +76,8 @@ export default function MonacoEditorImpl({ value, onChange, language = 'typescri
       compilerConfigured = true;
     }
     ts.typescriptDefaults.addExtraLib(sdk === 'app' ? APP_SDK_DTS : FORM_SDK_DTS, 'ts:formlogic-sdk.d.ts');
-  }, [sdk]);
+    onMountProp?.(editor);
+  }, [sdk, onMountProp]);
 
   const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 

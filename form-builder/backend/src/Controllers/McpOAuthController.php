@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\FlowService;
 use FormLogic\Services\McpOAuthService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -34,6 +36,11 @@ class McpOAuthController
         private AppService $apps,
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
+        // Injected for the first-party desktop device-link flow (token exchange mints a scoped flk_
+        // key tied to a desktop_connections row). Null in the pure-MCP test harness — the desktop
+        // branch only runs for the DESKTOP_CLIENT_ID client, which those tests never use.
+        private ?ApiKeyService $apiKeys = null,
+        private ?FlowService $flows = null,
     ) {}
 
     // ── Discovery (public, cache-friendly) ──
@@ -93,6 +100,12 @@ class McpOAuthController
             'clientUri' => $v['client']['clientUri'] ?? null,
             'redirectHost' => (string) (parse_url($v['redirectUri'], PHP_URL_HOST) ?? ''),
             'scopes' => $v['scopes'],
+            // Human-readable scope labels for the consent screen + a flag the SPA uses to render the
+            // desktop-link copy (and the device name it will link). Additive; the MCP consent UI can
+            // ignore both.
+            'scopeLabels' => McpOAuthService::scopeLabels($v['scopes']),
+            'isDesktopLink' => McpOAuthService::isDesktopClient($v['client']['clientId']),
+            'device' => $v['device'] ?? null,
         ]);
     }
 
@@ -120,7 +133,7 @@ class McpOAuthController
                 return $this->oauthError($response, 'invalid_request', 'App not found or access denied', 400);
             }
         }
-        $code = $this->oauth->mintCode($userId, $v['client']['clientId'], $v['redirectUri'], $v['scopes'], $v['codeChallenge'], $v['resource'], $appId);
+        $code = $this->oauth->mintCode($userId, $v['client']['clientId'], $v['redirectUri'], $v['scopes'], $v['codeChallenge'], $v['resource'], $appId, $v['device'] ?? null);
 
         $query = ['code' => $code];
         $state = $p['state'] ?? null;
@@ -201,6 +214,12 @@ class McpOAuthController
             if (!$r['ok']) {
                 return $this->oauthError($response, $r['error'], $r['error_description'], 400);
             }
+            // FormLogic Desktop device-link: mint a long-lived SCOPED flk_ API key (not an MCP
+            // session) tied to a desktop_connections row, returned ONCE. Keeps the MCP flow below
+            // untouched for every other client.
+            if (McpOAuthService::isDesktopClient($client['clientId'])) {
+                return $this->issueDesktopKey($request, $response, $r);
+            }
             $body = $this->oauth->issueTokenPair($r['userId'], $r['appId'], $r['scopes'], $r['resource'], $client['clientId']);
             $this->audit($request, 'mcp.oauth.token', $r['userId'], ['grant' => 'authorization_code', 'clientId' => $client['clientId'], 'appId' => $r['appId']]);
             return $this->tokenResponse($response, $body);
@@ -228,6 +247,52 @@ class McpOAuthController
         }
 
         return $this->oauthError($response, 'unsupported_grant_type', 'grant_type must be authorization_code or refresh_token', 400);
+    }
+
+    /**
+     * FormLogic Desktop device-link token exchange: mint a long-lived scoped flk_ API key holding
+     * exactly the granted scopes, tie it to a fresh desktop_connections row named for the device,
+     * and return it ONCE. The key is revocable from Settings→API keys and by deleting the
+     * connection (DELETE /api/desktop-connections/{id} revokes it). The desktop client stores
+     * `formlogic_api_key` (== access_token) and uses it as the Bearer against /api/v1.
+     */
+    private function issueDesktopKey(Request $request, Response $response, array $grant): Response
+    {
+        if ($this->apiKeys === null || $this->flows === null) {
+            return $this->oauthError($response, 'server_error', 'Desktop linking is not available', 500);
+        }
+        $userId = (string) $grant['userId'];
+        $device = isset($grant['deviceLabel']) && $grant['deviceLabel'] !== null ? (string) $grant['deviceLabel'] : null;
+        // The granted scopes are already the DESKTOP_SCOPES subset (validated at authorize time), so
+        // every one is a valid ApiKeyService scope. Name the key for the device.
+        $scopes = array_values($grant['scopes']);
+        $keyName = substr($device !== null ? "FormLogic Desktop on {$device}" : 'FormLogic Desktop', 0, 255);
+        try {
+            $key = $this->apiKeys->createKey($userId, $keyName, $scopes);
+            $connection = $this->flows->createOAuthDesktopConnection($userId, $device, $key['id']);
+        } catch (\Throwable $e) {
+            $this->logger?->warning('Desktop OAuth key mint failed', ['reason' => $e->getMessage()]);
+            return $this->oauthError($response, 'server_error', 'Could not complete desktop linking', 500);
+        }
+
+        $this->audit($request, 'desktop.oauth.link', $userId, [
+            'clientId' => McpOAuthService::DESKTOP_CLIENT_ID,
+            'connectionId' => $connection['id'],
+            'apiKeyId' => $key['id'],
+            'scopes' => $scopes,
+        ]);
+
+        return $this->tokenResponse($response, [
+            // access_token == formlogic_api_key so a generic OAuth client still finds a bearer, while
+            // the documented field is formlogic_api_key. Long-lived + revocable: no expires_in / refresh.
+            'access_token' => $key['key'],
+            'token_type' => 'Bearer',
+            'scope' => implode(' ', $scopes),
+            'formlogic_api_key' => $key['key'],
+            'api_key_id' => $key['id'],
+            'desktop_connection_id' => $connection['id'],
+            'device_name' => $connection['deviceName'],
+        ]);
     }
 
     // ── Helpers ──

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/flow-run-result.schema.json",
+  "title": "Flow run result",
+  "description": "Status/result envelope for a flow run: response of GET /api/flows/runs/{id} on FormLogic Desktop and the terminal payload FormLogic stores in flow_run_logs.result_json/error_json. Canonical copy: formlogic-app/docs/contracts/.",
+  "type": "object",
+  "required": ["runId", "status"],
+  "properties": {
+    "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "status": { "enum": ["queued", "running", "done", "error", "timeout", "cancelled"] },
+    "result": {
+      "description": "Flow output object (present when status = done)."
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": ["node_failed", "timeout", "cancelled", "capability_denied", "invalid_flow", "runner_unavailable"]
+        },
+        "message": { "type": "string", "maxLength": 1000 },
+        "nodeId": { "type": "string", "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "correlationId": { "type": "string", "maxLength": 150 },
+    "idempotencyKey": { "type": "string", "maxLength": 255 }
+  },
+  "additionalProperties": false
+}

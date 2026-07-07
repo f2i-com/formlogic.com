@@ -13,6 +13,8 @@ namespace FormLogic\Services;
  * - ctx.db: Database operations { setField, getField, setStatus, addTag }
  * - ctx.utils: Utility functions { uuid, now, nowMs, hash, formatDate }
  * - ctx.http: HTTP requests { get, post, put, patch, delete, request }
+ * - ctx.flows: FormLogic Flows { run(slug, input?) — records a queued-run intent (max 3),
+ *   enqueued by ResponseService AFTER the response persists; never executed in-sandbox }
  *
  * Scripts can return:
  * - { reject: true, message: 'reason' } to reject the submission
@@ -120,6 +122,7 @@ class FormLogicRuntime
             status: $capture->getStatus(),
             instructionCount: 0,
             executionTimeMs: $executionTimeMs,
+            flowRuns: $capture->getFlowRuns(),
         );
     }
 
@@ -138,8 +141,28 @@ class FormLogicRuntime
                 return $this->handleUtils($method, $args);
             case 'http':
                 return $this->handleHttp($method, $args);
+            case 'flows':
+                return $this->handleFlows($method, $args, $capture);
         }
         return null;
+    }
+
+    /**
+     * ctx.flows.run(slug, input?, opts?): capture-only — the intent is validated/capped in
+     * DbContextCapture and enqueued server-side after the response persists. opts is accepted
+     * for forward compatibility but currently ignored.
+     *
+     * @param array<int, mixed> $args
+     */
+    private function handleFlows(string $method, array $args, DbContextCapture $capture): mixed
+    {
+        if ($method !== 'run') {
+            return ['queued' => false, 'error' => 'unknown flows method'];
+        }
+        if (count($args) < 1 || !is_string($args[0])) {
+            return ['queued' => false, 'error' => 'flow slug must be a string'];
+        }
+        return $capture->addFlowRun($args[0], $args[1] ?? null);
     }
 
     /**

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
 import { AppRuntimeThemeProvider } from './AppRuntimeThemeProvider';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { AppRuntimeShell } from './AppRuntimeShell';
@@ -25,6 +26,15 @@ export function AppRuntimeRoot() {
       reset();
     };
   }, [appSlug, initialize, reset]);
+
+  // FormLogic Flows (docs/FORMLOGIC_FLOWS.md §5): start the event dispatcher once the
+  // runtime config is loaded (member session established). Inert for apps without flows;
+  // stops on unload / app switch. Keyed on the app id so config saves don't restart it.
+  const appId = config?.app?.id;
+  useEffect(() => {
+    if (!appSlug || !appId) return;
+    return startFlowDispatcher(appSlug, { id: appId });
+  }, [appSlug, appId]);
 
   // Point the browser at THIS app's dynamic manifest + theme-color so an
   // installed PWA uses the owner-configured install name/theme instead of the

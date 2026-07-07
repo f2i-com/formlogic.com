@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/connector-command.schema.json",
+  "title": "Remote connector command (relay)",
+  "description": "The remote command relay (docs/API.md §connector:relay). A web member ENQUEUES a command for the app owner's paired FormLogic Desktop runtime, which CLAIMS it (pending→claimed exactly-once) and COMPLETES it (claimed→done|failed). Canonical copy: formlogic-app/docs/contracts/.",
+  "type": "object",
+  "$defs": {
+    "enqueueRequest": {
+      "title": "Enqueue request",
+      "description": "Body of POST /api/app/{slug}/connector-commands (session; app member AND connector.<connectorId>.<command> grant). Reserve-first on idempotencyKey.",
+      "type": "object",
+      "required": ["connectorId", "command"],
+      "properties": {
+        "connectorId": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Target connector id (e.g. \"aokie\")." },
+        "command": { "type": "string", "minLength": 1, "maxLength": 96, "description": "Connector command (e.g. \"call.hangup\")." },
+        "payload": { "type": "object", "description": "Command payload (≤ 16 KiB encoded). Shape is connector/command specific." },
+        "idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Optional dedupe key; a duplicate returns the existing command. Absent → a fresh random key (no dedupe)." }
+      },
+      "additionalProperties": false
+    },
+    "claimRequest": {
+      "title": "Claim request",
+      "description": "Body of POST /api/v1/connector-commands/{id}/claim (scope connector:relay). Atomic pending→claimed; 409 if already claimed or expired.",
+      "type": "object",
+      "properties": {
+        "instanceId": { "type": "string", "maxLength": 120, "description": "Optional claimer instance id (the desktop install id), stored as claimedBy." }
+      },
+      "additionalProperties": false
+    },
+    "completeRequest": {
+      "title": "Complete request",
+      "description": "Body of POST /api/v1/connector-commands/{id}/complete (scope connector:relay). claimed→done|failed; 409 if not in the claimed state.",
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["done", "failed"] },
+        "result": { "type": "object", "description": "The connector's response (≤ 64 KiB encoded). Present on done." },
+        "error": { "type": "object", "description": "Failure detail (≤ 64 KiB encoded). Present on failed." }
+      },
+      "additionalProperties": false
+    },
+    "command": {
+      "title": "Command record",
+      "description": "A desktop_commands row (DesktopCommandService::format) as returned by the enqueue/get/claim/complete endpoints.",
+      "type": "object",
+      "required": ["commandId", "connectorId", "command", "status"],
+      "properties": {
+        "commandId": { "type": "string" },
+        "appId": { "type": ["string", "null"] },
+        "connectorId": { "type": "string" },
+        "command": { "type": "string" },
+        "payload": { "type": ["object", "null"] },
+        "idempotencyKey": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "claimed", "done", "failed", "expired"] },
+        "result": { "type": ["object", "null"] },
+        "error": { "type": ["object", "null"] },
+        "requestedByUserId": { "type": "string" },
+        "claimedBy": { "type": ["string", "null"] },
+        "createdAt": { "type": "string" },
+        "claimedAt": { "type": ["string", "null"] },
+        "finishedAt": { "type": ["string", "null"] },
+        "expiresAt": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

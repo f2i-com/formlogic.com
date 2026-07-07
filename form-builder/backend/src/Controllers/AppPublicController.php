@@ -1184,6 +1184,15 @@ class AppPublicController
         if (isset($data['answers'])) {
             $form = $this->formService->getForm($formId);
             if ($form) {
+                // PATCH semantics: callers (record editors, app-logic effects, flow output
+                // actions) may send only the fields they change. Merge over the STORED
+                // answers before validating, so a partial update like {status, ended_at}
+                // isn't rejected for omitting an unrelated required field. Required fields
+                // can still only be cleared by an explicit empty value, never by omission.
+                if (is_array($data['answers'])) {
+                    $existingAnswers = is_array($existingResp['answers'] ?? null) ? $existingResp['answers'] : [];
+                    $data['answers'] = array_merge($existingAnswers, $data['answers']);
+                }
                 // Drop non-input/unknown field answers before validating/persisting
                 $data['answers'] = $this->sanitizeAnswers($form['fields'] ?? [], $data['answers']);
                 $data['answers'] = $this->responseService->normalizeAnswers($form['fields'] ?? [], $data['answers'], $formId);

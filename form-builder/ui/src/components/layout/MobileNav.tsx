@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileText, Plus, Boxes, Settings } from 'lucide-react';
+import { LayoutDashboard, FileText, Plus, Boxes, Workflow } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { useAuthStore } from '../../stores/authStore';
@@ -17,7 +17,8 @@ export function MobileNav() {
     { action: openNewForm, icon: Plus, label: 'Create', isAction: true },
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
-    { path: '/settings', icon: Settings, label: 'Settings' },
+    // Settings moved into the profile menu (Header); Flows is now a first-class section.
+    { path: '/flows', icon: Workflow, label: 'Flows' },
   ];
 
   return (

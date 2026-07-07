@@ -1,5 +1,8 @@
 // ── Type definitions ────────────────────────────────────────────────────────
 
+import type { PackFlowBinding, PackFlowDefinition } from '../../types/flows';
+import type { CustomAppLogicBundle } from '../../types/customAppLogic';
+
 export interface PackFormField {
   id: string;
   type: string;
@@ -27,15 +30,23 @@ export interface PackForm {
   theme: Record<string, unknown>;
   logicScript?: string;
   /** Per-form section screen (renders on the form's view in-app and on its public link).
-   *  allowNewResponses keeps the real form reachable via the runtime's "New record" button. */
-  customScreen?: { enabled?: boolean; allowNewResponses?: boolean; kind?: 'dashboard'; dashboard?: PackDashboardScreen };
+   *  allowNewResponses keeps the real form reachable via the runtime's "New record" button.
+   *  kind 'sdk' renders a trusted first-party React screen from the sdkScreenRegistry. */
+  customScreen?: {
+    enabled?: boolean;
+    allowNewResponses?: boolean;
+    kind?: 'dashboard' | 'sdk';
+    dashboard?: PackDashboardScreen;
+    sdkScreen?: { screenId: string; title?: string; params?: Record<string, unknown> };
+  };
   fields: PackFormField[];
 }
 
 export interface PackAppRole {
   name: string;
   description: string;
-  permissions: Array<{ packFormId: string; permission: string }>;
+  /** packFormId null = an app-level permission string (declarative capability intent). */
+  permissions: Array<{ packFormId: string | null; permission: string }>;
 }
 
 export interface PackAppForm {
@@ -122,6 +133,8 @@ export interface PackApp {
   roles: PackAppRole[];
   /** Optional pre-configured chart reports + PDF documents shown in the app's Reports section. */
   reports?: PackReportItem[];
+  /** Optional sandboxed QuickJS app-logic bundle (spec §31; imported to apps.custom_logic). */
+  customLogic?: CustomAppLogicBundle;
 }
 
 export interface PackData {
@@ -136,6 +149,10 @@ export interface PackData {
   };
   forms: PackForm[];
   apps: PackApp[];
+  /** FormLogic Flows shipped with the pack (docs/FORMLOGIC_FLOWS.md §6). */
+  flows?: PackFlowDefinition[];
+  /** Event bindings for the pack's flows ('@pack:<formId>' refs remapped on import). */
+  flowBindings?: PackFlowBinding[];
 }
 
 // ── Shared defaults ─────────────────────────────────────────────────────────

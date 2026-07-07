@@ -19,6 +19,7 @@ import { ConnectorError, FALLBACKABLE_CODES, parseConnectorError } from './conne
 import { mockVehicleConnector } from './vehicleConnector';
 import { createLocalHttpConnector } from './localHttpConnector';
 import { deviceConnector } from './deviceConnector';
+import { aokieConnector } from './aokieConnector';
 
 export interface ConnectorClient {
   isNativeAvailable(): boolean;
@@ -42,6 +43,8 @@ const BROWSER_CONNECTORS: Record<string, BrowserConnector> = {
   [deviceConnector.id]: deviceConnector,
   [mockVehicleConnector.id]: mockVehicleConnector,
   [localHttpConnector.id]: localHttpConnector,
+  // Aokie routes desktop-first internally (FormLogic Desktop gateway → mock fallback).
+  [aokieConnector.id]: aokieConnector,
 };
 
 function nativeBridge() {
@@ -354,4 +357,9 @@ export function getConnectorClient(): ConnectorClient {
 /** Register an extra browser connector (used by tests / future connectors). */
 export function registerBrowserConnector(connector: BrowserConnector): void {
   BROWSER_CONNECTORS[connector.id] = connector;
+}
+
+/** Is `id` a registered browser connector? (Desktop event → app-logic gating uses this.) */
+export function isBrowserConnectorRegistered(id: string): boolean {
+  return !!BROWSER_CONNECTORS[id];
 }

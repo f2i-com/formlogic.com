@@ -8,6 +8,8 @@ export interface CodeEditorProps {
   /** Which FormLogic SDK type defs to surface for autocomplete (only meaningful for the code tab). */
   sdk?: 'form' | 'app';
   height?: string | number;
+  /** Called once with the mounted editor instance (e.g. to insert selectors at the cursor). */
+  onMount?: (editor: import('monaco-editor').editor.IStandaloneCodeEditor) => void;
 }
 
 // Monaco is heavy — load it (and its workers) as a separate chunk, only when an editor is shown.

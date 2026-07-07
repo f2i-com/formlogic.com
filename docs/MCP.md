@@ -108,6 +108,49 @@ under [Scopes](#scopes).
 
 ---
 
+## FormLogic Desktop device-link (first-party native client)
+
+FormLogic Desktop links an account through the **same OAuth 2.1 authorization server**, but as a
+first-party PUBLIC native client — no manual API-key paste. This reuses the authorize + consent +
+PKCE machinery above; only the client and the token-exchange output differ.
+
+- **Static client**: `client_id = formlogic-desktop`, PUBLIC (`token_endpoint_auth_method = none`),
+  seeded automatically (`MySQLConnection::seedFirstPartyOAuthClients`). **PKCE S256 is required** —
+  the public client's only proof-of-possession.
+- **Loopback redirects (RFC 8252 §7.3)**: the registered redirect URIs are `http://127.0.0.1/callback`
+  and `http://localhost/callback`, matched **port-agnostically** — the desktop binds any ephemeral
+  local port for the one-shot callback listener. Non-loopback redirects are rejected for this client.
+- **Distinct scope vocabulary**: this client requests **ApiKeyService** scopes, not MCP session
+  scopes — `flows:read flows:write responses:write connector:relay`
+  (`McpOAuthService::DESKTOP_SCOPES`). The consent page renders human-readable labels
+  (`authorize-info` returns `scopeLabels` + `isDesktopLink` + the `?device=` label).
+- **Token exchange mints a real scoped API key** (not an `flm_` MCP session): the `authorization_code`
+  grant returns a long-lived `flk_…` key holding exactly the granted scopes, named
+  *"FormLogic Desktop on `<device>`"* (the sanitized `?device=` label captured at authorize time),
+  tied to a `desktop_connections` row. The token body is:
+
+  ```json
+  {
+    "access_token": "flk_…",          // == formlogic_api_key (so generic OAuth libs find a bearer)
+    "token_type": "Bearer",
+    "scope": "flows:read flows:write responses:write connector:relay",
+    "formlogic_api_key": "flk_…",     // the documented field the desktop stores
+    "api_key_id": "…",
+    "desktop_connection_id": "…",
+    "device_name": "FormLogic Desktop on Reception PC"
+  }
+  ```
+
+  There is **no `expires_in` / `refresh_token`** — the key is long-lived and revocable, not a rotating
+  session. The desktop uses `formlogic_api_key` as the `Bearer` against `/api/v1`.
+- **Revocation / re-link**: revoke from **Settings → API keys**, or delete the connection
+  (`DELETE /api/desktop-connections/{id}` revokes the tied key as a cascade). Re-linking mints a fresh
+  key + connection; revoke the old one to supersede it.
+
+The MCP flow above is unchanged — the desktop branch only runs for `client_id = formlogic-desktop`.
+
+---
+
 ## Manual tokens (advanced / other clients)
 
 For MCP clients without OAuth support, generate a bearer token by hand. There are three places to start —

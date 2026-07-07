@@ -27,10 +27,44 @@ let fail = 0;
 let apps = 0;
 let forms = 0;
 
+// Trusted SDK screen ids — collected from every registerSdkScreen('<id>', …) call in the
+// custom-screen sources, so a pack can never reference a screen the bundle doesn't register.
+const sdkScreenIds = (() => {
+  const ids = new Set();
+  const dir = path.resolve('src/components/custom-screen');
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(e.name)) {
+        const src = fs.readFileSync(p, 'utf8');
+        for (const m of src.matchAll(/registerSdkScreen\(\s*['"]([^'"]+)['"]/g)) ids.add(m[1]);
+      }
+    }
+  };
+  walk(dir);
+  return ids;
+})();
+
 function checkScreen(label, cs, { isForm }) {
   if (!cs || cs.enabled !== true) {
     console.error(`[${label}] missing/disabled customScreen`);
     fail = 1;
+    return;
+  }
+  // Host-rendered SDK screens are trusted first-party React components — validate the
+  // registry reference (and the New-record affordance policy for form sections).
+  if (cs.kind === 'sdk') {
+    const id = cs.sdkScreen && cs.sdkScreen.screenId;
+    if (!id || typeof id !== 'string') {
+      console.error(`[${label}] sdk screen missing sdkScreen.screenId`); fail = 1; return;
+    }
+    if (!sdkScreenIds.has(id)) {
+      console.error(`[${label}] sdk screen '${id}' is not registered in sdkScreenRegistry`); fail = 1;
+    }
+    if (isForm && cs.allowNewResponses !== true) {
+      console.error(`[${label}] allowNewResponses must be true on section screens`); fail = 1;
+    }
     return;
   }
   // Host-rendered widget dashboards are declarative config (no user JS/CSS) — validate the widget

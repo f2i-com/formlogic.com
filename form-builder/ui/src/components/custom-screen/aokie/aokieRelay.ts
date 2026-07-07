@@ -1,0 +1,250 @@
+// Aokie Receptionist — remote call-control relay (docs/API.md §connector:relay, FORMLOGIC_FLOWS.md §14).
+//
+// When the receptionist runs headless in FormLogic Desktop on ANOTHER machine, the web Live Call
+// screen can't reach the local connector client. Instead it drives the call over the RELAY: enqueue
+// a connector command (POST /app/{slug}/connector-commands) that the owner's desktop runtime long-polls,
+// claims and completes, then poll the command back to a terminal status. This module is the pure,
+// unit-tested state machine + gating + copy behind those controls — the React screen only wires state.
+//
+// The relay path is permission-identical to the local path: a control is offered only when the app
+// holds the SAME connector.aokie.<command> grant AND the viewer's role can write Calls records.
+import type { ConnectorCommand, ConnectorCommandStatus } from '../../../types/flows';
+
+/** Poll cadence while a relayed command is in flight. */
+export const RELAY_POLL_MS = 1200;
+/** Client-side give-up window. Server-side commands expire ~60s after creation, so a little past that
+ *  we surface "no desktop online" rather than spin forever. */
+export const RELAY_TIMEOUT_MS = 65_000;
+
+/** The terminal states a relayed command can settle into (mirrors ConnectorCommandStatus). */
+export type RelayTerminalStatus = 'done' | 'failed' | 'expired';
+
+export function isTerminalStatus(status: ConnectorCommandStatus): status is RelayTerminalStatus {
+  return status === 'done' || status === 'failed' || status === 'expired';
+}
+
+export interface RelayOutcome {
+  status: RelayTerminalStatus;
+  result?: Record<string, unknown> | null;
+  error?: Record<string, unknown> | null;
+  commandId?: string;
+}
+
+/** Structural shape of the two lib/api relay methods (the real `api` satisfies this). */
+interface RelayApiResponse<T> {
+  data?: T;
+  error?: string;
+}
+export interface RelayApi {
+  enqueueConnectorCommand(
+    slug: string,
+    payload: { connectorId: string; command: string; payload?: Record<string, unknown>; idempotencyKey?: string }
+  ): Promise<RelayApiResponse<{ commandId: string; status: ConnectorCommandStatus; idempotent?: boolean }>>;
+  getConnectorCommand(
+    slug: string,
+    commandId: string
+  ): Promise<RelayApiResponse<{ command: ConnectorCommand }>>;
+}
+
+export interface RunRelayOptions {
+  pollMs?: number;
+  timeoutMs?: number;
+  /** Injectable delay (tests pass an immediate resolver). */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injectable clock (tests advance it to exercise the timeout branch). */
+  now?: () => number;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Enqueue one connector command and poll it to a terminal status. Throws only on the enqueue call
+ * itself failing (surfaced as a toast by the caller); a command that the desktop rejects or that
+ * expires resolves normally with status 'failed' / 'expired'. If the client give-up window elapses
+ * before the server marks it terminal we resolve 'expired' — for the operator that reads identically
+ * ("no desktop online").
+ */
+export async function runRelayCommand(
+  api: RelayApi,
+  slug: string,
+  command: string,
+  payload?: Record<string, unknown>,
+  options: RunRelayOptions = {}
+): Promise<RelayOutcome> {
+  const pollMs = options.pollMs ?? RELAY_POLL_MS;
+  const timeoutMs = options.timeoutMs ?? RELAY_TIMEOUT_MS;
+  const sleep = options.sleep ?? defaultSleep;
+  const now = options.now ?? (() => Date.now());
+
+  const enq = await api.enqueueConnectorCommand(slug, { connectorId: 'aokie', command, payload });
+  if (enq.error || !enq.data) {
+    throw new Error(enq.error || 'Failed to reach the desktop runtime');
+  }
+  const { commandId } = enq.data;
+  if (isTerminalStatus(enq.data.status)) {
+    return { status: enq.data.status, commandId };
+  }
+
+  const startedAt = now();
+  for (;;) {
+    await sleep(pollMs);
+    const res = await api.getConnectorCommand(slug, commandId);
+    const cmd = res.data?.command;
+    if (cmd && isTerminalStatus(cmd.status)) {
+      return { status: cmd.status, result: cmd.result, error: cmd.error, commandId };
+    }
+    if (now() - startedAt >= timeoutMs) {
+      return { status: 'expired', commandId };
+    }
+  }
+}
+
+// ── Optimistic overlay ──────────────────────────────────────────────────────────────────
+
+export interface CallOverlay {
+  callId: string;
+  state: 'ringing' | 'active' | 'ended';
+}
+
+/**
+ * The optimistic call-state to show the instant an operator taps a control, before the relay
+ * round-trips. Answer → live, reject/hangup → ended, operatorSpeak → no state change (null).
+ */
+export function optimisticOverlayFor(command: string, callId: string): CallOverlay | null {
+  switch (command) {
+    case 'call.answer':
+      return { callId, state: 'active' };
+    case 'call.reject':
+    case 'call.hangup':
+      return { callId, state: 'ended' };
+    default:
+      return null;
+  }
+}
+
+export interface PerformRelayCallbacks {
+  /** Apply (overlay) or clear (null) the optimistic call-state override. */
+  onOptimistic?: (overlay: CallOverlay | null) => void;
+  /** Called once on a successful command so the caller can re-fetch authoritative records. */
+  onReload?: () => void;
+  /** Injectable runner (tests substitute a deterministic outcome). */
+  runner?: typeof runRelayCommand;
+  runOptions?: RunRelayOptions;
+}
+
+/**
+ * Full optimistic relay flow: paint the optimistic state, enqueue+poll, then on success reload the
+ * authoritative records (and drop the overlay), or on failure/expiry REVERT the overlay. Returns the
+ * terminal outcome so the caller can toast it. Enqueue errors reject after reverting the overlay.
+ */
+export async function performRelayCommand(
+  api: RelayApi,
+  slug: string,
+  command: string,
+  callId: string | undefined,
+  payload: Record<string, unknown> | undefined,
+  callbacks: PerformRelayCallbacks = {}
+): Promise<RelayOutcome> {
+  const runner = callbacks.runner ?? runRelayCommand;
+  const overlay = callId ? optimisticOverlayFor(command, callId) : null;
+  if (overlay) callbacks.onOptimistic?.(overlay);
+  try {
+    const outcome = await runner(api, slug, command, payload, callbacks.runOptions);
+    if (outcome.status === 'done') {
+      callbacks.onOptimistic?.(null);
+      callbacks.onReload?.();
+    } else {
+      // failed / expired → revert the optimistic paint.
+      callbacks.onOptimistic?.(null);
+    }
+    return outcome;
+  } catch (err) {
+    callbacks.onOptimistic?.(null);
+    throw err;
+  }
+}
+
+// ── Local / relay routing ────────────────────────────────────────────────────────────────
+
+export interface LocalConnector {
+  request: (command: string, payload?: unknown) => Promise<unknown>;
+}
+
+export type DispatchResult = { mode: 'local' } | { mode: 'relay'; outcome: RelayOutcome };
+
+/**
+ * Route one call control to the right transport. In LOCAL-bridge mode the command goes straight to
+ * the connector client (the pre-existing, unchanged behaviour — the relay is never touched). In
+ * REMOTE-runtime mode it goes through performRelayCommand (enqueue → poll → optimistic overlay).
+ * Keeping the fork in one tested function guarantees local never accidentally hits the relay.
+ */
+export async function dispatchCallCommand(
+  deps: { remote: boolean; connector: LocalConnector; relay?: { api: RelayApi; slug: string } },
+  command: string,
+  callId: string | undefined,
+  payload?: Record<string, unknown>,
+  callbacks?: PerformRelayCallbacks
+): Promise<DispatchResult> {
+  if (deps.remote) {
+    if (!deps.relay) throw new Error('Remote dispatch requires a relay target');
+    const outcome = await performRelayCommand(deps.relay.api, deps.relay.slug, command, callId, payload, callbacks);
+    return { mode: 'relay', outcome };
+  }
+  await deps.connector.request(command, payload);
+  return { mode: 'local' };
+}
+
+// ── Gating ───────────────────────────────────────────────────────────────────────────────
+
+export interface CommandGate {
+  /** Connector grant probe: `connector.aokie.<command>` (the SAME check the local path uses). */
+  can: (command: string) => boolean;
+  /** Role gate: the viewer can write Calls records (operate the phone), not just view. */
+  roleAllowsOperating: boolean;
+}
+
+/** A control is actionable only with BOTH the connector grant and the operating role. */
+export function canRunCommand(command: string, gate: CommandGate): boolean {
+  return gate.roleAllowsOperating && gate.can(command);
+}
+
+// ── Outcome copy ───────────────────────────────────────────────────────────────────────────
+
+const COMMAND_SUCCESS_LABEL: Record<string, string> = {
+  'call.answer': 'Call answered',
+  'call.reject': 'Call rejected',
+  'call.hangup': 'Call ended',
+  'call.operatorSpeak': 'Sent to the caller',
+};
+
+export interface OutcomeToast {
+  kind: 'success' | 'error';
+  title: string;
+  message?: string;
+}
+
+/**
+ * Map a terminal relay outcome to the toast the operator sees. 'expired' is the load-bearing case:
+ * it means no FormLogic Desktop claimed the command, so we say so plainly rather than "timed out".
+ */
+export function describeRelayOutcome(command: string, outcome: RelayOutcome, deviceName?: string): OutcomeToast {
+  if (outcome.status === 'done') {
+    return { kind: 'success', title: COMMAND_SUCCESS_LABEL[command] ?? 'Command sent' };
+  }
+  if (outcome.status === 'expired') {
+    return {
+      kind: 'error',
+      title: 'No FormLogic Desktop is currently online',
+      message: deviceName
+        ? `${deviceName} did not pick up the command in time. Check the receptionist is still running there.`
+        : 'No desktop runtime picked up the command. Check the receptionist is still running.',
+    };
+  }
+  // failed
+  const errMessage = typeof outcome.error?.message === 'string' ? (outcome.error.message as string) : undefined;
+  return {
+    kind: 'error',
+    title: 'Command failed on the desktop',
+    message: errMessage ?? 'The receptionist could not complete that action.',
+  };
+}

@@ -30,7 +30,24 @@ export interface AppLogicEffectHandlers {
     answers: Record<string, unknown>,
     options?: Record<string, unknown>
   ): Promise<unknown>;
+  /**
+   * Update an existing response, located by explicit id OR a {field, value} match over
+   * recent answers (the trusted host performs the lookup — the sandbox never reads live
+   * data). `upsert` creates the row when no match exists.
+   */
+  updateResponse?(
+    formKey: string,
+    target: { responseId?: string; match?: { field: string; value: unknown } },
+    answers: Record<string, unknown>,
+    options?: { upsert?: boolean }
+  ): Promise<unknown>;
   listResponses?(formKey: string, query?: Record<string, unknown>): Promise<unknown>;
+  /** Run a FormLogic Flow by slug (docs/FORMLOGIC_FLOWS.md §5). Resolves with the flow
+   *  result for sync runs; async runs resolve as soon as the run is queued. */
+  flowRun?(
+    flow: string,
+    options?: { mode?: 'sync' | 'async'; timeoutMs?: number; input?: Record<string, unknown> }
+  ): Promise<unknown>;
   storageGet?(key: string): unknown;
   storageSet?(key: string, value: unknown): void;
   storageRemove?(key: string): void;

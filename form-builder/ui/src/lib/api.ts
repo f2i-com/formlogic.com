@@ -4,6 +4,22 @@
 
 import type { Form } from '../types/form';
 import type { App, AppForm, AppFormUsageApp, AppListItem, AppSettings, FormAppContext } from '../types/app';
+import type {
+  ClaimResult,
+  ConnectorCommand,
+  ConnectorCommandStatus,
+  FlowBinding,
+  FlowDefinition,
+  FlowKvEntry,
+  FlowRunError,
+  FlowRunLog,
+  FlowRunStatus,
+  FlowRuntimeKind,
+  PackFlowBinding,
+  PackFlowDefinition,
+  RuntimeFlows,
+  WorkflowGraph,
+} from '../types/flows';
 import { logger } from './logger';
 import { addDemoRecord, getDemoRecords, getDemoRecord, updateDemoRecord, deleteDemoRecord, isDemoLocalId, clearDemoRecords } from './demoLocal';
 
@@ -963,6 +979,20 @@ class ApiClient {
     return this.request(`/apps/${appId}/domains/${domainId}`, { method: 'DELETE' });
   }
 
+  /**
+   * Record a successful FormLogic Desktop pairing in the server-side registry
+   * (desktop_connections, owned by the Flows backend). Best-effort: callers must degrade
+   * gracefully when the endpoint isn't deployed yet (404 flattens to { error }).
+   */
+  async registerDesktopConnection(data: {
+    deviceName?: string;
+    desktopInstanceId?: string;
+    capabilities?: Record<string, unknown>;
+    trustedOrigins?: string[];
+  }): Promise<ApiResponse<{ connection?: Record<string, unknown> }>> {
+    return this.request('/desktop-connections', { method: 'POST', body: JSON.stringify(data) });
+  }
+
   /** Export the app as a signed .formlogic package (payload + Ed25519 signature + capabilities). */
   async exportAppSignedPackage(appId: string): Promise<ApiResponse<Record<string, unknown>>> {
     return this.request(`/apps/${appId}/export/signed`);
@@ -1449,6 +1479,308 @@ class ApiClient {
   }
   async runPublicFormReportBatch(formId: string, specs: Record<string, unknown>[]): Promise<ApiResponse<{ results: Array<import('../types/app').AppReportResult & { error?: boolean }> }>> {
     return this.request(`/public/forms/${encodeURIComponent(formId)}/reports/run-batch`, { method: 'POST', body: JSON.stringify({ specs }) });
+  }
+
+  // ── FormLogic Flows (docs/FORMLOGIC_FLOWS.md §3) ──────────────────────────────────────────
+  // Owner CRUD under /apps/{id}; runtime (browser runner) under /app/{slug}.
+
+  async listFlows(appId: string): Promise<ApiResponse<{ flows: FlowDefinition[] }>> {
+    return this.request(`/apps/${appId}/flows`);
+  }
+
+  async createFlow(
+    appId: string,
+    data: { name: string; slug?: string; description?: string; flowJson?: WorkflowGraph; enabled?: boolean; nodeCapabilities?: string[] }
+  ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    return this.request(`/apps/${appId}/flows`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateFlow(
+    appId: string,
+    flowId: string,
+    data: Partial<{ name: string; slug: string; description: string | null; flowJson: WorkflowGraph; enabled: boolean; nodeCapabilities: string[] | null }>
+  ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteFlow(appId: string, flowId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/flows/${flowId}`, { method: 'DELETE' });
+  }
+
+  /** Records a 'running' run log with trigger_event 'test'; the builder executes locally and PATCHes the result in. */
+  async testRunFlow(appId: string, flowId: string): Promise<ApiResponse<{ run: FlowRunLog }>> {
+    return this.request(`/apps/${appId}/flows/${flowId}/test-run`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  async listFlowBindings(appId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    return this.request(`/apps/${appId}/flow-bindings`);
+  }
+
+  async createFlowBinding(appId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    return this.request(`/apps/${appId}/flow-bindings`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateFlowBinding(appId: string, bindingId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteFlowBinding(appId: string, bindingId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${appId}/flow-bindings/${bindingId}`, { method: 'DELETE' });
+  }
+
+  /** Paginated run history, newest first (owner-scoped; filter by flowId / bindingId / status). */
+  async listFlowRuns(
+    appId: string,
+    options?: { flowId?: string; bindingId?: string; status?: string; page?: number; limit?: number }
+  ): Promise<ApiResponse<{ runs: FlowRunLog[]; page: number; limit: number; total: number }>> {
+    const params = new URLSearchParams();
+    if (options?.flowId) params.set('flowId', options.flowId);
+    if (options?.bindingId) params.set('bindingId', options.bindingId);
+    if (options?.status) params.set('status', options.status);
+    if (options?.page) params.set('page', String(options.page));
+    if (options?.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.request(`/apps/${appId}/flow-runs${query ? `?${query}` : ''}`);
+  }
+
+  /** Enabled flow definitions + bindings for the app runtime's browser runner (member-gated). */
+  async getAppFlows(slug: string): Promise<ApiResponse<RuntimeFlows>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flows`);
+  }
+
+  /**
+   * Reserve a run BEFORE executing it — the UNIQUE idempotency key is the cross-tab dedupe gate:
+   * 201 {runId} when this caller won the reservation, 200 {runId, idempotent:true} on a replay.
+   */
+  async reserveFlowRun(
+    slug: string,
+    payload: {
+      flowSlug: string;
+      bindingId?: string;
+      triggerEvent: string;
+      correlationId: string;
+      idempotencyKey: string;
+      inputSnapshot?: Record<string, unknown>;
+      formId?: string;
+      responseId?: string;
+      /** true = reserve as 'queued' (no execution yet); a runtime claims it later. */
+      queued?: boolean;
+    }
+  ): Promise<ApiResponse<{ runId: string; idempotent?: boolean; run: FlowRunLog }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Complete a run: transition running/queued → a terminal status per flow-run-result.schema.json. */
+  async completeFlowRun(
+    slug: string,
+    runId: string,
+    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+  ): Promise<ApiResponse<{ run: FlowRunLog }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/${encodeURIComponent(runId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Claimable 'queued' runs for this app (member-gated), oldest first. */
+  async listQueuedAppFlowRuns(slug: string, limit?: number): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);
+  }
+
+  /**
+   * Claim a queued run for this app (queued→running exactly once): 200 {run, claimed:true},
+   * 409 when another runtime — a browser tab or FormLogic Desktop — got there first.
+   */
+  async claimAppFlowRun(
+    slug: string,
+    runId: string,
+    payload: { runtime: FlowRuntimeKind; instanceId?: string }
+  ): Promise<ApiResponse<ClaimResult>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-runs/${encodeURIComponent(runId)}/claim`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ── Remote command relay (docs/API.md §connector:relay) ──────────────────────────────────
+  // A web member enqueues a connector command for the owner's paired FormLogic Desktop runtime
+  // (member + connector.<connectorId>.<command> grant gated) and reads the outcome back. The
+  // desktop agent (Rust, not this client) claims/completes over /api/v1/connector-commands.
+
+  /**
+   * Enqueue a connector command for the app owner's desktop runtime. 201 {commandId, status} on a
+   * fresh command; 200 {commandId, status, idempotent:true} when idempotencyKey replays an existing
+   * one. 403 when the caller lacks the connector.<connectorId>.<command> grant.
+   */
+  async enqueueConnectorCommand(
+    slug: string,
+    payload: { connectorId: string; command: string; payload?: Record<string, unknown>; idempotencyKey?: string }
+  ): Promise<ApiResponse<{ commandId: string; status: ConnectorCommandStatus; idempotent?: boolean }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/connector-commands`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Read a connector command's current status/result/error (member-gated). */
+  async getConnectorCommand(slug: string, commandId: string): Promise<ApiResponse<{ command: ConnectorCommand }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/connector-commands/${encodeURIComponent(commandId)}`);
+  }
+
+  // ── FormLogic Flows — workspace scope (docs/FORMLOGIC_FLOWS.md §8) ────────────────────────
+  // App-independent flows owned by the signed-in user (/api/flows, /api/flow-runs); slug is
+  // unique per owner across the workspace scope (enforced server-side).
+
+  async listWorkspaceFlows(): Promise<ApiResponse<{ flows: FlowDefinition[] }>> {
+    return this.request('/flows');
+  }
+
+  async createWorkspaceFlow(
+    data: { name: string; slug?: string; description?: string; flowJson?: WorkflowGraph; enabled?: boolean; nodeCapabilities?: string[] }
+  ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    return this.request('/flows', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async getWorkspaceFlow(flowId: string): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    return this.request(`/flows/${encodeURIComponent(flowId)}`);
+  }
+
+  async updateWorkspaceFlow(
+    flowId: string,
+    data: Partial<{ name: string; slug: string; description: string | null; flowJson: WorkflowGraph; enabled: boolean; nodeCapabilities: string[] | null }>
+  ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
+    return this.request(`/flows/${encodeURIComponent(flowId)}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteWorkspaceFlow(flowId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/flows/${encodeURIComponent(flowId)}`, { method: 'DELETE' });
+  }
+
+  /**
+   * Paginated run history across EVERY flow the user owns (workspace + app), newest first.
+   * appId filter: an app id, or 'workspace' for workspace-only runs.
+   */
+  async listMyFlowRuns(
+    options?: { flowId?: string; status?: FlowRunStatus; appId?: string; page?: number; limit?: number }
+  ): Promise<ApiResponse<{ runs: FlowRunLog[]; page: number; limit: number; total: number }>> {
+    const params = new URLSearchParams();
+    if (options?.flowId) params.set('flowId', options.flowId);
+    if (options?.status) params.set('status', options.status);
+    if (options?.appId) params.set('appId', options.appId);
+    if (options?.page) params.set('page', String(options.page));
+    if (options?.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    return this.request(`/flow-runs${query ? `?${query}` : ''}`);
+  }
+
+  /** Claimable 'queued' runs across every flow the user owns, oldest first. */
+  async listMyQueuedFlowRuns(limit?: number): Promise<ApiResponse<{ runs: FlowRunLog[] }>> {
+    return this.request(`/flow-runs/queued${limit ? `?limit=${limit}` : ''}`);
+  }
+
+  /** Claim a queued run (owner scope — workspace runs + any run of a flow the user owns). */
+  async claimMyFlowRun(
+    runId: string,
+    payload: { runtime: FlowRuntimeKind; instanceId?: string }
+  ): Promise<ApiResponse<ClaimResult>> {
+    return this.request(`/flow-runs/${encodeURIComponent(runId)}/claim`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Complete a run (owner scope) — running/queued → terminal, per flow-run-result.schema.json. */
+  async completeMyFlowRun(
+    runId: string,
+    payload: { status: FlowRunStatus; result?: Record<string, unknown> | null; error?: FlowRunError | null }
+  ): Promise<ApiResponse<{ run: FlowRunLog }>> {
+    return this.request(`/flow-runs/${encodeURIComponent(runId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ── Flow KV storage (docs/FORMLOGIC_FLOWS.md §9) ─────────────────────────────────────────
+  // Owner surface: appId omitted = the user's workspace store; appId set = an app the user
+  // OWNS. Caps: value ≤ 64 KiB, ≤ 500 keys per scope. Scopes are labels like 'flow:<slug>'.
+
+  /** List a scope's entries (or every scope when scope is omitted). */
+  async listFlowKv(options?: { appId?: string; scope?: string }): Promise<ApiResponse<{ entries: FlowKvEntry[] }>> {
+    const params = new URLSearchParams();
+    if (options?.appId) params.set('appId', options.appId);
+    if (options?.scope) params.set('scope', options.scope);
+    const query = params.toString();
+    return this.request(`/flow-kv${query ? `?${query}` : ''}`);
+  }
+
+  /** Read one key (404 → success:false when absent). */
+  async getFlowKv(scope: string, k: string, appId?: string): Promise<ApiResponse<{ entry: FlowKvEntry }>> {
+    const params = new URLSearchParams({ scope, k });
+    if (appId) params.set('appId', appId);
+    return this.request(`/flow-kv?${params.toString()}`);
+  }
+
+  /** Upsert one key. */
+  async putFlowKv(
+    payload: { scope: string; k: string; v: unknown; appId?: string }
+  ): Promise<ApiResponse<{ entry: FlowKvEntry }>> {
+    return this.request('/flow-kv', { method: 'PUT', body: JSON.stringify(payload) });
+  }
+
+  /** Delete one key. */
+  async deleteFlowKv(scope: string, k: string, appId?: string): Promise<ApiResponse<{ success: boolean }>> {
+    const params = new URLSearchParams({ scope, k });
+    if (appId) params.set('appId', appId);
+    return this.request(`/flow-kv?${params.toString()}`, { method: 'DELETE' });
+  }
+
+  /** Runtime KV read (member-gated; the store is shared app-wide, keyed by the app owner). */
+  async getAppFlowKv(
+    slug: string,
+    options?: { scope?: string; k?: string }
+  ): Promise<ApiResponse<{ entry?: FlowKvEntry; entries?: FlowKvEntry[] }>> {
+    const params = new URLSearchParams();
+    if (options?.scope) params.set('scope', options.scope);
+    if (options?.k) params.set('k', options.k);
+    const query = params.toString();
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-kv${query ? `?${query}` : ''}`);
+  }
+
+  /** Runtime KV upsert (member-gated, rate-limited like flow-runs). */
+  async putAppFlowKv(
+    slug: string,
+    payload: { scope: string; k: string; v: unknown }
+  ): Promise<ApiResponse<{ entry: FlowKvEntry }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/flow-kv`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // ── Form flow-bindings (workspace scope on standalone forms — /api/forms/{id}) ────────────
+  // Bind the owner's WORKSPACE flows to a form's events (e.g. 'form.submitted'); the server
+  // enqueues a 'queued' run per enabled binding after each successful submission (max 5).
+
+  async listFormFlowBindings(formId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/flow-bindings`);
+  }
+
+  async createFormFlowBinding(formId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/flow-bindings`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateFormFlowBinding(formId: string, bindingId: string, data: Record<string, unknown>): Promise<ApiResponse<{ binding: FlowBinding }>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/flow-bindings/${encodeURIComponent(bindingId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteFormFlowBinding(formId: string, bindingId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/forms/${encodeURIComponent(formId)}/flow-bindings/${encodeURIComponent(bindingId)}`, { method: 'DELETE' });
   }
 
   async lookupOwnedRecords(
@@ -2023,6 +2355,10 @@ interface PackData {
   packMeta: { id?: string; name: string; description: string; version: string; author?: string; tags?: string[] };
   forms: Array<Record<string, unknown>>;
   apps?: Array<Record<string, unknown>>;
+  /** FormLogic Flows (docs/FORMLOGIC_FLOWS.md §6): flow definitions shipped with the pack. */
+  flows?: PackFlowDefinition[];
+  /** Event bindings for the pack's flows ('@pack:<formId>' form refs remapped on import). */
+  flowBindings?: PackFlowBinding[];
 }
 
 interface PackImportResult {

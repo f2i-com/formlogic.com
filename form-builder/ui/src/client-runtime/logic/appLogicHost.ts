@@ -153,6 +153,7 @@ async function runHookInternal(
 
     const grants = collectGrants(bundle, script);
     const connectorRequests: Extract<CustomAppLogicEffect, { type: 'connector.request' }>[] = [];
+    const flowRuns: Extract<CustomAppLogicEffect, { type: 'flow.run' }>[] = [];
 
     for (const effect of resultEffects(result)) {
       const required = effectRequiredPermission(effect);
@@ -162,7 +163,47 @@ async function runHookInternal(
         logger.warn(`[app-logic] ${script.id}: effect '${effect.type}' denied (needs ${required})`);
         continue;
       }
-      await applyEffect(effect, handlers, outcome, connectorRequests);
+      await applyEffect(effect, handlers, outcome, connectorRequests, flowRuns);
+    }
+
+    // FormLogic Flows §5: a sync flow.run feeds its result back through onConnectorEvent
+    // (the same chained-hook shape as a connector.request result); async runs just queue.
+    if (flowRuns.length && handlers?.flowRun) {
+      for (const eff of flowRuns) {
+        const opts = { mode: eff.mode, timeoutMs: eff.timeoutMs, input: eff.input };
+        if (eff.mode !== 'sync') {
+          void handlers.flowRun(eff.flow, opts).catch((err) => {
+            logger.warn(`[app-logic] flow.run ${eff.flow} (async) failed:`, err);
+          });
+          continue;
+        }
+        let flowResult: unknown;
+        try {
+          flowResult = await handlers.flowRun(eff.flow, opts);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          outcome.errors.push(`flow.run ${eff.flow}: ${msg}`);
+          continue;
+        }
+        if (depth < MAX_CONNECTOR_CHAIN_DEPTH) {
+          const nested = await runHookInternal(
+            {
+              bundle,
+              hook: 'onConnectorEvent',
+              input: {
+                ...input,
+                values: { ...(input.values ?? {}), ...outcome.values },
+                event: { flow: eff.flow, source: 'flow', result: flowResult },
+              },
+              handlers,
+              budgetMs,
+            },
+            depth + 1
+          );
+          mergeOutcome(outcome, nested);
+          if (nested.rejected) return outcome;
+        }
+      }
     }
 
     // Effect model §32: perform connector requests, then feed results into
@@ -210,7 +251,8 @@ async function applyEffect(
   effect: CustomAppLogicEffect,
   handlers: AppLogicEffectHandlers | undefined,
   outcome: AppLogicHookOutcome,
-  connectorRequests: Extract<CustomAppLogicEffect, { type: 'connector.request' }>[]
+  connectorRequests: Extract<CustomAppLogicEffect, { type: 'connector.request' }>[],
+  flowRuns: Extract<CustomAppLogicEffect, { type: 'flow.run' }>[]
 ): Promise<void> {
   switch (effect.type) {
     case 'ui.setValues':
@@ -231,12 +273,31 @@ async function applyEffect(
     case 'connector.request':
       connectorRequests.push(effect);
       break;
+    case 'flow.run':
+      // Deferred like connector requests: performed after the effect loop so a sync
+      // run can chain its result into onConnectorEvent (docs/FORMLOGIC_FLOWS.md §5).
+      flowRuns.push(effect);
+      break;
     case 'formlogic.submitResponse':
       if (handlers?.submitResponse) {
         try {
           await handlers.submitResponse(effect.formKey, effect.answers, effect.options);
         } catch (err) {
           outcome.errors.push(`submitResponse ${effect.formKey}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      break;
+    case 'formlogic.updateResponse':
+      if (handlers?.updateResponse) {
+        try {
+          await handlers.updateResponse(
+            effect.formKey,
+            { responseId: effect.responseId, match: effect.match },
+            effect.answers,
+            { upsert: effect.upsert }
+          );
+        } catch (err) {
+          outcome.errors.push(`updateResponse ${effect.formKey}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       break;

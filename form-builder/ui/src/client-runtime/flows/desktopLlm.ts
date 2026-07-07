@@ -1,0 +1,55 @@
+// FormLogic Desktop local-AI routing for llm_chat (docs/FORMLOGIC_FLOWS.md §4).
+//
+// When a node declares no endpoint, the executor asks the PAIRED FormLogic Desktop for its
+// managed local AI services (GET /api/services) and picks the first RUNNING one exposing an
+// OpenAI-compatible chat endpoint — mirroring how f2i-web maps companion services into the
+// flow palette (companionServices.ts). Services run on their own loopback ports, so the
+// resolved endpoint is loopback-only by construction; nodes.ts re-checks isLoopbackUrl()
+// before trusting it. No Desktop / not paired / no suitable service → null, and the
+// executor falls through to the app's configured AI base.
+import { desktopClient, type DesktopServiceSnapshot } from '../desktop/desktopClient';
+import { getDesktopInfo } from '../desktop/desktopDetection';
+import { getDesktopToken } from '../desktop/desktopPairing';
+
+export interface DesktopLlmEndpoint {
+  /** Full OpenAI-compatible chat-completions URL on the local machine. */
+  endpoint: string;
+  /** Human-readable service name (for diagnostics/toasts). */
+  service: string;
+}
+
+/**
+ * Pick the first running OpenAI-compatible service. An explicit template contract
+ * (node.apiFormat === 'openai') wins; otherwise LLM-category services are assumed
+ * OpenAI-compatible on /v1/chat/completions — the universal convention for llama.cpp,
+ * Ollama, LM Studio, vLLM and TGI (same assumption f2i-web makes).
+ */
+export function pickDesktopLlmService(services: DesktopServiceSnapshot[]): DesktopLlmEndpoint | null {
+  for (const s of services) {
+    if (s.status !== 'running') continue;
+    const port = s.port || s.defaultPort || 0;
+    if (!port) continue;
+    const node = s.node ?? null;
+    if (node) {
+      if (node.apiFormat !== 'openai') continue; // declared contract, but not chat-compatible
+      return {
+        endpoint: `http://127.0.0.1:${port}${node.endpoint || '/v1/chat/completions'}`,
+        service: s.name || s.id,
+      };
+    }
+    if ((s.category ?? '').toLowerCase() !== 'llm') continue;
+    return { endpoint: `http://127.0.0.1:${port}/v1/chat/completions`, service: s.name || s.id };
+  }
+  return null;
+}
+
+/**
+ * Resolve a Desktop-managed local AI endpoint, or null when Desktop is undetected,
+ * unpaired, unreachable, or runs no suitable service. Never throws.
+ */
+export async function resolveDesktopLlmEndpoint(): Promise<DesktopLlmEndpoint | null> {
+  if (!getDesktopInfo().available || !getDesktopToken()) return null;
+  const res = await desktopClient.services.list();
+  if (!res.ok) return null;
+  return pickDesktopLlmService(res.data);
+}

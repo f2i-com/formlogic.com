@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://formlogic.com/schemas/flow-binding.schema.json",
+  "title": "FormLogic Flows event binding",
+  "description": "The JSON configuration of one row in app_flow_bindings (columns condition_json, input_map_json, output_actions_json, retry_policy_json, fallback_policy_json map to the fields below). Binds an app/form/connector event to a flow. Canonical copy: formlogic-app/docs/contracts/.",
+  "type": "object",
+  "required": ["event", "flow", "mode"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "description": "Event name that triggers the flow. Desktop/connector events (\"aokie.call.ended\"), form events (\"form.submitted\"), or \"manual\".",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-zA-Z0-9_]+)*$",
+      "maxLength": 150
+    },
+    "flow": {
+      "type": "string",
+      "description": "flow_definitions.slug within the same app scope.",
+      "pattern": "^[a-z][a-z0-9-]{1,127}$"
+    },
+    "mode": {
+      "enum": ["sync", "async", "background", "manual"],
+      "description": "sync: caller waits (live-call decisions/UI actions only, enforce small timeoutMs). async: queue and continue. background: fire-and-log. manual: user-triggered button."
+    },
+    "condition": {
+      "type": "object",
+      "required": ["type", "expr"],
+      "properties": {
+        "type": { "const": "expression" },
+        "expr": {
+          "type": "string",
+          "description": "Sandboxed boolean expression over {event}. Evaluated in the QuickJS sandbox, never eval().",
+          "maxLength": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "inputMap": {
+      "type": "object",
+      "description": "Flow input name -> source selector ($event.data, $event.data.callerPhone, $app, literal values).",
+      "maxProperties": 32,
+      "additionalProperties": true
+    },
+    "outputActions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "enum": [
+              "formlogic.submitResponse",
+              "formlogic.updateResponse",
+              "formlogic.toast",
+              "formlogic.store",
+              "connector.request",
+              "call.speak"
+            ],
+            "description": "MVP action set. Every formlogic.* write goes through the normal authenticated submission/update API so server-side validation, permissions and onSubmit scripts still run. 'formlogic.store' persists part of the result into Flow KV (docs §9); it requires the flow to declare the 'formlogic.kv.write' capability."
+          },
+          "form": { "type": "string", "maxLength": 128 },
+          "responseId": { "type": "string", "maxLength": 128 },
+          "answers": { "description": "Selector into $result or literal object." },
+          "when": { "type": "string", "description": "Selector/boolean expression gating this action.", "maxLength": 500 },
+          "connectorId": { "type": "string", "maxLength": 64 },
+          "command": { "type": "string", "maxLength": 96 },
+          "payload": {},
+          "message": { "type": "string", "maxLength": 500 },
+          "scope": { "type": "string", "description": "formlogic.store: KV scope (defaults to 'flow:<slug>').", "maxLength": 64 },
+          "key": { "type": "string", "description": "formlogic.store: KV key.", "maxLength": 190 },
+          "value": { "description": "formlogic.store: selector into $result or a literal to persist." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "timeoutMs": { "type": "integer", "minimum": 250, "maximum": 300000, "default": 30000 },
+    "retryPolicy": {
+      "type": "object",
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 5, "default": 1 },
+        "backoff": { "enum": ["none", "fixed", "exponential"], "default": "exponential" }
+      },
+      "additionalProperties": false
+    },
+    "fallbackPolicy": {
+      "type": "object",
+      "properties": {
+        "onError": { "enum": ["log_and_continue", "surface_error"], "default": "log_and_continue" },
+        "fallbackReply": { "type": "string", "maxLength": 500, "description": "For sync live-call bindings: spoken/UI fallback when the flow times out or fails." }
+      },
+      "additionalProperties": false
+    },
+    "enabled": { "type": "boolean", "default": true }
+  },
+  "additionalProperties": false
+}
