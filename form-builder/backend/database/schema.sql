@@ -168,7 +168,7 @@ CREATE TABLE `app_role_permissions` (
   `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `role_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   `form_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `permission` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `permission` varchar(191) COLLATE utf8mb4_unicode_ci NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_role_perm` (`role_id`,`form_id`,`permission`),
   KEY `form_id` (`form_id`),

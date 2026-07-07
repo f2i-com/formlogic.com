@@ -243,7 +243,7 @@ class MySQLConnection
                 id VARCHAR(36) PRIMARY KEY,
                 role_id VARCHAR(36) NOT NULL,
                 form_id VARCHAR(36) DEFAULT NULL,
-                permission VARCHAR(50) NOT NULL,
+                permission VARCHAR(191) NOT NULL,
                 FOREIGN KEY (role_id) REFERENCES app_roles(id) ON DELETE CASCADE,
                 FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
                 UNIQUE KEY unique_role_perm (role_id, form_id, permission),
@@ -1243,6 +1243,17 @@ class MySQLConnection
         if ($pdo->query("SHOW TABLES LIKE 'mcp_oauth_codes'")->rowCount() > 0
             && $pdo->query("SHOW COLUMNS FROM mcp_oauth_codes LIKE 'device_label'")->rowCount() === 0) {
             $pdo->exec("ALTER TABLE mcp_oauth_codes ADD COLUMN device_label VARCHAR(120) NULL AFTER resource");
+        }
+
+        // Widen app_role_permissions.permission (was VARCHAR(50)) so connector capability grants —
+        // connector.<connectorId>.<command> (see ConnectorCommandController) — aren't silently
+        // truncated on longer connector/command names, which would break the exact-match RBAC check
+        // (fails closed). 191 is the canonical utf8mb4 index-safe width: the composite UNIQUE key
+        // (role_id, form_id, permission) stays well within InnoDB's 3072-byte prefix limit. Guarded so
+        // it runs once (skips once the column is already widened).
+        $permCol = $pdo->query("SHOW COLUMNS FROM app_role_permissions LIKE 'permission'")->fetch();
+        if ($permCol && stripos((string) ($permCol['Type'] ?? ''), 'varchar(50)') !== false) {
+            $pdo->exec("ALTER TABLE app_role_permissions MODIFY COLUMN permission VARCHAR(191) COLLATE utf8mb4_unicode_ci NOT NULL");
         }
 
         // Seed the first-party OAuth clients (idempotent) now that mcp_oauth_clients exists.
