@@ -350,14 +350,15 @@ impl FormLogicClient {
         }
     }
 
-    /// Best-effort DELETE of a desktop-connection row (Unlink). The desktop only
-    /// holds the scoped `flk_` key, so this can only reach a route exposed under
-    /// `/api/v1`; a 404 (route absent / already gone) is swallowed. Deleting the
-    /// row server-side cascades to revoke the tied key (docs/MCP.md §device-link),
-    /// but the user can always revoke from Settings → API keys regardless.
-    pub async fn delete_desktop_connection(&self, id: &str) -> FlResult<()> {
+    /// Unlink this install server-side over `/api/v1` (Unlink). The desktop holds
+    /// only its scoped `flk_` key, so it uses the API-key self-unlink route
+    /// (DELETE /api/v1/desktop-connections/self): the key identifies the install,
+    /// so the server removes this install's OWN connection row AND revokes the
+    /// calling key — fully cut off (docs/MCP.md §device-link). A 404 (older backend
+    /// without the route, or already gone) is swallowed; the local key clears anyway.
+    pub async fn delete_desktop_connection(&self) -> FlResult<()> {
         match self
-            .send(reqwest::Method::DELETE, &format!("desktop-connections/{id}"), &[], None)
+            .send(reqwest::Method::DELETE, "desktop-connections/self", &[], None)
             .await
         {
             Ok(_) => Ok(()),

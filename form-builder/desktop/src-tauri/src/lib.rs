@@ -1030,9 +1030,11 @@ async fn disconnect_formlogic(
     app: tauri::AppHandle,
     runtime: tauri::State<'_, Arc<FlowRuntime>>,
 ) -> Result<(), String> {
-    if let Some(id) = read_config_str(&app, "formlogicConnectionId") {
+    // Only OAuth-linked installs carry a connection id; a hand-entered key isn't a managed
+    // connection, so we don't ask the server to revoke it (it may be used elsewhere).
+    if read_config_str(&app, "formlogicConnectionId").is_some() {
         if let Some(client) = FormLogicClient::new(&runtime.config()) {
-            let _ = client.delete_desktop_connection(&id).await;
+            let _ = client.delete_desktop_connection().await;
         }
     }
     write_config_str(&app, "formlogicBaseUrl", None)?;

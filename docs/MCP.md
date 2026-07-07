@@ -143,9 +143,15 @@ PKCE machinery above; only the client and the token-exchange output differ.
 
   There is **no `expires_in` / `refresh_token`** — the key is long-lived and revocable, not a rotating
   session. The desktop uses `formlogic_api_key` as the `Bearer` against `/api/v1`.
-- **Revocation / re-link**: revoke from **Settings → API keys**, or delete the connection
-  (`DELETE /api/desktop-connections/{id}` revokes the tied key as a cascade). Re-linking mints a fresh
-  key + connection; revoke the old one to supersede it.
+- **Revocation / re-link**: three ways, all end-state-equivalent (connection row gone + key revoked):
+  - **From the web** — revoke in **Settings → API keys**, or delete the connection
+    (`DELETE /api/desktop-connections/{id}`, session-auth) which revokes the tied key as a cascade.
+  - **From the desktop** — clicking **Unlink** calls `DELETE /api/v1/desktop-connections/self` with its
+    own `flk_` key (scope `flows:write`). The key identifies the install, so the server removes that
+    install's own connection row and revokes the calling key — no id, and a key can only ever unlink
+    itself. A hand-entered key (Advanced setup, no connection row) is left untouched.
+
+  Re-linking mints a fresh key + connection; revoke the old one to supersede it.
 
 The MCP flow above is unchanged — the desktop branch only runs for `client_id = formlogic-desktop`.
 

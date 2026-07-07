@@ -664,4 +664,29 @@ class FlowController
         }
         return $this->jsonResponse($response, ['success' => true]);
     }
+
+    /**
+     * Desktop self-unlink over /api/v1 (API-key auth). FormLogic Desktop holds only its scoped flk_
+     * key, so it can't reach the session-auth delete above; this lets it cut itself off server-side
+     * when the user clicks Unlink. The calling key identifies exactly one install, so it removes only
+     * its OWN connection row (never a sibling's) and, when it does, revokes that key so the install is
+     * fully cut off. A key with no connection row (e.g. a hand-entered one via Advanced) matches
+     * nothing and is left untouched — not ours to revoke. Idempotent: once the key is revoked a repeat
+     * call 401s at the middleware.
+     */
+    public function deleteOwnDesktopConnection(Request $request, Response $response): Response
+    {
+        $userId = $request->getAttribute('userId');
+        $apiKeyId = (string) ($request->getAttribute('apiKeyId') ?? '');
+        if (!$userId || $apiKeyId === '') {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $connectionRemoved = $this->flows->deleteDesktopConnectionForKey($userId, $apiKeyId);
+        if ($connectionRemoved && $this->apiKeys !== null) {
+            try {
+                $this->apiKeys->revokeKey($apiKeyId, $userId);
+            } catch (\Throwable) { /* best-effort: local key clears regardless */ }
+        }
+        return $this->jsonResponse($response, ['success' => true, 'connectionRemoved' => $connectionRemoved]);
+    }
 }

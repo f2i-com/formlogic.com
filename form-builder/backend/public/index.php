@@ -1523,6 +1523,14 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
     $group->post('/connector-commands/{id}/complete', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->complete($request, $response, $getArgs($request));
     })->add($connectorRelayAuth);
+
+    // Desktop self-unlink (flows:write — always present on desktop keys). The desktop holds only its
+    // scoped flk_ key, so it can't reach the session-auth DELETE /api/desktop-connections/{id}; this
+    // lets "Unlink" cut the install off server-side. The calling key identifies the install, so it
+    // removes only its OWN connection row + self-revokes that key (least-privilege by construction).
+    $group->delete('/desktop-connections/self', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->deleteOwnDesktopConnection($request, $response);
+    })->add($flowsWriteAuth);
 })->add($apiRateLimiter);
 
 // Audit verification route (admin, protected — restricted to platform owner)

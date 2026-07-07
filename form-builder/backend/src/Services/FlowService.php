@@ -1964,6 +1964,19 @@ class FlowService
         return $stmt->rowCount() > 0;
     }
 
+    /**
+     * Delete the connection minted for a given flk_ key (owner-scoped). Backs the desktop's own
+     * /api/v1 self-unlink: the calling key identifies exactly one install, so it can remove only its
+     * OWN row — never a sibling install's (least-privilege by construction). A hand-entered key with
+     * no connection row matches nothing (returns false), so the caller leaves it alone. True if a row went.
+     */
+    public function deleteDesktopConnectionForKey(string $userId, string $apiKeyId): bool
+    {
+        $stmt = $this->mysql->prepare("DELETE FROM desktop_connections WHERE owner_user_id = :o AND api_key_id = :k");
+        $stmt->execute(['o' => $userId, 'k' => $apiKeyId]);
+        return $stmt->rowCount() > 0;
+    }
+
     // ── Internals ────────────────────────────────────────────────────────────────────────────
 
     /** inputSchema / outputSchema (≤ 16 KiB each) + nodeCapabilities (≤ 64 strings ≤ 128 chars). */

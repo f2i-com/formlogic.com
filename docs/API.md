@@ -102,6 +102,7 @@ All paths are owner-scoped: a key only ever sees flows/bindings/runs of flows it
 | `GET` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:read` |
 | `PUT` | `/flow-kv` — `{scope, k, v, appId?}` (value ≤ 64 KiB, ≤ 500 keys/scope) | `flows:write` |
 | `DELETE` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:write` |
+| `DELETE` | `/desktop-connections/self` — self-unlink: removes the calling install's own connection row and revokes the calling key. No id (the key identifies the install); a hand-entered key with no connection is left untouched | `flows:write` |
 
 ### Remote command relay (`connector:relay`) — desktop runtime side
 

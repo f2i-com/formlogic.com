@@ -290,4 +290,85 @@ class DesktopOAuthLinkTest extends TestCase
         $this->assertNull(self::$apiKeys->validateKey($apiKey), 'revoking the connection revokes its key');
         $this->assertCount(0, self::$flows->listDesktopConnections($this->userId));
     }
+
+    // ── desktop self-unlink over /api/v1 (API-key auth) ──
+
+    /** Run the full device-link and return the minted key + connection ids. */
+    private function linkDesktop(): array
+    {
+        $pkce = $this->pkce();
+        $params = $this->authorizeParams($pkce['challenge']);
+        $code = $this->mintCode($params);
+        $r = $this->token([
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'redirect_uri' => $params['redirect_uri'],
+            'client_id' => McpOAuthService::DESKTOP_CLIENT_ID,
+            'code_verifier' => $pkce['verifier'],
+        ]);
+        $this->assertSame(200, $r['status'], json_encode($r['body']));
+        $apiKey = (string) $r['body']['formlogic_api_key'];
+        $validated = self::$apiKeys->validateKey($apiKey);
+        $this->assertNotNull($validated);
+        return ['apiKey' => $apiKey, 'keyId' => (string) $validated['id'], 'connectionId' => (string) $r['body']['desktop_connection_id']];
+    }
+
+    /** Simulate ApiKeyMiddleware: userId + apiKeyId attributes come from the validated flk_ key. */
+    private function selfUnlink(string $apiKeyId): array
+    {
+        $req = (new ServerRequestFactory())->createServerRequest('DELETE', self::BASE . '/api/v1/desktop-connections/self')
+            ->withAttribute('userId', $this->userId)
+            ->withAttribute('apiKeyId', $apiKeyId);
+        $resp = self::$flowCtrl->deleteOwnDesktopConnection($req, (new ResponseFactory())->createResponse());
+        return ['status' => $resp->getStatusCode(), 'body' => self::decode($resp)];
+    }
+
+    public function testDesktopSelfUnlinkOverApiKeyRevokesOwnKeyAndRemovesConnection(): void
+    {
+        $link = $this->linkDesktop();
+        $this->assertNotNull(self::$apiKeys->validateKey($link['apiKey']), 'key is live before unlink');
+        $this->assertCount(1, self::$flows->listDesktopConnections($this->userId));
+
+        $r = $this->selfUnlink($link['keyId']);
+        $this->assertSame(200, $r['status'], json_encode($r['body']));
+        $this->assertTrue($r['body']['success']);
+        $this->assertTrue($r['body']['connectionRemoved'], 'the desktop removes its own connection row');
+
+        $this->assertNull(self::$apiKeys->validateKey($link['apiKey']), 'self-unlink revokes the calling key server-side');
+        $this->assertCount(0, self::$flows->listDesktopConnections($this->userId), 'connection row is gone');
+    }
+
+    public function testDesktopSelfUnlinkAffectsOnlyTheCallingInstallNotSiblings(): void
+    {
+        $a = $this->linkDesktop(); // install A
+        $b = $this->linkDesktop(); // install B — same user, distinct key + connection
+        $this->assertCount(2, self::$flows->listDesktopConnections($this->userId));
+        $this->assertNotSame($a['keyId'], $b['keyId']);
+
+        // B unlinks itself: the key identifies the install, so ONLY B's row + key are affected.
+        $r = $this->selfUnlink($b['keyId']);
+        $this->assertSame(200, $r['status'], json_encode($r['body']));
+        $this->assertTrue($r['body']['connectionRemoved']);
+
+        $this->assertNotNull(self::$apiKeys->validateKey($a['apiKey']), 'sibling key A survives');
+        $this->assertNull(self::$apiKeys->validateKey($b['apiKey']), 'the calling key B is revoked');
+        $conns = self::$flows->listDesktopConnections($this->userId);
+        $this->assertCount(1, $conns, 'only A remains');
+        $this->assertSame($a['connectionId'], $conns[0]['id']);
+    }
+
+    public function testSelfUnlinkLeavesAHandEnteredKeyWithNoConnectionAlone(): void
+    {
+        // A key with no desktop_connections row (the Advanced manual-key path) must NOT be revoked by
+        // self-unlink — it isn't a managed desktop link. connectionRemoved=false, key stays live.
+        $created = self::$apiKeys->createKey($this->userId, 'Manual desktop key', ['flows:read', 'flows:write']);
+        $apiKey = (string) $created['key'];
+        $keyId = (string) $created['id'];
+        $this->assertNotNull(self::$apiKeys->validateKey($apiKey));
+
+        $r = $this->selfUnlink($keyId);
+        $this->assertSame(200, $r['status'], json_encode($r['body']));
+        $this->assertFalse($r['body']['connectionRemoved'], 'no connection row for a manual key');
+        $this->assertNotNull(self::$apiKeys->validateKey($apiKey), 'a manual key is left untouched');
+    }
 }
