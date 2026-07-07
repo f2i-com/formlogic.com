@@ -208,6 +208,9 @@ class PackService
                         // Never let an import escalate Owner; only Admin/Member overrides apply.
                         if ($target && ($target['name'] ?? '') !== 'Owner' && !empty($permissions)) {
                             $this->appUserService->setRolePermissions($target['id'], $permissions, true);
+                            // Connector capability grants (connector.<id>.<command>) go through the
+                            // owner-only path so pack-defined member connector access actually persists.
+                            $this->appUserService->setConnectorGrants($target['id'], $permissions, true);
                         }
                         continue;
                     }
@@ -220,6 +223,8 @@ class PackService
                         // The importer owns the freshly created app, so they may grant the app-level
                         // permissions the pack defines (else an admin-style role would be uninstallable).
                         $this->appUserService->setRolePermissions($role['id'], $permissions, true);
+                        // ...and the connector capability grants (owner-only path).
+                        $this->appUserService->setConnectorGrants($role['id'], $permissions, true);
                     }
                 }
 

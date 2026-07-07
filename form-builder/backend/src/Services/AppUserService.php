@@ -248,8 +248,10 @@ class AppUserService
             $this->mysql->beginTransaction();
         }
         try {
-            // Delete existing permissions
-            $stmt = $this->mysql->prepare("DELETE FROM app_role_permissions WHERE role_id = :role_id");
+            // Delete existing BUILT-IN permissions only. connector.* grants are owner-managed via
+            // setConnectorGrants() and must survive a role-editor save (the editor doesn't carry
+            // them, so a blanket delete-all here would silently wipe them).
+            $stmt = $this->mysql->prepare("DELETE FROM app_role_permissions WHERE role_id = :role_id AND permission NOT LIKE 'connector.%'");
             $stmt->execute(['role_id' => $roleId]);
 
             // Insert new permissions
@@ -281,6 +283,62 @@ class AppUserService
                 ]);
             }
 
+            if (!$inTransaction) {
+                $this->mysql->commit();
+            }
+        } catch (\Exception $e) {
+            if (!$inTransaction) {
+                $this->mysql->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Replace a role's connector capability grants (connector.<id>[.<command>|.*]). OWNER-ONLY:
+     * device-control capability isn't delegatable, so this throws unless $actorIsOwner (pack imports
+     * run in the owner's context). Deliberately SEPARATE from setRolePermissions so the built-in role
+     * editor — which never carries connector grants — can't wipe them. Full-replace within the
+     * connector category only (leaves built-in perms untouched); idempotent (dedupes the input).
+     * Accepts the same [{permission, formId?}] shape as setRolePermissions and filters to valid
+     * connector grants itself, so a caller can pass a mixed permission list to both methods.
+     */
+    public function setConnectorGrants(string $roleId, array $grants, bool $actorIsOwner = false): void
+    {
+        if (!$actorIsOwner) {
+            throw new \RuntimeException('Only the app owner can grant connector capabilities');
+        }
+        $role = $this->getRole($roleId);
+        if (!$role) {
+            throw new \RuntimeException('Role not found');
+        }
+        if (($role['isSystem'] ?? false) && ($role['name'] ?? '') === 'Owner') {
+            throw new \RuntimeException('The Owner role cannot be modified');
+        }
+
+        // Validate + dedupe (connector grants are app-scoped → form_id NULL).
+        $valid = [];
+        foreach ($grants as $g) {
+            $perm = is_array($g) ? (string) ($g['permission'] ?? '') : (string) $g;
+            if (AppPermissions::isConnectorGrant($perm)) {
+                $valid[$perm] = true;
+            }
+        }
+
+        $inTransaction = $this->mysql->inTransaction();
+        if (!$inTransaction) {
+            $this->mysql->beginTransaction();
+        }
+        try {
+            $this->mysql->prepare("DELETE FROM app_role_permissions WHERE role_id = :role_id AND permission LIKE 'connector.%'")
+                ->execute(['role_id' => $roleId]);
+            $ins = $this->mysql->prepare("
+                INSERT INTO app_role_permissions (id, role_id, form_id, permission)
+                VALUES (:id, :role_id, NULL, :permission)
+            ");
+            foreach (array_keys($valid) as $perm) {
+                $ins->execute(['id' => $this->generateUuid(), 'role_id' => $roleId, 'permission' => $perm]);
+            }
             if (!$inTransaction) {
                 $this->mysql->commit();
             }

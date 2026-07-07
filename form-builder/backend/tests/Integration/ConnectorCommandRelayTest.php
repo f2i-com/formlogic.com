@@ -31,6 +31,7 @@ class ConnectorCommandRelayTest extends TestCase
     private static ?PDO $pdo = null;
     private static DesktopCommandService $commands;
     private static ConnectorCommandController $ctrl;
+    private static AppUserService $appUsers;
 
     private string $ownerId = '';
     private string $memberId = '';
@@ -67,7 +68,8 @@ class ConnectorCommandRelayTest extends TestCase
         $forms = new FormService($conn, $sqlite);
         $apps = new AppService($conn, $forms);
         self::$commands = new DesktopCommandService($conn);
-        self::$ctrl = new ConnectorCommandController(self::$commands, $apps, new AppUserService($conn));
+        self::$appUsers = new AppUserService($conn);
+        self::$ctrl = new ConnectorCommandController(self::$commands, $apps, self::$appUsers);
     }
 
     protected function setUp(): void
@@ -217,6 +219,60 @@ class ConnectorCommandRelayTest extends TestCase
         } finally {
             self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$stranger]);
         }
+    }
+
+    // ── owner-only connector grants (the write path packs use) ──
+
+    public function testOwnerGrantsConnectorCapabilityToMemberRoleThenMemberCanEnqueue(): void
+    {
+        // Grant through the owner-only service path (what a pack import uses), mixing in a non-connector
+        // string that must be ignored. Previously connector grants were silently dropped by the
+        // AppPermissions::ALL filter, so a member could never be granted connector access.
+        self::$appUsers->setConnectorGrants($this->roleId, [
+            ['permission' => 'connector.aokie.call.hangup'],
+            ['permission' => 'view_analytics'], // not a connector grant → ignored here
+        ], true);
+
+        $this->assertTrue(self::$appUsers->hasPermission($this->appId, $this->memberId, 'connector.aokie.call.hangup'));
+        $r = $this->enqueue($this->memberId, ['connectorId' => 'aokie', 'command' => 'call.hangup']);
+        $this->assertSame(201, $r['status'], json_encode($r['body']));
+
+        // Only the connector grant landed on the role.
+        $stmt = self::$pdo->prepare("SELECT permission FROM app_role_permissions WHERE role_id = ?");
+        $stmt->execute([$this->roleId]);
+        $this->assertSame(['connector.aokie.call.hangup'], $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public function testConnectorGrantsAreOwnerOnlyAndSurviveARoleEditorSave(): void
+    {
+        self::$appUsers->setConnectorGrants($this->roleId, [['permission' => 'connector.aokie.sms.send']], true);
+
+        // A delegate (non-owner) may not grant connector capabilities.
+        try {
+            self::$appUsers->setConnectorGrants($this->roleId, [['permission' => 'connector.aokie.call.answer']], false);
+            $this->fail('expected the owner-only guard to throw');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('owner', strtolower($e->getMessage()));
+        }
+
+        // A normal role-editor save (built-ins only) must NOT wipe the connector grant.
+        self::$appUsers->setRolePermissions($this->roleId, [['formId' => null, 'permission' => 'view_analytics']], true);
+        $this->assertTrue(self::$appUsers->hasPermission($this->appId, $this->memberId, 'connector.aokie.sms.send'), 'connector grant survives a role save');
+        $this->assertTrue(self::$appUsers->hasPermission($this->appId, $this->memberId, 'view_analytics'), 'the built-in was applied');
+    }
+
+    public function testMalformedOrOverlongConnectorGrantsAreRejected(): void
+    {
+        self::$appUsers->setConnectorGrants($this->roleId, [
+            ['permission' => 'connector.aokie.call.hangup'],                 // valid
+            ['permission' => 'connector.'],                                  // no connector id
+            ['permission' => 'connector.AOKIE.x'],                           // uppercase id
+            ['permission' => 'connector.aokie.' . str_repeat('x', 200)],     // exceeds the 191 column
+            ['permission' => 'manage_app'],                                  // not a connector grant
+        ], true);
+        $stmt = self::$pdo->prepare("SELECT permission FROM app_role_permissions WHERE role_id = ? AND permission LIKE 'connector.%'");
+        $stmt->execute([$this->roleId]);
+        $this->assertSame(['connector.aokie.call.hangup'], $stmt->fetchAll(PDO::FETCH_COLUMN));
     }
 
     // ── reserve-first idempotency ──

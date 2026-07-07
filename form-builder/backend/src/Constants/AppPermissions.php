@@ -48,4 +48,18 @@ class AppPermissions
         self::DELETE_RESPONSES,
         self::EXPORT_RESPONSES,
     ];
+
+    /**
+     * Connector capability grants live alongside the built-ins in app_role_permissions but are NOT in
+     * ::ALL — they're dynamic (per installed connector). Valid forms (see ConnectorCommandController):
+     *   connector.<id>            — every command on the connector
+     *   connector.<id>.*          — wildcard, same
+     *   connector.<id>.<command>  — one command (command may be dotted, e.g. call.operatorSpeak)
+     * Bounded to the column width (VARCHAR(191)) so a grant can never be stored truncated.
+     */
+    public static function isConnectorGrant(string $permission): bool
+    {
+        return strlen($permission) <= 191
+            && preg_match('/^connector\.[a-z0-9][a-z0-9_-]{0,62}(\.(\*|[A-Za-z0-9][A-Za-z0-9_.-]{0,119}))?$/', $permission) === 1;
+    }
 }
