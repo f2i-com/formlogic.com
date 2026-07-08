@@ -9,6 +9,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
+use FormLogic\Services\AuditService;
 use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
@@ -104,6 +105,7 @@ class McpTest extends TestCase
         }
         self::$pdo->prepare('DELETE FROM mcp_sessions WHERE user_id = ?')->execute([$this->userId]);
         self::$pdo->prepare('DELETE FROM desktop_commands WHERE owner_user_id = ?')->execute([$this->userId]);
+        self::$pdo->prepare('DELETE FROM audit_log WHERE user_id = ?')->execute([$this->userId]);
         // Clean children for EVERY app the user owns (incl. apps a creator token made during a test).
         $owned = self::$pdo->prepare('SELECT id FROM apps WHERE owner_id = ?');
         $owned->execute([$this->userId]);
@@ -207,6 +209,40 @@ class McpTest extends TestCase
     {
         $r = $this->rpc($token, ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list']);
         return array_map(static fn ($t) => $t['name'], $r['result']['tools'] ?? []);
+    }
+
+    /** A fresh McpController sharing the same real services/DB as self::$ctrl, but wired to a REAL
+     *  AuditService (self::$ctrl's is null) — for tests that assert an audit row was actually written. */
+    private function makeAuditedCtrl(AuditService $audit, ?FormService $forms = null): McpController
+    {
+        return new McpController(
+            self::$tokens,
+            $forms ?? self::$forms,
+            self::$apps,
+            self::$responses,
+            $audit,
+            null,
+            self::$reportValidator,
+            self::$desktopCommands
+        );
+    }
+
+    /** Latest audit_log row for this test's user + action, decoded, or null if none exists. */
+    private function latestAuditRow(string $action): ?array
+    {
+        $stmt = self::$pdo->prepare('SELECT * FROM audit_log WHERE user_id = ? AND action = ? ORDER BY sequence_number DESC LIMIT 1');
+        $stmt->execute([$this->userId, $action]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
+    /** Count of this test's user's audit_log rows across the given actions. */
+    private function countAuditRows(array $actions): int
+    {
+        $placeholders = implode(',', array_fill(0, count($actions), '?'));
+        $stmt = self::$pdo->prepare("SELECT COUNT(*) FROM audit_log WHERE user_id = ? AND action IN ({$placeholders})");
+        $stmt->execute(array_merge([$this->userId], $actions));
+        return (int) $stmt->fetchColumn();
     }
 
     // ── connector_command: an AI drives the linked desktop's connectors through the relay ──
@@ -824,5 +860,163 @@ class McpTest extends TestCase
 
         $both = self::$tokens->create($this->userId, null, 3600, 900, ['forms:write', 'apps:write'])['token'];
         $this->assertContains('create_app_form', $this->toolNames($both));
+    }
+
+    // ── denial/error auditing: scope/ownership denials and unexpected errors leave a queryable trail ──
+
+    /**
+     * A scope violation (requireScope) now throws McpDeniedException, which callTool()'s new catch
+     * clause turns into an 'mcp.denied' audit row carrying the tool name + reason code 'scope' — while
+     * the client-facing response text is byte-identical to the pre-fix plain-\Exception behavior.
+     */
+    public function testScopeViolationIsAuditedAsMcpDeniedWithReasonAndTool(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        $ctrl = $this->makeAuditedCtrl($audit);
+        $tok = self::$tokens->create($this->userId)['token']; // no connector:command scope
+
+        $res = $this->tool($tok, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup'], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertSame(
+            'Error: This MCP token lacks the required scope: connector:command',
+            $res['text'],
+            'client-facing response text must be byte-identical to before this fix'
+        );
+
+        $row = $this->latestAuditRow('mcp.denied');
+        $this->assertNotNull($row, 'a scope violation must produce an mcp.denied audit row');
+        $details = json_decode($row['details'] ?? '{}', true);
+        $this->assertSame('scope', $details['reason'] ?? null);
+        $this->assertSame('connector_command', $details['tool'] ?? null);
+    }
+
+    /**
+     * An app-scope violation (assertAppScope: a token scoped to one app touching another) produces
+     * 'mcp.denied' with reason 'app_scope', response text unchanged.
+     */
+    public function testAppScopeViolationIsAuditedAsMcpDeniedWithAppScopeReason(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        $ctrl = $this->makeAuditedCtrl($audit);
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+
+        $res = $this->tool($tok, 'update_app', ['appId' => $this->appB, 'name' => 'Hijack'], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertSame(
+            'Error: This MCP token is scoped to a single app and cannot touch other apps',
+            $res['text'],
+            'client-facing response text must be byte-identical to before this fix'
+        );
+
+        $row = $this->latestAuditRow('mcp.denied');
+        $this->assertNotNull($row, 'an app-scope violation must produce an mcp.denied audit row');
+        $details = json_decode($row['details'] ?? '{}', true);
+        $this->assertSame('app_scope', $details['reason'] ?? null);
+        $this->assertSame('update_app', $details['tool'] ?? null);
+    }
+
+    /**
+     * A form-not-found/not-owned denial (ownForm) produces 'mcp.denied' with reason 'not_found' — the
+     * intentionally vague "not found or access denied" message is preserved verbatim.
+     */
+    public function testFormOwnershipViolationIsAuditedAsMcpDeniedWithNotFoundReason(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        $ctrl = $this->makeAuditedCtrl($audit);
+        // Account-wide token (not app-scoped) so assertFormInScope passes through to ownForm(), which
+        // then rejects a formId belonging to a different user.
+        $tok = self::$tokens->create($this->userId, null, 3600, 900, ['forms:read'])['token'];
+
+        $res = $this->tool($tok, 'get_form', ['formId' => 'does-not-exist'], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertSame('Error: Form not found or access denied', $res['text']);
+
+        $row = $this->latestAuditRow('mcp.denied');
+        $this->assertNotNull($row, 'a form ownership/not-found denial must produce an mcp.denied audit row');
+        $details = json_decode($row['details'] ?? '{}', true);
+        $this->assertSame('not_found', $details['reason'] ?? null);
+        $this->assertSame('get_form', $details['tool'] ?? null);
+    }
+
+    /**
+     * An unexpected non-\Exception \Throwable (mirroring testUnexpectedThrowableIsGenericButPlainExceptionStillLeaksItsOwnSafeMessage)
+     * produces an 'mcp.tool_error' audit row with the message truncated to 200 chars — while the
+     * client-facing response stays the same generic, non-leaking text as before this fix.
+     */
+    public function testUnexpectedThrowableIsAuditedAsMcpToolErrorWithTruncatedMessage(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        $longMessage = 'raw internal detail that must never reach the client ' . str_repeat('x', 300);
+        $formService = $this->createMock(FormService::class);
+        $formService->method('getAllForms')->willThrowException(new \TypeError($longMessage));
+        $ctrl = $this->makeAuditedCtrl($audit, $formService);
+        $tok = self::$tokens->create($this->userId)['token']; // account-wide token -> list_forms calls getAllForms()
+
+        $res = $this->tool($tok, 'list_forms', [], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertSame(
+            'Error: an unexpected error occurred. Please try again.',
+            $res['text'],
+            'client-facing response must stay generic and byte-identical to before this fix'
+        );
+        $this->assertStringNotContainsString('raw internal detail', $res['text']);
+
+        $row = $this->latestAuditRow('mcp.tool_error');
+        $this->assertNotNull($row, 'an unexpected \Throwable must produce an mcp.tool_error audit row');
+        $details = json_decode($row['details'] ?? '{}', true);
+        $this->assertSame('list_forms', $details['tool'] ?? null);
+        $this->assertSame(substr($longMessage, 0, 200), $details['message'] ?? null);
+        $this->assertLessThanOrEqual(200, strlen($details['message'] ?? ''), 'the audited message must be truncated to 200 chars');
+    }
+
+    /**
+     * A multibyte character straddling the old byte-200 cut point must not corrupt the audited details.
+     * Byte-based substr() can split a multibyte UTF-8 codepoint, producing an invalid-UTF-8 string that
+     * makes AuditService's json_encode() return false — silently discarding the WHOLE details blob
+     * (including the 'tool' key), not just the message. Truncation must be mb-safe.
+     */
+    public function testUnexpectedThrowableWithMultibyteMessageProducesValidAuditDetails(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        // 199 ASCII bytes followed by multibyte UTF-8 characters straddling the byte-200 boundary.
+        $longMessage = str_repeat('a', 199) . '日本語のエラーメッセージ' . str_repeat('b', 50);
+        $formService = $this->createMock(FormService::class);
+        $formService->method('getAllForms')->willThrowException(new \TypeError($longMessage));
+        $ctrl = $this->makeAuditedCtrl($audit, $formService);
+        $tok = self::$tokens->create($this->userId)['token']; // account-wide token -> list_forms calls getAllForms()
+
+        $res = $this->tool($tok, 'list_forms', [], $ctrl);
+        $this->assertTrue($res['isError']);
+
+        $row = $this->latestAuditRow('mcp.tool_error');
+        $this->assertNotNull($row, 'an unexpected \Throwable with a multibyte message must still produce an mcp.tool_error audit row');
+        $this->assertNotSame(
+            '',
+            (string) ($row['details'] ?? ''),
+            'details must not be silently dropped by a json_encode() failure on invalid UTF-8'
+        );
+        $details = json_decode($row['details'] ?? '{}', true);
+        $this->assertSame('list_forms', $details['tool'] ?? null, 'tool attribution must survive truncation of a multibyte message');
+        $this->assertSame(mb_substr($longMessage, 0, 200), $details['message'] ?? null);
+    }
+
+    /**
+     * Ordinary input-validation \Exceptions (the file's established "safe to show the caller" convention
+     * — e.g. a malformed field) are deliberately NOT audited by design: only genuine denials (scope/
+     * ownership) and genuinely unexpected errors are. No new mcp.denied/mcp.tool_error row is added, and
+     * the response text is unaffected.
+     */
+    public function testOrdinaryValidationExceptionDoesNotAddDenialOrErrorAuditRows(): void
+    {
+        $audit = new AuditService(self::$mysql, null, 'test-audit-hmac-key');
+        $ctrl = $this->makeAuditedCtrl($audit);
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+
+        $before = $this->countAuditRows(['mcp.denied', 'mcp.tool_error']);
+        $res = $this->tool($tok, 'create_form', ['title' => 'X', 'fields' => ['not-an-object']], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertStringContainsString('malformed', $res['text']);
+        $after = $this->countAuditRows(['mcp.denied', 'mcp.tool_error']);
+        $this->assertSame($before, $after, 'an ordinary validation \Exception must not add a new mcp.denied/mcp.tool_error audit row');
     }
 }

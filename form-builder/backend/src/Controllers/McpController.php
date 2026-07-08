@@ -19,6 +19,26 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
 
 /**
+ * Thrown when an MCP tool call is denied by a scope or ownership check (requireScope, assertAppScope,
+ * assertFormInScope, ownApp, ownForm) — as opposed to an ordinary input-validation \Exception. Carries
+ * a short, stable machine-readable reason code alongside the human message so callTool()'s catch site
+ * can audit denials (queryable trail for a probing/misbehaving token) without parsing message text.
+ * The message shown to the MCP caller is unchanged either way — this is purely additive server-side.
+ */
+class McpDeniedException extends \Exception
+{
+    public function __construct(string $message, private readonly string $reasonCode, ?\Throwable $previous = null)
+    {
+        parent::__construct($message, 0, $previous);
+    }
+
+    public function getReasonCode(): string
+    {
+        return $this->reasonCode;
+    }
+}
+
+/**
  * MCP server (Model Context Protocol over Streamable HTTP) + ephemeral-token management.
  *
  * An external AI (Claude/Cursor/…) authenticates with a short-lived MCP token (Authorization: Bearer)
@@ -559,6 +579,12 @@ class McpController
                     throw new \Exception("Unknown or unavailable tool: {$name}");
             }
             return ['content' => [['type' => 'text', 'text' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)]]];
+        } catch (McpDeniedException $e) {
+            // A scope/ownership denial (as opposed to ordinary validation noise below) — always audited
+            // so a token probing outside its scope, or repeatedly failing, leaves a queryable trail.
+            // Must be caught before the plain \Exception branch (McpDeniedException extends it).
+            $this->audit($request, 'mcp.denied', $userId, ['tool' => $name, 'reason' => $e->getReasonCode()]);
+            return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
         } catch (\Exception $e) {
             // Every intentional throw in this file is a plain \Exception with a deliberately
             // user-safe message — that's the convention for "safe to show the MCP caller".
@@ -567,6 +593,9 @@ class McpController
             // Anything else (TypeError, PDOException, etc.) was never crafted to be user-facing and
             // may carry internals (SQL fragments, file paths) — log it, don't echo it to the client.
             $this->logger?->error('MCP tool call failed unexpectedly', ['tool' => $name, 'error' => $e->getMessage()]);
+            // mb_substr (not substr): a byte-cut multibyte message would be invalid UTF-8, which makes
+            // json_encode() in AuditService::log() return false -> the whole details blob (incl. 'tool') is lost.
+            $this->audit($request, 'mcp.tool_error', $userId, ['tool' => $name, 'message' => mb_substr($e->getMessage(), 0, 200)]);
             return ['content' => [['type' => 'text', 'text' => 'Error: an unexpected error occurred. Please try again.']], 'isError' => true];
         }
     }
@@ -574,7 +603,7 @@ class McpController
     private function requireScope(array $session, string $scope): void
     {
         if (!in_array($scope, $session['scopes'] ?? [], true)) {
-            throw new \Exception("This MCP token lacks the required scope: {$scope}");
+            throw new McpDeniedException("This MCP token lacks the required scope: {$scope}", 'scope');
         }
     }
 
@@ -592,13 +621,13 @@ class McpController
     {
         if (is_array($session['created'] ?? null)) {
             if ($appId === '' || !in_array($appId, $session['created']['apps'] ?? [], true)) {
-                throw new \Exception('This MCP link can only manage the app(s) it created');
+                throw new McpDeniedException('This MCP link can only manage the app(s) it created', 'app_scope');
             }
             return;
         }
         $scoped = $session['appId'] ?? null;
         if ($scoped !== null && $scoped !== $appId) {
-            throw new \Exception('This MCP token is scoped to a single app and cannot touch other apps');
+            throw new McpDeniedException('This MCP token is scoped to a single app and cannot touch other apps', 'app_scope');
         }
     }
 
@@ -611,11 +640,11 @@ class McpController
             if ($formId !== '' && (in_array($formId, $createdForms, true) || $this->formInAnyApp($session['created']['apps'] ?? [], $formId))) {
                 return;
             }
-            throw new \Exception('This MCP link can only touch forms it created (or forms in apps it created)');
+            throw new McpDeniedException('This MCP link can only touch forms it created (or forms in apps it created)', 'form_scope');
         }
         $scoped = $session['appId'] ?? null;
         if ($scoped !== null && ($formId === '' || !$this->appService->formBelongsToApp($scoped, $formId))) {
-            throw new \Exception('This MCP token is scoped to an app; that form is not part of it');
+            throw new McpDeniedException('This MCP token is scoped to an app; that form is not part of it', 'form_scope');
         }
     }
 
@@ -744,7 +773,7 @@ class McpController
     {
         $f = $formId !== '' ? $this->formService->getForm($formId) : null;
         if (!$f || ($f['userId'] ?? null) !== $userId) {
-            throw new \Exception('Form not found or access denied');
+            throw new McpDeniedException('Form not found or access denied', 'not_found');
         }
         return $f;
     }
@@ -753,7 +782,7 @@ class McpController
     {
         $a = $appId !== '' ? $this->appService->getApp($appId) : null;
         if (!$a || ($a['ownerId'] ?? null) !== $userId) {
-            throw new \Exception('App not found or access denied');
+            throw new McpDeniedException('App not found or access denied', 'not_found');
         }
         return $a;
     }
