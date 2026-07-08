@@ -944,14 +944,34 @@ async fn connector_request(
 async fn run_http_request(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node);
     let raw_url = require_string(node, &["url"])?;
-    let url = interpolate_template(&raw_url, &scope_to_context(scope));
-    if !is_allowed_flow_url(&url, &deps.base_url) {
-        return Err(FlowError::new(
-            FlowErrorCode::CapabilityDenied,
-            format!("Node '{}' http_request URL is not allow-listed (FormLogic base or local services only)", node.id),
-            Some(node.id.clone()),
-        ));
-    }
+    let interpolated_url = interpolate_template(&raw_url, &scope_to_context(scope));
+    // `data.service`, if set, is a STATIC, author-chosen service id — read directly off the
+    // node's data, NEVER templated/selector-resolved. It pins WHICH desktop service is hit;
+    // the (templatable) `url` becomes a PATH appended to that service's resolved loopback base
+    // instead of being used as an absolute URL. This is what keeps the feature safe when
+    // trigger/event data flows into `url`: an attacker who controls the trigger can influence
+    // the PATH but never the host, because `service` is fixed at flow-authoring time. The
+    // allow-list check below is skipped entirely in this branch — the service resolution IS
+    // the trust boundary now, not the URL allow-list.
+    // `.trim()` matches the browser runtime's `data.service.trim() !== ''` check (nodes.ts) so a
+    // whitespace-only value is treated as absent in both runtimes, not just as absent-per-language.
+    let url = if let Some(service) = data.get("service").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        // bundled=true: unlike stt_transcribe/tts_speak, http_request has no 'endpoint' property
+        // to fall back to — the only fix is to start the named service (or fix `service`).
+        let base = resolve_service_base(deps, service)
+            .filter(|b| is_loopback_url(b))
+            .ok_or_else(|| desktop_service_unavailable(node, service, true))?;
+        format!("{}/{}", base.trim_end_matches('/'), interpolated_url.trim_start_matches('/'))
+    } else {
+        if !is_allowed_flow_url(&interpolated_url, &deps.base_url) {
+            return Err(FlowError::new(
+                FlowErrorCode::CapabilityDenied,
+                format!("Node '{}' http_request URL is not allow-listed (FormLogic base or local services only)", node.id),
+                Some(node.id.clone()),
+            ));
+        }
+        interpolated_url
+    };
     let method = data.get("method").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("GET").to_uppercase();
     let m = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|_| FlowError::new(FlowErrorCode::InvalidFlow, format!("Node '{}' bad method", node.id), Some(node.id.clone())))?;

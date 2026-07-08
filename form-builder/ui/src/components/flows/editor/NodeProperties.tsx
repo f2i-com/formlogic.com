@@ -26,6 +26,7 @@ import {
 } from './nodeCatalog';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
+import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
 
 type MonacoEditor = import('monaco-editor').editor.IStandaloneCodeEditor;
 
@@ -525,6 +526,68 @@ function ConnectorCommandField({
   );
 }
 
+/**
+ * Desktop-service id picker (backs `http_request`'s optional `service` field): a select of the
+ * paired Desktop's currently-running services, else free text when Desktop is unpaired,
+ * unreachable, or reports none — same graceful-degradation philosophy as `ConnectorField`.
+ * Unlike `ConnectorField` (which reads already-loaded `context.connectors` synchronously), the
+ * service list isn't preloaded anywhere in the editor context, so this component fetches
+ * `desktopClient.services.list()` itself on mount, with a simple loading state.
+ */
+function DesktopServicePickerField({
+  spec,
+  value,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const [services, setServices] = useState<DesktopServiceSnapshot[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    desktopClient.services.list().then((res) => {
+      if (cancelled) return;
+      setServices(res.ok ? res.data : []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const raw = typeof value === 'string' ? value : '';
+  const loading = services === null;
+  const ids = services?.map((s) => s.id) ?? [];
+  return (
+    <label className="block">
+      <span className={LABEL_CLS}>{spec.label}</span>
+      {loading ? (
+        <input type="text" value={raw} disabled placeholder="Loading Desktop services…" className={INPUT_CLS + ' opacity-60'} />
+      ) : ids.length > 0 ? (
+        <select
+          value={raw}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS + ' cursor-pointer'}
+        >
+          <option value="">(none — URL below is an absolute address)</option>
+          {services!.map((s) => (
+            <option key={s.id} value={s.id}>{s.name || s.id}</option>
+          ))}
+          {raw !== '' && !ids.includes(raw) && <option value={raw}>{raw}</option>}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={raw}
+          placeholder={spec.placeholder}
+          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
+          className={INPUT_CLS}
+        />
+      )}
+      {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
+    </label>
+  );
+}
+
 /** Append-a-field helper under an answers editor: a datalist of the form's field ids. */
 function AnswersFieldAdder({
   nodeId,
@@ -870,6 +933,20 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                       onChange={onChange}
                     />
                   );
+                }
+                if (p.type === 'desktopService') {
+                  return <DesktopServicePickerField key={p.key} spec={p} value={data[p.key]} onChange={onChange} />;
+                }
+                // http_request's `url` becomes a PATH (not an absolute URL) once a `service` is
+                // chosen above it — swap the help/placeholder to say so, purely presentational
+                // (the stored value/key are untouched; the executor decides the same way).
+                if (p.key === 'url' && typeof data.service === 'string' && data.service.trim() !== '') {
+                  const pathSpec: NodePropertySpec = {
+                    ...p,
+                    placeholder: '/predict  or  predict',
+                    help: `Path under the '${data.service}' service (leading slash optional) — {{...}} templating against the run scope.`,
+                  };
+                  return <Field key={p.key} spec={pathSpec} value={data[p.key]} onChange={onChange} />;
                 }
                 if (p.type === 'code') {
                   const codeField = <CodeField key={p.key} spec={p} value={data[p.key]} onChange={onChange} setInserter={setInserter} />;

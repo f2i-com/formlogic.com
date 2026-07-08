@@ -509,13 +509,40 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
   const { node, deps } = ctx;
   const data = nodeData(node);
   const rawUrl = requireString(node, data, ['url']);
-  const url = interpolateTemplate(rawUrl, scopeToContext(ctx.scope));
-  if (!isAllowedFlowUrl(url)) {
-    throw new FlowExecError(
-      'capability_denied',
-      `Node '${node.id}' http_request URL is not allow-listed (Desktop base URL or the FormLogic API only)`,
-      node.id
-    );
+  const interpolatedUrl = interpolateTemplate(rawUrl, scopeToContext(ctx.scope));
+  // `data.service`, if set, is a STATIC, author-chosen service id — read directly off the
+  // node's data, NEVER templated/selector-resolved. It pins WHICH desktop service is hit; the
+  // (templatable) `url` becomes a PATH appended to that service's resolved loopback base
+  // instead of being used as an absolute URL. This is what keeps the feature safe when
+  // trigger/event data flows into `url`: an attacker who controls the trigger can influence
+  // the PATH but never the host, because `service` is fixed at flow-authoring time. The
+  // allow-list check below is skipped entirely in this branch — the service resolution IS the
+  // trust boundary now, not the URL allow-list.
+  let url: string;
+  if (typeof data.service === 'string' && data.service.trim() !== '') {
+    let base: string | null = null;
+    if (deps.resolveDesktopServiceBase) {
+      try {
+        base = await deps.resolveDesktopServiceBase(data.service);
+      } catch {
+        base = null;
+      }
+    }
+    if (!base || !isLoopbackUrl(base)) {
+      // bundled=true: unlike stt_transcribe/tts_speak, http_request has no 'endpoint' property
+      // to fall back to — the only fix is to start the named service (or fix `service`).
+      throw desktopServiceUnavailable(node, data.service, true);
+    }
+    url = `${base.replace(/\/+$/, '')}/${interpolatedUrl.replace(/^\/+/, '')}`;
+  } else {
+    url = interpolatedUrl;
+    if (!isAllowedFlowUrl(url)) {
+      throw new FlowExecError(
+        'capability_denied',
+        `Node '${node.id}' http_request URL is not allow-listed (Desktop base URL or the FormLogic API only)`,
+        node.id
+      );
+    }
   }
   const method = typeof data.method === 'string' && data.method !== '' ? data.method.toUpperCase() : 'GET';
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };

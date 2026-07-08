@@ -74,7 +74,13 @@ export type FieldType =
   /** Connector id — a select of context-available connectors, else free text. */
   | 'connector'
   /** Connector command — a datalist of the chosen connector's known commands, else free text. */
-  | 'connectorCommand';
+  | 'connectorCommand'
+  /**
+   * Desktop service id — a select of the paired Desktop's running services (fetched live via
+   * `desktopClient.services.list()`), else free text when Desktop is unpaired/unreachable.
+   * Backs `http_request`'s optional `service` field (docs §4).
+   */
+  | 'desktopService';
 
 /**
  * A conditional-visibility predicate over the node's own data. A property with a `showIf` is only
@@ -500,7 +506,8 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     type: 'http_request',
     label: 'HTTP request',
     category: 'connector',
-    description: 'Fetch an allow-listed URL (the FormLogic API or the paired Desktop base URL only).',
+    description:
+      'Fetch an allow-listed URL (the FormLogic API or the paired Desktop base URL only), or a named Desktop service.',
     icon: Globe,
     accent: 'cyan',
     executable: true,
@@ -508,6 +515,18 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
+      {
+        key: 'service',
+        label: 'Desktop service (optional)',
+        type: 'desktopService',
+        placeholder: 'e.g. llama-cpp — leave blank to call an absolute URL below',
+        help:
+          "Target a named service running in FormLogic Desktop (llama.cpp, Ollama, a custom script service, …) " +
+          "by id instead of hand-typing its loopback URL. When set, 'URL' below becomes a PATH under that " +
+          "service (e.g. /predict) rather than an absolute URL, and only that service's resolved loopback " +
+          'port is reachable — the Desktop/API URL allow-list does not apply for this node. Fixed at ' +
+          'authoring time; never affected by trigger/event data.',
+      },
       {
         key: 'url',
         label: 'URL',

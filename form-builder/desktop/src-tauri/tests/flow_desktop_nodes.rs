@@ -50,6 +50,12 @@ async fn stub_screenshot(Path(_id): Path<String>, Json(_body): Json<Value>) -> J
     Json(json!({ "dataUrl": "data:image/png;base64,AAA" }))
 }
 
+/// Stands in for a llama.cpp / Ollama / custom-script service targeted by `http_request`'s
+/// `service` field.
+async fn stub_predict() -> Json<Value> {
+    Json(json!({ "predicted": true }))
+}
+
 async fn stub_krea2_generate(Json(_body): Json<Value>) -> Json<Value> {
     Json(json!({ "ok": true, "imageUrl": "http://service/file?path=out.png" }))
 }
@@ -77,6 +83,7 @@ async fn spawn_stub() -> SocketAddr {
         .route("/session/:id/wait", post(stub_wait))
         .route("/session/:id/html", get(stub_html))
         .route("/session/:id/screenshot", post(stub_screenshot))
+        .route("/predict", get(stub_predict))
         .route("/generate", post(stub_krea2_generate))
         .route("/v1/images/generations", post(stub_openai_images))
         .route("/v1/audio/transcriptions", post(stub_stt))
@@ -266,4 +273,59 @@ async fn stt_rejects_non_allowlisted_endpoint() {
     let flow = single_node_flow("stt_transcribe", json!({ "endpoint": "https://evil.example/v1/audio/transcriptions", "audio": "x" }));
     let out = execute_flow(&flow, &empty_deps(), &opts()).await;
     assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
+}
+
+// ── http_request + `service` (target a named Desktop service instead of an absolute URL) ──────
+// Mirrors ui/src/client-runtime/flows/nodes.test.ts's `http_request` describe block.
+
+#[tokio::test]
+async fn http_request_service_path_with_leading_slash_hits_the_resolved_service() {
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["llama-cpp"]);
+    let flow = single_node_flow("http_request", json!({ "service": "llama-cpp", "url": "/predict" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    assert_eq!(out.status, "done", "{:?}", out.error);
+    let r = out.result.unwrap();
+    assert_eq!(r["ok"], json!(true));
+    assert_eq!(r["body"]["predicted"], json!(true));
+}
+
+#[tokio::test]
+async fn http_request_service_path_without_leading_slash_hits_the_same_url() {
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["llama-cpp"]);
+    let flow = single_node_flow("http_request", json!({ "service": "llama-cpp", "url": "predict" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    assert_eq!(out.status, "done", "{:?}", out.error);
+    assert_eq!(out.result.unwrap()["body"]["predicted"], json!(true));
+}
+
+#[tokio::test]
+async fn http_request_service_unavailable_is_actionable_never_coming_soon() {
+    // No service_bases + no registry + no endpoint override → unavailable, same actionable
+    // failure shape as browser_action/image_gen/stt/tts.
+    let flow = single_node_flow("http_request", json!({ "service": "llama-cpp", "url": "/predict" }));
+    let out = execute_flow(&flow, &empty_deps(), &opts()).await;
+    assert_eq!(out.status, "error");
+    let e = out.error.unwrap();
+    assert_eq!(e.code, FlowErrorCode::NodeFailed);
+    assert!(e.message.contains("llama-cpp"), "message: {}", e.message);
+    assert!(!e.message.to_lowercase().contains("coming soon"));
+}
+
+#[tokio::test]
+async fn http_request_service_ignores_the_url_allowlist_but_never_leaves_the_resolved_host() {
+    // Without `service`, an absolute non-allow-listed URL is capability_denied (see
+    // runner.rs::http_request_rejects_non_allowlisted_url). With `service` set, the
+    // (author-fixed, never-templated) service resolution IS the trust boundary: the same
+    // shape of value in `url` is treated as a PATH and can never redirect the request to a
+    // different host — it always lands on the resolved loopback service.
+    let addr = spawn_stub().await;
+    let deps = deps_with_services(&format!("http://{addr}"), &["llama-cpp"]);
+    let flow = single_node_flow("http_request", json!({ "service": "llama-cpp", "url": "https://evil.example/predict" }));
+    let out = execute_flow(&flow, &deps, &opts()).await;
+    // The request reached OUR stub (no route for that literal path → 404), proving it never
+    // attempted to leave the resolved loopback host, let alone reach evil.example.
+    assert_eq!(out.status, "done", "{:?}", out.error);
+    assert_eq!(out.result.unwrap()["status"], json!(404));
 }

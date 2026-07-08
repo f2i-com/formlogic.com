@@ -314,6 +314,55 @@ function routedFetch(routes: Record<string, unknown>): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
+describe('http_request', () => {
+  it('rejects a non-allow-listed absolute URL when `service` is unset (unchanged existing behavior)', async () => {
+    const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { url: 'https://evil.example/x' } };
+    await expect(executeNode(ctxFor(node, fakeDeps({ fetchFn: routedFetch({}) }))))
+      .rejects.toMatchObject({ code: 'capability_denied' });
+  });
+
+  it('with `service` set, treats `url` as a PATH under the resolved service base (leading slash)', async () => {
+    const fetchFn = routedFetch({ '/predict': { predicted: true } });
+    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:8080');
+    const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { service: 'llama-cpp', url: '/predict' } };
+    const out = (await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })))) as Record<string, unknown>;
+    expect(resolveDesktopServiceBase).toHaveBeenCalledWith('llama-cpp');
+    expect(out.ok).toBe(true);
+    expect((out.body as Record<string, unknown>).predicted).toBe(true);
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:8080/predict', expect.anything());
+  });
+
+  it('joins the path the same way whether `url` has a leading slash or not', async () => {
+    const fetchFn = routedFetch({ '/predict': { predicted: true } });
+    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:8080/');
+    const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { service: 'llama-cpp', url: 'predict' } };
+    await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })));
+    expect(fetchFn).toHaveBeenCalledWith('http://127.0.0.1:8080/predict', expect.anything());
+  });
+
+  it('fails with the actionable desktopServiceUnavailable message (never "coming soon") when the service cannot be resolved', async () => {
+    const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { service: 'llama-cpp', url: '/predict' } };
+    const deps = fakeDeps({ resolveDesktopServiceBase: vi.fn(async () => null) });
+    await expect(executeNode(ctxFor(node, deps))).rejects.toMatchObject({ code: 'node_failed' });
+    await executeNode(ctxFor(node, deps)).catch((err: FlowExecError) => {
+      expect(err.message).toMatch(/llama-cpp/);
+      expect(err.message).not.toMatch(/coming soon/i);
+    });
+  });
+
+  it('never redirects to a different host even when `url` looks like an absolute URL, once `service` is fixed', async () => {
+    // The templatable `url` can only ever become a PATH under the fixed, author-chosen service
+    // base — an attacker controlling trigger data that feeds `url` can influence the path, but
+    // never which host is contacted, because `service` is never templated.
+    const fetchFn = routedFetch({});
+    const resolveDesktopServiceBase = vi.fn(async () => 'http://127.0.0.1:8080');
+    const node: WorkflowGraphNode = { id: 'h', type: 'http_request', data: { service: 'llama-cpp', url: 'https://evil.example/steal' } };
+    await executeNode(ctxFor(node, fakeDeps({ fetchFn, resolveDesktopServiceBase })));
+    const calledUrl = String((fetchFn as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+    expect(calledUrl.startsWith('http://127.0.0.1:8080/')).toBe(true);
+  });
+});
+
 describe('browser_action', () => {
   const base = 'http://127.0.0.1:17880';
   function browserDeps(fetchFn: typeof fetch, resolve: string | null = base): FlowExecutorDeps {
