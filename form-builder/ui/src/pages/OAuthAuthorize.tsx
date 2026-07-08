@@ -17,6 +17,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'screens:write': 'Create and edit custom screens',
   'responses:read': 'Read submitted form responses',
   'responses:write': 'Submit and edit form responses',
+  'connector:command': 'Control your FormLogic Desktop connectors (e.g. the Aokie phone)',
   'offline_access': 'Stay connected without asking you again',
 };
 

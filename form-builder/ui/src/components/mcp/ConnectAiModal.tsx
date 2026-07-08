@@ -16,6 +16,8 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [fresh, setFresh] = useState<NewToken | null>(null);
   // The OAuth paste-the-URL path is primary; the manual flm_ token flow lives behind this.
   const [showManual, setShowManual] = useState(false);
+  // Opt-in: also let the AI drive this account's FormLogic Desktop connectors (e.g. the Aokie phone).
+  const [connectorAccess, setConnectorAccess] = useState(false);
   // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
   const isDemo = useAuthStore((s) => s.user?.isDemo === true);
 
@@ -33,7 +35,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
   const generate = async () => {
     setGenerating(true);
-    const r = await api.createMcpToken(appId, creator);
+    const r = await api.createMcpToken(appId, creator, connectorAccess);
     setGenerating(false);
     if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
     setFresh(r.data);
@@ -144,11 +146,19 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-gray-500 dark:text-slate-400">For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.</p>
-                  <Button onClick={generate} disabled={generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
-                    {generating ? 'Generating…' : 'Generate connection'}
-                  </Button>
+                <div className="space-y-3">
+                  {!isDemo && (
+                    <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                      <input type="checkbox" checked={connectorAccess} onChange={(e) => setConnectorAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
+                      <span>Also let this AI <span className="font-medium">control your FormLogic Desktop</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
+                    </label>
+                  )}
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs text-gray-500 dark:text-slate-400">For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.</p>
+                    <Button onClick={generate} disabled={generating} leftIcon={generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}>
+                      {generating ? 'Generating…' : 'Generate connection'}
+                    </Button>
+                  </div>
                 </div>
               )}
             </div>
@@ -169,6 +179,9 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                       {(s.scopes || []).includes('responses:read')
                         ? <span className="text-amber-600 dark:text-amber-400 font-medium"> · reads submissions</span>
                         : <span className="text-gray-400 dark:text-slate-500"> · no submission data</span>}
+                      {(s.scopes || []).includes('connector:command')
+                        ? <span className="text-primary-600 dark:text-primary-400 font-medium"> · controls desktop</span>
+                        : null}
                     </p>
                     <p className="text-gray-400 dark:text-slate-500">Created {formatRelativeTime(s.createdAt)} · expires {formatTimeUntil(s.expiresAt)} · idle {Math.round(s.idleTimeout / 60)} min</p>
                   </div>

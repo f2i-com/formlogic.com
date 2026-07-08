@@ -69,6 +69,11 @@ class McpController
             $creator = false;
             $scopes = ['apps:read', 'forms:read', 'responses:read'];
         }
+        // Opt-in: also let the AI drive the owner's FormLogic Desktop connectors (e.g. the Aokie
+        // phone) via connector_command. Never for the shared demo. Appended to the builder scopes.
+        if (!$readOnly && ($body['connectorAccess'] ?? false) === true) {
+            $scopes = array_values(array_unique(array_merge($scopes ?? \FormLogic\Services\McpTokenService::DEFAULT_SCOPES, ['connector:command'])));
+        }
 
         $result = $this->tokens->create($userId, $appId, $ttl, $idle, $scopes, $creator);
         $result['readOnly'] = $readOnly;
