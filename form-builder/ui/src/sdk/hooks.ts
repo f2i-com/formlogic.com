@@ -92,8 +92,9 @@ export interface UseResponsesResult {
 }
 
 /**
- * Recent responses for a form (newest first). Demo-aware; resolves to [] if the user
- * can't view (the store's fetchRecentRows swallows a 403 and returns []).
+ * Recent responses for a form (newest first). Demo-aware; a 403/404/network failure
+ * rejects (the store's fetchRecentRows throws) and surfaces via `error` below, rather
+ * than silently resolving to [].
  *
  * `pollInterval` (seconds) opts into live updates: the list silently re-fetches on
  * that cadence while the tab is visible, so views that watch incoming records (e.g.

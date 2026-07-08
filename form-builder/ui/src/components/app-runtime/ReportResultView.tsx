@@ -338,14 +338,14 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
         <AreaChart data={rows} margin={margin}>
           {common}
           {names.map((n) => (
-            <Area key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} fill={colorOf.get(n)} fillOpacity={0.14} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4, n) : { r: 4, strokeWidth: 2, stroke: t.surface }} />
+            <Area key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} fill={colorOf.get(n)} fillOpacity={0.14} isAnimationActive={anim} dot={rows.length <= 20 ? { r: 3, fill: colorOf.get(n), stroke: t.surface, strokeWidth: 1.5 } : false} activeDot={canClick ? clickableDot(4, n) : { r: 4, strokeWidth: 2, stroke: t.surface }} />
           ))}
         </AreaChart>
       ) : (
         <LineChart data={rows} margin={margin}>
           {common}
           {names.map((n) => (
-            <Line key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4.5, n) : { r: 4.5, strokeWidth: 2, stroke: t.surface }} />
+            <Line key={n} type="monotone" name={n} dataKey={n} stroke={colorOf.get(n)} strokeWidth={2} isAnimationActive={anim} dot={rows.length <= 20 ? { r: 3, fill: colorOf.get(n), stroke: t.surface, strokeWidth: 1.5 } : false} activeDot={canClick ? clickableDot(4.5, n) : { r: 4.5, strokeWidth: 2, stroke: t.surface }} />
           ))}
         </LineChart>
       );
@@ -432,7 +432,7 @@ export function ReportResultView({ result, spec, primaryColor, print = false, fi
                 </linearGradient>
               </defs>
               {common}
-              <Area type="monotone" name="Value" dataKey="value" stroke={t.accent} strokeWidth={2} fill={`url(#${gradId})`} fillOpacity={1} isAnimationActive={anim} dot={false} activeDot={canClick ? clickableDot(4.5) : { r: 4.5, strokeWidth: 2, stroke: t.surface }}>
+              <Area type="monotone" name="Value" dataKey="value" stroke={t.accent} strokeWidth={2} fill={`url(#${gradId})`} fillOpacity={1} isAnimationActive={anim} dot={series.length <= 20 ? { r: 3, fill: t.accent, stroke: t.surface, strokeWidth: 1.5 } : false} activeDot={canClick ? clickableDot(4.5) : { r: 4.5, strokeWidth: 2, stroke: t.surface }}>
                 {showLabels && <LabelList dataKey="value" position="top" formatter={(v: unknown) => vf.short(v)} style={labelStyle} />}
               </Area>
             </AreaChart>

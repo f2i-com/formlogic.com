@@ -176,14 +176,15 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
 
       fetchRecentRows: async (formId, limit) => {
         const map = (r: Record<string, unknown>) => ({ id: String(r.id ?? ''), answers: (r.answers as Record<string, unknown>) ?? {}, submittedAt: String(r.submittedAt ?? '') });
-        try {
-          if (!api.isDemoMode()) {
-            const { rows } = await get().fetchResponsePage(formId, { limit, offset: 0 });
-            return (rows as Record<string, unknown>[]).map(map);
-          }
-          const rows = (await get().fetchResponses(formId, { limit })) as Record<string, unknown>[];
-          return rows.map(map);
-        } catch { return []; }
+        // Let a 403/404/network failure THROW (matches fetchResponses/fetchResponsePage) instead of
+        // swallowing it to [] — callers (dashboard list/activity widgets, the SDK's useResponses) need
+        // to tell "form deleted or no permission" apart from a genuinely empty form.
+        if (!api.isDemoMode()) {
+          const { rows } = await get().fetchResponsePage(formId, { limit, offset: 0 });
+          return (rows as Record<string, unknown>[]).map(map);
+        }
+        const rows = (await get().fetchResponses(formId, { limit })) as Record<string, unknown>[];
+        return rows.map(map);
       },
 
       createResponse: async (formId, answers) => {
@@ -299,6 +300,13 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           toast.error('Failed to save dashboard', typeof r.error === 'string' ? r.error : undefined);
           return false;
         }
+        // Reconcile with the server's post-sanitize record — a save-time clamp (e.g. a widget
+        // referencing a form just removed from the app) must be reflected, not silently dropped.
+        const savedApp = (r.data as { app?: Record<string, unknown> } | undefined)?.app;
+        if (savedApp && 'customScreen' in savedApp) {
+          const cur = get().config;
+          if (cur) set({ config: { ...cur, app: { ...cur.app, customScreen: savedApp.customScreen as CustomScreen } } });
+        }
         return true;
       },
 
@@ -322,6 +330,12 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
           if (cur) set({ config: { ...cur, forms: cur.forms.map((f) => (f.formId === formId ? { ...f, customScreen: prevScreen } : f)) } });
           toast.error('Failed to save section screen', typeof r.error === 'string' ? r.error : undefined);
           return false;
+        }
+        // Reconcile with the server's post-sanitize record, same reasoning as saveDashboard.
+        const savedForm = (r.data as { form?: Record<string, unknown> } | undefined)?.form;
+        if (savedForm && 'customScreen' in savedForm) {
+          const cur = get().config;
+          if (cur) set({ config: { ...cur, forms: cur.forms.map((f) => (f.formId === formId ? { ...f, customScreen: savedForm.customScreen as CustomScreen } : f)) } });
         }
         return true;
       },

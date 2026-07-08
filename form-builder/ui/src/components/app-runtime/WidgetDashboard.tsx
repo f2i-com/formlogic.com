@@ -234,7 +234,9 @@ export function WidgetDashboard(props: WidgetDashboardProps) {
               retrying={!!data.retrying[w.id]}
               listRows={data.listData[w.id]}
               listLoading={w.kind === 'list' && !!w.list?.formId && !!props.fetchRecent && data.listData[w.id] === undefined}
+              listError={data.listErrors[w.id]}
               activity={data.activity}
+              activityError={data.activityError}
               forms={forms}
               submittableForms={props.submittableForms}
               primaryColor={primaryColor}
@@ -270,7 +272,13 @@ export interface WidgetViewProps {
   listRows?: WidgetRecord[];
   /** True while this list widget's rows are still being fetched (skeleton instead of empty state). */
   listLoading?: boolean;
+  /** Sanitized failure message when this list widget's fetch failed (form deleted, no permission,
+   *  network error) — zero rows + this set means "couldn't load", not "genuinely empty". */
+  listError?: string;
   activity: ActivityRow[];
+  /** Sanitized failure message when the activity feed's fetch failed outright — zero rows + this
+   *  set means "couldn't load", not "genuinely empty". */
+  activityError?: string | null;
   forms: WidgetDataForm[];
   submittableForms?: WidgetDataForm[];
   primaryColor?: string;
@@ -289,7 +297,7 @@ export function WidgetView(p: WidgetViewProps) {
     return (
       <div className={`${CARD} h-full min-h-0 p-5 overflow-auto`}>
         {w.title && <h3 className="font-semibold tracking-tight text-gray-900 dark:text-white mb-1.5">{w.title}</h3>}
-        <p className="text-sm text-gray-600 dark:text-slate-300 whitespace-pre-wrap">{w.text?.body ?? ''}</p>
+        <p className="text-sm text-gray-600 dark:text-slate-300 whitespace-pre-wrap break-words">{w.text?.body ?? ''}</p>
       </div>
     );
   }
@@ -344,6 +352,8 @@ export function WidgetView(p: WidgetViewProps) {
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
         {p.listLoading && p.listRows === undefined ? (
           <ListSkeleton withMeta={!!cfg?.metaField} />
+        ) : rows.length === 0 && p.listError ? (
+          <WidgetError canEdit={p.canEdit} detail={p.listError} />
         ) : rows.length === 0 ? (
           <WidgetEmpty icon={<Inbox className="h-6 w-6 opacity-70" />} text="No records yet" />
         ) : (
@@ -410,7 +420,9 @@ export function WidgetView(p: WidgetViewProps) {
   } else if (w.kind === 'activity') {
     body = (
       <div className="flex-1 min-h-0 overflow-auto px-2 pb-2">
-        {p.activity.length === 0 ? (
+        {p.activity.length === 0 && p.activityError ? (
+          <WidgetError canEdit={p.canEdit} detail={p.activityError} />
+        ) : p.activity.length === 0 ? (
           <WidgetEmpty icon={<ActivityGlyph className="h-6 w-6 opacity-70" />} text="No recent activity." />
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-slate-800">

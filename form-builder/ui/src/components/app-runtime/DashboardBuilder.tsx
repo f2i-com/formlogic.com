@@ -29,6 +29,17 @@ const uid = () => 'w_' + Math.random().toString(36).slice(2, 10);
 type Layout = { x: number; y: number; w: number; h: number };
 const overlaps = (a: Layout, b: Layout) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
+/** Minimum resizable height (grid rows) by widget kind. Text/actions/plain-KPI widgets are readable
+ *  at 1 row; chart visualizations that need axis/legend space (bar/line/area/pie/donut/table) and
+ *  list/activity widgets need at least 2 so their labels/legend never get squeezed or overlap. A KPI
+ *  with a sparkline or a target progress bar renders extra content below the number (see the
+ *  'kpi-trend'/'target' gallery presets, both shipped at h:2) and needs the same 2-row floor. */
+function minHeightFor(w: DashboardWidget): number {
+  if (w.kind === 'list' || w.kind === 'activity') return 2;
+  if (w.kind === 'report') return w.spec?.viz === 'kpi' && !w.spec?.sparkline && !w.spec?.target ? 1 : 2;
+  return 1; // text, actions
+}
+
 /**
  * Vertical gravity compaction: float every widget up to fill gaps, treating the moving widget as a
  * fixed obstacle (so it stays under the cursor). Keeps the grid tidy — no overlaps, no drifting gaps.
@@ -196,6 +207,10 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       : 0
   );
   const [copyOpen, setCopyOpen] = useState(false);
+  // Widget id pending delete confirmation (T-widget-delete-confirm): the Trash button no longer
+  // deletes immediately — a stray click on a chart full of configuration would otherwise vanish
+  // with no undo.
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   // The app being edited (excluded from the copy-source list). Both builder hosts live inside the
   // app runtime, so the store is populated; falls back to undefined harmlessly elsewhere.
   const currentAppId = useAppRuntimeStore((s) => s.config?.app.id);
@@ -263,9 +278,10 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
       if (!it) return;
       const dxCells = Math.round((e.clientX - it.startX) / (cellW + GRID_GAP));
       const dyCells = Math.round((e.clientY - it.startY) / (GRID_ROW + GRID_GAP));
+      const movingWidget = it.base.find((w) => w.id === it.id);
       const patch = it.type === 'move'
         ? { x: Math.max(0, Math.min(it.orig.x + dxCells, cols - it.orig.w)), y: Math.max(0, it.orig.y + dyCells) }
-        : { w: Math.max(1, Math.min(it.orig.w + dxCells, cols - it.orig.x)), h: Math.max(1, it.orig.h + dyCells) };
+        : { w: Math.max(1, Math.min(it.orig.w + dxCells, cols - it.orig.x)), h: Math.max(movingWidget ? minHeightFor(movingWidget) : 1, it.orig.h + dyCells) };
       // Recompute from the drag-start snapshot each frame → deterministic, no cumulative drift.
       const next = it.base.map((w) => (w.id === it.id ? { ...w, layout: { ...w.layout, ...patch } } : w));
       setWidgets(resolveDrag(next, it.id, it.orig));
@@ -425,7 +441,7 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
                         <Settings2 className="h-3.5 w-3.5" /> Edit
                       </button>
                     )}
-                    <button type="button" title="Delete" onClick={(e) => { e.stopPropagation(); removeWidget(w.id); }} className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-red-500 cursor-pointer">
+                    <button type="button" title="Delete" onClick={(e) => { e.stopPropagation(); setDeleteId(w.id); }} className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 shadow-sm text-gray-500 hover:text-red-500 cursor-pointer">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -439,7 +455,9 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
                       canEdit
                       errorDetail={data.reportErrors[w.id]}
                       listRows={data.listData[w.id]}
+                      listError={data.listErrors[w.id]}
                       activity={data.activity}
+                      activityError={data.activityError}
                       forms={builderForms as unknown as WidgetDataForm[]}
                       submittableForms={props.submittableForms}
                       primaryColor={scope === 'app' ? undefined : accent}
@@ -591,6 +609,19 @@ export function DashboardBuilder(props: DashboardBuilderProps) {
         cancelLabel="Keep editing"
         variant="danger"
       />
+
+      {/* Widget delete confirmation — a stray click on the Trash icon must not vanish a
+          configured widget with no way back. */}
+      <ConfirmDialog
+        isOpen={!!deleteId}
+        onClose={() => setDeleteId(null)}
+        onConfirm={() => { if (deleteId) removeWidget(deleteId); setDeleteId(null); }}
+        title="Delete this widget?"
+        message="This removes the widget from the dashboard. You can't undo this once you save."
+        confirmLabel="Delete widget"
+        cancelLabel="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }
@@ -604,7 +635,13 @@ function SimpleWidgetConfig({ widget, forms, onClose, onSave }: {
   onSave: (patch: Partial<DashboardWidget>) => void;
 }) {
   const [title, setTitle] = useState(widget.title ?? '');
-  const [formId, setFormId] = useState(widget.list?.formId ?? forms[0]?.formId ?? '');
+  // Fall back to the first available form when the stored formId no longer matches one in
+  // `forms` (e.g. the form was removed from the app) — otherwise the select shows no matching
+  // option and a save silently keeps the dead reference.
+  const storedListFormId = widget.list?.formId;
+  const [formId, setFormId] = useState(
+    storedListFormId && forms.some((f) => f.formId === storedListFormId) ? storedListFormId : forms[0]?.formId ?? ''
+  );
   const [titleField, setTitleField] = useState(widget.list?.titleField ?? '');
   const [subtitleField, setSubtitleField] = useState(widget.list?.subtitleField ?? '');
   const [metaField, setMetaField] = useState(widget.list?.metaField ?? '');

@@ -107,7 +107,12 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
   const initSpec = report?.spec;
   const [name, setName] = useState(report?.name ?? '');
   const [description, setDescription] = useState(report?.description ?? '');
-  const [formId, setFormId] = useState(initSpec?.formId ?? forms[0]?.formId ?? '');
+  // Fall back to the first available form when the stored formId no longer matches one in
+  // `forms` (e.g. the form was removed from the app) — otherwise the select shows no matching
+  // option and saving keeps the dead reference.
+  const [formId, setFormId] = useState(
+    initSpec?.formId && forms.some((f) => f.formId === initSpec.formId) ? initSpec.formId : forms[0]?.formId ?? ''
+  );
   const [viz, setViz] = useState<ReportViz>(initSpec?.viz ?? 'bar');
   const [groupField, setGroupField] = useState(initSpec?.groupBy?.field ?? '');
   const [bucket, setBucket] = useState<NonNullable<AppReportSpec['groupBy']>['bucket']>(initSpec?.groupBy?.bucket ?? 'month');
@@ -292,8 +297,14 @@ export function ReportBuilder({ report, onClose, onSave, forms: formsProp, runRe
         try {
           const res = await runReport(querySpec);
           if (seq === seqRef.current) setPreview(res);
-        } catch {
-          if (seq === seqRef.current) { setPreviewErr('Could not run this report.'); setPreview(null); }
+        } catch (err) {
+          // Thread the actual caught message through — the runner throws the server's sanitized
+          // error, so a user opening Edit on a broken widget sees the real reason instead of a
+          // less-informative message than the read-only dashboard tile already showed them.
+          if (seq === seqRef.current) {
+            setPreviewErr(err instanceof Error && err.message ? err.message : 'Could not run this report.');
+            setPreview(null);
+          }
         } finally {
           if (seq === seqRef.current) setRunning(false);
         }

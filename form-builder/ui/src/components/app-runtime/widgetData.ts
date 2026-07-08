@@ -46,7 +46,14 @@ export interface WidgetData {
    *  what usually fills this in. Never a raw stack/SQL — only what the API already returned. */
   reportErrors: Record<string, string>;
   listData: Record<string, WidgetRecord[]>;
+  /** Sanitized failure message per FAILED list widget (formId deleted, no permission, network error).
+   *  A list widget with `listErrors[id]` set and zero rows failed its fetch — it is NOT genuinely
+   *  empty — so the renderer should show the shared WidgetError instead of "No records yet". */
+  listErrors: Record<string, string>;
   activity: ActivityRow[];
+  /** Set when the activity feed's fetch failed outright (server call threw, or every viewable form's
+   *  fetch failed) rather than the feed genuinely having zero rows. Cleared on the next success. */
+  activityError: string | null;
   /** Re-run JUST one report widget via the single-report runner (owner "Retry"). No-op for ids
    *  that aren't report widgets. Success replaces that widget's result; failure keeps the current
    *  data and records the sanitized message in reportErrors. */
@@ -222,6 +229,7 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
 
   // ── List widgets: newest rows per referenced form ──────────────────────────
   const [listData, setListData] = useState<Record<string, WidgetRecord[]>>({});
+  const [listErrors, setListErrors] = useState<Record<string, string>>({});
   const listKey = useMemo(
     () => JSON.stringify(widgets.filter((w) => w.kind === 'list' && w.list?.formId).map((w) => [w.id, w.list!.formId, w.list!.limit ?? 6])),
     [widgets]
@@ -231,19 +239,22 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
     const background = refreshToken > 0 && lastListKey.current === listKey;
     lastListKey.current = listKey;
     const items = widgets.filter((w) => w.kind === 'list' && w.list?.formId);
-    if (items.length === 0 || !fetchRecent) { setListData({}); return; }
+    if (items.length === 0 || !fetchRecent) { setListData({}); setListErrors({}); return; }
     let cancelled = false;
     (async () => {
       // null marks a failed fetch so a background refresh can keep that widget's last good rows.
       const out: Record<string, WidgetRecord[] | null> = {};
+      const errs: Record<string, string> = {};
       await Promise.all(items.map(async (w) => {
         try { out[w.id] = await fetchRecent(w.list!.formId, Math.max(1, Math.min(w.list!.limit ?? 6, 25))); }
-        catch { out[w.id] = null; }
+        catch (err) { out[w.id] = null; errs[w.id] = errorMessage(err) ?? 'Could not load these records.'; }
       }));
       if (cancelled) return;
       setListData((prev) => {
         // Background merges into the previous map (rows stay visible, no skeleton flash);
-        // foreground replaces it wholesale (today's behaviour, failures become empty lists).
+        // foreground replaces it wholesale. A failed fetch still lands as [] here (so the loading
+        // skeleton — gated on listData[id] === undefined — clears), but listErrors records WHY it's
+        // empty so the renderer can tell a genuine empty state from "form deleted or no permission".
         const map: Record<string, WidgetRecord[]> = background ? { ...prev } : {};
         for (const w of items) {
           const rows = out[w.id];
@@ -251,6 +262,14 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
           else if (!background) map[w.id] = [];
         }
         return map;
+      });
+      setListErrors((prev) => {
+        const next: Record<string, string> = { ...prev };
+        for (const w of items) {
+          if (errs[w.id]) next[w.id] = errs[w.id];
+          else if (out[w.id]) delete next[w.id]; // a fresh success clears a stale error
+        }
+        return next;
       });
     })();
     return () => { cancelled = true; };
@@ -260,9 +279,10 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
   // ── Activity built-in: newest records across viewable forms ────────────────
   const hasActivity = widgets.some((w) => w.kind === 'activity');
   const [activity, setActivity] = useState<ActivityRow[]>([]);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const lastActivityKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!hasActivity) { setActivity([]); lastActivityKey.current = null; return; }
+    if (!hasActivity) { setActivity([]); setActivityError(null); lastActivityKey.current = null; return; }
     // Server-side feed: one permission-filtered, newest-first call replaces the per-form
     // client derivation. Same background semantics: a token bump with the same inputs
     // refetches quietly, and a FAILED background refetch keeps the last good rows.
@@ -274,16 +294,16 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
       (async () => {
         try {
           const rows = await fetchActivity(8);
-          if (!cancelled) setActivity(rows.filter((r) => r.id).slice(0, 8));
-        } catch {
-          // Foreground failure mirrors today's drop-on-error (empty feed);
-          // background failure keeps whatever is currently shown.
-          if (!cancelled && !background) setActivity([]);
+          if (!cancelled) { setActivity(rows.filter((r) => r.id).slice(0, 8)); setActivityError(null); }
+        } catch (err) {
+          // Foreground failure surfaces as an error (not a quiet empty feed);
+          // background failure keeps whatever is currently shown + its error state.
+          if (!cancelled && !background) { setActivity([]); setActivityError(errorMessage(err) ?? 'Could not load recent activity.'); }
         }
       })();
       return () => { cancelled = true; };
     }
-    if (!fetchRecent) { setActivity([]); lastActivityKey.current = null; return; }
+    if (!fetchRecent) { setActivity([]); setActivityError(null); lastActivityKey.current = null; return; }
     const viewable = forms.filter((f) => (canViewForm ? canViewForm(f.formId) : true)).slice(0, 6);
     // A token bump with the same content inputs is a background refresh; anything else (forms or
     // widgets changed) keeps today's foreground replace.
@@ -310,10 +330,15 @@ export function useWidgetData(widgets: DashboardWidget[], deps: WidgetDataDeps, 
         all.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
         return all.filter((r) => r.id).slice(0, 8);
       });
+      if (!background) {
+        // Every viewable form's fetch failed (not just some) — that's an error, not a genuinely
+        // empty feed. A partial failure still contributes rows from the forms that succeeded.
+        setActivityError(viewable.length > 0 && failed.length === viewable.length ? 'Could not load recent activity.' : null);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActivity, forms, listKey, refreshToken]);
 
-  return { reportResults, reportLoading, reportErrors, listData, activity, retryWidget, retrying };
+  return { reportResults, reportLoading, reportErrors, listData, listErrors, activity, activityError, retryWidget, retrying };
 }

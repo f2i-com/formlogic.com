@@ -11,7 +11,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import type { AppFormRelations } from '../../lib/api';
-import type { AppForm } from '../../types/app';
+import type { App, AppForm, DashboardWidget, AppReportItem } from '../../types/app';
+import { isReportDocument } from '../../types/app';
 
 interface RelationBadge {
   type: 'outgoing' | 'incoming';
@@ -32,10 +33,14 @@ export function AppFormManager() {
   const [editingNameId, setEditingNameId] = useState<string | null>(null);
   const [editNameValue, setEditNameValue] = useState('');
   const [relationBadges, setRelationBadges] = useState<Record<string, RelationBadge[]>>({});
-  const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }>; sharedWith: string[] } | null>(null);
+  const [removeConfirm, setRemoveConfirm] = useState<{ formId: string; formName: string; affectedFields: Array<{ formName: string; fieldLabel: string }>; sharedWith: string[]; dashboardRefCount: number } | null>(null);
   // Cache the app's linked_record relations (one round trip) so we can check for
   // references when a form is removed (incomingLinks = fields elsewhere targeting it).
   const relationsRef = useRef<Record<string, AppFormRelations>>({});
+  // Cache the app's home dashboard widgets + saved reports (one round trip) so a form removal
+  // can warn when a widget/report still points at the form being removed — the backend already
+  // sanitizes dead references on the next dashboard save, but the user should know BEFORE removing.
+  const dashboardDataRef = useRef<{ widgets: DashboardWidget[]; reports: AppReportItem[] }>({ widgets: [], reports: [] });
   // Guards against out-of-order loadForms resolving (e.g. rapid appId changes)
   const loadTokenRef = useRef(0);
 
@@ -46,10 +51,13 @@ export function AppFormManager() {
     // Use the API directly so a fetch FAILURE is distinguishable from "no forms"
     // (the store helper returns [] either way), letting us show error + retry.
     // Relations come from ONE owner-scoped call (replaces the old per-form getForm
-    // fan-out); if it fails the badges/warnings just degrade to empty.
-    const [result, relResult] = await Promise.all([
+    // fan-out); if it fails the badges/warnings just degrade to empty. The app record
+    // (customScreen + reports) powers the dashboard-reference warning on remove; if it
+    // fails that warning just degrades to empty (never blocks the page).
+    const [result, relResult, appResult] = await Promise.all([
       api.getAppForms(appId),
       api.getAppFormRelations(appId),
+      api.getApp(appId),
     ]);
     if (loadTokenRef.current !== token) return;
     if (result.error) {
@@ -95,6 +103,13 @@ export function AppFormManager() {
 
     setRelationBadges(badges);
     relationsRef.current = relationsCache;
+
+    const appRecord = appResult.data?.app as App | undefined;
+    dashboardDataRef.current = {
+      widgets: appRecord?.customScreen?.kind === 'dashboard' ? (appRecord.customScreen.dashboard?.widgets ?? []) : [],
+      reports: appRecord?.reports ?? [],
+    };
+
     setLoading(false);
   };
 
@@ -180,10 +195,26 @@ export function AppFormManager() {
         fieldLabel: link.fieldLabel,
       }));
 
+    // Also warn when the app's home dashboard or saved reports still query this form — the
+    // backend safely sanitizes those dead references on the NEXT dashboard/report save, but the
+    // user should know before removing that widgets will silently go blank until then.
+    const { widgets, reports } = dashboardDataRef.current;
+    const reportFormIds = new Map<string, string>();
+    for (const item of reports) { if (!isReportDocument(item)) reportFormIds.set(item.id, item.spec.formId); }
+    const widgetRefCount = widgets.filter((w) =>
+      (w.kind === 'report' && w.spec?.formId === formId) || (w.kind === 'list' && w.list?.formId === formId)
+    ).length;
+    const reportRefCount = reports.filter((item) => (
+      isReportDocument(item)
+        ? item.blocks.some((b) => b.kind === 'report' && reportFormIds.get(b.reportId) === formId)
+        : item.spec.formId === formId
+    )).length;
+    const dashboardRefCount = widgetRefCount + reportRefCount;
+
     // Always confirm — removing a form from an app is a meaningful action even
     // when nothing links to it (it stops collecting in the app + can lose relations).
     const af = appForms.find((f) => f.formId === formId);
-    setRemoveConfirm({ formId, formName, affectedFields, sharedWith: af ? getSharedApps(af) : [] });
+    setRemoveConfirm({ formId, formName, affectedFields, sharedWith: af ? getSharedApps(af) : [], dashboardRefCount });
   };
 
   const handleRemoveConfirmed = async (formId: string) => {
@@ -504,15 +535,24 @@ export function AppFormManager() {
         isOpen={!!removeConfirm}
         onClose={() => setRemoveConfirm(null)}
         onConfirm={() => removeConfirm && handleRemoveConfirmed(removeConfirm.formId)}
-        title={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Linked record dependencies' : 'Remove form from app?'}
+        title={removeConfirm && (removeConfirm.affectedFields.length > 0 || removeConfirm.dashboardRefCount > 0) ? 'This form is in use' : 'Remove form from app?'}
         message={removeConfirm
-          ? (removeConfirm.affectedFields.length > 0
-              ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}\n\n${removeConfirm.sharedWith.length > 0 ? `The form and its data stay in ${removeConfirm.sharedWith.join(', ')} — nothing is deleted.\n\n` : ''}Are you sure you want to remove this form?`
+          ? (removeConfirm.affectedFields.length > 0 || removeConfirm.dashboardRefCount > 0
+              ? [
+                  removeConfirm.affectedFields.length > 0
+                    ? `Removing "${removeConfirm.formName}" will break linked record fields in the following forms:\n\n${removeConfirm.affectedFields.map((af) => `- ${af.formName}: "${af.fieldLabel}"`).join('\n')}`
+                    : `Removing "${removeConfirm.formName}" from this app:`,
+                  removeConfirm.dashboardRefCount > 0
+                    ? `${removeConfirm.dashboardRefCount} dashboard widget${removeConfirm.dashboardRefCount === 1 ? '' : 's'} or report${removeConfirm.dashboardRefCount === 1 ? '' : 's'} still query this form and will go blank until you edit or remove ${removeConfirm.dashboardRefCount === 1 ? 'it' : 'them'}.`
+                    : '',
+                  removeConfirm.sharedWith.length > 0 ? `The form and its data stay in ${removeConfirm.sharedWith.join(', ')} — nothing is deleted.` : '',
+                  'Are you sure you want to remove this form?',
+                ].filter(Boolean).join('\n\n')
               : (removeConfirm.sharedWith.length > 0
                   ? `Remove "${removeConfirm.formName}" from this app? It will stop appearing here, but the form and all of its responses stay in ${removeConfirm.sharedWith.join(', ')} — nothing is deleted.`
                   : `Remove "${removeConfirm.formName}" from this app? It will stop appearing in the app. The form and its responses are kept.`))
           : ''}
-        confirmLabel={removeConfirm && removeConfirm.affectedFields.length > 0 ? 'Remove anyway' : 'Remove'}
+        confirmLabel={removeConfirm && (removeConfirm.affectedFields.length > 0 || removeConfirm.dashboardRefCount > 0) ? 'Remove anyway' : 'Remove'}
         variant="danger"
       />
     </div>
