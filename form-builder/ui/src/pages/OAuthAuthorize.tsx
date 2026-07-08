@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import type { OAuthAuthorizeInfo, OAuthErrorInfo } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Logo } from '../components/ui/Logo';
-import { AlertCircle, Check, Globe, Loader2, Plug, XCircle } from 'lucide-react';
+import { AlertCircle, Check, Globe, Laptop, Loader2, Plug, XCircle } from 'lucide-react';
 
 /** Plain-language labels for the McpTokenService scope ids (unknown scopes show their raw id). */
 const SCOPE_LABELS: Record<string, string> = {
@@ -168,12 +168,32 @@ export function OAuthAuthorize() {
       <>
         <div className="text-center">
           <div className="w-12 h-12 mx-auto rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center mb-4">
-            <Plug className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            {info.isDesktopLink ? (
+              <Laptop className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            ) : (
+              <Plug className="h-6 w-6 text-primary-600 dark:text-primary-400" />
+            )}
           </div>
           <h1 className="text-xl font-semibold text-gray-900 dark:text-white tracking-tight">
-            <span className="text-primary-700 dark:text-primary-300">{info.clientName}</span> wants to connect
+            {info.isDesktopLink ? (
+              'Link FormLogic Desktop'
+            ) : (
+              <>
+                <span className="text-primary-700 dark:text-primary-300">{info.clientName}</span> wants to connect
+              </>
+            )}
           </h1>
-          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">to your FormLogic account ({user.email})</p>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">
+            {info.isDesktopLink ? (
+              info.device ? (
+                <>This will connect the desktop app on <span className="font-semibold text-gray-900 dark:text-white">{info.device}</span> to your FormLogic account ({user.email}).</>
+              ) : (
+                <>This will connect FormLogic Desktop to your account ({user.email}).</>
+              )
+            ) : (
+              `to your FormLogic account (${user.email})`
+            )}
+          </p>
         </div>
 
         {/* Where the browser goes after approval — shown prominently (anti-phishing). */}
@@ -191,7 +211,7 @@ export function OAuthAuthorize() {
             {info.scopes.map((scope) => (
               <li key={scope} className="flex items-start gap-2 text-sm text-gray-700 dark:text-slate-200">
                 <Check className="h-4 w-4 shrink-0 mt-0.5 text-primary-600 dark:text-primary-400" />
-                <span>{SCOPE_LABELS[scope] || scope}</span>
+                <span>{info.scopeLabels?.[scope] || SCOPE_LABELS[scope] || scope}</span>
               </li>
             ))}
           </ul>

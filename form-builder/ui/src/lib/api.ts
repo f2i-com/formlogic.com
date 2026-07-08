@@ -150,6 +150,12 @@ export interface OAuthAuthorizeInfo {
   /** Host of the validated redirect_uri — displayed prominently (anti-phishing). */
   redirectHost: string;
   scopes: string[];
+  /** Human-readable labels for `scopes`, keyed by scope id. */
+  scopeLabels?: Record<string, string>;
+  /** True when this consent is for linking a FormLogic Desktop install (client_id=formlogic-desktop). */
+  isDesktopLink?: boolean;
+  /** Hostname the desktop sent, when `isDesktopLink` is true (may be null). */
+  device?: string | null;
 }
 
 export interface OAuthAuthorizeResult {
@@ -2221,6 +2227,15 @@ class ApiClient {
       method: 'DELETE',
     });
   }
+
+  // Linked FormLogic Desktop installs
+  async getDesktopConnections(): Promise<ApiResponse<{ connections: DesktopConnection[] }>> {
+    return this.request('/desktop-connections');
+  }
+
+  async revokeDesktopConnection(id: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/desktop-connections/${id}`, { method: 'DELETE' });
+  }
 }
 
 // Types
@@ -2537,6 +2552,18 @@ interface ApiKeyCreated extends ApiKey {
   key: string;
 }
 
+interface DesktopConnection {
+  id: string;
+  deviceName: string;
+  desktopInstanceId: string;
+  apiKeyId: string | null;
+  capabilities: string[];
+  trustedOrigins: string[];
+  lastSeenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface UploadedFileMetadata {
   id: string;
   originalFilename: string;
@@ -2562,4 +2589,4 @@ export function resolveFileUrl(url?: string | null): string {
 }
 
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };

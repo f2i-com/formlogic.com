@@ -12,7 +12,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/toastStore';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
-import { parseServerDate } from '../lib/utils';
+import { parseServerDate, formatRelativeTime } from '../lib/utils';
 import {
   User,
   Bell,
@@ -27,6 +27,7 @@ import {
   Check,
   Lock,
   Key,
+  Laptop,
   Copy,
   Trash2,
   Plus,
@@ -36,7 +37,7 @@ import {
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
-import type { AuditVerifyResult, ApiKey, ApiKeyCreated } from '../lib/api';
+import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 
 // Local preferences stored in localStorage
@@ -84,6 +85,7 @@ const SECTIONS = [
   { id: 'form-defaults', label: 'Form defaults' },
   { id: 'security', label: 'Security' },
   { id: 'api-keys', label: 'API keys' },
+  { id: 'linked-desktops', label: 'Linked desktops' },
   { id: 'mcp', label: 'MCP' },
   { id: 'audit', label: 'Audit' },
   { id: 'your-data', label: 'Your data' },
@@ -173,6 +175,13 @@ export function Settings() {
   const [showMcp, setShowMcp] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
+
+  // Linked FormLogic Desktop installs
+  const [desktopConnections, setDesktopConnections] = useState<DesktopConnection[]>([]);
+  const [isLoadingDesktops, setIsLoadingDesktops] = useState(true);
+  const [desktopLoadError, setDesktopLoadError] = useState<string | null>(null);
+  const [revokeDesktopTarget, setRevokeDesktopTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isRevokingDesktop, setIsRevokingDesktop] = useState(false);
 
   // Update form when user changes
   useEffect(() => {
@@ -321,6 +330,28 @@ export function Settings() {
     loadApiKeys();
   }, []);
 
+  const loadDesktopConnections = async () => {
+    setIsLoadingDesktops(true);
+    setDesktopLoadError(null);
+    try {
+      const result = await api.getDesktopConnections();
+      if (result.data) {
+        setDesktopConnections(result.data.connections);
+      } else {
+        setDesktopLoadError(typeof result.error === 'string' ? result.error : 'Could not load linked desktops');
+      }
+    } catch {
+      setDesktopLoadError('Could not load linked desktops');
+    } finally {
+      setIsLoadingDesktops(false);
+    }
+  };
+
+  // Load linked desktops on mount
+  useEffect(() => {
+    loadDesktopConnections();
+  }, []);
+
   const handleCreateApiKey = async () => {
     if (!newKeyName.trim() || newKeyScopes.length === 0) return;
 
@@ -361,6 +392,23 @@ export function Settings() {
       }
     } finally {
       setIsRevoking(false);
+    }
+  };
+
+  const confirmRevokeDesktop = async () => {
+    if (!revokeDesktopTarget) return;
+    setIsRevokingDesktop(true);
+    try {
+      const result = await api.revokeDesktopConnection(revokeDesktopTarget.id);
+      if (result.data) {
+        toast.success('Desktop unlinked', `"${revokeDesktopTarget.name}" has been unlinked.`);
+        loadDesktopConnections();
+        setRevokeDesktopTarget(null);
+      } else {
+        toast.error('Failed to unlink desktop', result.error || 'Unknown error');
+      }
+    } finally {
+      setIsRevokingDesktop(false);
     }
   };
 
@@ -831,6 +879,78 @@ export function Settings() {
           </CardContent>
         </Card>
 
+        {/* Linked Desktops Section */}
+        <Card id="linked-desktops" className="overflow-hidden scroll-mt-24">
+          <CardContent className="p-6">
+            <SectionHeader
+              icon={Laptop}
+              title="Linked Desktops"
+              description="FormLogic Desktop installs linked to your account. Each one can run your flows and relay live commands (like the Aokie phone bridge) even when you're not at that computer."
+              iconBg="bg-primary-50 dark:bg-primary-500/10"
+              iconColor="text-primary-600 dark:text-primary-400"
+            />
+            <div className="space-y-4 ml-0 sm:ml-14">
+              {isLoadingDesktops ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-slate-400 py-4">
+                  <Spinner size="sm" /> <span>Loading linked desktops…</span>
+                </div>
+              ) : desktopLoadError ? (
+                <div className="py-6 text-center text-sm">
+                  <p className="text-gray-600 dark:text-slate-300">{desktopLoadError}</p>
+                  <button type="button" onClick={loadDesktopConnections} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
+                </div>
+              ) : desktopConnections.length === 0 ? (
+                <EmptyState
+                  icon={Laptop}
+                  title="No desktops linked yet"
+                  description='Open FormLogic Desktop, go to Settings, and click "Link FormLogic account" to connect it here.'
+                  className="py-8"
+                />
+              ) : (
+                <div className="space-y-2">
+                  {desktopConnections.map((conn) => {
+                    const isOnline = conn.lastSeenAt !== null && Date.now() - parseServerDate(conn.lastSeenAt).getTime() < 90_000;
+                    return (
+                      <div
+                        key={conn.id}
+                        className="flex items-center justify-between p-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{conn.deviceName}</p>
+                            {isOnline && (
+                              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-300 font-medium">
+                                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                Online now
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
+                            {!isOnline && (
+                              <>
+                                {conn.lastSeenAt ? `Last seen ${formatRelativeTime(conn.lastSeenAt)}` : 'Never connected'}
+                                {' · '}
+                              </>
+                            )}
+                            Linked {formatRelativeTime(conn.createdAt)}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setRevokeDesktopTarget({ id: conn.id, name: conn.deviceName })}
+                          className="flex-shrink-0 p-2 rounded-lg text-gray-400 hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors ml-2"
+                          title="Unlink desktop"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Connect an AI (MCP) Section */}
         <Card id="mcp" className="overflow-hidden scroll-mt-24">
           <CardContent className="p-6">
@@ -1001,6 +1121,17 @@ export function Settings() {
         message={`Revoke API key "${revokeTarget?.name ?? ''}"? Applications using it will stop working immediately. This cannot be undone.`}
         confirmLabel="Revoke key"
         isLoading={isRevoking}
+      />
+
+      <ConfirmDialog
+        isOpen={revokeDesktopTarget !== null}
+        onClose={() => setRevokeDesktopTarget(null)}
+        onConfirm={confirmRevokeDesktop}
+        variant="danger"
+        title="Unlink desktop"
+        message={`Unlink "${revokeDesktopTarget?.name ?? ''}"? It will need to link again from FormLogic Desktop's Settings to reconnect.`}
+        confirmLabel="Unlink"
+        isLoading={isRevokingDesktop}
       />
 
       <ConnectAiModal isOpen={showMcp} onClose={() => setShowMcp(false)} />
