@@ -211,8 +211,9 @@ screens — but **cannot read submission data**:
 
 `apps:read` · `apps:write` · `forms:read` · `forms:write` · `screens:write`
 
-`responses:read` is **off by default** and must be granted explicitly. `tools/list` only returns the tools
-your token's scopes allow.
+`responses:read` is **off by default** and must be granted explicitly, as is **`connector:command`** (lets the
+token drive connectors on your linked FormLogic Desktop — e.g. control the Aokie phone). `tools/list` only
+returns the tools your token's scopes allow.
 
 **App‑scoped tokens** are enforced everywhere: they only see that one app's forms, can't create new apps,
 and can't touch other apps or their forms.
@@ -246,6 +247,12 @@ FormLogic in advance:
 | `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_responses` | responses:read | List a form's responses (off by default) |
+| `connector_command` | connector:command | Send a command to a connector on your linked **FormLogic Desktop** and wait for the result — remote-control hardware/services like the **Aokie** phone bridge (`call.answer`/`call.hangup`/`call.operatorSpeak`/`sms.send`/…). Off by default. |
+
+**`connector_command`** is how an AI drives your desktop remotely. It enqueues the command for the owner's
+desktop runtime; the desktop (holding a `connector:relay` key) claims it exactly-once, runs it through its
+local connector gateway, and completes the result — which the tool returns (or a note if the desktop is
+offline). The desktop must be **running and linked** (see [device-link](#formlogic-desktop-device-link-first-party-native-client)).
 
 Everything goes through the same services + ownership checks as the rest of the API, so an MCP token can
 only ever touch the owner's resources (and, when app‑scoped, only that app).

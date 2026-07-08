@@ -180,6 +180,7 @@ class McpOAuthService
             'flows:read' => 'Read your flows, bindings and runs',
             'flows:write' => 'Run and complete flows',
             'connector:relay' => 'Act as a desktop runtime for connector commands',
+            'connector:command' => 'Send commands to your FormLogic Desktop connectors (e.g. control the Aokie phone)',
         ];
         $out = [];
         foreach ($scopes as $scope) {

@@ -362,7 +362,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(ResponseService::class),
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
-        $c->get(\FormLogic\Services\AppReportService::class)
+        $c->get(\FormLogic\Services\AppReportService::class),
+        $c->get(\FormLogic\Services\DesktopCommandService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so

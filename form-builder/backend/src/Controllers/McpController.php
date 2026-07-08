@@ -38,6 +38,7 @@ class McpController
         private ?AuditService $auditService = null,
         private ?LoggerInterface $logger = null,
         private ?AppReportService $reportValidator = null,
+        private ?\FormLogic\Services\DesktopCommandService $desktopCommands = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -192,6 +193,7 @@ class McpController
         'update_app' => 'apps:write', 'add_form_to_app' => 'apps:write',
         'create_report' => 'apps:write', 'create_document' => 'apps:write',
         'set_app_home' => 'screens:write', 'list_responses' => 'responses:read',
+        'connector_command' => 'connector:command',
     ];
 
     /** Execute a tool, scoped to the session owner + the token's scopes + (optional) app scope. */
@@ -413,6 +415,45 @@ class McpController
                     $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     $data = $this->responseService->getFormResponses((string) $args['formId'], ['limit' => min(200, max(1, (int) ($args['limit'] ?? 50)))]);
                     break;
+                case 'connector_command': {
+                    if ($this->desktopCommands === null) {
+                        throw new \Exception('Connector relay is not available on this server.');
+                    }
+                    $connectorId = trim((string) ($args['connectorId'] ?? ''));
+                    $command = trim((string) ($args['command'] ?? ''));
+                    if ($connectorId === '' || $command === '') {
+                        throw new \Exception('connectorId and command are required.');
+                    }
+                    $payload = is_array($args['payload'] ?? null) ? $args['payload'] : null;
+                    $waitMs = max(0, min(25000, (int) ($args['waitMs'] ?? 15000)));
+                    // Enqueue for the token owner's desktop runtime; the desktop (its connector:relay
+                    // key) claims + executes it exactly-once and completes the result back.
+                    $enq = $this->desktopCommands->enqueue($userId, $userId, $scopedApp, [
+                        'connectorId' => $connectorId,
+                        'command' => $command,
+                        'payload' => $payload,
+                    ]);
+                    $cmdId = (string) ($enq['command']['commandId'] ?? '');
+                    $this->audit($request, 'mcp.connector_command', $userId, ['connectorId' => $connectorId, 'command' => $command, 'commandId' => $cmdId]);
+                    // Poll for the desktop to claim + complete (the relay long-polls ~1s, so a live
+                    // desktop finishes within a couple of seconds).
+                    $row = $enq['command'];
+                    $deadline = microtime(true) + $waitMs / 1000;
+                    while (microtime(true) < $deadline && in_array($row['status'] ?? 'pending', ['pending', 'claimed'], true)) {
+                        usleep(400000);
+                        $row = $this->desktopCommands->get($cmdId, $userId) ?? $row;
+                    }
+                    $data = [
+                        'commandId' => $cmdId,
+                        'status' => $row['status'] ?? 'pending',
+                        'result' => $row['result'] ?? null,
+                        'error' => $row['error'] ?? null,
+                    ];
+                    if (in_array($data['status'], ['pending', 'claimed'], true)) {
+                        $data['note'] = 'Queued but not completed yet — ensure FormLogic Desktop is running and linked with the connector:relay scope. It will run when the desktop next polls.';
+                    }
+                    break;
+                }
                 default:
                     throw new \Exception("Unknown or unavailable tool: {$name}");
             }
@@ -640,6 +681,7 @@ class McpController
             ['name' => 'create_report', 'scope' => 'apps:write', 'description' => "Add a chart report to the app's Reports section (bar/line/area/pie/donut chart, a KPI number, or a table). spec = { formId, viz, groupBy?:{field,bucket?}, measure?:{fn,field?}, joins?:[{via,formId,type}], filters?:[{field,op,value?}], columns?:[…], seriesSort?, sort?, limit? }. viz: bar|line|area|pie|donut|kpi|table. fn: count|countDistinct|sum|avg|min|max. Use the REAL form ids you created. joins[].via = a linked_record field id on the base form; joins[].formId = the linked form. Field refs (group/measure/filter/columns) are a base field id, a joined ref \"<joinFormId>::<fieldId>\", or the pseudo-fields __submitted_at / __status. Returns the created report incl. its id.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'spec' => ['type' => 'object', 'description' => 'Report spec (see tool description).']], ['appId', 'name', 'spec'])],
             ['name' => 'create_document', 'scope' => 'apps:write', 'description' => "Add a PDF document (a report page combining multiple charts + explanatory text) to the app's Reports section. blocks[] render in order: { kind:'text', title?, body } for a heading/paragraph, or { kind:'report', reportId, caption? } to embed a chart — reportId is the id returned by create_report. Create the chart reports FIRST, then reference them here.", 'inputSchema' => $obj(['appId' => ['type' => 'string'], 'name' => ['type' => 'string'], 'description' => ['type' => 'string'], 'blocks' => ['type' => 'array', 'items' => ['type' => 'object', 'description' => "{ kind:'text', title?, body } | { kind:'report', reportId, caption? }"]]], ['appId', 'name', 'blocks'])],
             ['name' => 'list_responses', 'scope' => 'responses:read', 'description' => "List a form's responses.", 'inputSchema' => $obj(['formId' => ['type' => 'string'], 'limit' => ['type' => 'number']], ['formId'])],
+            ['name' => 'connector_command', 'scope' => 'connector:command', 'description' => "Send a command to a hardware/service CONNECTOR on the owner's linked FormLogic Desktop and wait for the result (the desktop must be RUNNING + LINKED). connectorId names the connector (e.g. 'aokie' — the Bluetooth phone bridge). command + payload are connector-specific; for aokie: call.answer, call.reject, call.hangup, call.operatorSpeak {text}, sms.send {to, body}, sms.thread {threadId}, call.current, phone.status, dongle.list, dongle.diagnostics {simulate:'call'}. This is how you REMOTELY control the phone: e.g. hang up the current call, or speak a message to the caller. Returns the connector's result, or a note that it is still pending (desktop offline/slow).", 'inputSchema' => $obj(['connectorId' => ['type' => 'string', 'description' => "Connector id, e.g. 'aokie'."], 'command' => ['type' => 'string', 'description' => 'Connector command, e.g. call.hangup.'], 'payload' => ['type' => 'object', 'description' => 'Command arguments (connector-specific).'], 'waitMs' => ['type' => 'number', 'description' => 'Max ms to wait for the desktop result (default 15000, max 25000).']], ['connectorId', 'command'])],
         ];
         // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
         // knowledge. Listed first so it's the obvious first call.

@@ -9,6 +9,7 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
+use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
 use FormLogic\Services\ResponseService;
@@ -67,7 +68,7 @@ class McpTest extends TestCase
         $responses = new ResponseService($conn, $sqlite);
         self::$apps = new AppService($conn, $forms);
         self::$tokens = new McpTokenService($conn);
-        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, new AppReportService(self::$apps, $forms));
+        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, new AppReportService(self::$apps, $forms), new DesktopCommandService($conn));
     }
 
     protected function setUp(): void
@@ -92,6 +93,7 @@ class McpTest extends TestCase
             return;
         }
         self::$pdo->prepare('DELETE FROM mcp_sessions WHERE user_id = ?')->execute([$this->userId]);
+        self::$pdo->prepare('DELETE FROM desktop_commands WHERE owner_user_id = ?')->execute([$this->userId]);
         // Clean children for EVERY app the user owns (incl. apps a creator token made during a test).
         $owned = self::$pdo->prepare('SELECT id FROM apps WHERE owner_id = ?');
         $owned->execute([$this->userId]);
@@ -153,6 +155,37 @@ class McpTest extends TestCase
     {
         $r = $this->rpc($token, ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/list']);
         return array_map(static fn ($t) => $t['name'], $r['result']['tools'] ?? []);
+    }
+
+    // ── connector_command: an AI drives the linked desktop's connectors through the relay ──
+
+    public function testConnectorCommandIsScopeGatedAndEnqueuesForTheOwnersDesktop(): void
+    {
+        // Without connector:command the tool is neither listed nor callable.
+        $plain = self::$tokens->create($this->userId)['token'];
+        $this->assertNotContains('connector_command', $this->toolNames($plain));
+        $denied = $this->tool($plain, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup']);
+        $this->assertTrue($denied['isError']);
+        $this->assertStringContainsString('scope', strtolower($denied['text']));
+
+        // With the scope it's listed, and calling it queues a command for the owner's desktop. Nothing
+        // claims it in-test, so waitMs=0 returns immediately: status=pending + an actionable note.
+        $tok = self::$tokens->create($this->userId, null, 3600, 3600, ['connector:command'])['token'];
+        $this->assertContains('connector_command', $this->toolNames($tok));
+        $r = $this->tool($tok, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup', 'payload' => ['reason' => 'x'], 'waitMs' => 0]);
+        $this->assertFalse($r['isError'], $r['text']);
+        $this->assertSame('pending', $r['data']['status']);
+        $this->assertNotEmpty($r['data']['commandId']);
+        $this->assertArrayHasKey('note', $r['data']);
+
+        // The queued row is real, owner-scoped, and carries the connector + command.
+        $stmt = self::$pdo->prepare('SELECT owner_user_id, connector_id, command, status FROM desktop_commands WHERE id = ?');
+        $stmt->execute([$r['data']['commandId']]);
+        $cmd = $stmt->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame($this->userId, $cmd['owner_user_id']);
+        $this->assertSame('aokie', $cmd['connector_id']);
+        $this->assertSame('call.hangup', $cmd['command']);
+        $this->assertSame('pending', $cmd['status']);
     }
 
     // ── token service ──

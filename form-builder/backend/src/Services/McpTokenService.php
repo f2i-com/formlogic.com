@@ -23,7 +23,7 @@ class McpTokenService
 
     /** Builder scopes granted by default — deliberately EXCLUDES responses:* (submission data). */
     public const DEFAULT_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write'];
-    public const ALL_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write', 'responses:read', 'responses:write'];
+    public const ALL_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write', 'responses:read', 'responses:write', 'connector:command'];
 
     public function __construct(private MySQLConnection $mysql) {}
 
