@@ -1353,7 +1353,14 @@ pub fn run() {
                 api_key: read_config_str(app.handle(), "formlogicApiKey").unwrap_or_default(),
             };
             let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
-            flow_runtime.start();
+            // start() launches the flow event/claim/heartbeat loops via tokio::spawn, which needs an
+            // ambient Tokio runtime. Unlike f2i-server (#[tokio::main]), Tauri's setup hook runs
+            // OUTSIDE the runtime, so run start() ON Tauri's async runtime (tokio) — otherwise
+            // tokio::spawn panics ("there is no reactor running") and the app crashes on launch.
+            {
+                let fr = flow_runtime.clone();
+                tauri::async_runtime::spawn(async move { fr.start(); });
+            }
 
             // OAuth "Link account" machine (device-link, docs/MCP.md). One
             // attempt at a time; the UI drives it via the formlogic_oauth_* commands.
