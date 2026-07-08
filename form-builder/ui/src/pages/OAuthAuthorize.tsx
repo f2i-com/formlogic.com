@@ -17,7 +17,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'screens:write': 'Create and edit custom screens',
   'responses:read': 'Read submitted form responses',
   'responses:write': 'Submit and edit form responses',
-  'connector:command': 'Control your FormLogic Desktop connectors (e.g. the Aokie phone)',
+  'connector:command': 'Control your FormLogic Desktop connectors (e.g. the Aokie phone) — account-wide',
   'offline_access': 'Stay connected without asking you again',
 };
 
@@ -233,6 +233,11 @@ export function OAuthAuthorize() {
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
+            {info.scopes.includes('connector:command') && (
+              <p className="mt-1.5 text-[11px] text-gray-400 dark:text-slate-500">
+                This won&apos;t limit FormLogic Desktop/connector control above — that always applies to your whole account, whichever app (if any) you pick here.
+              </p>
+            )}
           </div>
         )}
 

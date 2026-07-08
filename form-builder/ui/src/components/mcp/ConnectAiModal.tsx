@@ -121,6 +121,9 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                   ) : (
                     <p className="text-[11px] text-gray-500 dark:text-slate-400">
                       Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
+                      {connectorAccess && (
+                        <> Also lets it <span className="font-medium text-gray-700 dark:text-slate-300">control your linked FormLogic Desktop and its connectors</span> — that access covers your whole account, not just {creator ? 'the app it creates' : appId ? 'this app' : 'the apps you build'}.</>
+                      )}
                     </p>
                   )}
                   <div>
