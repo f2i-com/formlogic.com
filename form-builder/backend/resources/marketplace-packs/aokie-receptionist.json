@@ -3565,7 +3565,12 @@
                 "prompt": "Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:",
                 "model": "{{nodes.context.model}}",
                 "maxTokens": 90,
-                "temperature": 0.5
+                "temperature": 0.5,
+                "extraBody": {
+                  "chat_template_kwargs": {
+                    "enable_thinking": false
+                  }
+                }
               }
             },
             {

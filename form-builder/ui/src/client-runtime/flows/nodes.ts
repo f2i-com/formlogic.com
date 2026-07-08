@@ -470,6 +470,11 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   }
   if (typeof data.temperature === 'number') body.temperature = data.temperature;
   if (typeof data.maxTokens === 'number') body.max_tokens = data.maxTokens;
+  // Pass-through extra request params (e.g. Qwen3's
+  // chat_template_kwargs:{enable_thinking:false} to skip the reasoning block).
+  if (data.extraBody && typeof data.extraBody === 'object') {
+    Object.assign(body, data.extraBody as Record<string, unknown>);
+  }
 
 
   let res: Response;

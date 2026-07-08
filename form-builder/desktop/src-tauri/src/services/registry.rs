@@ -715,6 +715,24 @@ impl Registry {
         self.services.get(id).map(|s| s.port)
     }
 
+    /// Port of a RUNNING LLM-category service, so a flow reuses whatever model
+    /// the desktop currently has loaded (e.g. llama.cpp with the user's gguf,
+    /// or a running Ollama). Prefers llama-cpp, then ollama, then any other
+    /// running LLM service. `None` if no LLM service is running.
+    pub fn running_llm_port(&self) -> Option<u16> {
+        let is_running_llm = |s: &ServiceRuntime| {
+            s.status == ServiceStatus::Running && s.template.category.eq_ignore_ascii_case("llm")
+        };
+        for id in ["llama-cpp", "ollama"] {
+            if let Some(s) = self.services.get(id) {
+                if is_running_llm(s) {
+                    return Some(s.port);
+                }
+            }
+        }
+        self.services.values().find(|s| is_running_llm(s)).map(|s| s.port)
+    }
+
     /// Every loadable *.gguf at the top level of any model search root
     /// (primary + extras), deduped + sorted. Excludes multimodal projector
     /// files (`mmproj*`), which aren't a standalone model. Powers the

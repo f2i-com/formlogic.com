@@ -691,11 +691,19 @@ impl FlowRuntime {
     fn resolve_llm_endpoint(&self) -> Option<String> {
         let reg = self.registry.as_ref()?;
         let r = reg.lock().ok()?;
-        if let Some(port) = r.service_port("ollama") {
+        // Prefer whatever LLM service the desktop currently has RUNNING, so the
+        // flow reuses the already-loaded model (e.g. llama.cpp with the user's
+        // gguf) instead of a fixed choice. The node's model is auto-discovered
+        // from that endpoint's /v1/models, so no model needs pinning.
+        if let Some(port) = r.running_llm_port() {
             return Some(format!("http://127.0.0.1:{port}/v1/chat/completions"));
         }
-        if let Some(port) = r.service_port("llama-cpp") {
-            return Some(format!("http://127.0.0.1:{port}/v1/chat/completions"));
+        // Fallback: the known local LLM ports even if the registry marks them
+        // stopped (e.g. an externally-started Ollama the desktop didn't launch).
+        for id in ["ollama", "llama-cpp"] {
+            if let Some(port) = r.service_port(id) {
+                return Some(format!("http://127.0.0.1:{port}/v1/chat/completions"));
+            }
         }
         None
     }

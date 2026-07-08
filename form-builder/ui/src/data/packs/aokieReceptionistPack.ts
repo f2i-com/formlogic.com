@@ -1305,11 +1305,16 @@ export const aokieReceptionistPack: PackData = {
             data: {
               // Persona + model come from the Receptionist Settings record via the
               // context node (templated), so editing that record reconfigures the AI.
+              // Empty model = auto-use whatever the desktop's running LLM has loaded.
               system: '{{nodes.context.persona}}',
               prompt: 'Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:',
               model: '{{nodes.context.model}}',
               maxTokens: 90,
               temperature: 0.5,
+              // Qwen3 (and other reasoning models) otherwise burn the token budget
+              // on a hidden <think> block and return an empty reply — disable it for
+              // fast, direct spoken answers. Ignored by models without a thinking mode.
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
             },
           },
           { id: 'say', type: 'aokie_speak', data: { textFrom: '$nodes.reply.content' } },

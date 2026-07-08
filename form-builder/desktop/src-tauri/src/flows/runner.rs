@@ -1055,6 +1055,17 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
     if let Some(mt) = data.get("maxTokens").and_then(Value::as_u64) {
         body["max_tokens"] = json!(mt);
     }
+    // Pass-through extra request params (e.g. Qwen3's
+    // `chat_template_kwargs: {enable_thinking: false}` to skip the reasoning
+    // block for fast, direct replies). Merged last so it can override.
+    if let (Some(extra), Some(obj)) = (
+        data.get("extraBody").and_then(Value::as_object),
+        body.as_object_mut(),
+    ) {
+        for (k, v) in extra {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
     let resp = deps
         .http
         .post(&endpoint)

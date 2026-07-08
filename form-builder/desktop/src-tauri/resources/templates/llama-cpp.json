@@ -29,6 +29,7 @@
   "node": {
     "endpoint": "/v1/chat/completions",
     "method": "POST",
+    "apiFormat": "openai",
     "bodyTemplate": "{\"model\": \"local-model\", \"messages\": [{\"role\": \"system\", \"content\": {{system}}}, {\"role\": \"user\", \"content\": {{input}}}], \"stream\": false}",
     "responsePath": "choices.0.message.content",
     "icon": "🦙"
