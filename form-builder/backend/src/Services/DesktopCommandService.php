@@ -128,6 +128,25 @@ class DesktopCommandService
     }
 
     /**
+     * Seconds since the owner's desktop runtime was last seen, or null if never/none. A linked
+     * FormLogic Desktop long-polls the connector:relay surface continuously (≤25s), so a fresh
+     * last_used_at on an active connector:relay key is a reliable "the desktop is online" signal —
+     * used to fast-fail commands when no desktop is polling instead of waiting the full timeout.
+     */
+    public function ownerDesktopLastSeenSeconds(string $ownerUserId): ?int
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT TIMESTAMPDIFF(SECOND, MAX(last_used_at), NOW()) AS age
+             FROM api_keys
+             WHERE user_id = :o AND is_active = 1 AND last_used_at IS NOT NULL
+               AND scopes LIKE '%connector:relay%'"
+        );
+        $stmt->execute(['o' => $ownerUserId]);
+        $age = $stmt->fetchColumn();
+        return $age === null || $age === false ? null : (int) $age;
+    }
+
+    /**
      * Pending, non-expired commands for the owner's runtime, oldest first. Sweeps stale pending
      * rows to 'expired' first. $sinceId, when given, returns only commands created strictly after
      * that command's created_at (a simple cursor the long-poll advances).

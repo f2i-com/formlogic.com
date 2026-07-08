@@ -247,6 +247,7 @@ FormLogic in advance:
 | `create_report` | apps:write | Add a chart, KPI, or table to the app's Reports section |
 | `create_document` | apps:write | Compose an exportable PDF report page from charts and text |
 | `list_responses` | responses:read | List a form's responses (off by default) |
+| `desktop_status` | connector:command | Is your FormLogic Desktop online (polling the relay)? Returns `{ online, lastSeenSecondsAgo }` — call before `connector_command`. |
 | `connector_command` | connector:command | Send a command to a connector on your linked **FormLogic Desktop** and wait for the result — remote-control hardware/services like the **Aokie** phone bridge (`call.answer`/`call.hangup`/`call.operatorSpeak`/`sms.send`/…). Off by default. |
 
 **`connector_command`** is how an AI drives your desktop remotely. It enqueues the command for the owner's

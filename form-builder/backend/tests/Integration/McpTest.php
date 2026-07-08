@@ -177,6 +177,17 @@ class McpTest extends TestCase
         $this->assertSame('pending', $r['data']['status']);
         $this->assertNotEmpty($r['data']['commandId']);
         $this->assertArrayHasKey('note', $r['data']);
+        // No desktop is polling in-test → reported offline, and the command says so.
+        $this->assertFalse($r['data']['desktopOnline']);
+        $this->assertStringContainsStringIgnoringCase('online', $r['data']['note']);
+
+        // desktop_status is scope-gated too, and reports offline (nothing has polled the relay).
+        $this->assertContains('desktop_status', $this->toolNames($tok));
+        $this->assertNotContains('desktop_status', $this->toolNames($plain));
+        $st = $this->tool($tok, 'desktop_status');
+        $this->assertFalse($st['isError'], $st['text']);
+        $this->assertFalse($st['data']['online']);
+        $this->assertNull($st['data']['lastSeenSecondsAgo']);
 
         // The queued row is real, owner-scoped, and carries the connector + command.
         $stmt = self::$pdo->prepare('SELECT owner_user_id, connector_id, command, status FROM desktop_commands WHERE id = ?');
