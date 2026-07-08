@@ -4,12 +4,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_RUN_LOG,
+  deriveEdgeRunStates,
   formatDuration,
   nodeDurationMs,
   previewOutput,
   reduceNodeStatus,
   reduceRunLog,
   type NodeStatusMap,
+  type RunnableEdge,
 } from './runStatus';
 
 describe('reduceNodeStatus', () => {
@@ -71,6 +73,84 @@ describe('reduceRunLog', () => {
     const a = reduceRunLog(EMPTY_RUN_LOG, 'a', 'running', undefined, 1);
     expect(EMPTY_RUN_LOG).toEqual({ map: {}, order: [] });
     expect(a.order).toEqual(['a']);
+  });
+});
+
+describe('deriveEdgeRunStates', () => {
+  const notCondition = () => undefined;
+  const edge = (id: string, source: string, target: string, sourceHandle?: string | null): RunnableEdge => ({
+    id,
+    source,
+    target,
+    sourceHandle,
+  });
+
+  it('a linear chain: the executed hop is done, the currently-running hop is active', () => {
+    const status: NodeStatusMap = {
+      a: { status: 'done', startedAt: 0, endedAt: 10 },
+      b: { status: 'done', startedAt: 10, endedAt: 30 },
+      c: { status: 'running', startedAt: 30 },
+    };
+    const edges = [edge('e1', 'a', 'b'), edge('e2', 'b', 'c')];
+    const states = deriveEdgeRunStates(edges, notCondition, status);
+    expect(states.e1).toEqual({ phase: 'done', durationMs: 20, showDuration: true });
+    expect(states.e2).toEqual({ phase: 'active', durationMs: null, showDuration: false });
+  });
+
+  it('leaves an edge out entirely when its source has not settled, or its target never ran', () => {
+    const status: NodeStatusMap = { a: { status: 'running', startedAt: 0 } };
+    const edges = [edge('e1', 'a', 'b')];
+    expect(deriveEdgeRunStates(edges, notCondition, status)).toEqual({});
+  });
+
+  it('condition routing: only the branch matching the source output branch lights up, even when the un-taken branch\'s target ran via another edge', () => {
+    const isCondition = (id: string) => (id === 'cond' ? 'condition' : undefined);
+    const status: NodeStatusMap = {
+      cond: { status: 'done', startedAt: 0, endedAt: 5, output: true },
+      t: { status: 'done', startedAt: 5, endedAt: 15 },
+      f: { status: 'done', startedAt: 5, endedAt: 15 }, // settled via some other route
+    };
+    const edges = [edge('e-true', 'cond', 't', 'true'), edge('e-false', 'cond', 'f', 'false')];
+    const states = deriveEdgeRunStates(edges, isCondition, status);
+    expect(states['e-true'].phase).toBe('done');
+    expect(states['e-false']).toBeUndefined(); // un-taken branch stays dark
+  });
+
+  it('a handle-less condition edge follows the truthy branch (matches the executor default)', () => {
+    const isCondition = () => 'condition';
+    const trueOut: NodeStatusMap = {
+      cond: { status: 'done', startedAt: 0, endedAt: 5, output: true },
+      next: { status: 'done', startedAt: 5, endedAt: 10 },
+    };
+    const falseOut: NodeStatusMap = {
+      cond: { status: 'done', startedAt: 0, endedAt: 5, output: false },
+      next: { status: 'done', startedAt: 5, endedAt: 10 },
+    };
+    const edges = [edge('e1', 'cond', 'next')]; // no sourceHandle
+    expect(deriveEdgeRunStates(edges, isCondition, trueOut).e1.phase).toBe('done');
+    expect(deriveEdgeRunStates(edges, isCondition, falseOut).e1).toBeUndefined();
+  });
+
+  it('dedupes a multi-input join: only the first qualifying done-edge shows the duration', () => {
+    const status: NodeStatusMap = {
+      a1: { status: 'done', startedAt: 0, endedAt: 5 },
+      a2: { status: 'done', startedAt: 0, endedAt: 5 },
+      join: { status: 'done', startedAt: 5, endedAt: 20 },
+    };
+    const edges = [edge('e1', 'a1', 'join'), edge('e2', 'a2', 'join')];
+    const states = deriveEdgeRunStates(edges, notCondition, status);
+    expect(states.e1).toEqual({ phase: 'done', durationMs: 15, showDuration: true });
+    expect(states.e2).toEqual({ phase: 'done', durationMs: 15, showDuration: false });
+  });
+
+  it('a failed hop is "failed" and never shows a duration label', () => {
+    const status: NodeStatusMap = {
+      a: { status: 'done', startedAt: 0, endedAt: 5 },
+      b: { status: 'error', startedAt: 5, endedAt: 12, error: 'boom' },
+    };
+    const edges = [edge('e1', 'a', 'b')];
+    const states = deriveEdgeRunStates(edges, notCondition, status);
+    expect(states.e1).toEqual({ phase: 'failed', durationMs: 7, showDuration: false });
   });
 });
 

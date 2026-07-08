@@ -16,6 +16,7 @@ import {
   type FlowEditorContext,
   type NodeSpec,
 } from './nodeCatalog';
+import { ACCENT_CHIP } from './accents';
 
 const HOVER_DELAY_MS = 450;
 
@@ -46,7 +47,7 @@ function PaletteDoc({ spec, anchor }: { spec: NodeSpec; anchor: DOMRect }) {
         </p>
       )}
       {spec.requiresDesktopService && (
-        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-indigo-600 dark:text-indigo-300">
+        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-300">
           <MonitorDown className="h-2.5 w-2.5" /> Runs on the {spec.requiresDesktopService} service in FormLogic Desktop
         </p>
       )}
@@ -59,18 +60,6 @@ function PaletteDoc({ spec, anchor }: { spec: NodeSpec; anchor: DOMRect }) {
 
 /** dataTransfer MIME the canvas reads on drop. */
 export const PALETTE_DND_MIME = 'application/x-formlogic-flow-node';
-
-const ACCENT_DOT: Record<string, string> = {
-  emerald: 'bg-emerald-500',
-  amber: 'bg-amber-500',
-  sky: 'bg-sky-500',
-  violet: 'bg-violet-500',
-  cyan: 'bg-cyan-500',
-  indigo: 'bg-indigo-500',
-  teal: 'bg-teal-500',
-  rose: 'bg-rose-500',
-  slate: 'bg-slate-400',
-};
 
 interface NodePaletteProps {
   /** Add a node at the viewport centre (click / keyboard). */
@@ -123,25 +112,22 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
       aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
       className={cn(
         'group flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
-        'border-gray-200/80 dark:border-slate-700/60',
+        'border-transparent',
         disabled
           ? 'cursor-not-allowed opacity-55'
           : 'cursor-grab bg-white hover:border-primary-300 hover:bg-primary-50/50 dark:bg-slate-800/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
       )}
     >
-      <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-md bg-gray-100 text-gray-600 dark:bg-slate-700/60 dark:text-slate-300">
+      <span className={cn('mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-md', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          <span className={cn('h-1.5 w-1.5 flex-none rounded-full', ACCENT_DOT[spec.accent] ?? ACCENT_DOT.slate)} />
-          <span className="truncate text-xs font-medium text-gray-800 dark:text-slate-200">{spec.label}</span>
-        </span>
+        <span className="truncate block text-xs font-medium text-gray-800 dark:text-slate-200">{spec.label}</span>
         <span className="mt-0.5 line-clamp-2 block text-[11px] leading-snug text-gray-400 dark:text-slate-500">
           {spec.description}
         </span>
         {desktop && (
-          <span className="mt-1 inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+          <span className="mt-1 inline-flex items-center gap-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
             <MonitorDown className="h-2.5 w-2.5" /> Runs on FormLogic Desktop
           </span>
         )}
@@ -178,7 +164,7 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
 
   if (collapsed) {
     return (
-      <div className="flex h-full min-h-0 w-14 flex-none flex-col items-center gap-2 border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40 py-2.5">
+      <div className="flex h-full min-h-0 w-14 flex-none flex-col items-center gap-2 bg-gray-100/50 dark:bg-slate-900/50 py-2.5">
         <Button
           variant="ghost"
           size="iconOnly"
@@ -194,8 +180,8 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, co
   }
 
   return (
-    <div className="flex h-full min-h-0 w-64 flex-none flex-col border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40">
-      <div className="flex items-center gap-1.5 border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
+    <div className="flex h-full min-h-0 w-64 flex-none flex-col bg-gray-100/50 dark:bg-slate-900/50">
+      <div className="flex items-center gap-1.5 p-2.5">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input

@@ -318,9 +318,10 @@ export function FlowsWorkspace() {
           )}
         </div>
 
-        {/* Right panel: history / test run (lg+) */}
+        {/* Right panel: history / test run (lg+). No border here — the panel's white bg vs the
+            canvas's gray provides the seam (docs §4, rail hierarchy: seams by value contrast). */}
         {selectedFlow && rightPanel === 'history' && (
-          <div className="hidden w-96 flex-none border-l border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900 lg:flex">
+          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 lg:flex">
             <FlowRunHistory flowId={selectedFlow.id} refreshKey={historyKey} />
           </div>
         )}
@@ -390,7 +391,7 @@ function FlowLibrary({
 
   if (collapsed) {
     return (
-      <aside className={cn('min-h-0 flex-none flex-col items-center gap-2 border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/50 dark:bg-slate-900/30 py-2.5', className)}>
+      <aside className={cn('min-h-0 flex-none flex-col items-center gap-2 bg-gray-100/50 dark:bg-slate-900/50 py-2.5', className)}>
         <Button variant="ghost" size="iconOnly" onClick={onToggleCollapsed} aria-label="Expand flow library" title="Expand flow library" className="h-8 w-8">
           <PanelLeftOpen className="h-4 w-4" />
         </Button>
@@ -402,8 +403,8 @@ function FlowLibrary({
   }
 
   return (
-    <aside className={cn('min-h-0 flex-none flex-col border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/50 dark:bg-slate-900/30', className)}>
-      <div className="flex items-center gap-1.5 border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
+    <aside className={cn('min-h-0 flex-none flex-col bg-gray-100/50 dark:bg-slate-900/50', className)}>
+      <div className="flex items-center gap-1.5 p-2.5">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input

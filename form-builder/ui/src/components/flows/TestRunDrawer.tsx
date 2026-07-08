@@ -50,9 +50,11 @@ function statusTone(status: string): string {
   return 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25';
 }
 
-/** A tiny per-node status glyph for the timeline (running spins, done checks, error crosses). */
+/** A tiny per-node status glyph for the timeline (running spins, done checks, error crosses).
+ *  Running speaks in the primary token so the drawer and the canvas run-beam agree on what
+ *  "live" looks like — one execution language across the whole editor. */
 function PhaseGlyph({ phase }: { phase: NodeRunPhase }) {
-  if (phase === 'running') return <Loader2 className="h-3.5 w-3.5 flex-none animate-spin text-amber-500" />;
+  if (phase === 'running') return <Loader2 className="h-3.5 w-3.5 flex-none animate-spin text-primary-500" />;
   if (phase === 'done') return <Check className="h-3.5 w-3.5 flex-none text-emerald-500" />;
   return <X className="h-3.5 w-3.5 flex-none text-red-500" />;
 }

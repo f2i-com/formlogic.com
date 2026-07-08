@@ -6,7 +6,7 @@
 // reconnection, and a right-click context menu (duplicate / delete / auto-layout / fit / select
 // all). All GRAPH state lives in the parent FlowEditor; this component is presentation + interaction
 // wiring. Must be rendered inside a <ReactFlowProvider> (FlowEditor provides it).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -32,6 +32,16 @@ import { FlowEdge } from './FlowEdge';
 import { NODE_SPECS, EMPTY_FLOW_EDITOR_CONTEXT, isNodeAvailableInContext, type FlowEditorContext, type NodeSpec } from './nodeCatalog';
 import type { FlowRFEdge, FlowRFNode } from './flowGraph';
 import { PALETTE_DND_MIME } from './NodePalette';
+import { FlowNodeSignalsContext } from './flowNodeContext';
+import { deriveEdgeRunStates, type NodeRunStatus } from '../runStatus';
+
+/** Minimap fill class for a node's run status (idle → '', so nodeColor's slate default shows). */
+function minimapRunClass(status: NodeRunStatus | undefined): string {
+  if (!status) return '';
+  if (status.status === 'running') return 'fl-mm-running';
+  if (status.status === 'error') return 'fl-mm-error';
+  return 'fl-mm-done';
+}
 
 /** The source end of an in-progress quick-connect drag (the node/handle the edge started from). */
 interface QuickConnectSource {
@@ -98,10 +108,32 @@ export function FlowCanvas({
   const connectingRef = useRef<QuickConnectSource | null>(null);
   const [quick, setQuick] = useState<{ x: number; y: number; flow: { x: number; y: number }; source: QuickConnectSource } | null>(null);
 
-  // Every edge renders as the custom arrowed/deletable 'flow' edge without polluting stored state.
+  // Live Wire: read the current Test Run's per-node status (provided by FlowEditor, never stored
+  // on the graph) so the canvas can light up executed edges and the minimap without any new props.
+  const signals = useContext(FlowNodeSignalsContext);
+
+  const nodeTypeById = useMemo(() => {
+    const byId = new Map<string, string | undefined>();
+    for (const n of nodes) byId.set(n.id, n.type);
+    return (id: string) => byId.get(id);
+  }, [nodes]);
+
+  const edgeRunStates = useMemo(
+    () => deriveEdgeRunStates(edges, nodeTypeById, signals.status),
+    [edges, nodeTypeById, signals.status],
+  );
+
+  // Every edge renders as the custom arrowed/deletable 'flow' edge, with its run-beam state (if
+  // any) injected as presentation-only `data.run` — without polluting stored state (docs §1b).
   const styledEdges = useMemo(
-    () => edges.map((e) => ({ ...e, type: e.type ?? 'flow', markerEnd: e.markerEnd ?? DEFAULT_MARKER })),
-    [edges],
+    () =>
+      edges.map((e) => ({
+        ...e,
+        type: e.type ?? 'flow',
+        markerEnd: e.markerEnd ?? DEFAULT_MARKER,
+        data: { ...(e.data ?? {}), run: edgeRunStates[e.id] },
+      })),
+    [edges, edgeRunStates],
   ) as FlowRFEdge[];
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -192,6 +224,13 @@ export function FlowCanvas({
   }, [menu, closeMenu]);
 
   const miniMapNodeColor = useMemo(() => () => 'rgb(148 163 184)', []);
+  // Run coloring on the minimap (docs §5) — the .fl-mm-* classes carry !important fills (index.css)
+  // so they win over the inline `fill` react-flow sets from nodeColor above, on any node that has
+  // reported a run status; idle nodes keep the slate default untouched.
+  const miniMapNodeClassName = useCallback(
+    (n: FlowRFNode) => minimapRunClass(signals.status[n.id]),
+    [signals.status],
+  );
   const selectionScoped = menu?.onNode || hasSelection;
 
   return (
@@ -233,6 +272,7 @@ export function FlowCanvas({
         <Controls className="!shadow-md" showInteractive={false} />
         <MiniMap
           nodeColor={miniMapNodeColor}
+          nodeClassName={miniMapNodeClassName}
           pannable
           zoomable
           className="!bg-white dark:!bg-slate-900 !border !border-gray-200 dark:!border-slate-700 rounded-lg"

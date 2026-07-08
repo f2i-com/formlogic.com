@@ -90,6 +90,74 @@ export function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
 }
 
+// ---------------------------------------------------------------------------
+// Edge run-beam derivation (Live Wire) — turns the same status map into a per-edge run state
+// so the canvas edge (FlowEdge) can render a travelling beam / executed-path highlight without
+// the executor ever knowing the canvas exists. Presentation only; never executes anything.
+// ---------------------------------------------------------------------------
+
+/** An edge's live run-beam phase, derived — never stored on the edge itself. */
+export type EdgeRunPhase = 'active' | 'done' | 'failed';
+
+export interface EdgeRunState {
+  phase: EdgeRunPhase;
+  /** The duration of the hop the edge delivered (its target's run time), or null if untimed. */
+  durationMs: number | null;
+  /** True only on the first qualifying done-edge (input order) into a given target — dedupes
+   *  multi-input joins so a node's duration renders once, not once per incoming wire. */
+  showDuration: boolean;
+}
+
+/** The minimal edge shape the deriver needs (a subset of FlowRFEdge). */
+export interface RunnableEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+}
+
+/**
+ * Derive every edge's run-beam state from the current node status map. Mirrors the REAL executor
+ * routing rule (client-runtime/flows/flowExecutor.ts `edgeIsActive`) exactly, so a condition
+ * node's un-taken branch never lights up even when its target happened to run via another path:
+ * a condition edge is only "active" when `sourceHandle` matches the source's actual output
+ * branch ('true'/'false'), with a handle-less edge following the truthy branch — the same
+ * default the executor applies. Pure; reads only the status map, never touches the graph.
+ */
+export function deriveEdgeRunStates(
+  edges: RunnableEdge[],
+  nodeTypeById: (id: string) => string | undefined,
+  status: NodeStatusMap,
+): Record<string, EdgeRunState> {
+  const out: Record<string, EdgeRunState> = {};
+  const shownForTarget = new Set<string>();
+
+  for (const edge of edges) {
+    const sourceStatus = status[edge.source];
+    const targetStatus = status[edge.target];
+    // A hop is only traversed once its source has settled successfully and the target exists in
+    // the map at all (idle-idle edges — nothing has run yet — are left out entirely).
+    if (!sourceStatus || sourceStatus.status !== 'done' || !targetStatus) continue;
+
+    if (nodeTypeById(edge.source) === 'condition') {
+      const branch = sourceStatus.output ? 'true' : 'false';
+      const handle = edge.sourceHandle;
+      const onBranch = handle === undefined || handle === null || handle === '' ? branch === 'true' : handle === branch;
+      if (!onBranch) continue; // the un-taken branch stays dark even if its target ran another way
+    }
+
+    const phase: EdgeRunPhase =
+      targetStatus.status === 'running' ? 'active' : targetStatus.status === 'error' ? 'failed' : 'done';
+    const durationMs = nodeDurationMs(targetStatus);
+    const showDuration = phase === 'done' && durationMs !== null && !shownForTarget.has(edge.target);
+    if (showDuration) shownForTarget.add(edge.target);
+
+    out[edge.id] = { phase, durationMs, showDuration };
+  }
+
+  return out;
+}
+
 /** A one-line, length-capped preview of a node's output for the timeline. */
 export function previewOutput(value: unknown, max = 120): string {
   if (value === undefined) return '—';

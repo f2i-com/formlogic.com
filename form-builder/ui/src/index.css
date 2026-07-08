@@ -312,6 +312,27 @@
     100% { background-position: -200% 0; }
   }
 
+  /* Flows editor "Live Wire" run-beam — a travelling dash pattern along an executed edge's path,
+     source → target (negative offset = draws in the path's own direction). Color comes from the
+     edge's own `!stroke-primary-*` class (FlowEdge); this only supplies the motion. Period 14 =
+     dash(8) + gap(6) for a seamless loop. */
+  .flow-beam {
+    stroke-dasharray: 8 6;
+    animation: flow-beam-dash 0.55s linear infinite;
+  }
+  @keyframes flow-beam-dash {
+    to { stroke-dashoffset: -14; }
+  }
+
+  /* Flows editor minimap — tint a node's rect by its current Test Run status. `!important`
+     because @xyflow/react's MiniMapNode sets `fill` as an inline style (from the `nodeColor`
+     prop); only an !important stylesheet rule can out-rank that, same trick FlowEdge already
+     uses (`!stroke-*`) to win over React Flow's own inline edge styles. Reading --primary-*
+     means the constellation is indigo by day, lime by night, automatically. */
+  .fl-mm-running { fill: rgb(var(--primary-500) / 0.9) !important; }
+  .fl-mm-done { fill: rgb(var(--primary-500) / 0.55) !important; }
+  .fl-mm-error { fill: rgb(239 68 68 / 0.9) !important; }
+
   /* Respect prefers-reduced-motion */
   @media (prefers-reduced-motion: reduce) {
     .animate-slide-in,
@@ -320,8 +341,14 @@
     .animate-shake,
     .animate-pulse,
     .fade-in-up,
-    .shimmer {
+    .shimmer,
+    .flow-beam {
       animation: none !important;
+    }
+    /* Static fallback: a solid conductor instead of a travelling dash — the executed-path
+       highlight (FlowEdge's primary/40 'done' stroke) already tells the rest of the story. */
+    .flow-beam {
+      stroke-dasharray: none !important;
     }
   }
 }
