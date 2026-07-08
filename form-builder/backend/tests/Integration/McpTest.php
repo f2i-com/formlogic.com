@@ -12,6 +12,7 @@ use FormLogic\Services\AppReportService;
 use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
+use FormLogic\Services\RateLimiter;
 use FormLogic\Services\ResponseService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -31,6 +32,10 @@ class McpTest extends TestCase
     private static McpTokenService $tokens;
     private static AppService $apps;
     private static McpController $ctrl;
+    private static AppReportService $reportValidator;
+    private static DesktopCommandService $desktopCommands;
+    private static FormService $forms;
+    private static ResponseService $responses;
 
     private string $userId = '';
     private string $appA = '';
@@ -68,7 +73,11 @@ class McpTest extends TestCase
         $responses = new ResponseService($conn, $sqlite);
         self::$apps = new AppService($conn, $forms);
         self::$tokens = new McpTokenService($conn);
-        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, new AppReportService(self::$apps, $forms), new DesktopCommandService($conn));
+        self::$forms = $forms;
+        self::$responses = $responses;
+        self::$reportValidator = new AppReportService(self::$apps, $forms);
+        self::$desktopCommands = new DesktopCommandService($conn);
+        self::$ctrl = new McpController(self::$tokens, $forms, self::$apps, $responses, null, null, self::$reportValidator, self::$desktopCommands);
     }
 
     protected function setUp(): void
@@ -132,23 +141,64 @@ class McpTest extends TestCase
             ->execute(['af-' . bin2hex(random_bytes(12)), $appId, $formId]);
     }
 
-    private function rpc(string $token, array $payload): array
+    private function rpc(string $token, array $payload, ?McpController $ctrl = null): array
     {
         $stream = (new StreamFactory())->createStream(json_encode($payload));
         $req = (new ServerRequestFactory())->createServerRequest('POST', '/api/mcp')
             ->withHeader('Authorization', 'Bearer ' . $token)
             ->withBody($stream);
-        $resp = self::$ctrl->handle($req, (new ResponseFactory())->createResponse());
+        $resp = ($ctrl ?? self::$ctrl)->handle($req, (new ResponseFactory())->createResponse());
         $resp->getBody()->rewind();
         return json_decode((string) $resp->getBody(), true) ?: [];
     }
 
     /** Returns ['isError'=>bool, 'data'=>mixed, 'text'=>string]. */
-    private function tool(string $token, string $name, array $args = []): array
+    private function tool(string $token, string $name, array $args = [], ?McpController $ctrl = null): array
     {
-        $r = $this->rpc($token, ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call', 'params' => ['name' => $name, 'arguments' => $args]]);
+        $r = $this->rpc($token, ['jsonrpc' => '2.0', 'id' => 1, 'method' => 'tools/call', 'params' => ['name' => $name, 'arguments' => $args]], $ctrl);
         $txt = $r['result']['content'][0]['text'] ?? '';
         return ['isError' => $r['result']['isError'] ?? false, 'data' => json_decode($txt, true), 'text' => $txt];
+    }
+
+    /** A batch RPC: raw messages array (each { jsonrpc, id, method, params }), returned as the raw
+     *  JSON-RPC response array (list of results, one per message with a non-null id). */
+    private function batch(string $token, array $messages, ?McpController $ctrl = null): array
+    {
+        $stream = (new StreamFactory())->createStream(json_encode($messages));
+        $req = (new ServerRequestFactory())->createServerRequest('POST', '/api/mcp')
+            ->withHeader('Authorization', 'Bearer ' . $token)
+            ->withBody($stream);
+        $resp = ($ctrl ?? self::$ctrl)->handle($req, (new ResponseFactory())->createResponse());
+        $resp->getBody()->rewind();
+        return json_decode((string) $resp->getBody(), true) ?: [];
+    }
+
+    /** A connector_command tools/call batch message. */
+    private function connectorCommandMessage(int $id, int $waitMs): array
+    {
+        return ['jsonrpc' => '2.0', 'id' => $id, 'method' => 'tools/call', 'params' => [
+            'name' => 'connector_command',
+            'arguments' => ['connectorId' => 'aokie', 'command' => 'call.hangup', 'waitMs' => $waitMs],
+        ]];
+    }
+
+    /** A fresh McpController sharing the same real services/DB as self::$ctrl, but with its own
+     *  RateLimiter / connector-batch ceiling override — for tests that need to isolate those from the
+     *  shared self::$ctrl used everywhere else. */
+    private function makeCtrl(?RateLimiter $rateLimiter, ?int $connectorBatchCeilingMs = null): McpController
+    {
+        return new McpController(
+            self::$tokens,
+            self::$forms,
+            self::$apps,
+            self::$responses,
+            null,
+            null,
+            self::$reportValidator,
+            self::$desktopCommands,
+            $rateLimiter,
+            $connectorBatchCeilingMs
+        );
     }
 
     private function toolNames(string $token): array
@@ -197,6 +247,114 @@ class McpTest extends TestCase
         $this->assertSame('aokie', $cmd['connector_id']);
         $this->assertSame('call.hangup', $cmd['command']);
         $this->assertSame('pending', $cmd['status']);
+    }
+
+    // ── connector_command batch DoS fix: one shared wall-clock deadline across a whole batch ──
+
+    /**
+     * A single connector_command call — whether it's the only message in a JSON-RPC batch, or not a
+     * batch at all — must behave EXACTLY as it did before the batch-deadline plumbing: it blocks for
+     * its own full requested wait (no clamping), since the shared-deadline math only ever engages from
+     * the 2nd connector_command call in a request onward. No desktop ever claims it in-test, so the
+     * poll loop runs for its whole window (proving it actually waited, not just returned instantly).
+     */
+    public function testSoleConnectorCommandCallGetsItsFullRequestedWaitUnclamped(): void
+    {
+        $tok = self::$tokens->create($this->userId, null, 3600, 3600, ['connector:command'])['token'];
+
+        // (a) As the ONLY message in a batch (array_is_list branch, count === 1).
+        $start = microtime(true);
+        $out = $this->batch($tok, [$this->connectorCommandMessage(1, 900)]);
+        $elapsed = microtime(true) - $start;
+        $data = json_decode($out[0]['result']['content'][0]['text'] ?? '', true);
+        $this->assertSame('pending', $data['status'] ?? null, (string) json_encode($out));
+        $this->assertGreaterThanOrEqual(0.7, $elapsed, 'a solo batched call must wait close to its full requested 900ms, not be clamped down');
+        $this->assertLessThan(2.5, $elapsed, 'sanity: should not run far longer than its own requested wait');
+
+        // (b) As a plain (non-batch) single JSON-RPC object — the everyday real-world shape.
+        $start = microtime(true);
+        $r = $this->tool($tok, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup', 'waitMs' => 700]);
+        $elapsed = microtime(true) - $start;
+        $this->assertFalse($r['isError'], $r['text']);
+        $this->assertSame('pending', $r['data']['status']);
+        $this->assertGreaterThanOrEqual(0.55, $elapsed, 'a non-batch call must wait close to its full requested 700ms, not be clamped down');
+        $this->assertLessThan(2.5, $elapsed);
+    }
+
+    /**
+     * Multiple connector_command calls in the SAME batch share ONE wall-clock ceiling: the first call
+     * gets its own full wait, but later calls are clamped to whatever remains of that shared ceiling —
+     * so the batch's TOTAL blocking time stays capped at roughly one call's ceiling, never the sum of
+     * every call's independently-requested wait (which is what let 20 calls tie up a worker for ~500s).
+     * Uses a short, test-only ceiling override (production always uses the real 25000ms) so this proves
+     * the real wired-up polling mechanism without an actual ~25s sleep.
+     */
+    public function testBatchedConnectorCommandCallsShareOneCappedDeadlineNotTheSum(): void
+    {
+        $ctrl = $this->makeCtrl(null, 1200); // 1200ms shared ceiling instead of the real 25000ms
+        $tok = self::$tokens->create($this->userId, null, 3600, 3600, ['connector:command'])['token'];
+
+        // 4 calls each requesting 1000ms — uncapped, they'd sum to ~4s+. Capped, the whole batch must
+        // land close to the 1200ms shared ceiling.
+        $messages = [
+            $this->connectorCommandMessage(1, 1000),
+            $this->connectorCommandMessage(2, 1000),
+            $this->connectorCommandMessage(3, 1000),
+            $this->connectorCommandMessage(4, 1000),
+        ];
+        $start = microtime(true);
+        $out = $this->batch($tok, $messages, $ctrl);
+        $elapsed = microtime(true) - $start;
+
+        $this->assertCount(4, $out);
+        foreach ($out as $r) {
+            $data = json_decode($r['result']['content'][0]['text'] ?? '', true);
+            $this->assertSame('pending', $data['status'] ?? null, (string) json_encode($r));
+        }
+        // The real bug: 4 x 1000ms independently would take ~4s+ (and 20 calls at 25s each ~500s).
+        // Capped to one shared ~1200ms ceiling, the whole batch must land well under half of the
+        // uncapped sum, and comfortably close to the ceiling rather than to 4x it.
+        $this->assertLessThan(2.0, $elapsed, 'a batch of 4 connector_command calls must be capped near the shared ceiling, not their 4x sum');
+        $this->assertGreaterThanOrEqual(0.9, $elapsed, 'the first call in the batch must still block for close to its own real wait');
+    }
+
+    /**
+     * connector_command is gated by the SAME per-user 30-per-60s budget the web enqueue path
+     * (POST /api/app/{slug}/connector-commands) already enforces via RateLimitMiddleware — applied
+     * here directly since this MCP tool calls DesktopCommandService without going through that
+     * middleware. Exceeding it rejects with a tool error (not an uncaught exception); other tools
+     * (e.g. desktop_status) are completely unaffected.
+     */
+    public function testConnectorCommandRateLimitMirrorsTheWebBudgetAndDoesNotAffectOtherTools(): void
+    {
+        $rateLimiter = new RateLimiter(self::$mysql->getConnection());
+        $ctrl = $this->makeCtrl($rateLimiter);
+        $tok = self::$tokens->create($this->userId, null, 3600, 3600, ['connector:command'])['token'];
+
+        // The limiter uses a 60s wall-clock-aligned fixed window; if this test's 31 sequential calls
+        // straddled a window boundary, the counter would reset mid-test and the 31st call would land in
+        // a fresh (under-budget) window instead of tripping the limit. Start just after a fresh window
+        // begins so the whole sequence has ample margin.
+        $secondsLeft = $rateLimiter->secondsUntilReset(60);
+        if ($secondsLeft < 10) {
+            usleep(($secondsLeft + 1) * 1000000);
+        }
+
+        // waitMs=0 so every call returns immediately (no polling) — this test is about the rate
+        // limiter's counting, not the wait/deadline logic covered above.
+        for ($i = 1; $i <= 30; $i++) {
+            $r = $this->tool($tok, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup', 'waitMs' => 0], $ctrl);
+            $this->assertFalse($r['isError'], "call #{$i} should be within the 30/60s budget: {$r['text']}");
+        }
+        // The 31st call in the same 60s window exceeds the budget and is rejected as a tool error.
+        $r31 = $this->tool($tok, 'connector_command', ['connectorId' => 'aokie', 'command' => 'call.hangup', 'waitMs' => 0], $ctrl);
+        $this->assertTrue($r31['isError']);
+        $this->assertStringContainsStringIgnoringCase('too many', $r31['text']);
+
+        // A completely different tool call (same session, same rate-limited controller) is unaffected —
+        // the budget is scoped to connector_command only.
+        $st = $this->tool($tok, 'desktop_status', [], $ctrl);
+        $this->assertFalse($st['isError'], $st['text']);
     }
 
     // ── token service ──

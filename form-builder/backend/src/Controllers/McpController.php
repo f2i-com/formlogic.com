@@ -12,6 +12,7 @@ use FormLogic\Services\AppService;
 use FormLogic\Services\AppReportService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\AuditService;
+use FormLogic\Services\RateLimiter;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -39,6 +40,10 @@ class McpController
         private ?LoggerInterface $logger = null,
         private ?AppReportService $reportValidator = null,
         private ?\FormLogic\Services\DesktopCommandService $desktopCommands = null,
+        private ?RateLimiter $rateLimiter = null,
+        // Overridable only by tests, to prove the shared batch-deadline cap (below) engages without a
+        // real ~25s sleep. Production never passes this — it always falls back to the real ceiling.
+        private ?int $connectorBatchCeilingMs = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -133,6 +138,15 @@ class McpController
             return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32700, 'message' => 'Parse error']], 400);
         }
 
+        // One shared wall-clock budget for every connector_command call in THIS request (batch or
+        // not): 'deadline' is the same ceiling a single call is already allowed today, and 'seen'
+        // counts connector_command calls as they're dispatched. The first one is never clamped by it
+        // (so a solo call — the overwhelmingly common case — behaves exactly as before); only the 2nd+
+        // connector_command call in the SAME batch has its wait clamped to whatever remains, so N
+        // batched calls can't each independently block the worker for up to 25s (an N×25s DoS) — see
+        // the connector_command case in callTool().
+        $connectorBudget = ['deadline' => microtime(true) + $this->connectorCommandBatchCeilingMs() / 1000, 'seen' => 0];
+
         // Batch (a list of messages) or a single message.
         if (array_is_list($body)) {
             if (count($body) > 20) {
@@ -142,7 +156,7 @@ class McpController
             foreach ($body as $msg) {
                 // $session is passed by reference so a create_app/create_form earlier in the batch is
                 // visible to a dependent call later in the same batch (creator tokens).
-                $r = is_array($msg) ? $this->dispatch($msg, $session, $request) : null;
+                $r = is_array($msg) ? $this->dispatch($msg, $session, $request, $connectorBudget) : null;
                 if ($r !== null) {
                     $out[] = $r;
                 }
@@ -150,12 +164,20 @@ class McpController
             return empty($out) ? $response->withStatus(202) : $this->rpc($response, $out);
         }
 
-        $result = $this->dispatch($body, $session, $request);
+        $result = $this->dispatch($body, $session, $request, $connectorBudget);
         return $result === null ? $response->withStatus(202) : $this->rpc($response, $result);
     }
 
+    /** The single-call ceiling (ms), also reused as the whole batch's shared connector_command budget
+     *  (see $connectorBudget in handle()). Tests may override via the constructor to prove the cap
+     *  engages without a real ~25s sleep; production always uses CONNECTOR_COMMAND_MAX_WAIT_MS. */
+    private function connectorCommandBatchCeilingMs(): int
+    {
+        return $this->connectorBatchCeilingMs ?? self::CONNECTOR_COMMAND_MAX_WAIT_MS;
+    }
+
     /** Handle one JSON-RPC message. Returns the response array, or null for notifications. */
-    private function dispatch(array $message, array &$session, Request $request): ?array
+    private function dispatch(array $message, array &$session, Request $request, array &$connectorBudget): ?array
     {
         $id = $message['id'] ?? null;
         $method = (string) ($message['method'] ?? '');
@@ -179,7 +201,7 @@ class McpController
             case 'tools/list':
                 return $this->ok($id, ['tools' => $this->toolDefs($session)]);
             case 'tools/call':
-                return $this->ok($id, $this->callTool((string) ($params['name'] ?? ''), is_array($params['arguments'] ?? null) ? $params['arguments'] : [], $session, $request));
+                return $this->ok($id, $this->callTool((string) ($params['name'] ?? ''), is_array($params['arguments'] ?? null) ? $params['arguments'] : [], $session, $request, $connectorBudget));
             default:
                 return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32601, 'message' => "Method not found: {$method}"]];
         }
@@ -204,8 +226,12 @@ class McpController
     /** A desktop is "online" if its connector:relay key was used within this window (it long-polls ≤25s). */
     private const DESKTOP_ONLINE_WINDOW = 90;
 
+    /** Max ms a single connector_command call may block waiting for the desktop — also reused as the
+     *  shared ceiling the whole batch's connector_command calls collectively cannot exceed. */
+    private const CONNECTOR_COMMAND_MAX_WAIT_MS = 25000;
+
     /** Execute a tool, scoped to the session owner + the token's scopes + (optional) app scope. */
-    private function callTool(string $name, array $args, array &$session, Request $request): array
+    private function callTool(string $name, array $args, array &$session, Request $request, array &$connectorBudget): array
     {
         $userId = $session['userId'];
         $scopedApp = $session['appId'] ?? null;
@@ -444,13 +470,24 @@ class McpController
                     if ($this->desktopCommands === null) {
                         throw new \Exception('Connector relay is not available on this server.');
                     }
+                    // The web enqueue path (POST /api/app/{slug}/connector-commands) is gated by a
+                    // 30-per-60s-per-user RateLimitMiddleware; this MCP tool calls DesktopCommandService
+                    // directly and would otherwise bypass it entirely. Apply the SAME budget here, keyed
+                    // the same way (keyPrefix 'connector_relay', per-user) so an MCP client can't issue
+                    // connector commands any faster than a web client could.
+                    if ($this->rateLimiter !== null) {
+                        $hits = $this->rateLimiter->hit('connector_relay:u:' . hash('sha256', $userId), 60);
+                        if ($hits > 30) {
+                            throw new \Exception('Too many connector commands — please slow down (max 30 per minute).');
+                        }
+                    }
                     $connectorId = trim((string) ($args['connectorId'] ?? ''));
                     $command = trim((string) ($args['command'] ?? ''));
                     if ($connectorId === '' || $command === '') {
                         throw new \Exception('connectorId and command are required.');
                     }
                     $payload = is_array($args['payload'] ?? null) ? $args['payload'] : null;
-                    $waitMs = max(0, min(25000, (int) ($args['waitMs'] ?? 15000)));
+                    $waitMs = max(0, min(self::CONNECTOR_COMMAND_MAX_WAIT_MS, (int) ($args['waitMs'] ?? 15000)));
                     // Presence: if no desktop has polled the relay recently, don't block the full timeout
                     // for one that isn't there — still enqueue + give a short grace in case it's just
                     // coming online.
@@ -468,7 +505,18 @@ class McpController
                     // Poll for the desktop to claim + complete (a live desktop finishes in a couple of
                     // seconds); an offline desktop gets a short grace only.
                     $row = $enq['command'];
-                    $deadline = microtime(true) + ($online ? $waitMs : min($waitMs, 3000)) / 1000;
+                    $effectiveWaitMs = $online ? $waitMs : min($waitMs, 3000);
+                    // Batch DoS guard: the FIRST connector_command call dispatched in this request gets
+                    // its full, independent wait — identical to today. Only the 2nd+ connector_command
+                    // call in the SAME batch is clamped to whatever remains of the one shared ceiling
+                    // (never negative), so it returns immediately with today's "still pending" shape
+                    // once the ceiling is spent, instead of blocking for its own fresh timeout.
+                    $connectorBudget['seen']++;
+                    if ($connectorBudget['seen'] > 1) {
+                        $remainingMs = (int) round(($connectorBudget['deadline'] - microtime(true)) * 1000);
+                        $effectiveWaitMs = max(0, min($effectiveWaitMs, $remainingMs));
+                    }
+                    $deadline = microtime(true) + $effectiveWaitMs / 1000;
                     while (microtime(true) < $deadline && in_array($row['status'] ?? 'pending', ['pending', 'claimed'], true)) {
                         usleep(400000);
                         $row = $this->desktopCommands->get($cmdId, $userId) ?? $row;

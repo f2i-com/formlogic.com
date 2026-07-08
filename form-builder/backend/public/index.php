@@ -355,6 +355,12 @@ $container->set(ApiKeyController::class, function (Container $c) {
 $container->set(\FormLogic\Services\McpTokenService::class, function (Container $c) {
     return new \FormLogic\Services\McpTokenService($c->get(MySQLConnection::class));
 });
+// Shared, persistent rate-limit store (same one every RateLimitMiddleware wraps) — registered here so
+// it can be injected straight into McpController for the connector_command tool (see below), not just
+// used at route-middleware level.
+$container->set(\FormLogic\Services\RateLimiter::class, function (Container $c) {
+    return new \FormLogic\Services\RateLimiter($c->get(MySQLConnection::class)->getConnection());
+});
 $container->set(\FormLogic\Controllers\McpController::class, function (Container $c) {
     return new \FormLogic\Controllers\McpController(
         $c->get(\FormLogic\Services\McpTokenService::class),
@@ -364,7 +370,11 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(AuditService::class),
         $c->get(LoggerInterface::class),
         $c->get(\FormLogic\Services\AppReportService::class),
-        $c->get(\FormLogic\Services\DesktopCommandService::class)
+        $c->get(\FormLogic\Services\DesktopCommandService::class),
+        // connector_command is gated by the SAME per-user 30-per-60s budget as the web enqueue path
+        // (POST /api/app/{slug}/connector-commands), since it calls DesktopCommandService directly and
+        // so never passes through that route's RateLimitMiddleware.
+        $c->get(\FormLogic\Services\RateLimiter::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
