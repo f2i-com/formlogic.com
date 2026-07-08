@@ -208,6 +208,45 @@ class FlowOwnerReserveTest extends TestCase
         }
     }
 
+    /**
+     * The binding-enabled kill switch (bug: a disabled binding kept firing on Desktop forever
+     * because the API-key surface it polls returned disabled rows unfiltered). `listOwnerBindings`
+     * backs ONLY `GET /api/v1/flow-bindings` (FormLogic Desktop's `list_bindings()` snapshot poll)
+     * — it must exclude disabled bindings entirely. The owner-facing Flows-panel listing
+     * (`listBindings()`, behind `GET /apps/{id}/flow-bindings`) is a separate query and must keep
+     * showing BOTH enabled and disabled bindings, with their real state, so a user can find one to
+     * re-enable.
+     */
+    public function testListOwnerBindingsExcludesDisabledButAppScopedListingShowsBoth(): void
+    {
+        self::$flows->createFlow($this->appId, $this->userA, ['name' => 'Desk', 'slug' => 'desk', 'flowJson' => $this->graph()]);
+        $enabled = self::$flows->createBinding($this->appId, [
+            'flow' => 'desk', 'event' => 'aokie.call.incoming', 'mode' => 'async', 'enabled' => true,
+        ]);
+        $disabled = self::$flows->createBinding($this->appId, [
+            'flow' => 'desk', 'event' => 'aokie.call.incoming', 'mode' => 'async', 'enabled' => false,
+        ]);
+
+        // Desktop-facing surface: the disabled binding must be invisible — this is the actual
+        // kill switch a phone-call binding (e.g. aokie.call.incoming) relies on.
+        $ownerIds = array_column(self::$flows->listOwnerBindings($this->userA), 'id');
+        $this->assertContains($enabled['id'], $ownerIds);
+        $this->assertNotContains($disabled['id'], $ownerIds, 'a disabled binding must never reach the desktop sync endpoint');
+
+        // formId filtering still composes correctly with the enabled predicate.
+        $this->assertSame([], self::$flows->listOwnerBindings($this->userA, 'no-such-form'));
+
+        // Owner-facing UI listing (app-scoped): unaffected, shows both with true status.
+        $byId = [];
+        foreach (self::$flows->listBindings($this->appId) as $b) {
+            $byId[$b['id']] = $b;
+        }
+        $this->assertArrayHasKey($enabled['id'], $byId, 'owner UI must still list the enabled binding');
+        $this->assertArrayHasKey($disabled['id'], $byId, 'owner UI must still list the disabled binding so it can be re-enabled');
+        $this->assertTrue($byId[$enabled['id']]['enabled']);
+        $this->assertFalse($byId[$disabled['id']]['enabled']);
+    }
+
     public function testOwnerAppLogicIsOwnerScopedAndResolvesForms(): void
     {
         $bundle = [

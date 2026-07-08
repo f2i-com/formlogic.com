@@ -446,6 +446,13 @@ impl FlowRuntime {
             s.bindings
                 .iter()
                 .filter(|b| {
+                    // Defense-in-depth: the server (`FlowService::listOwnerBindings`) already
+                    // excludes disabled bindings from the snapshot, but the dispatcher's core
+                    // match must never fire one that slips through regardless (absent field =
+                    // enabled, matching the DB default — same convention as find_flow above).
+                    if b.get("enabled").and_then(Value::as_bool) == Some(false) {
+                        return false;
+                    }
                     let mode = b.get("mode").and_then(Value::as_str).unwrap_or("");
                     if mode == "manual" {
                         return false;
@@ -1249,6 +1256,35 @@ mod tests {
         }
         let g = rt.seen.lock().unwrap();
         assert!(g.0.len() <= SEEN_CAP);
+    }
+
+    /// A disabled binding must never fire, even if it slips into the local snapshot (e.g. a
+    /// future server-side regression, or the window between an owner disabling a binding and the
+    /// next snapshot refresh) — this is the defense-in-depth half of the binding-enabled kill
+    /// switch (server side: `FlowService::listOwnerBindings` now excludes `enabled = 0` rows).
+    /// Absent `enabled` (the DB default / pre-field snapshots) must still match, same convention
+    /// as `find_flow`'s existing `!= Some(false)` check a few lines above.
+    #[test]
+    fn matching_bindings_excludes_disabled_binding() {
+        let rt = runtime();
+        let enabled = json!({ "id": "b-enabled", "mode": "async", "event": "aokie.call.incoming", "enabled": true });
+        let default_enabled = json!({ "id": "b-default", "mode": "async", "event": "aokie.call.incoming" });
+        let disabled = json!({ "id": "b-disabled", "mode": "async", "event": "aokie.call.incoming", "enabled": false });
+        *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+            flows: vec![],
+            bindings: vec![enabled, default_enabled, disabled],
+            applogic: vec![],
+            fetched_at: Instant::now(),
+        });
+
+        let envelope = json!({ "name": "aokie.call.incoming", "data": {} });
+        let matched = rt.matching_bindings(&envelope);
+        let ids: Vec<&str> = matched.iter().filter_map(|b| b.get("id").and_then(Value::as_str)).collect();
+
+        assert!(ids.contains(&"b-enabled"), "enabled binding must still match");
+        assert!(ids.contains(&"b-default"), "binding with no enabled field defaults to enabled");
+        assert!(!ids.contains(&"b-disabled"), "disabled binding must never be dispatched");
+        assert_eq!(matched.len(), 2);
     }
 
     #[tokio::test]

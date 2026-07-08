@@ -1146,12 +1146,18 @@ class FlowService
     }
 
     /**
-     * Every binding whose flow the user owns (workspace form bindings + app bindings),
-     * optionally filtered by form. @return array[]
+     * Every ENABLED binding whose flow the user owns (workspace form bindings + app bindings),
+     * optionally filtered by form. This is the sole backer of the API-key `/api/v1/flow-bindings`
+     * route that FormLogic Desktop polls into its local dispatch snapshot (formlogic_client.rs
+     * `list_bindings`) — the `enabled = 1` predicate is the server-side kill switch: disabling a
+     * binding from the owner-facing Flows panel (which lists bindings via the separate app-scoped
+     * `listBindings()`/`listFormBindings()`, unaffected by this filter) must stop Desktop from ever
+     * seeing it again, not just the browser runtime (`getRuntimeFlows()` filters the same way).
+     * @return array[]
      */
     public function listOwnerBindings(string $ownerUserId, ?string $formId = null): array
     {
-        $where = 'f.owner_user_id = :o';
+        $where = 'f.owner_user_id = :o AND b.enabled = 1';
         $params = ['o' => $ownerUserId];
         if ($formId !== null && $formId !== '') {
             $where .= ' AND b.form_id = :form';
