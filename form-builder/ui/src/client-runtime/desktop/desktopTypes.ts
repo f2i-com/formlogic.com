@@ -1,11 +1,11 @@
 // FormLogic Desktop — shared browser-side types (docs/FORMLOGIC_DESKTOP.md §1/§2/§3,
 // docs/contracts/desktop-event.schema.json, connector-request/response.schema.json).
 //
-// FormLogic Desktop is the local companion (rebranded F2I companion) on 127.0.0.1:17872.
+// FormLogic Desktop is the local companion on 127.0.0.1:17872.
 // These types mirror the frozen Phase 0 contracts; nothing here talks to the network —
 // the detection/pairing/client/events modules build on this file.
 
-/** Loopback base URL of FormLogic Desktop (contract §1 — unchanged from the F2I companion). */
+/** Loopback base URL of FormLogic Desktop (contract §1). */
 export const DESKTOP_BASE_URL = 'http://127.0.0.1:17872';
 
 // Overridable for tests (points the whole desktop stack at a mock server / distinct
@@ -27,8 +27,8 @@ export function __resetDesktopBaseUrlForTests(): void {
   baseUrl = DESKTOP_BASE_URL;
 }
 
-/** Companion ids accepted by detection (contract §1 — legacy id kept for 1–2 releases). */
-export const DESKTOP_COMPANION_IDS = ['formlogic-desktop', 'f2i-companion'] as const;
+/** Companion ids accepted by detection (contract §1). */
+export const DESKTOP_COMPANION_IDS = ['formlogic-desktop'] as const;
 
 /** GET /api/health response (unauthenticated, CORS-open). */
 export interface DesktopHealth {

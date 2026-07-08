@@ -3,8 +3,8 @@ setlocal enabledelayedexpansion
 rem ===================================================================
 rem install-ltx2.bat -- one-click install of the LTX-2.3 video service.
 rem
-rem Run by the F2I Companion (which sets F2I_DATA_DIR / F2I_MODELS_DIR /
-rem F2I_MODEL_DIRS / F2I_SCRIPTS_DIR). ASCII-only on purpose (cmd + PS 5.1
+rem Run by the FormLogic Companion (which sets FORMLOGIC_DATA_DIR / FORMLOGIC_MODELS_DIR /
+rem FORMLOGIC_MODEL_DIRS / FORMLOGIC_SCRIPTS_DIR). ASCII-only on purpose (cmd + PS 5.1
 rem both mangle non-ASCII).
 rem
 rem VERIFIED RECIPE (2026-05-29, RTX 5090 / Windows 11):
@@ -18,23 +18,23 @@ rem   5. uv pip install fastapi + uvicorn (for ltx2_server.py)
 rem
 rem Weights are NOT downloaded here -- point the service at the folder that
 rem already holds them via the companion's model folders (e.g. E:\ckpts).
-rem Set F2I_LTX_DOWNLOAD=1 to pull them from HuggingFace into the models dir.
+rem Set FORMLOGIC_LTX_DOWNLOAD=1 to pull them from HuggingFace into the models dir.
 rem ===================================================================
 
 echo [install-ltx2] starting LTX-2.3 video service install
 
-if "%F2I_DATA_DIR%"=="" (
-  echo [install-ltx2] ERROR: F2I_DATA_DIR is not set. Run Install from the F2I app.
+if "%FORMLOGIC_DATA_DIR%"=="" (
+  echo [install-ltx2] ERROR: FORMLOGIC_DATA_DIR is not set. Run Install from the FormLogic app.
   exit /b 1
 )
 
-set "DATA=%F2I_DATA_DIR%"
-set "MODELS=%F2I_MODELS_DIR%"
+set "DATA=%FORMLOGIC_DATA_DIR%"
+set "MODELS=%FORMLOGIC_MODELS_DIR%"
 if "%MODELS%"=="" set "MODELS=%DATA%\models"
 set "SVC=%DATA%\services\ltx2"
 set "REPO=%SVC%\LTX-2-main"
 set "VPY=%REPO%\.venv\Scripts\python.exe"
-set "TORCH_INDEX=%F2I_TORCH_INDEX%"
+set "TORCH_INDEX=%FORMLOGIC_TORCH_INDEX%"
 if "%TORCH_INDEX%"=="" set "TORCH_INDEX=https://download.pytorch.org/whl/cu128"
 
 rem --- 1. uv ---------------------------------------------------------
@@ -93,7 +93,7 @@ if errorlevel 1 ( popd & goto :fail )
 popd
 
 rem --- 6. weights (opt-in) -----------------------------------------
-if "%F2I_LTX_DOWNLOAD%"=="1" (
+if "%FORMLOGIC_LTX_DOWNLOAD%"=="1" (
   echo [install-ltx2] downloading LTX-2.3 weights into %MODELS% (LARGE; resumes if interrupted)
   "%UV%" pip install --python "%VPY%" huggingface_hub
   "%VPY%" -c "import os;from huggingface_hub import hf_hub_download as d;r='Lightricks/LTX-2';o=os.environ['MODELS'];[d(repo_id=r,filename=f,local_dir=o) for f in ['ltx-2.3-22b-distilled-1.1.safetensors','ltx-2.3-spatial-upscaler-x2-1.0.safetensors']]"

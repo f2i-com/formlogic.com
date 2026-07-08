@@ -1,12 +1,12 @@
 /**
- * Light/dark theme for the F2I companion — mirrors the web app's cartographic
+ * Light/dark theme for the FormLogic companion — mirrors the web app's cartographic
  * palette. We toggle a single `dark` class on <html>; the bare `:root` in
  * styles.css is the light default. Preference persists to localStorage and
  * falls back to the OS `prefers-color-scheme` on first run.
  */
 export type ThemeMode = 'light' | 'dark';
 
-const KEY = 'f2i-theme';
+const KEY = 'formlogic-theme';
 
 export function initialTheme(): ThemeMode {
   try {

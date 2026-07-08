@@ -36,7 +36,7 @@ describe('desktop detection', () => {
         healthResponse({
           status: 'ok',
           companion: 'formlogic-desktop',
-          legacyCompanion: 'f2i-companion',
+          legacyCompanion: 'formlogic-desktop',
           version: '1.2.3',
           apiVersion: 1,
           pluginApiVersion: 1,
@@ -54,13 +54,12 @@ describe('desktop detection', () => {
     expect(info.baseUrl).toBe(DESKTOP_BASE_URL);
   });
 
-  it('accepts the legacy companion id "f2i-companion"', async () => {
+  it('rejects the retired legacy companion id "f2i-companion"', async () => {
     setFetch(vi.fn(() => healthResponse({ status: 'ok', companion: 'f2i-companion', version: '0.9.0' })));
 
     const info = await refreshDesktopStatus();
 
-    expect(info.available).toBe(true);
-    expect(info.companion).toBe('f2i-companion');
+    expect(info.available).toBe(false);
   });
 
   it('rejects an unrecognised companion id (some other localhost service)', async () => {

@@ -15,7 +15,7 @@
       "${dataDir}/scripts/playwright_server.py"
     ],
     "env": {
-      "F2I_BROWSER_PORT": "${port}"
+      "FORMLOGIC_BROWSER_PORT": "${port}"
     }
   },
   "health": {
@@ -27,6 +27,6 @@
       "${dataDir}/venvs/playwright"
     ]
   },
-  "installedMarker": "${dataDir}/venvs/playwright/.f2i-installed",
+  "installedMarker": "${dataDir}/venvs/playwright/.formlogic-installed",
   "docsUrl": "https://playwright.dev"
 }

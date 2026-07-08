@@ -32,7 +32,7 @@
       "${dataDir}/services/ltx2"
     ]
   },
-  "installedMarker": "${dataDir}/services/ltx2/.f2i-installed",
+  "installedMarker": "${dataDir}/services/ltx2/.formlogic-installed",
   "docsUrl": "https://github.com/Lightricks/LTX-2",
   "node": {
     "endpoint": "/generate",

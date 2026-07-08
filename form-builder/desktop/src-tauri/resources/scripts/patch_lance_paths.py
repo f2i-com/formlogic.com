@@ -1,4 +1,4 @@
-"""Make Lance run on the F2I Companion's setup (weights off-repo, no flash-attn).
+"""Make Lance run on the FormLogic Companion's setup (weights off-repo, no flash-attn).
 
 Two idempotent, marker-guarded source patches, applied to the fetched Lance repo
 at install time (and re-runnable):
@@ -28,10 +28,10 @@ import os
 import sys
 
 # ---- patch #1: config_factory.get_model_path ----------------------------------
-PATHS_MARKER = "F2I_PATH_PATCH"
+PATHS_MARKER = "FORMLOGIC_PATH_PATCH"
 PATHS_NEEDLE = '    return str(value) if value is not None else ""'
 PATHS_REPLACEMENT = '''    value = str(value) if value is not None else ""
-    # F2I_PATH_PATCH: the bundled path_default.yaml uses a relative "downloads/..."
+    # FORMLOGIC_PATH_PATCH: the bundled path_default.yaml uses a relative "downloads/..."
     # base; honor LANCE_MODEL_BASE_DIR so the ViT/VAE resolve next to off-repo weights.
     import os as _os
     _base = _os.getenv("LANCE_MODEL_BASE_DIR")
@@ -44,14 +44,14 @@ PATHS_REPLACEMENT = '''    value = str(value) if value is not None else ""
     return value'''
 
 # ---- patch #2: ViT attn_implementation -> sdpa --------------------------------
-VIT_MARKER = "F2I_VIT_SDPA"
+VIT_MARKER = "FORMLOGIC_VIT_SDPA"
 VIT_NEEDLE = (
     "    def __init__(self, config, *inputs, **kwargs) -> None:\n"
     "        super().__init__(config, *inputs, **kwargs)\n"
 )
 VIT_REPLACEMENT = (
     "    def __init__(self, config, *inputs, **kwargs) -> None:\n"
-    "        # F2I_VIT_SDPA: pin the vision tower to SDPA so it never hits transformers'\n"
+    "        # FORMLOGIC_VIT_SDPA: pin the vision tower to SDPA so it never hits transformers'\n"
     "        # flash-attn validation (no Windows/Blackwell flash_attn wheel; the LLM trunk\n"
     "        # uses our SDPA flash_attn shim). The ViT's sdpa branch is the same math.\n"
     "        try:\n"

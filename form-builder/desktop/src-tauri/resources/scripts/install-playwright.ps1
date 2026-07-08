@@ -5,20 +5,20 @@
 # Chromium browser binary. Reuses the companion's bundled Python runtime
 # when present, otherwise falls back to a system Python 3 on PATH.
 #
-# Env supplied by the companion: F2I_BIN_DIR (= <dataDir>/bin),
-# F2I_MODELS_DIR. We derive <dataDir> from F2I_BIN_DIR.
+# Env supplied by the companion: FORMLOGIC_BIN_DIR (= <dataDir>/bin),
+# FORMLOGIC_MODELS_DIR. We derive <dataDir> from FORMLOGIC_BIN_DIR.
 #
 # One-time cost: the Chromium download is ~150 MB. Subsequent installs
 # (re-run to upgrade) are quick -- pip + playwright cache aggressively.
 
 $ErrorActionPreference = 'Stop'
 
-if (-not $env:F2I_BIN_DIR) {
-    Write-Error 'F2I_BIN_DIR is not set; this script expects to be invoked by the F2I app.'
+if (-not $env:FORMLOGIC_BIN_DIR) {
+    Write-Error 'FORMLOGIC_BIN_DIR is not set; this script expects to be invoked by the FormLogic app.'
     exit 1
 }
 
-$dataDir = Split-Path $env:F2I_BIN_DIR -Parent
+$dataDir = Split-Path $env:FORMLOGIC_BIN_DIR -Parent
 $venv = Join-Path $dataDir 'venvs\playwright'
 $venvPy = Join-Path $venv 'Scripts\python.exe'
 
@@ -56,4 +56,4 @@ Write-Host "[install-playwright] downloading Chromium (~150 MB, one-time)..."
 & $venvPy -m playwright install chromium
 if ($LASTEXITCODE -ne 0) { Write-Error "playwright install chromium failed (exit $LASTEXITCODE)"; exit 4 }
 
-Write-Host "[install-playwright] done. Start the 'Playwright Browser' service, then browser_* nodes in f2i-web will use it."
+Write-Host "[install-playwright] done. Start the 'Playwright Browser' service, then browser_* nodes in formlogic-web will use it."

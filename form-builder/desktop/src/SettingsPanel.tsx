@@ -16,7 +16,7 @@ import { useToast } from './Toasts';
  * Settings panel — the data + models folders, additional model scan dirs,
  * and the HuggingFace token. Still the natural home for future options.
  *
- * The data folder is where EVERYTHING F2I manages lives:
+ * The data folder is where EVERYTHING FormLogic manages lives:
  * downloaded models, venvs, installed service binaries, templates,
  * scripts. By default that's under %APPDATA% (tidy but buried); users
  * who want their 50 GB of models on a specific drive — and easy to get
@@ -531,7 +531,7 @@ export default function SettingsPanel() {
         <h3 className="section-title">Models folder</h3>
         <p className="form-hint" style={{ marginBottom: 12 }}>
           Where downloaded models &amp; weights are saved — the LTX-2.3 / Lance
-          installers' <code className="path-code">F2I_MODELS_DIR</code> points
+          installers' <code className="path-code">FORMLOGIC_MODELS_DIR</code> points
           here too. Defaults to a <code className="path-code">models</code>{' '}
           subfolder of the data folder; point it at a big drive (e.g.{' '}
           <code className="path-code">E:\models</code>) to keep your library

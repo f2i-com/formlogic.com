@@ -1,5 +1,5 @@
 {
-  "name": "f2i-companion",
+  "name": "formlogic-desktop",
   "private": true,
   "version": "0.1.0",
   "description": "FormLogic Desktop — tray-resident desktop companion. Manages local models, flows, plugins, and hardware for FormLogic apps (Ollama, ComfyUI, custom Python) and exposes them via a localhost API.",

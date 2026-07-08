@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""F2I Companion — Playwright browser server.
+"""FormLogic Companion — Playwright browser server.
 
 A tiny single-threaded HTTP server exposing Chromium automation backed by
-Playwright. The companion runs this as a managed service; f2i-web's
+Playwright. The companion runs this as a managed service; formlogic-web's
 browser_* nodes talk to it over HTTP when running in a plain browser (no
 Tauri native browser plugin available).
 
@@ -12,8 +12,8 @@ time). Every request is handled on the main thread, where Playwright was
 started — so we never touch a Playwright object from a foreign thread.
 
 Config (env):
-  F2I_BROWSER_PORT       TCP port to bind on 127.0.0.1 (default 17880)
-  F2I_BROWSER_HEADLESS   "0" to run headed (debugging); default headless
+  FORMLOGIC_BROWSER_PORT       TCP port to bind on 127.0.0.1 (default 17880)
+  FORMLOGIC_BROWSER_HEADLESS   "0" to run headed (debugging); default headless
 
 API (all JSON, CORS open — bind is loopback-only):
   GET    /health                       -> { ok, browser, headless }
@@ -36,8 +36,8 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-PORT = int(os.environ.get("F2I_BROWSER_PORT", "17880"))
-HEADLESS = os.environ.get("F2I_BROWSER_HEADLESS", "1") != "0"
+PORT = int(os.environ.get("FORMLOGIC_BROWSER_PORT", "17880"))
+HEADLESS = os.environ.get("FORMLOGIC_BROWSER_HEADLESS", "1") != "0"
 
 # Lazy globals — the browser launches on first /health or /session so an
 # import/launch failure is reported via HTTP rather than crashing at boot.
@@ -94,7 +94,7 @@ def get_page(sid):
 
 
 # Playwright's add_cookies() wants each cookie keyed by name/value plus
-# EITHER url OR (domain AND path). f2i cookies may carry only a domain, so
+# EITHER url OR (domain AND path). formlogic cookies may carry only a domain, so
 # we fall back to the current page URL. sameSite must be one of
 # Strict/Lax/None — normalise or drop anything else so one bad value can't
 # fail the whole batch.

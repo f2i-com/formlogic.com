@@ -159,13 +159,13 @@ export default function ServicesPanel() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${id}.f2i-service.json`;
+      a.download = `${id}.formlogic-service.json`;
       a.click();
       URL.revokeObjectURL(url);
       toast.push({
         kind: 'success',
         title: `Exported "${name}"`,
-        body: `${id}.f2i-service.json — share it; import on any machine.`,
+        body: `${id}.formlogic-service.json — share it; import on any machine.`,
       });
     } catch (e) {
       setActionError(

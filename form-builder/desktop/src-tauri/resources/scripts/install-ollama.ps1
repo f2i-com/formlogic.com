@@ -2,7 +2,7 @@
 #
 # Installs Ollama via its official Windows installer. Ollama puts itself
 # on PATH globally, so the template's `command: "ollama"` works without
-# any additional wiring (no F2I_BIN_DIR step).
+# any additional wiring (no FORMLOGIC_BIN_DIR step).
 #
 # If Ollama is already installed, this script is a no-op.
 
@@ -60,7 +60,7 @@ try {
     $resolved = (Get-Command ollama -ErrorAction Stop).Source
     Write-Host "[install-ollama] installed at $resolved"
 } catch {
-    Write-Warning '[install-ollama] installed, but ollama is not yet on PATH for the current session. Restart the F2I app if needed.'
+    Write-Warning '[install-ollama] installed, but ollama is not yet on PATH for the current session. Restart the FormLogic app if needed.'
 }
 
 # Pre-pull the tiny default model the companion's Ollama node targets

@@ -1,23 +1,23 @@
-//! `f2i-server` — the companion's HTTP API + service supervisor, headless.
+//! `formlogic-server` — the companion's HTTP API + service supervisor, headless.
 //!
 //! Same axum API as the tray app (services / models / python on
 //! `127.0.0.1:17872`), but with no window, tray, or webview — for running on a
-//! Linux box (or any server) driven by a CO-LOCATED Node CLI / f2i-web. The API
+//! Linux box (or any server) driven by a CO-LOCATED Node CLI / formlogic-web. The API
 //! binds 127.0.0.1 only (never a network interface); remote access must go through
 //! an SSH tunnel or an authenticating reverse proxy.
 //!
 //! Configuration is by environment variable instead of the GUI's pointer file:
-//!   F2I_DATA_DIR        data root (databases, venvs, templates)  [~/.f2i-server]
-//!   F2I_MODELS_DIR      where downloads land                     [<data>/models]
-//!   F2I_EXTRA_MODEL_DIRS extra read-only model roots (`:`/`;`-separated)
-//!   F2I_SERVER_PORT     listen port                              [17872]
-//!   F2I_SERVER_TOKEN    bearer token gating privileged routes    [none]
-//!   F2I_HF_TOKEN        HuggingFace token for gated downloads    [none]
-//!   F2I_LLAMACPP_MODEL  GGUF the llama-cpp service loads         [none]
+//!   FORMLOGIC_DATA_DIR        data root (databases, venvs, templates)  [~/.formlogic-server]
+//!   FORMLOGIC_MODELS_DIR      where downloads land                     [<data>/models]
+//!   FORMLOGIC_EXTRA_MODEL_DIRS extra read-only model roots (`:`/`;`-separated)
+//!   FORMLOGIC_SERVER_PORT     listen port                              [17872]
+//!   FORMLOGIC_SERVER_TOKEN    bearer token gating privileged routes    [none]
+//!   FORMLOGIC_HF_TOKEN        HuggingFace token for gated downloads    [none]
+//!   FORMLOGIC_LLAMACPP_MODEL  GGUF the llama-cpp service loads         [none]
 //!                       (the headless equivalent of the Model selector)
-//!   F2I_OLLAMA_MODEL    model the ollama service uses (${ollamaModel}) [qwen2.5:0.5b]
+//!   FORMLOGIC_OLLAMA_MODEL    model the ollama service uses (${ollamaModel}) [qwen2.5:0.5b]
 //!
-//! With no F2I_SERVER_TOKEN set, privileged routes (define service / install
+//! With no FORMLOGIC_SERVER_TOKEN set, privileged routes (define service / install
 //! python / create venv / delete) are CLOSED: a headless server has no real
 //! webview origin, and any local process can forge the `Origin` header, so the
 //! bearer token is the only credential trusted off the GUI. Set a token to
@@ -28,17 +28,17 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use f2i_companion_lib::events::EventBus;
-use f2i_companion_lib::flows::FlowRuntime;
-use f2i_companion_lib::formlogic_client::FormLogicConfig;
-use f2i_companion_lib::http::{self, CompanionConfig, ConfigProvider};
-use f2i_companion_lib::pairing::{PairingHandle, PairingStore};
-use f2i_companion_lib::plugins::registry::{PluginHost, PluginHostHandle};
-use f2i_companion_lib::services::catalog::CatalogHandle;
-use f2i_companion_lib::services::downloads::{Downloads, DownloadsHandle};
-use f2i_companion_lib::services::python::{Python, PythonHandle};
-use f2i_companion_lib::services::registry::{Registry, RegistryHandle};
-use f2i_companion_lib::COMPANION_PORT;
+use formlogic_desktop_lib::events::EventBus;
+use formlogic_desktop_lib::flows::FlowRuntime;
+use formlogic_desktop_lib::formlogic_client::FormLogicConfig;
+use formlogic_desktop_lib::http::{self, CompanionConfig, ConfigProvider};
+use formlogic_desktop_lib::pairing::{PairingHandle, PairingStore};
+use formlogic_desktop_lib::plugins::registry::{PluginHost, PluginHostHandle};
+use formlogic_desktop_lib::services::catalog::CatalogHandle;
+use formlogic_desktop_lib::services::downloads::{Downloads, DownloadsHandle};
+use formlogic_desktop_lib::services::python::{Python, PythonHandle};
+use formlogic_desktop_lib::services::registry::{Registry, RegistryHandle};
+use formlogic_desktop_lib::COMPANION_PORT;
 
 /// Env-var-backed config provider (the headless analogue of the GUI's
 /// AppHandle-backed one). No pointer file, no restart-required concept.
@@ -62,16 +62,16 @@ impl ConfigProvider for EnvConfig {
             models_configured_dir: None,
             models_is_custom: false,
             models_restart_required: false,
-            // Headless: reflect the F2I_LLAMACPP_MODEL env (applied to the live
+            // Headless: reflect the FORMLOGIC_LLAMACPP_MODEL env (applied to the live
             // registry at startup) so /api/config reports the active model.
-            llama_model: std::env::var("F2I_LLAMACPP_MODEL")
+            llama_model: std::env::var("FORMLOGIC_LLAMACPP_MODEL")
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
-            // Reflect F2I_OLLAMA_MODEL (applied to the registry at startup) so
+            // Reflect FORMLOGIC_OLLAMA_MODEL (applied to the registry at startup) so
             // /api/config reports the active model; falls back to the service's
             // built-in default (qwen2.5:0.5b) when unset.
-            ollama_model: std::env::var("F2I_OLLAMA_MODEL")
+            ollama_model: std::env::var("FORMLOGIC_OLLAMA_MODEL")
                 .ok()
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
@@ -124,24 +124,24 @@ async fn main() {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
 
-    let data_dir = match std::env::var_os("F2I_DATA_DIR") {
+    let data_dir = match std::env::var_os("FORMLOGIC_DATA_DIR") {
         Some(d) => PathBuf::from(d),
         None => match home_dir() {
-            Some(h) => h.join(".f2i-server"),
+            Some(h) => h.join(".formlogic-server"),
             None => {
                 eprintln!(
-                    "f2i-server: set F2I_DATA_DIR — no HOME/USERPROFILE to derive a default data dir"
+                    "formlogic-server: set FORMLOGIC_DATA_DIR — no HOME/USERPROFILE to derive a default data dir"
                 );
                 std::process::exit(1);
             }
         },
     };
-    let models_dir = std::env::var_os("F2I_MODELS_DIR")
+    let models_dir = std::env::var_os("FORMLOGIC_MODELS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("models"));
     // Use the platform path separator (`;` on Windows, `:` on Unix) so a
     // Windows drive path like `D:\ckpts` isn't split on its colon.
-    let extra_model_dirs: Vec<PathBuf> = std::env::var_os("F2I_EXTRA_MODEL_DIRS")
+    let extra_model_dirs: Vec<PathBuf> = std::env::var_os("FORMLOGIC_EXTRA_MODEL_DIRS")
         .map(|s| {
             std::env::split_paths(&s)
                 .filter(|p| !p.as_os_str().is_empty())
@@ -151,24 +151,24 @@ async fn main() {
     // Default only when UNSET/blank; fail loud on a typo / out-of-range / 0 rather
     // than silently binding the default (which leaves the server reachable on a
     // port the operator didn't choose, with no error).
-    let port: u16 = match std::env::var("F2I_SERVER_PORT") {
+    let port: u16 = match std::env::var("FORMLOGIC_SERVER_PORT") {
         Err(_) => COMPANION_PORT,
         Ok(s) if s.trim().is_empty() => COMPANION_PORT,
         Ok(s) => s.trim().parse::<u16>().ok().filter(|p| *p != 0).unwrap_or_else(|| {
-            eprintln!("f2i-server: invalid F2I_SERVER_PORT {s:?} (want 1-65535)");
+            eprintln!("formlogic-server: invalid FORMLOGIC_SERVER_PORT {s:?} (want 1-65535)");
             std::process::exit(1);
         }),
     };
     // Trim symmetrically with the client (bearer_token trims), so surrounding
     // whitespace in the env var can't silently reject a valid token.
-    let auth_token = std::env::var("F2I_SERVER_TOKEN")
+    let auth_token = std::env::var("FORMLOGIC_SERVER_TOKEN")
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
 
     if let Err(e) = std::fs::create_dir_all(&data_dir) {
         eprintln!(
-            "f2i-server: cannot create data dir {}: {e}",
+            "formlogic-server: cannot create data dir {}: {e}",
             data_dir.display()
         );
         std::process::exit(1);
@@ -179,15 +179,15 @@ async fn main() {
         match Registry::init(data_dir.clone(), models_dir.clone(), extra_model_dirs) {
             Ok(r) => Arc::new(Mutex::new(r)),
             Err(e) => {
-                eprintln!("f2i-server: registry init failed: {e}");
+                eprintln!("formlogic-server: registry init failed: {e}");
                 std::process::exit(1);
             }
         };
-    // Headless has no Model-selector UI; honor F2I_LLAMACPP_MODEL so the built-in
+    // Headless has no Model-selector UI; honor FORMLOGIC_LLAMACPP_MODEL so the built-in
     // llama-cpp service (which refuses to start with no model) is usable on a
     // server. Absent it, llama-cpp stays unstartable — define a custom template
     // with the gguf baked into run.args instead.
-    if let Ok(m) = std::env::var("F2I_LLAMACPP_MODEL") {
+    if let Ok(m) = std::env::var("FORMLOGIC_LLAMACPP_MODEL") {
         let m = m.trim().to_string();
         if !m.is_empty() {
             if let Ok(mut r) = registry.lock() {
@@ -195,10 +195,10 @@ async fn main() {
             }
         }
     }
-    // Same for Ollama — F2I_OLLAMA_MODEL picks the model nodes use via ${ollamaModel}
+    // Same for Ollama — FORMLOGIC_OLLAMA_MODEL picks the model nodes use via ${ollamaModel}
     // (the GUI has a selector; headless reads the env). Absent it, the service's
     // built-in default (qwen2.5:0.5b) applies.
-    if let Ok(m) = std::env::var("F2I_OLLAMA_MODEL") {
+    if let Ok(m) = std::env::var("FORMLOGIC_OLLAMA_MODEL") {
         let m = m.trim().to_string();
         if !m.is_empty() {
             if let Ok(mut r) = registry.lock() {
@@ -213,7 +213,7 @@ async fn main() {
         r.backfill_install_markers();
     }
     let downloads: DownloadsHandle = Downloads::new(models_dir.clone()).into_handle();
-    if let Ok(tok) = std::env::var("F2I_HF_TOKEN") {
+    if let Ok(tok) = std::env::var("FORMLOGIC_HF_TOKEN") {
         if !tok.is_empty() {
             downloads.set_token(Some(tok));
         }
@@ -232,7 +232,7 @@ async fn main() {
     // Headless has no separate config dir; pairing state sits in the data dir.
     // With no GUI to approve requests, pairing works only via the
     // FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN bypass — otherwise administer the
-    // plugin API with the F2I_SERVER_TOKEN bearer.
+    // plugin API with the FORMLOGIC_SERVER_TOKEN bearer.
     let pairing: PairingHandle = PairingStore::new(
         data_dir.join("pairing.json"),
         std::env::var("FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN").ok(),
@@ -254,9 +254,9 @@ async fn main() {
     let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
     flow_runtime.start();
     if flow_runtime.status().linked {
-        log::info!("f2i-server: FormLogic Cloud linked — flow runtime active (event + claim loops)");
+        log::info!("formlogic-server: FormLogic Cloud linked — flow runtime active (event + claim loops)");
     } else {
-        log::info!("f2i-server: FormLogic Cloud NOT linked (set FORMLOGIC_BASE_URL + FORMLOGIC_API_KEY) — flow runtime idle");
+        log::info!("formlogic-server: FormLogic Cloud NOT linked (set FORMLOGIC_BASE_URL + FORMLOGIC_API_KEY) — flow runtime idle");
     }
 
     // Reap exited child processes so service status flips promptly.
@@ -323,7 +323,7 @@ async fn main() {
         let plugin_host = plugin_host.clone();
         tokio::spawn(async move {
             shutdown_signal().await;
-            log::info!("f2i-server: shutting down — stopping all plugins + services");
+            log::info!("formlogic-server: shutting down — stopping all plugins + services");
             // Plugins get a bounded graceful shutdown (plugin.shutdown → kill).
             let _ = tokio::time::timeout(
                 std::time::Duration::from_secs(8),
@@ -343,13 +343,13 @@ async fn main() {
     // serve() logs the authoritative post-bind "listening" line, so a port-in-use
     // failure here no longer prints a contradictory success message first.
     log::info!(
-        "f2i-server starting on http://127.0.0.1:{port}  (data={}, models={}, auth={})",
+        "formlogic-server starting on http://127.0.0.1:{port}  (data={}, models={}, auth={})",
         data_dir.display(),
         models_dir.display(),
         if auth_token.is_some() {
             "token"
         } else {
-            "none — privileged/admin routes DISABLED; set F2I_SERVER_TOKEN to administer"
+            "none — privileged/admin routes DISABLED; set FORMLOGIC_SERVER_TOKEN to administer"
         },
     );
 
@@ -369,7 +369,7 @@ async fn main() {
     )
     .await
     {
-        eprintln!("f2i-server: HTTP server error: {e}");
+        eprintln!("formlogic-server: HTTP server error: {e}");
         std::process::exit(1);
     }
 }

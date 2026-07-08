@@ -657,7 +657,7 @@ async fn run_download(
     update(Box::new(|p| p.status = DownloadStatus::Active));
 
     let client = match reqwest::Client::builder()
-        .user_agent(format!("f2i-companion/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("formlogic-desktop/{}", env!("CARGO_PKG_VERSION")))
         // Re-validate every redirect hop: a public host (incl. the HF resolve URL) may 302 to a
         // CDN, but it must stay https and must not point at an internal literal IP (defense over
         // the start() guard, which only sees the original URL). DNS-name hops are followed and
@@ -1184,7 +1184,7 @@ mod tests {
 
     #[test]
     fn token_state_trims_and_clears() {
-        let d = Downloads::new(std::env::temp_dir().join("f2i-token-test"));
+        let d = Downloads::new(std::env::temp_dir().join("formlogic-token-test"));
         assert!(!d.has_token(), "starts unset");
         d.set_token(Some("hf_abc".to_string()));
         assert!(d.has_token(), "set");

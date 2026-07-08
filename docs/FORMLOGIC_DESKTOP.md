@@ -1,28 +1,28 @@
 # FormLogic Desktop — Local Companion Contract
 
 **Status:** Phase 0 contract (frozen 2026-07-07). Canonical home of the cross-repo contracts: this repo, `docs/contracts/*.schema.json`.
-**Repos:** the desktop implementation lives **in this repo** at `form-builder/desktop` (Tauri 2; relocated from `f2i-com/f2i-web` per the hybrid-layout decision in `docs/ADR_FORMLOGIC_DESKTOP.md`); the browser client lives at `form-builder/ui/src/client-runtime/desktop/`; plugins (e.g. Aokie) live in their own repos.
+**Repos:** the desktop implementation lives **in this repo** at `form-builder/desktop` (Tauri 2; relocated from `formlogic-com/formlogic-web` per the hybrid-layout decision in `docs/ADR_FORMLOGIC_DESKTOP.md`); the browser client lives at `form-builder/ui/src/client-runtime/desktop/`; plugins (e.g. Aokie) live in their own repos.
 
-FormLogic Desktop is the rebranded/evolved F2I desktop companion. It is the **local capability layer**: model/service manager, plugin host, permission gateway, event bus, and (later) flow runner. The browser never gets raw hardware access — FormLogic Web talks to Desktop; Desktop talks to plugins.
+FormLogic Desktop is the rebranded/evolved FormLogic desktop companion. It is the **local capability layer**: model/service manager, plugin host, permission gateway, event bus, and (later) flow runner. The browser never gets raw hardware access — FormLogic Web talks to Desktop; Desktop talks to plugins.
 
 ## 1. Identity & transport
 
-- Loopback only: binds `127.0.0.1:17872` (unchanged from F2I companion).
+- Loopback only: binds `127.0.0.1:17872` (unchanged from FormLogic companion).
 - `GET /api/health` (unauthenticated, CORS-open) returns:
 
 ```json
 {
   "status": "ok",
   "companion": "formlogic-desktop",
-  "legacyCompanion": "f2i-companion",
+  "legacyCompanion": "formlogic-desktop",
   "version": "<semver>",
   "apiVersion": 1,
   "pluginApiVersion": 1
 }
 ```
 
-- Detection (both the F2I flow-builder UI and FormLogic Web) accepts `companion === 'formlogic-desktop' || companion === 'f2i-companion'`. The legacy value is kept for one or two releases.
-- Display name: **FormLogic Desktop** (tray, window title, installer). Bundle identifier stays `com.f2i` so existing installs keep their data dir.
+- Detection (both the FormLogic flow-builder UI and FormLogic Web) accepts `companion === 'formlogic-desktop' || companion === 'formlogic-desktop'`. The legacy value is kept for one or two releases.
+- Display name: **FormLogic Desktop** (tray, window title, installer). Bundle identifier stays `com.formlogic.desktop` so existing installs keep their data dir.
 
 ## 2. API groups
 
@@ -65,7 +65,7 @@ Loopback is not sufficient for privileged commands. Model:
 5. Browser keeps the token in memory/sessionStorage (never localStorage, never cookies) and sends `Authorization: Bearer <token>` (or `?token=` for EventSource only).
 6. Requests where the `Origin` header does not match the token's bound origin are rejected `origin_denied`.
 
-Dev bypass: `FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN=http://localhost:5173` auto-approves pairing for that origin (debug builds / env only). Legacy F2I rules (existing `origin_guard`, `F2I_SERVER_TOKEN`) continue to apply to the pre-existing service/model routes.
+Dev bypass: `FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN=http://localhost:5173` auto-approves pairing for that origin (debug builds / env only). Legacy FormLogic rules (existing `origin_guard`, `FORMLOGIC_SERVER_TOKEN`) continue to apply to the pre-existing service/model routes.
 
 Error envelope everywhere: `{ok:false, error:{code, message}}` with codes from `connector-response.schema.json` (`origin_denied`, `capability_denied`, `connector_missing`, `connector_unavailable`, `command_failed`, `ipc_unavailable`, `auth_required`). These are intentionally the SAME codes FormLogic's `ConnectorError` already parses; only `ipc_unavailable`/`connector_missing` are fallbackable in the browser.
 
@@ -76,7 +76,7 @@ See `docs/DESKTOP_PLUGIN_SDK.md`. Summary: plugins are directories under `<deskt
 ## 5. Browser client (FormLogic Web)
 
 `form-builder/ui/src/client-runtime/desktop/`:
-- `desktopDetection.ts` — poll `/api/health`, accept both companion ids, pub/sub status (mirrors f2i-web `companionDetection.ts`).
+- `desktopDetection.ts` — poll `/api/health`, accept both companion ids, pub/sub status (mirrors formlogic-web `companionDetection.ts`).
 - `desktopPairing.ts` — pairing-request flow + token/session storage per origin.
 - `desktopClient.ts` — typed fetch wrapper (`info`, `plugins`, `connectors.request`, …).
 - `desktopEvents.ts` — `EventSource` subscription, envelope validation, dedupe on `idempotencyKey`, dispatch into the app-logic `onConnectorEvent` hook and flow bindings.
@@ -90,25 +90,25 @@ See `docs/DESKTOP_PLUGIN_SDK.md`. Summary: plugins are directories under `<deskt
 
 FormLogic Desktop is the **headless runtime for flows + the Aokie receptionist** — the receptionist runs *inside* the Desktop app; the web app only views state remotely (docs/FORMLOGIC_FLOWS.md §14). This is implemented in `form-builder/desktop/src-tauri/src/flows/` + `formlogic_client.rs`.
 
-- **Account link.** The desktop stores `{formlogicBaseUrl, formlogicApiKey}` in its config dir (`companion-config.json`, alongside the pairing store — survives a data-folder move; **treat the file as a secret — key encryption-at-rest is out of scope**). The key is a scoped External-API key (`flk_…`) with `flows:read` + `flows:write` + `responses:read` + `responses:write` + `responses:manage` + `connector:relay`. All three `responses:*` scopes are required: the runtime LISTs (for `formlogic_list_responses` and match-based updates), submits, and updates an app's records when applying `onConnectorEvent` effects + flow output actions. The GUI exposes this under **Settings → FormLogic Cloud** (base URL + key inputs, "Test connection", live status); the headless `f2i-server` reads `FORMLOGIC_BASE_URL` + `FORMLOGIC_API_KEY`.
+- **Account link.** The desktop stores `{formlogicBaseUrl, formlogicApiKey}` in its config dir (`companion-config.json`, alongside the pairing store — survives a data-folder move; **treat the file as a secret — key encryption-at-rest is out of scope**). The key is a scoped External-API key (`flk_…`) with `flows:read` + `flows:write` + `responses:read` + `responses:write` + `responses:manage` + `connector:relay`. All three `responses:*` scopes are required: the runtime LISTs (for `formlogic_list_responses` and match-based updates), submits, and updates an app's records when applying `onConnectorEvent` effects + flow output actions. The GUI exposes this under **Settings → FormLogic Cloud** (base URL + key inputs, "Test connection", live status); the headless `formlogic-server` reads `FORMLOGIC_BASE_URL` + `FORMLOGIC_API_KEY`.
   - **App-internal forms:** an app's forms (e.g. the Aokie "Calls" store) are `draft` at the form level — the owner's API key can still write to them because `authorizeForm` proved ownership; the external API only refuses an `archived` form. Public/anon endpoints still require `published`.
 
   **Running the headless runtime locally (verified reproducible recipe):**
 
   ```
   # build both binaries
-  cd form-builder/desktop/src-tauri && cargo build --bin f2i-server --no-default-features
+  cd form-builder/desktop/src-tauri && cargo build --bin formlogic-server --no-default-features
   cd <aokie-repo>/crates && cargo build -p aokie-plugin
   # install the plugin into a data dir
   mkdir -p <DATA>/plugins/aokie
   cp <aokie-repo>/crates/aokie-plugin/manifest.json      <DATA>/plugins/aokie/
   cp <aokie-repo>/crates/target/debug/aokie-plugin.exe   <DATA>/plugins/aokie/
   # run it linked (mint an flk_ key with the six scopes above for your user)
-  F2I_DATA_DIR=<DATA> F2I_SERVER_TOKEN=<tok> \
+  FORMLOGIC_DATA_DIR=<DATA> FORMLOGIC_SERVER_TOKEN=<tok> \
   FORMLOGIC_BASE_URL=http://api.formlogic.local FORMLOGIC_API_KEY=<flk_…> \
   FORMLOGIC_DEV_MODE=1 FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN=http://formlogic.local \
-    form-builder/desktop/src-tauri/target/debug/f2i-server
-  # drive it (bearer = F2I_SERVER_TOKEN)
+    form-builder/desktop/src-tauri/target/debug/formlogic-server
+  # drive it (bearer = FORMLOGIC_SERVER_TOKEN)
   curl 127.0.0.1:17872/api/health
   curl -H "Authorization: Bearer <tok>" 127.0.0.1:17872/api/desktop/info          # flowRuntime.linked:true
   curl -XPOST -H "Authorization: Bearer <tok>" 127.0.0.1:17872/api/plugins/aokie/start

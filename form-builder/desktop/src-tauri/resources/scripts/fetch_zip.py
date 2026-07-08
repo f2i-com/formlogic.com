@@ -44,7 +44,7 @@ def download(url: str, out_path: str) -> None:
 
 
 def _stream(url: str, out_path: str, ctx: ssl.SSLContext) -> None:
-    req = urllib.request.Request(url, headers={"User-Agent": "f2i-companion"})
+    req = urllib.request.Request(url, headers={"User-Agent": "formlogic-desktop"})
     with urllib.request.urlopen(req, context=ctx) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         got = 0
@@ -74,7 +74,7 @@ def main() -> int:
     os.makedirs(dest, exist_ok=True)
 
     is_tar = url.endswith(".tar.gz") or url.endswith(".tgz")
-    tmp = os.path.join(tempfile.gettempdir(), "f2i_fetch" + (".tar.gz" if is_tar else ".zip"))
+    tmp = os.path.join(tempfile.gettempdir(), "formlogic_fetch" + (".tar.gz" if is_tar else ".zip"))
     try:
         download(url, tmp)
     except Exception as e:  # noqa: BLE001 - surface any network error verbatim

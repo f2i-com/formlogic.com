@@ -76,14 +76,14 @@ const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
     ),
     // Lance (image+video) service: one-click .bat installer. It runs the
     // repo's own lance_gradio.py; lance_server.py (below) wraps run_task() in a
-    // clean JSON API for f2i-web while still mounting that Gradio UI.
+    // clean JSON API for formlogic-web while still mounting that Gradio UI.
     (
         "install-lance.bat",
         include_str!("../../resources/scripts/install-lance.bat"),
     ),
     // Optional multi-GPU sharding / CPU-offload patch for Lance's gradio
     // server. install-lance.bat applies it after fetch; inert at runtime
-    // unless F2I_LANCE_SHARD=1 / F2I_LANCE_OFFLOAD=1.
+    // unless FORMLOGIC_LANCE_SHARD=1 / FORMLOGIC_LANCE_OFFLOAD=1.
     (
         "patch_lance_sharding.py",
         include_str!("../../resources/scripts/patch_lance_sharding.py"),
@@ -98,19 +98,19 @@ const BUILTIN_SCRIPTS: &[(&str, &str)] = &[
     // SDPA-backed `flash_attn` shim. Lance hard-imports flash_attn_varlen_func;
     // there's no matching Windows/Blackwell wheel, so install-lance.bat copies
     // this into the venv's site-packages as flash_attn.py (unless
-    // F2I_LANCE_FLASH=1, which builds the real thing).
+    // FORMLOGIC_LANCE_FLASH=1, which builds the real thing).
     (
         "flash_attn_shim.py",
         include_str!("../../resources/scripts/flash_attn_shim.py"),
     ),
-    // Thin JSON API (FastAPI) wrapping lance_gradio.run_task so f2i-web can
+    // Thin JSON API (FastAPI) wrapping lance_gradio.run_task so formlogic-web can
     // drive Lance over HTTP; also mounts the Gradio UI at /ui.
     (
         "lance_server.py",
         include_str!("../../resources/scripts/lance_server.py"),
     ),
     // --- Linux install scripts (.sh) — seeded alongside the .ps1/.bat so
-    // f2i-server can install services on a headless Linux host. ollama /
+    // formlogic-server can install services on a headless Linux host. ollama /
     // playwright / llama-cpp are real installers; ltx2 / lance print manual
     // setup guidance (their GPU installs need a real Linux+CUDA box to port).
     (
@@ -215,7 +215,7 @@ pub struct ServiceSnapshot {
     pub node: Option<NodeSpec>,
 }
 
-/// Result of `ensure_by_port` — surfaced to f2i-web so it can tell the
+/// Result of `ensure_by_port` — surfaced to formlogic-web so it can tell the
 /// user "started Ollama for you" vs "no companion service on that port".
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,7 +275,7 @@ fn combine_model_dirs(primary: &Path, extra: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 /// Join model roots with the OS path separator (`;` on Windows, `:` elsewhere)
-/// for the `${modelDirs}` placeholder + `F2I_MODEL_DIRS` env. Services split on
+/// for the `${modelDirs}` placeholder + `FORMLOGIC_MODEL_DIRS` env. Services split on
 /// `os.pathsep` to recover the list.
 fn join_model_dirs(dirs: &[PathBuf]) -> String {
     let sep = if cfg!(windows) { ";" } else { ":" };
@@ -359,11 +359,11 @@ pub struct Registry {
     /// `templates/`, `scripts/`, `bin/`, `venvs/` subdirs.
     data_dir: PathBuf,
     /// Resolved models dir — the `${modelsDir}` placeholder + the
-    /// `F2I_MODELS_DIR` install env. Usually `<dataDir>/models`, but can be
+    /// `FORMLOGIC_MODELS_DIR` install env. Usually `<dataDir>/models`, but can be
     /// a user-chosen folder on another drive (set in Settings).
     models_dir: PathBuf,
     /// All model search roots, primary first: `[models_dir] ++ extra`. Powers
-    /// the `${modelDirs}` placeholder + `F2I_MODEL_DIRS` env (os-pathsep list)
+    /// the `${modelDirs}` placeholder + `FORMLOGIC_MODEL_DIRS` env (os-pathsep list)
     /// so a service can scan several drives (e.g. `E:\models` AND `E:\ckpts`)
     /// for its weights. Deduped; primary stays index 0 for back-compat.
     model_dirs: Vec<PathBuf>,
@@ -527,7 +527,7 @@ impl Registry {
     /// resolved downloads/weights root (override or `<dataDir>/models`);
     /// `extra_model_dirs` are additional read-only search roots (e.g.
     /// `E:\ckpts`) the user registered in Settings — together they form the
-    /// `${modelDirs}` / `F2I_MODEL_DIRS` search list.
+    /// `${modelDirs}` / `FORMLOGIC_MODEL_DIRS` search list.
     pub fn init(
         data_dir: PathBuf,
         models_dir: PathBuf,
@@ -658,7 +658,7 @@ impl Registry {
     }
 
     /// Replace the extra search roots (live — the next service start picks
-    /// them up via `${modelDirs}` / `F2I_MODEL_DIRS`). Primary stays index 0.
+    /// them up via `${modelDirs}` / `FORMLOGIC_MODEL_DIRS`). Primary stays index 0.
     pub fn set_extra_model_dirs(&mut self, extra: Vec<PathBuf>) {
         self.model_dirs = combine_model_dirs(&self.models_dir, extra);
     }
@@ -752,7 +752,7 @@ impl Registry {
 
     /// True when `p` resolves inside a managed root (`${dataDir}` — which
     /// contains bin/scripts/venvs/services — or any model dir). The uninstall
-    /// guard so a template's declared paths can't reach outside what F2I owns.
+    /// guard so a template's declared paths can't reach outside what FormLogic owns.
     fn path_within_managed_root(&self, p: &Path) -> bool {
         let target = norm_path_key(&p.display().to_string());
         if target.is_empty() {
@@ -970,7 +970,7 @@ impl Registry {
             if let Some(parent) = Path::new(&marker).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let _ = std::fs::write(&marker, "installed by f2i\n");
+            let _ = std::fs::write(&marker, "installed by formlogic\n");
         }
         let _ = std::fs::write(&sentinel, "");
     }
@@ -1275,7 +1275,7 @@ impl Registry {
 
     /// Ensure the service listening on `port` is running, starting it if
     /// needed. This is the companion-side mirror of the desktop's
-    /// `ensure_service_ready_by_port`: f2i-web calls it (over HTTP) right
+    /// `ensure_service_ready_by_port`: formlogic-web calls it (over HTTP) right
     /// before hitting a `127.0.0.1:<port>` endpoint that a companion
     /// service owns, so picking a stopped companion service in a flow and
     /// running it "just works" — no manual Start click first.
@@ -1408,7 +1408,7 @@ impl Registry {
             if let Some(parent) = Path::new(&resolved).parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(&resolved, "installed by f2i\n") {
+            if let Err(e) = std::fs::write(&resolved, "installed by formlogic\n") {
                 log::warn!("could not write install marker {resolved}: {e}");
             }
         }
@@ -1598,17 +1598,17 @@ impl Registry {
         };
 
         let mut env: HashMap<String, String> = HashMap::new();
-        env.insert("F2I_BIN_DIR".into(), bin_dir);
-        env.insert("F2I_MODELS_DIR".into(), models_dir);
+        env.insert("FORMLOGIC_BIN_DIR".into(), bin_dir);
+        env.insert("FORMLOGIC_MODELS_DIR".into(), models_dir);
         // All registered model roots (primary + extras), os-pathsep-joined, so
         // an installer can scan every drive the user added in Settings.
-        env.insert("F2I_MODEL_DIRS".into(), join_model_dirs(&self.model_dirs));
+        env.insert("FORMLOGIC_MODEL_DIRS".into(), join_model_dirs(&self.model_dirs));
         // Extra vars so a Python-service installer can locate the bundled
-        // interpreter (`%F2I_DATA_DIR%\python\python.exe`), the shared venvs
+        // interpreter (`%FORMLOGIC_DATA_DIR%\python\python.exe`), the shared venvs
         // root, and seeded helper scripts without hard-coding the data dir.
-        env.insert("F2I_DATA_DIR".into(), data_dir);
-        env.insert("F2I_VENVS_DIR".into(), venvs_dir);
-        env.insert("F2I_SCRIPTS_DIR".into(), scripts_dir);
+        env.insert("FORMLOGIC_DATA_DIR".into(), data_dir);
+        env.insert("FORMLOGIC_VENVS_DIR".into(), venvs_dir);
+        env.insert("FORMLOGIC_SCRIPTS_DIR".into(), scripts_dir);
 
         let cfg = SpawnConfig {
             command: &cmd_str,
@@ -1617,8 +1617,8 @@ impl Registry {
             // Run the installer in the data dir, not the inherited process CWD: the install
             // scripts shell out to bare helpers (curl/tar/where/git/robocopy) and Windows
             // searches the CWD before System32/PATH, so a planted binary in an attacker-
-            // writable CWD would otherwise run during install. (Reuses the F2I_DATA_DIR value.)
-            cwd: env.get("F2I_DATA_DIR").map(String::as_str),
+            // writable CWD would otherwise run during install. (Reuses the FORMLOGIC_DATA_DIR value.)
+            cwd: env.get("FORMLOGIC_DATA_DIR").map(String::as_str),
         };
 
         let runner = Runner::spawn(cfg).map_err(|e| {
@@ -1974,8 +1974,8 @@ mod tests {
     #[test]
     fn uninstall_refuses_managed_roots_and_structural_dirs() {
         use std::path::PathBuf;
-        let data = PathBuf::from("C:/f2i/data");
-        let models = PathBuf::from("C:/f2i/models");
+        let data = PathBuf::from("C:/formlogic/data");
+        let models = PathBuf::from("C:/formlogic/models");
         let reg = super::Registry::empty(data.clone(), models.clone());
         // The data dir, the models dir, and the shared structural dirs must ALL be refused —
         // an uninstall removing one would remove_dir_all every OTHER service's files / the
@@ -2013,7 +2013,7 @@ mod tests {
     #[test]
     fn package_files_cannot_overwrite_builtin_or_others_scripts() {
         use std::collections::HashMap;
-        let dir = std::env::temp_dir().join(format!("f2i-mpf-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("formlogic-mpf-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -2063,7 +2063,7 @@ mod tests {
 
     #[test]
     fn installed_marker_gates_installed_over_run_executable() {
-        let data = std::env::temp_dir().join(format!("f2i-marker-{}", std::process::id()));
+        let data = std::env::temp_dir().join(format!("formlogic-marker-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&data);
         std::fs::create_dir_all(&data).unwrap();
         let reg = super::Registry::empty(data.clone(), data.join("models"));
@@ -2071,7 +2071,7 @@ mod tests {
         let json = r#"{
             "id": "svc", "name": "Svc", "description": "", "category": "test",
             "defaultPort": 9999,
-            "installedMarker": "${dataDir}/venvs/svc/.f2i-installed",
+            "installedMarker": "${dataDir}/venvs/svc/.formlogic-installed",
             "run": { "command": "${dataDir}/venvs/svc/Scripts/python.exe", "args": [] }
         }"#;
         let t: super::ServiceTemplate = serde_json::from_str(json).unwrap();
@@ -2087,26 +2087,26 @@ mod tests {
         );
 
         // Marker present (installer exited 0) → installed.
-        std::fs::write(data.join("venvs/svc/.f2i-installed"), "").unwrap();
+        std::fs::write(data.join("venvs/svc/.formlogic-installed"), "").unwrap();
         assert!(reg.run_installed(&t, 9999), "marker present → installed");
 
         // backfill: a pre-marker install (interp present, marker removed) gets the marker back.
-        std::fs::remove_file(data.join("venvs/svc/.f2i-installed")).unwrap();
+        std::fs::remove_file(data.join("venvs/svc/.formlogic-installed")).unwrap();
         let mut reg2 = super::Registry::empty(data.clone(), data.join("models"));
         reg2.services
             .insert("svc".to_string(), super::ServiceRuntime::new(t.clone()));
         reg2.backfill_install_markers();
         assert!(
-            data.join("venvs/svc/.f2i-installed").exists(),
+            data.join("venvs/svc/.formlogic-installed").exists(),
             "backfill should restore the marker for an existing install (interp present)"
         );
 
         // backfill is ONE-TIME (sentinel persisted): a NEW partial install after migration
         // (interpreter present, marker absent) must NOT be re-blessed on a later run/restart.
-        std::fs::remove_file(data.join("venvs/svc/.f2i-installed")).unwrap();
+        std::fs::remove_file(data.join("venvs/svc/.formlogic-installed")).unwrap();
         reg2.backfill_install_markers();
         assert!(
-            !data.join("venvs/svc/.f2i-installed").exists(),
+            !data.join("venvs/svc/.formlogic-installed").exists(),
             "one-time backfill must not resurrect a post-migration partial install"
         );
 

@@ -1,4 +1,4 @@
-"""Minimal `flash_attn` shim backed by PyTorch SDPA (F2I-companion installed).
+"""Minimal `flash_attn` shim backed by PyTorch SDPA (FormLogic-companion installed).
 
 Lance hard-imports `flash_attn` in modeling/lance/qwen2_navit.py and calls
 `flash_attn_varlen_func` for its packed (NaViT) attention. Real flash-attn has
@@ -13,7 +13,7 @@ OTHER Lance model files (vit, qwen2_5_vl) take their built-in SDPA paths — the
 only import from flash_attn under that guard. qwen2_navit's unguarded
 `from flash_attn import flash_attn_varlen_func` resolves here.
 
-Set F2I_LANCE_FLASH=1 at install time to instead build/install real flash-attn
+Set FORMLOGIC_LANCE_FLASH=1 at install time to instead build/install real flash-attn
 and skip this shim.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ import torch.nn.functional as F
 
 # Intentionally NOT a real version — kept off PyPI-style metadata so
 # is_flash_attn_2_available() (which reads importlib.metadata) returns False.
-__version__ = "0.0.0+f2i-sdpa-shim"
+__version__ = "0.0.0+formlogic-sdpa-shim"
 
 
 def _seg_attention(q, k, v, causal: bool, softmax_scale: float):

@@ -7,7 +7,7 @@
 # ported + validated on a Linux GPU box.
 #
 # Manual setup on a CUDA Linux host:
-#   1. Create a Python 3.11 venv (f2i venv create lance --req "torch==2.8 --index-url https://download.pytorch.org/whl/cu128").
+#   1. Create a Python 3.11 venv (formlogic venv create lance --req "torch==2.8 --index-url https://download.pytorch.org/whl/cu128").
 #   2. Fetch the Lance repo into <dataDir>/services/lance, pip install its requirements.
 #   3. Download weights (HuggingFace hub) into the models dir.
 #   4. Point the lance template's run.command at <dataDir>/venvs/lance/bin/python and run lance_server.py.

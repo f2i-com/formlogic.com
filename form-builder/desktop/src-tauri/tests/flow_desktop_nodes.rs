@@ -23,7 +23,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use f2i_companion_lib::flows::runner::{execute_flow, FlowErrorCode, RunDeps, RunOptions, DEFAULT_TIMEOUT_MS};
+use formlogic_desktop_lib::flows::runner::{execute_flow, FlowErrorCode, RunDeps, RunOptions, DEFAULT_TIMEOUT_MS};
 
 // ── stub service (Playwright browser + krea2 + OpenAI-compatible stt/tts) ──────
 

@@ -2,7 +2,7 @@
 
 The Lightricks/LTX-2 repo ships pipeline *classes*, not a server. This wraps
 `DistilledPipeline` (text/image -> video; internally 2-stage: half-res gen ->
-2x spatial upscale -> refine) in FastAPI so f2i-web can drive it over HTTP:
+2x spatial upscale -> refine) in FastAPI so formlogic-web can drive it over HTTP:
 
   GET  /health            -> {ok, loaded}
   GET  /resolve           -> the weight paths it found (debug aid)
@@ -21,7 +21,7 @@ filenames. Set the matching env var if a heuristic ever misses.
 Env (set by the companion service template):
   LTX2_PORT          listen port (default 17890)
   LTX2_MODEL_DIRS    os.pathsep-joined model roots to search (e.g. E:\\models;E:\\ckpts)
-  F2I_MODEL_DIRS     fallback for the above (companion exposes both)
+  FORMLOGIC_MODEL_DIRS     fallback for the above (companion exposes both)
   LTX2_CKPT          explicit distilled .safetensors (overrides search)
   LTX2_GEMMA         explicit Gemma 3 text-encoder dir
   LTX2_UPSAMPLER     explicit spatial upscaler .safetensors
@@ -118,7 +118,7 @@ _gen_lock = threading.Lock()
 # Weight resolution across the registered model folders.
 # --------------------------------------------------------------------------
 def _model_dirs() -> list[str]:
-    raw = _env("LTX2_MODEL_DIRS") or _env("F2I_MODEL_DIRS") or _env("F2I_MODELS_DIR")
+    raw = _env("LTX2_MODEL_DIRS") or _env("FORMLOGIC_MODEL_DIRS") or _env("FORMLOGIC_MODELS_DIR")
     dirs, seen = [], set()
     for d in raw.split(os.pathsep):
         d = d.strip().strip('"')
@@ -218,7 +218,7 @@ class GenerateRequest(BaseModel):
     seed: int = 42
     # LTX-2 trained at high res; defaults to a moderate ~720p clip. Two-stage
     # requires height & width divisible by 64 (stage 1 runs at half). num_frames
-    # should be 8*K + 1. Bump from f2i-web for full quality (e.g. 1088x1920).
+    # should be 8*K + 1. Bump from formlogic-web for full quality (e.g. 1088x1920).
     height: int = 704
     width: int = 1280
     num_frames: int = 97
@@ -226,7 +226,7 @@ class GenerateRequest(BaseModel):
     enhance_prompt: bool = False
 
 
-app = FastAPI(title="LTX-2 JSON API (F2I)")
+app = FastAPI(title="LTX-2 JSON API (FormLogic)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 

@@ -1,21 +1,21 @@
 [package]
-name = "f2i-companion"
+name = "formlogic-desktop"
 version = "0.1.0"
-description = "Tray-resident desktop companion for f2i-web. Manages local AI services + browser automation, exposes them to the web flow editor via a localhost API."
-authors = ["F2I"]
+description = "Tray-resident desktop companion for formlogic-web. Manages local AI services + browser automation, exposes them to the web flow editor via a localhost API."
+authors = ["FormLogic"]
 edition = "2021"
 rust-version = "1.77"
-# The crate ships two binaries now (the GUI companion + the headless f2i-server),
+# The crate ships two binaries now (the GUI companion + the headless formlogic-server),
 # so `cargo run` / `tauri dev` would be ambiguous without naming the default.
-default-run = "f2i-companion"
+default-run = "formlogic-desktop"
 
 [lib]
-name = "f2i_companion_lib"
+name = "formlogic_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # The crate builds two binaries from one shared lib:
-#   f2i-companion — the Tauri GUI (needs the `gui` feature → tauri/webkit2gtk)
-#   f2i-server    — headless HTTP API (no GUI deps when built --no-default-features)
+#   formlogic-desktop — the Tauri GUI (needs the `gui` feature → tauri/webkit2gtk)
+#   formlogic-server    — headless HTTP API (no GUI deps when built --no-default-features)
 [features]
 default = ["gui"]
 gui = [
@@ -27,13 +27,13 @@ gui = [
 ]
 
 [[bin]]
-name = "f2i-companion"
+name = "formlogic-desktop"
 path = "src/main.rs"
 required-features = ["gui"]
 
 [[bin]]
-name = "f2i-server"
-path = "src/bin/f2i-server.rs"
+name = "formlogic-server"
+path = "src/bin/formlogic-server.rs"
 
 # Protocol-complete mock plugin (init/health/shutdown, echo.ping connector,
 # mock.tick events). Built for the plugin-host integration tests
@@ -60,7 +60,7 @@ serde_json = "1.0"
 
 # Async runtime + HTTP server. axum is the small, focused choice — we
 # don't need the heavier alternatives. tower-http gives us the CORS
-# layer that lets a hosted f2i-web at any origin reach the companion.
+# layer that lets a hosted formlogic-web at any origin reach the companion.
 tokio = { version = "1.40", features = ["full"] }
 axum = "0.7"
 tower-http = { version = "0.6", features = ["cors"] }

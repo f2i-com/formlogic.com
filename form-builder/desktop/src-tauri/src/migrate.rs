@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn plan_counts_only_migratable_subdirs() {
-        let base = std::env::temp_dir().join("f2i-migrate-test-plan");
+        let base = std::env::temp_dir().join("formlogic-migrate-test-plan");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("old");
         write(&old.join("models/a.bin"), b"hello"); // 5
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn copy_leaves_source_then_move_removes_it() {
-        let base = std::env::temp_dir().join("f2i-migrate-test-copymove");
+        let base = std::env::temp_dir().join("formlogic-migrate-test-copymove");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("old");
         write(&old.join("models/a.bin"), b"hello");
@@ -313,7 +313,7 @@ mod tests {
         // Move into a dir that already has a same-named but DIFFERENT file:
         // the dest keeps its own copy AND the source is preserved (deleting
         // it would be silent data loss).
-        let base = std::env::temp_dir().join("f2i-migrate-test-movecollide");
+        let base = std::env::temp_dir().join("formlogic-migrate-test-movecollide");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("old");
         let new = base.join("new");
@@ -337,7 +337,7 @@ mod tests {
         // but DIFFERENT bytes: skip-if-exists leaves the dest untouched, and
         // the source MUST be preserved — a size-only check would falsely
         // treat the dest as "the same file" and silently delete the source.
-        let base = std::env::temp_dir().join("f2i-migrate-test-eqsizecollide");
+        let base = std::env::temp_dir().join("formlogic-migrate-test-eqsizecollide");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("old");
         let new = base.join("new");
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn skip_if_exists_does_not_clobber() {
-        let base = std::env::temp_dir().join("f2i-migrate-test-skip");
+        let base = std::env::temp_dir().join("formlogic-migrate-test-skip");
         let _ = std::fs::remove_dir_all(&base);
         let old = base.join("old");
         let new = base.join("new");

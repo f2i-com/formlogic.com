@@ -4,8 +4,8 @@ rem ===================================================================
 rem install-lance.bat -- one-click install of ByteDance "Lance", a 3B
 rem unified image+video generate/edit model. Runs its own Gradio server.
 rem
-rem Run by the F2I Companion (sets F2I_DATA_DIR / F2I_MODELS_DIR /
-rem F2I_SCRIPTS_DIR). ASCII-only on purpose.
+rem Run by the FormLogic Companion (sets FORMLOGIC_DATA_DIR / FORMLOGIC_MODELS_DIR /
+rem FORMLOGIC_SCRIPTS_DIR). ASCII-only on purpose.
 rem
 rem Steps: standalone Python 3.11 -> venv -> pinned CUDA PyTorch 2.8 ->
 rem fetch the bytedance/Lance repo (no git) -> requirements.txt ->
@@ -21,20 +21,20 @@ rem
 rem flash-attn is SKIPPED by default: building it on Windows is slow and
 rem fragile, and Lance runs with PyTorch SDPA attention without it. If
 rem Lance later complains "No module named flash_attn", set
-rem F2I_LANCE_FLASH=1 and re-run to attempt the build. Needs a 40GB-class
+rem FORMLOGIC_LANCE_FLASH=1 and re-run to attempt the build. Needs a 40GB-class
 rem GPU per the model card (A100); expect tight fit / offloading below that.
 rem ===================================================================
 
 echo [install-lance] starting Lance (image+video) service install
 
-if "%F2I_DATA_DIR%"=="" (
-  echo [install-lance] ERROR: F2I_DATA_DIR is not set. Run Install from the F2I app.
+if "%FORMLOGIC_DATA_DIR%"=="" (
+  echo [install-lance] ERROR: FORMLOGIC_DATA_DIR is not set. Run Install from the FormLogic app.
   exit /b 1
 )
 
-set "DATA=%F2I_DATA_DIR%"
+set "DATA=%FORMLOGIC_DATA_DIR%"
 set "PY=%DATA%\python\python.exe"
-set "SCRIPTS=%F2I_SCRIPTS_DIR%"
+set "SCRIPTS=%FORMLOGIC_SCRIPTS_DIR%"
 if "%SCRIPTS%"=="" set "SCRIPTS=%DATA%\scripts"
 set "VENV=%DATA%\venvs\lance"
 set "VPY=%VENV%\Scripts\python.exe"
@@ -43,11 +43,11 @@ set "REPO=%SVC%\Lance-main"
 rem Weights live in their OWN folder under the models dir (E:\models\lance),
 rem NOT under AppData. lance_gradio.py reads a relative "downloads" dir, so we
 rem junction <repo>\downloads -> %LANCEW% below.
-set "MODELS=%F2I_MODELS_DIR%"
+set "MODELS=%FORMLOGIC_MODELS_DIR%"
 if "%MODELS%"=="" set "MODELS=%DATA%\models"
 set "LANCEW=%MODELS%\lance"
 set "REPODL=%REPO%\downloads"
-set "TORCH_INDEX=%F2I_TORCH_INDEX%"
+set "TORCH_INDEX=%FORMLOGIC_TORCH_INDEX%"
 if "%TORCH_INDEX%"=="" set "TORCH_INDEX=https://download.pytorch.org/whl/cu128"
 rem Standalone Python 3.11 just for the Lance venv (its deps lack 3.12 wheels).
 set "PY311DIR=%SVC%\python311"
@@ -57,7 +57,7 @@ set "PBS_PY311=3.11.15"
 
 if not exist "%PY%" (
   echo [install-lance] ERROR: bundled Python not found at %PY%
-  echo [install-lance] Install Python first in the F2I app's Python tab, then re-run.
+  echo [install-lance] Install Python first in the FormLogic app's Python tab, then re-run.
   exit /b 1
 )
 
@@ -107,7 +107,7 @@ echo [install-lance] installing requirements.txt
 "%VPY%" -m pip install -r "%REPO%\requirements.txt"
 if errorlevel 1 goto :fail
 
-echo [install-lance] applying optional multi-GPU sharding patch (inert unless F2I_LANCE_SHARD=1)
+echo [install-lance] applying optional multi-GPU sharding patch (inert unless FORMLOGIC_LANCE_SHARD=1)
 "%VPY%" "%SCRIPTS%\patch_lance_sharding.py" "%REPO%\lance_gradio.py"
 
 echo [install-lance] patching Lance for off-repo weights + SDPA vision tower (no flash-attn)
@@ -119,18 +119,18 @@ rem the Gradio server crashes on launch with "No module named flash_attn".
 rem There is no Windows wheel matching torch2.8/cu128/cp311 on Blackwell, so by
 rem default we install a small SDPA-backed `flash_attn` shim: exact attention via
 rem torch.nn.functional.scaled_dot_product_attention (numerically identical to
-rem flash-attn, just not fused), which runs on any GPU. Set F2I_LANCE_FLASH=1 to
+rem flash-attn, just not fused), which runs on any GPU. Set FORMLOGIC_LANCE_FLASH=1 to
 rem instead build the real flash-attn 2.8.3 (slow, often fails on Windows).
 rem Single-line ifs only -- cmd mis-parses a ')' in echo text inside a (...) block.
 set "SITEPK=%VENV%\Lib\site-packages"
-if not "%F2I_LANCE_FLASH%"=="1" echo [install-lance] installing SDPA flash_attn shim (exact attention; set F2I_LANCE_FLASH=1 to build real flash-attn instead)
-if not "%F2I_LANCE_FLASH%"=="1" if exist "%SITEPK%\flash_attn.py" del /q "%SITEPK%\flash_attn.py"
-if not "%F2I_LANCE_FLASH%"=="1" copy /y "%SCRIPTS%\flash_attn_shim.py" "%SITEPK%\flash_attn.py" >nul
-if not "%F2I_LANCE_FLASH%"=="1" if not exist "%SITEPK%\flash_attn.py" goto :fail
-if "%F2I_LANCE_FLASH%"=="1" echo [install-lance] building real flash-attn 2.8.3 -- this can take a while
-if "%F2I_LANCE_FLASH%"=="1" if exist "%SITEPK%\flash_attn.py" del /q "%SITEPK%\flash_attn.py"
-if "%F2I_LANCE_FLASH%"=="1" "%VPY%" -m pip install flash-attn==2.8.3 --no-build-isolation
-if "%F2I_LANCE_FLASH%"=="1" if errorlevel 1 goto :fail
+if not "%FORMLOGIC_LANCE_FLASH%"=="1" echo [install-lance] installing SDPA flash_attn shim (exact attention; set FORMLOGIC_LANCE_FLASH=1 to build real flash-attn instead)
+if not "%FORMLOGIC_LANCE_FLASH%"=="1" if exist "%SITEPK%\flash_attn.py" del /q "%SITEPK%\flash_attn.py"
+if not "%FORMLOGIC_LANCE_FLASH%"=="1" copy /y "%SCRIPTS%\flash_attn_shim.py" "%SITEPK%\flash_attn.py" >nul
+if not "%FORMLOGIC_LANCE_FLASH%"=="1" if not exist "%SITEPK%\flash_attn.py" goto :fail
+if "%FORMLOGIC_LANCE_FLASH%"=="1" echo [install-lance] building real flash-attn 2.8.3 -- this can take a while
+if "%FORMLOGIC_LANCE_FLASH%"=="1" if exist "%SITEPK%\flash_attn.py" del /q "%SITEPK%\flash_attn.py"
+if "%FORMLOGIC_LANCE_FLASH%"=="1" "%VPY%" -m pip install flash-attn==2.8.3 --no-build-isolation
+if "%FORMLOGIC_LANCE_FLASH%"=="1" if errorlevel 1 goto :fail
 
 echo [install-lance] downloading Lance weights into %LANCEW%
 echo [install-lance] LARGE download; resumes if interrupted

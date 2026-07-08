@@ -1,14 +1,14 @@
 //! Service template — declarative description of an installable + runnable
 //! local AI service. One JSON file per service; users can drop their own
-//! into `%APPDATA%/com.f2i/templates/` to extend the set without
+//! into `%APPDATA%/com.formlogic.desktop/templates/` to extend the set without
 //! recompiling.
 //!
 //! Path placeholders supported in `args` / `env` / `cwd`:
 //!   ${port}        — the resolved port from the running config
-//!   ${dataDir}     — `%APPDATA%/com.f2i/`
-//!   ${binDir}      — `%APPDATA%/com.f2i/bin/`
-//!   ${modelsDir}   — `%APPDATA%/com.f2i/models/`
-//!   ${scriptsDir}  — `%APPDATA%/com.f2i/scripts/` (where `files` land)
+//!   ${dataDir}     — `%APPDATA%/com.formlogic.desktop/`
+//!   ${binDir}      — `%APPDATA%/com.formlogic.desktop/bin/`
+//!   ${modelsDir}   — `%APPDATA%/com.formlogic.desktop/models/`
+//!   ${scriptsDir}  — `%APPDATA%/com.formlogic.desktop/scripts/` (where `files` land)
 //!
 //! A template can be fully self-contained ("plug-and-play"): set `files` to a
 //! map of `filename -> contents` and those scripts are written into
@@ -53,7 +53,7 @@ pub struct ServiceTemplate {
     /// and checks for `installed`. For a venv service whose interpreter exists right after the
     /// venv is created (step 1) — BEFORE the multi-GB pip/model download that can fail — the
     /// interpreter merely existing isn't "installed"; this marker, written only on success, is.
-    /// Put it inside the dir Uninstall removes (e.g. `${dataDir}/venvs/<id>/.f2i-installed`) so
+    /// Put it inside the dir Uninstall removes (e.g. `${dataDir}/venvs/<id>/.formlogic-installed`) so
     /// it's cleaned up. None ⇒ fall back to "the run executable exists".
     #[serde(default)]
     pub installed_marker: Option<String>,
@@ -126,7 +126,7 @@ pub enum InstallSpec {
     None,
 
     /// Run a platform-specific script. Path is relative to the seeded
-    /// scripts dir (`%APPDATA%/com.f2i/scripts/`).
+    /// scripts dir (`%APPDATA%/com.formlogic.desktop/scripts/`).
     Script {
         /// Windows PowerShell script filename (.ps1)
         #[serde(default)]

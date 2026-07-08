@@ -442,7 +442,7 @@ fn install_python_native(dest: &Path, logs: &LogBuffer) -> Result<(), String> {
 
     logs.push("stdout", format!("downloading {url}"));
     let client = reqwest::blocking::Client::builder()
-        .user_agent(concat!("f2i-companion/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("formlogic-desktop/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
     let mut resp = client

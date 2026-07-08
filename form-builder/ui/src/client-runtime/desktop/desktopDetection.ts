@@ -1,9 +1,8 @@
 // FormLogic Desktop detection (docs/FORMLOGIC_DESKTOP.md §1/§5).
 //
-// A small reactive probe of GET /api/health on 127.0.0.1:17872, mirroring f2i-web's
-// companionDetection.ts. Accepts BOTH companion ids (the legacy 'f2i-companion' is kept
-// for 1–2 releases). Never throws on network failure — an unreachable Desktop simply
-// publishes {available:false}.
+// A small reactive probe of GET /api/health on 127.0.0.1:17872. Recognises the
+// FormLogic Desktop companion id and never throws on network failure — an
+// unreachable Desktop simply publishes {available:false}.
 //
 // Lifecycle: detection is demand-driven, NOT started at boot. subscribeDesktopStatus()
 // starts the poll on the first subscriber and stops it when the last one unsubscribes,
@@ -21,7 +20,7 @@ const FETCH_TIMEOUT_MS = 1500;
 export interface DesktopInfo {
   /** True if the last health probe returned a recognised companion. */
   available: boolean;
-  /** Which id the running companion reported ('formlogic-desktop' | 'f2i-companion'). */
+  /** Which id the running companion reported ('formlogic-desktop'). */
   companion?: string;
   version?: string;
   apiVersion?: number;

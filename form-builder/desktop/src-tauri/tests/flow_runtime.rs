@@ -21,12 +21,12 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use f2i_companion_lib::events::EventBus;
-use f2i_companion_lib::flows::FlowRuntime;
-use f2i_companion_lib::formlogic_client::FormLogicConfig;
-use f2i_companion_lib::plugins::manifest::parse_manifest;
-use f2i_companion_lib::plugins::registry::PluginHost;
-use f2i_companion_lib::plugins::rpc::LogRing;
+use formlogic_desktop_lib::events::EventBus;
+use formlogic_desktop_lib::flows::FlowRuntime;
+use formlogic_desktop_lib::formlogic_client::FormLogicConfig;
+use formlogic_desktop_lib::plugins::manifest::parse_manifest;
+use formlogic_desktop_lib::plugins::registry::PluginHost;
+use formlogic_desktop_lib::plugins::rpc::LogRing;
 
 #[derive(Clone, Default)]
 struct Counters {

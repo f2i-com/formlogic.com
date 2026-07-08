@@ -17,10 +17,10 @@ pub fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let quit_item = MenuItem::with_id(handle, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(handle, &[&open_item, &quit_item])?;
 
-    // Tray id stays "f2i-companion" (a stable internal identifier — changing it
+    // Tray id stays "formlogic-desktop" (a stable internal identifier — changing it
     // would orphan OS tray-position preferences); only the visible strings are
     // rebranded to FormLogic Desktop.
-    let mut builder = TrayIconBuilder::with_id("f2i-companion")
+    let mut builder = TrayIconBuilder::with_id("formlogic-desktop")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("FormLogic Desktop");

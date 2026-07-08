@@ -1,5 +1,5 @@
 /* ============================================================================
- * F2I — desktop companion. Shares the web app's "cartographic" identity:
+ * FormLogic — desktop companion. Shares the web app's "cartographic" identity:
  * warm-cream LIGHT base + slate DARK base, ONE indigo accent, with Fraunces
  * (display) / Public Sans (body) / JetBrains Mono (data). Light & dark switch
  * via the `dark` class on <html>. Fonts are self-hosted so it renders offline.
@@ -188,7 +188,7 @@ a:hover { color: var(--signal-bright); text-decoration: underline; text-underlin
   background: linear-gradient(90deg, var(--signal-line), transparent 40%);
 }
 
-/* brand wordmark: F2I as a stamped model-number, name in display face */
+/* brand wordmark: FormLogic as a stamped model-number, name in display face */
 .brand { display: flex; align-items: center; gap: 14px; }
 
 .brand-mark {
@@ -248,7 +248,7 @@ a:hover { color: var(--signal-bright); text-decoration: underline; text-underlin
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--line-2); }
 
-/* f2i.com link */
+/* formlogic.com link */
 .brand-link {
   font-family: var(--font-mono);
   font-size: 12px;

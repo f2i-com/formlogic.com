@@ -1,41 +1,41 @@
 [Unit]
-Description=F2I server (headless companion — services/models/python API on 127.0.0.1:17872)
-Documentation=https://f2i.com
+Description=FormLogic server (headless companion — services/models/python API on 127.0.0.1:17872)
+Documentation=https://formlogic.com
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 # Run as a dedicated unprivileged user you create:
-#   useradd --system --shell /usr/sbin/nologin f2i
-# (StateDirectory below auto-creates /var/lib/f2i owned by f2i — no manual mkdir.)
-User=f2i
-Group=f2i
+#   useradd --system --shell /usr/sbin/nologin formlogic
+# (StateDirectory below auto-creates /var/lib/formlogic owned by formlogic — no manual mkdir.)
+User=formlogic
+Group=formlogic
 
 # All state lives under one dir (databases, venvs, downloaded models, templates).
-Environment=F2I_DATA_DIR=/var/lib/f2i
-Environment=F2I_MODELS_DIR=/var/lib/f2i/models
+Environment=FORMLOGIC_DATA_DIR=/var/lib/formlogic
+Environment=FORMLOGIC_MODELS_DIR=/var/lib/formlogic/models
 # Bind port (loopback only). Front with nginx/Caddy + TLS if exposed.
-Environment=F2I_SERVER_PORT=17872
+Environment=FORMLOGIC_SERVER_PORT=17872
 # Set a long random token to allow privileged admin calls (define service /
 # install python / create venv) from the CLI: Authorization: Bearer <token>.
 # Leave empty to keep privileged routes closed to non-browser callers.
-Environment=F2I_SERVER_TOKEN=
+Environment=FORMLOGIC_SERVER_TOKEN=
 # Optional: HuggingFace token for gated model downloads.
-# Environment=F2I_HF_TOKEN=
+# Environment=FORMLOGIC_HF_TOKEN=
 
-ExecStart=/usr/local/bin/f2i-server
+ExecStart=/usr/local/bin/formlogic-server
 Restart=on-failure
 RestartSec=3
 
-# f2i-server stops every managed service on SIGTERM before exiting.
+# formlogic-server stops every managed service on SIGTERM before exiting.
 KillSignal=SIGTERM
 TimeoutStopSec=30
 
-# State dir: systemd auto-creates /var/lib/f2i (+ /var/lib/f2i/models) owned by
-# f2i:f2i at 0700 on first start, and keeps it writable under ProtectSystem=strict
+# State dir: systemd auto-creates /var/lib/formlogic (+ /var/lib/formlogic/models) owned by
+# formlogic:formlogic at 0700 on first start, and keeps it writable under ProtectSystem=strict
 # — so no manual mkdir/chown and no separate ReadWritePaths is needed.
-StateDirectory=f2i f2i/models
+StateDirectory=formlogic formlogic/models
 StateDirectoryMode=0700
 
 # Hardening (relax if a managed service needs more).

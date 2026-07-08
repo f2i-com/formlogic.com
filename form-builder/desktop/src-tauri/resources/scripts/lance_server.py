@@ -1,6 +1,6 @@
-"""lance_server.py -- thin JSON API over Lance's run_task, for F2I / f2i-web.
+"""lance_server.py -- thin JSON API over Lance's run_task, for FormLogic / formlogic-web.
 
-Lance ships a Gradio app (lance_gradio.py). f2i-web is a browser app and wants a
+Lance ships a Gradio app (lance_gradio.py). formlogic-web is a browser app and wants a
 clean HTTP API, not Gradio's fn_index protocol, so this wraps run_task() in
 FastAPI:
 
@@ -13,7 +13,7 @@ It also mounts the original Gradio UI at /ui, sharing the SAME model pool
 (run_task uses a process-global PipelinePool in lance_gradio), so there is no
 double-VRAM cost between the API and the UI.
 
-Run by the F2I Companion's "Lance (Image+Video)" service (cwd = the Lance repo):
+Run by the FormLogic Companion's "Lance (Image+Video)" service (cwd = the Lance repo):
   python lance_server.py --server-name 127.0.0.1 --server-port 17900
 
 Importing lance_gradio is cheap: its Gradio launch is guarded under
@@ -106,8 +106,8 @@ class GenerateRequest(BaseModel):
     cfg: float = DEFAULT_CFG_TEXT_SCALE
 
 
-app = FastAPI(title="Lance JSON API (F2I)")
-# f2i-web runs in a browser on a different origin -> permissive CORS (localhost).
+app = FastAPI(title="Lance JSON API (FormLogic)")
+# formlogic-web runs in a browser on a different origin -> permissive CORS (localhost).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -118,7 +118,7 @@ app.add_middleware(
 
 # Absolute base URL for /file links, set in main() from the bind args so the
 # returned videoUrl/imageUrl work directly as a browser <video>/<img> src
-# (a relative path would resolve against the f2i-web origin, not this server).
+# (a relative path would resolve against the formlogic-web origin, not this server).
 BASE_URL = ""
 
 

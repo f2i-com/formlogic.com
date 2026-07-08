@@ -3,16 +3,16 @@
 #
 # Sets up the Playwright browser backend (Linux): a Python venv with playwright
 # + Chromium. Reuses the companion's bundled Python runtime when present, else a
-# system python3. Env from the companion: F2I_BIN_DIR (= <dataDir>/bin).
+# system python3. Env from the companion: FORMLOGIC_BIN_DIR (= <dataDir>/bin).
 
 set -e
 
-if [ -z "$F2I_BIN_DIR" ]; then
-  echo "[install-playwright] F2I_BIN_DIR not set; run via the F2I app/server." >&2
+if [ -z "$FORMLOGIC_BIN_DIR" ]; then
+  echo "[install-playwright] FORMLOGIC_BIN_DIR not set; run via the FormLogic app/server." >&2
   exit 1
 fi
 
-dataDir=$(dirname "$F2I_BIN_DIR")
+dataDir=$(dirname "$FORMLOGIC_BIN_DIR")
 venv="$dataDir/venvs/playwright"
 venvPy="$venv/bin/python"
 
@@ -25,7 +25,7 @@ elif command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
   basePy="$(command -v python)"
 else
-  echo "[install-playwright] no Python found. Run 'f2i python install' or install system python3." >&2
+  echo "[install-playwright] no Python found. Run 'formlogic python install' or install system python3." >&2
   exit 1
 fi
 

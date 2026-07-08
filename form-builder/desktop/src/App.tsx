@@ -19,7 +19,7 @@ import SettingsPanel from './SettingsPanel';
 interface HealthResponse {
   status: string;
   companion: string;
-  /** Pre-rebrand id ('f2i-companion'), kept for older web builds. */
+  /** Pre-rebrand id ('formlogic-desktop'), kept for older web builds. */
   legacyCompanion?: string;
   version: string;
   apiVersion?: number;
@@ -120,13 +120,13 @@ export default function App() {
           </button>
           <a
             className="brand-link"
-            href="https://f2i.com"
+            href="https://formlogic.com"
             onClick={(e) => {
               e.preventDefault();
-              openExternal('https://f2i.com');
+              openExternal('https://formlogic.com');
             }}
           >
-            f2i.com ↗
+            formlogic.com ↗
           </a>
           <code>{API_BASE}</code>
           {health ? (

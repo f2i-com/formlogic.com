@@ -1,16 +1,16 @@
-# F2I (desktop)
+# FormLogic (desktop)
 
-Tray-resident desktop companion for **f2i-web**. Manages local AI services
+Tray-resident desktop companion for **formlogic-web**. Manages local AI services
 (Ollama, llama.cpp, custom Python rigs), model downloads from HuggingFace,
 and a bundled portable Python runtime with reusable venvs — exposing
-everything to the f2i-web flow editor over a localhost HTTP API.
+everything to the formlogic-web flow editor over a localhost HTTP API.
 
 Two-process architecture by design:
 
-- **f2i-web** (the flow editor) lives in your browser and stays focused
+- **formlogic-web** (the flow editor) lives in your browser and stays focused
   on flow building, palette UX, and the parts of execution that work in
   a pure browser (ffmpeg.wasm video/audio, HTTP service calls, etc.).
-- **F2I** (this app) lives in your system tray and owns
+- **FormLogic** (this app) lives in your system tray and owns
   everything that needs a real OS process: spawning AI service binaries,
   managing model downloads, bundling a portable Python runtime,
   running Playwright for browser automation (Phase 4).
@@ -25,8 +25,8 @@ companion-managed services appear, browser nodes become usable.
 |---|---|---|
 | **1** | Scaffold, tray icon, localhost API `/api/health`, web-side detection probe | ✅ |
 | **2** | Service registry (start/stop/install/logs) · bundled install scripts (llama.cpp, Ollama, Python) · HF model downloads with pause/resume · embedded Python + reusable venvs · React dashboard with Services / Models / Python tabs | ✅ |
-| **3** | f2i-web fetches companion services into the palette automatically | ✅ |
-| **4** | Playwright sidecar (managed "Playwright Browser" service) + `browser_*` nodes in f2i-web | ✅ |
+| **3** | formlogic-web fetches companion services into the palette automatically | ✅ |
+| **4** | Playwright sidecar (managed "Playwright Browser" service) + `browser_*` nodes in formlogic-web | ✅ |
 | **5** | Single-exe productisation, auto-update, settings persistence | next |
 
 ## Built-in templates
@@ -89,7 +89,7 @@ Requirements (Windows):
 - Visual Studio Build Tools (the "Desktop development with C++" workload)
 
 ```pwsh
-# from f2i-web/desktop/
+# from formlogic-web/desktop/
 npm install
 npm run tauri:dev   # Spawns vite + Rust dev build + opens window
 ```
@@ -103,7 +103,7 @@ curl http://127.0.0.1:17872/api/health
 ```
 Expected response:
 ```json
-{ "status": "ok", "companion": "f2i-companion", "version": "0.1.0" }
+{ "status": "ok", "companion": "formlogic-desktop", "version": "0.1.0" }
 ```
 
 ## Production build
@@ -115,21 +115,21 @@ npm run tauri:build
 Output is a standalone `.exe` (Windows MSI / NSIS installer + a portable
 binary) under `src-tauri/target/release/bundle/`.
 
-## Headless server (`f2i-server`)
+## Headless server (`formlogic-server`)
 
 The same HTTP API (`/api/services`, `/api/models`, `/api/python`, …) without a
 window, tray, or webview — for running on a server where the Node CLI or a
-hosted f2i-web drives it. It's a second binary in this crate
-(`src/bin/f2i-server.rs`) sharing all the service code; the GUI's
+hosted formlogic-web drives it. It's a second binary in this crate
+(`src/bin/formlogic-server.rs`) sharing all the service code; the GUI's
 AppHandle-backed config is swapped for an env-var one (`ConfigProvider`).
 
 ```bash
-cargo run --bin f2i-server                                   # dev (links tauri)
-cargo build --release --no-default-features --bin f2i-server  # tauri-free, for a clean Linux server
+cargo run --bin formlogic-server                                   # dev (links tauri)
+cargo build --release --no-default-features --bin formlogic-server  # tauri-free, for a clean Linux server
 ```
 
 The GUI and the server share one crate but split on a default **`gui`** Cargo
-feature: `f2i-companion` (the tray app) requires it; `f2i-server` built with
+feature: `formlogic-desktop` (the tray app) requires it; `formlogic-server` built with
 `--no-default-features` drops tauri entirely — **no `webkit2gtk`/GTK on the
 box** (`cargo tree -i tauri` is empty). `npm run tauri:dev` / `tauri:build`
 pass `--features gui` for the GUI.
@@ -138,16 +138,16 @@ Configuration is by environment variable (no pointer file):
 
 | env | default | purpose |
 |---|---|---|
-| `F2I_DATA_DIR` | `~/.f2i-server` | data root (databases, venvs, templates) |
-| `F2I_MODELS_DIR` | `<data>/models` | where downloads land |
-| `F2I_EXTRA_MODEL_DIRS` | — | extra read-only model roots (`:`/`;`-separated) |
-| `F2I_SERVER_PORT` | `17872` | listen port (loopback only) |
-| `F2I_SERVER_TOKEN` | — | bearer token gating privileged routes |
-| `F2I_HF_TOKEN` | — | HuggingFace token for gated downloads |
+| `FORMLOGIC_DATA_DIR` | `~/.formlogic-server` | data root (databases, venvs, templates) |
+| `FORMLOGIC_MODELS_DIR` | `<data>/models` | where downloads land |
+| `FORMLOGIC_EXTRA_MODEL_DIRS` | — | extra read-only model roots (`:`/`;`-separated) |
+| `FORMLOGIC_SERVER_PORT` | `17872` | listen port (loopback only) |
+| `FORMLOGIC_SERVER_TOKEN` | — | bearer token gating privileged routes |
+| `FORMLOGIC_HF_TOKEN` | — | HuggingFace token for gated downloads |
 
 **Auth:** reads stay open on loopback. *Privileged* routes (define a service,
 install Python, create/delete a venv, delete a model/service) require either an
-allowed browser origin **or** `Authorization: Bearer <F2I_SERVER_TOKEN>`. With
+allowed browser origin **or** `Authorization: Bearer <FORMLOGIC_SERVER_TOKEN>`. With
 no token set those routes are effectively closed to the headless CLI — set a
 token to administer the server remotely. `SIGTERM`/`Ctrl-C` stops all managed
 services before exit (clean `systemctl stop`).
@@ -161,19 +161,19 @@ runtime + venvs are already cross-platform, and venv `run.command` paths
 (`…/Scripts/python.exe`) are rewritten to `…/bin/python` on Unix automatically.
 
 Drive it all from the CLI — see the management commands in `cli/README.md`
-(`f2i python install`, `f2i service install ollama`, `f2i model download …`).
+(`formlogic python install`, `formlogic service install ollama`, `formlogic model download …`).
 
 **PATH-based services (e.g. ollama):** ollama installs system-wide and adds
 itself to `PATH`. A *running* server won't see a tool that landed on `PATH`
-after it started, so right after `f2i service install ollama`, restart the
+after it started, so right after `formlogic service install ollama`, restart the
 server (a `systemctl restart` / fresh shell picks up the new `PATH`) before
-`f2i service start ollama`. Validated end-to-end on 2× RTX 5090: install → start
+`formlogic service start ollama`. Validated end-to-end on 2× RTX 5090: install → start
 → a flow's `service_call` node runs LLM inference on the GPU.
 
 ## Data folder
 
 By default everything lives under the OS app-data dir
-(`%APPDATA%/com.f2i/` on Windows). The **Settings** tab lets
+(`%APPDATA%/com.formlogic.desktop/` on Windows). The **Settings** tab lets
 you point it anywhere — a roomy drive, a folder you can browse easily —
 via a native picker. The choice persists in a tiny pointer file
 (`companion-config.json` in the OS config dir, which never moves) and
@@ -194,7 +194,7 @@ them across if you relocate.
 
 Everything is under one folder so users know exactly what disk a clean
 uninstall takes — delete that directory (plus the tiny
-`companion-config.json` pointer in `%APPDATA%/com.f2i/`).
+`companion-config.json` pointer in `%APPDATA%/com.formlogic.desktop/`).
 
 ## Port choice
 
@@ -254,5 +254,5 @@ desktop/
 ## Why a separate folder, not a separate repo
 
 Keeps phasing tight — every change to the companion ships alongside the
-matching f2i-web wire-up. When the companion stabilises and gets
+matching formlogic-web wire-up. When the companion stabilises and gets
 released independently, it's a clean lift.

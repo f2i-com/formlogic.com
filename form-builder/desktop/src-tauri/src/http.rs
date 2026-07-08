@@ -1,4 +1,4 @@
-//! Localhost HTTP API the f2i-web flow editor talks to.
+//! Localhost HTTP API the formlogic-web flow editor talks to.
 //!
 //! Phase 1 surface:
 //!   GET /api/health        → { status, companion, legacyCompanion, version,
@@ -64,7 +64,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Read-only data-dir configuration the web app shows ("your models live at
 /// X"). Built by a [`ConfigProvider`] so the HTTP layer stays host-agnostic —
-/// the Tauri GUI backs it with AppHandle paths, the headless `f2i-server` with
+/// the Tauri GUI backs it with AppHandle paths, the headless `formlogic-server` with
 /// env vars. This is the `GET /api/config` response shape.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,14 +117,13 @@ struct AppState {
 }
 
 /// Current companion id, reported by `/api/health` + `/api/desktop/info`.
-/// The desktop app is FormLogic Desktop (the rebranded F2I companion); web
-/// detectors accept this OR [`LEGACY_COMPANION_ID`] during the transition.
+/// The desktop app is FormLogic Desktop; web detectors key off this id.
 const COMPANION_ID: &str = "formlogic-desktop";
 
-/// Pre-rebrand companion id, kept in the health/info payloads for one or two
-/// releases so already-deployed web builds that match only the old id keep
-/// detecting the companion.
-const LEGACY_COMPANION_ID: &str = "f2i-companion";
+/// Retained only for wire-shape stability with older web detectors that read a
+/// separate `legacyCompanion` field. The rebrand is complete, so no distinct
+/// legacy id remains — this mirrors COMPANION_ID.
+const LEGACY_COMPANION_ID: &str = COMPANION_ID;
 
 /// User-facing product name (`/api/desktop/info` `name`).
 const DESKTOP_NAME: &str = "FormLogic Desktop";
@@ -369,7 +368,7 @@ struct EnsureByPortRequest {
 }
 
 /// Start the companion service that owns `port` if it isn't already
-/// running. Called by f2i-web before it hits a `127.0.0.1:<port>`
+/// running. Called by formlogic-web before it hits a `127.0.0.1:<port>`
 /// endpoint a companion service owns, so picking a stopped service in a
 /// flow and running it "just works". Returns immediately after the
 /// spawn — the flow's HTTP/LLM node retries while the server warms up.
@@ -1195,7 +1194,7 @@ fn is_loopback_origin(origin: &str) -> bool {
 }
 
 fn is_allowed_origin(origin: &str) -> bool {
-    // Dev + locally-served f2i-web (any loopback port).
+    // Dev + locally-served formlogic-web (any loopback port).
     if is_loopback_origin(origin) {
         return true;
     }
@@ -1206,11 +1205,11 @@ fn is_allowed_origin(origin: &str) -> bool {
     {
         return true;
     }
-    // Production f2i-web: https://f2i.com and any subdomain (port-agnostic).
+    // Production formlogic-web: https://formlogic.com and any subdomain (port-agnostic).
     if let Some(rest) = origin.strip_prefix("https://") {
         let host = rest.split('/').next().unwrap_or(rest);
         let host = host.split(':').next().unwrap_or(host);
-        if host == "f2i.com" || host.ends_with(".f2i.com") {
+        if host == "formlogic.com" || host.ends_with(".formlogic.com") {
             return true;
         }
     }
@@ -1265,7 +1264,7 @@ fn is_restricted_read_path(path: &str) -> bool {
 }
 
 /// Stricter allow-list for privileged endpoints: the companion's OWN webview and
-/// f2i.com only — never an arbitrary localhost page. Loopback origins are
+/// formlogic.com only — never an arbitrary localhost page. Loopback origins are
 /// allowed in debug builds (the dev UI is served from a localhost port) but NOT
 /// in a release build, which is what ships.
 fn is_allowed_origin_privileged(origin: &str) -> bool {
@@ -1278,7 +1277,7 @@ fn is_allowed_origin_privileged(origin: &str) -> bool {
     if let Some(rest) = origin.strip_prefix("https://") {
         let host = rest.split('/').next().unwrap_or(rest);
         let host = host.split(':').next().unwrap_or(host);
-        if host == "f2i.com" || host.ends_with(".f2i.com") {
+        if host == "formlogic.com" || host.ends_with(".formlogic.com") {
             return true;
         }
     }
@@ -1330,7 +1329,7 @@ struct AuthConfig {
 /// server has no webview — any local process can forge the `Origin` header — so it
 /// trusts the token alone: headless WITH a token is token-only, and headless with
 /// NO token has its privileged (command-defining / destructive) routes CLOSED (the
-/// operator must set F2I_SERVER_TOKEN to administer it; the CLI sends the bearer).
+/// operator must set FORMLOGIC_SERVER_TOKEN to administer it; the CLI sends the bearer).
 fn privileged_allowed(token_ok: bool, gui_mode: bool, _has_token: bool, origin_priv_ok: bool) -> bool {
     token_ok || (gui_mode && origin_priv_ok)
 }
@@ -1361,7 +1360,7 @@ async fn origin_guard(
             .and_then(|o| o.to_str().ok())
             .map(str::to_owned);
         // A configured bearer token lets a headless/non-browser admin client
-        // (the CLI, f2i-server tooling) perform privileged ops the origin
+        // (the CLI, formlogic-server tooling) perform privileged ops the origin
         // allow-list would otherwise block — there's no browser origin on a
         // server. Compared without per-byte short-circuit (token_eq).
         let token_ok = matches!(
@@ -1377,7 +1376,7 @@ async fn origin_guard(
             // forged Origin (any non-browser caller can set one) must not substitute
             // for it. Mirrors privileged_allowed: pass on a matching token, OR when
             // there's no real lockdown (GUI, or no token configured) AND the origin
-            // is browser-acceptable (loopback/tauri/f2i.com) or absent (native CLI).
+            // is browser-acceptable (loopback/tauri/formlogic.com) or absent (native CLI).
             // So headless+token now requires the token even with a spoofed Origin,
             // while GUI mode and the no-token default keep their broad behavior.
             let origin_ok = match origin.as_deref() {
@@ -1452,7 +1451,7 @@ pub async fn serve(
     // `/api/flows/*` routes (they report runner_unavailable).
     flow_runtime: Option<Arc<FlowRuntime>>,
 ) -> Result<(), BoxError> {
-    // CORS stays permissive so a hosted f2i-web at any domain can READ the
+    // CORS stays permissive so a hosted formlogic-web at any domain can READ the
     // API (the localhost bind keeps non-local processes out). State-changing
     // and exec endpoints are additionally gated by `origin_guard` below, so a
     // random web page the user has open can't issue drive-by POST/DELETE
@@ -1601,7 +1600,7 @@ mod tests {
         let v = serde_json::to_value(health_body()).expect("health serializes");
         assert_eq!(v["status"], "ok");
         assert_eq!(v["companion"], "formlogic-desktop");
-        assert_eq!(v["legacyCompanion"], "f2i-companion");
+        assert_eq!(v["legacyCompanion"], "formlogic-desktop");
         assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(v["apiVersion"], 1);
         assert_eq!(v["pluginApiVersion"], 1);
@@ -1614,7 +1613,7 @@ mod tests {
         let v = serde_json::to_value(desktop_info_body()).expect("info serializes");
         assert_eq!(v["name"], "FormLogic Desktop");
         assert_eq!(v["companion"], "formlogic-desktop");
-        assert_eq!(v["legacyCompanion"], "f2i-companion");
+        assert_eq!(v["legacyCompanion"], "formlogic-desktop");
         assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(v["apiVersion"], 1);
         assert_eq!(v["pluginApiVersion"], 1);

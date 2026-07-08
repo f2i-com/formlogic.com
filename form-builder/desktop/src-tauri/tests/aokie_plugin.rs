@@ -23,10 +23,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use f2i_companion_lib::connectors::{self, ConnectorRequestBody};
-use f2i_companion_lib::events::EventBus;
-use f2i_companion_lib::plugins::builtin::BUILTIN_PLUGIN_TEMPLATES;
-use f2i_companion_lib::plugins::registry::{
+use formlogic_desktop_lib::connectors::{self, ConnectorRequestBody};
+use formlogic_desktop_lib::events::EventBus;
+use formlogic_desktop_lib::plugins::builtin::BUILTIN_PLUGIN_TEMPLATES;
+use formlogic_desktop_lib::plugins::registry::{
     PluginHost, PluginHostHandle, PluginSnapshot, PluginState,
 };
 

@@ -2,7 +2,7 @@
 # install-ollama.sh
 #
 # Installs Ollama on Linux via the official install script. Ollama puts itself
-# on PATH, so the template's `command: "ollama"` works without F2I_BIN_DIR.
+# on PATH, so the template's `command: "ollama"` works without FORMLOGIC_BIN_DIR.
 # No-op if already installed.
 
 set -e
@@ -22,8 +22,8 @@ sh "$tmp"
 rm -f "$tmp"
 
 # The official installer enables + starts a systemd `ollama` service on :11434.
-# f2i manages ollama itself (its template runs `ollama serve`), so stop + disable
-# the unit to free the port — otherwise f2i's `ollama serve` can't bind. Guarded
+# formlogic manages ollama itself (its template runs `ollama serve`), so stop + disable
+# the unit to free the port — otherwise formlogic's `ollama serve` can't bind. Guarded
 # so a non-systemd / non-root / container host doesn't abort the install (set -e).
 if command -v systemctl >/dev/null 2>&1; then
   sudo systemctl stop ollama 2>/dev/null || true

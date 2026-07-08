@@ -1,7 +1,7 @@
 //! FormLogic Desktop — entry point.
 //!
 //! Phase 1: bring up the Tauri shell + a tray icon + a localhost HTTP API
-//! that f2i-web can discover.
+//! that formlogic-web can discover.
 //! Phase 2: load the service registry, manage child processes, expose
 //! /api/services/* and stop everything cleanly on exit.
 
@@ -15,7 +15,7 @@ pub mod pairing;
 pub mod plugins;
 pub mod services;
 
-/// Port the localhost API binds to. Fixed so f2i-web's detection probe has a
+/// Port the localhost API binds to. Fixed so formlogic-web's detection probe has a
 /// stable target. Shared by both binaries (the GUI and the headless server).
 pub const COMPANION_PORT: u16 = 17872;
 
@@ -31,7 +31,7 @@ pub const DESKTOP_API_VERSION: u32 = 1;
 pub const PLUGIN_API_VERSION: u32 = 1;
 
 // Everything below `open_path` is the GUI companion (Tauri), gated behind the
-// default `gui` feature: `cargo build --bin f2i-server --no-default-features`
+// default `gui` feature: `cargo build --bin formlogic-server --no-default-features`
 // builds the headless server WITHOUT tauri/webkit2gtk. `http` + `services`
 // above are tauri-free and shared by both binaries.
 #[cfg(feature = "gui")]
@@ -144,10 +144,10 @@ fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Open an external URL (e.g. https://f2i.com) in the system default browser.
+/// Open an external URL (e.g. https://formlogic.com) in the system default browser.
 /// Unlike `open_path`, this does NOT existence-check — it hands the URL to the
 /// OS handler. Guarded to http/https so the UI can't ask us to launch arbitrary
-/// schemes. Invoked from the header's f2i.com link.
+/// schemes. Invoked from the header's formlogic.com link.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -181,7 +181,7 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 // COMPANION_PORT is declared at the crate root (above mod gui) so the headless
-// f2i-server shares it; here it's in scope via `use super::COMPANION_PORT`.
+// formlogic-server shares it; here it's in scope via `use super::COMPANION_PORT`.
 
 /// The OS-default data dir (`%APPDATA%/<id>/` on Windows, etc.). This is
 /// where everything lives unless the user has chosen a custom folder.
@@ -343,7 +343,7 @@ fn write_service_gpus(
 /// Additional model search roots beyond the primary models dir, stored as a
 /// JSON array under `extraModelDirs`. These are read-only weight folders the
 /// user registers in Settings (e.g. `E:\ckpts`) so a service can scan several
-/// drives via `${modelDirs}` / `F2I_MODEL_DIRS`. Empty when none configured.
+/// drives via `${modelDirs}` / `FORMLOGIC_MODEL_DIRS`. Empty when none configured.
 fn read_extra_model_dirs(app: &tauri::AppHandle) -> Vec<String> {
     read_config_obj(app)
         .get("extraModelDirs")
@@ -457,7 +457,7 @@ fn resolve_data_dir(app: &tauri::AppHandle) -> PathBuf {
 
 /// Resolve the active models directory: the user's `modelsDir` override
 /// (when set + creatable) else `<dataDir>/models`. This is where downloads
-/// land and where the install scripts' `F2I_MODELS_DIR` points.
+/// land and where the install scripts' `FORMLOGIC_MODELS_DIR` points.
 fn resolve_models_dir(app: &tauri::AppHandle, data_dir: &std::path::Path) -> PathBuf {
     if let Some(custom) = read_models_dir_override(app) {
         let p = PathBuf::from(&custom);
@@ -491,7 +491,7 @@ pub(crate) fn config_snapshot(app: &tauri::AppHandle, registry: &RegistryHandle)
     let configured_dir = read_data_dir_override(app);
     let effective = configured_dir.clone().unwrap_or_else(|| default_dir.clone());
     // Normalise trailing separators for the comparison so e.g.
-    // "D:\F2I" and "D:\F2I\" don't read as a pending change.
+    // "D:\FormLogic" and "D:\FormLogic\" don't read as a pending change.
     let norm = |s: &str| s.trim_end_matches(['/', '\\']).to_lowercase();
 
     // Models dir: default is <pending data dir>/models, so the "pending"
@@ -583,7 +583,7 @@ fn set_data_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     std::fs::create_dir_all(&p).map_err(|e| format!("can't create that folder: {e}"))?;
     // Writability probe — a read-only or permission-denied folder is a
     // common foot-gun; catch it now rather than on first download.
-    let probe = p.join(".f2i-write-test");
+    let probe = p.join(".formlogic-write-test");
     std::fs::write(&probe, b"ok").map_err(|e| format!("that folder isn't writable: {e}"))?;
     let _ = std::fs::remove_file(&probe);
     write_data_dir_override(&app, Some(trimmed))
@@ -591,7 +591,7 @@ fn set_data_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
 
 /// Tauri command: set (or, with an empty string, reset to `<dataDir>/models`)
 /// the models dir. Same creatable+writable validation as the data dir.
-/// Applies on next launch (Downloads + the install scripts' F2I_MODELS_DIR
+/// Applies on next launch (Downloads + the install scripts' FORMLOGIC_MODELS_DIR
 /// capture it at startup); the UI prompts to restart.
 #[tauri::command]
 fn set_models_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
@@ -602,7 +602,7 @@ fn set_models_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     validate_local_dir_path(trimmed)?;
     let p = PathBuf::from(trimmed);
     std::fs::create_dir_all(&p).map_err(|e| format!("can't create that folder: {e}"))?;
-    let probe = p.join(".f2i-write-test");
+    let probe = p.join(".formlogic-write-test");
     std::fs::write(&probe, b"ok").map_err(|e| format!("that folder isn't writable: {e}"))?;
     let _ = std::fs::remove_file(&probe);
     write_models_dir_override(&app, Some(trimmed))
@@ -636,7 +636,7 @@ fn list_model_dirs(registry: tauri::State<RegistryHandle>) -> Vec<String> {
 
 /// Tauri command: register an additional (read-only) model folder. Validates
 /// it exists, persists it, and updates the LIVE registry so the next service
-/// start sees it via `${modelDirs}` / `F2I_MODEL_DIRS` — no restart needed.
+/// start sees it via `${modelDirs}` / `FORMLOGIC_MODEL_DIRS` — no restart needed.
 /// Returns the updated extra-dirs list. A folder that's already registered (or
 /// is the primary) is a no-op / error respectively.
 #[tauri::command]
@@ -1266,7 +1266,7 @@ pub fn run() {
                     Err(e) => {
                         log::error!("registry init failed at {}: {e}", data_dir.display());
                         // Empty placeholder; the UI surfaces "no templates" cleanly.
-                        let fallback = std::env::temp_dir().join("f2i-companion-fallback");
+                        let fallback = std::env::temp_dir().join("formlogic-desktop-fallback");
                         let fb_models = fallback.join("models");
                         // Even the temp-dir fallback does filesystem work and can
                         // fail (read-only/full temp). Don't panic — degrade to a
@@ -1354,7 +1354,7 @@ pub fn run() {
             };
             let flow_runtime = FlowRuntime::new(plugin_host.clone(), Some(registry.clone()), fl_config);
             // start() launches the flow event/claim/heartbeat loops via tokio::spawn, which needs an
-            // ambient Tokio runtime. Unlike f2i-server (#[tokio::main]), Tauri's setup hook runs
+            // ambient Tokio runtime. Unlike formlogic-server (#[tokio::main]), Tauri's setup hook runs
             // OUTSIDE the runtime, so run start() ON Tauri's async runtime (tokio) — otherwise
             // tokio::spawn panics ("there is no reactor running") and the app crashes on launch.
             {
@@ -1404,9 +1404,9 @@ pub fn run() {
                     COMPANION_PORT,
                     config_provider,
                     // GUI: webview-origin auth, plus an OPTIONAL bearer token
-                    // (set F2I_SERVER_TOKEN) so the CLI can drive this companion
+                    // (set FORMLOGIC_SERVER_TOKEN) so the CLI can drive this companion
                     // without locking out the webview (gui_mode = true below).
-                    std::env::var("F2I_SERVER_TOKEN").ok().filter(|s| !s.is_empty()),
+                    std::env::var("FORMLOGIC_SERVER_TOKEN").ok().filter(|s| !s.is_empty()),
                     true,
                     registry_for_http,
                     downloads_for_http,

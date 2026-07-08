@@ -7,9 +7,9 @@ large clip can span both GPUs (the stock server puts one full model copy per
 GPU — concurrency, not sharding).
 
 The patch is INERT by default: it only changes behaviour when, at runtime:
-  F2I_LANCE_SHARD=1   -> accelerate device_map across all visible GPUs
-  F2I_LANCE_OFFLOAD=1 -> accelerate sequential CPU offload (slow, fits anything)
-  F2I_LANCE_SHARD_MEM -> optional per-GPU cap for the shard (e.g. "30GiB")
+  FORMLOGIC_LANCE_SHARD=1   -> accelerate device_map across all visible GPUs
+  FORMLOGIC_LANCE_OFFLOAD=1 -> accelerate sequential CPU offload (slow, fits anything)
+  FORMLOGIC_LANCE_SHARD_MEM -> optional per-GPU cap for the shard (e.g. "30GiB")
 Otherwise the model loads exactly as before (`model.to(device)`).
 
 Idempotent (skips if already patched) and graceful (if an anchor isn't found
@@ -23,35 +23,35 @@ the reliable fits-anything fallback.
 """
 import sys
 
-MARKER = "# F2I_SHARD_PATCH"
+MARKER = "# FORMLOGIC_SHARD_PATCH"
 
 HELPERS = '''\
-# F2I_SHARD_PATCH: optional multi-GPU sharding / CPU offload (companion-injected).
-# Inert unless F2I_LANCE_SHARD=1 or F2I_LANCE_OFFLOAD=1 at runtime.
-def _f2i_shard_enabled():
+# FORMLOGIC_SHARD_PATCH: optional multi-GPU sharding / CPU offload (companion-injected).
+# Inert unless FORMLOGIC_LANCE_SHARD=1 or FORMLOGIC_LANCE_OFFLOAD=1 at runtime.
+def _formlogic_shard_enabled():
     import os, torch
     return (
-        os.getenv("F2I_LANCE_SHARD") == "1"
+        os.getenv("FORMLOGIC_LANCE_SHARD") == "1"
         and torch.cuda.is_available()
         and torch.cuda.device_count() > 1
     )
 
-def _f2i_offload_enabled():
+def _formlogic_offload_enabled():
     import os, torch
-    return os.getenv("F2I_LANCE_OFFLOAD") == "1" and torch.cuda.is_available()
+    return os.getenv("FORMLOGIC_LANCE_OFFLOAD") == "1" and torch.cuda.is_available()
 
-def _f2i_maybe_collapse(gpu_ids):
+def _formlogic_maybe_collapse(gpu_ids):
     # Shard / offload run a SINGLE pipeline (one model spanning the GPUs),
     # so collapse the per-GPU pool to one entry.
     try:
-        if (_f2i_shard_enabled() or _f2i_offload_enabled()) and len(gpu_ids) > 1:
-            print(f"[F2I] shard/offload: collapsing GPU pool {gpu_ids} -> [{gpu_ids[0]}]", flush=True)
+        if (_formlogic_shard_enabled() or _formlogic_offload_enabled()) and len(gpu_ids) > 1:
+            print(f"[FormLogic] shard/offload: collapsing GPU pool {gpu_ids} -> [{gpu_ids[0]}]", flush=True)
             return gpu_ids[:1]
     except Exception as _e:
-        print(f"[F2I] maybe_collapse error: {_e}", flush=True)
+        print(f"[FormLogic] maybe_collapse error: {_e}", flush=True)
     return gpu_ids
 
-def _f2i_no_split(model):
+def _formlogic_no_split(model):
     names = set()
     try:
         for _n, m in model.named_modules():
@@ -63,23 +63,23 @@ def _f2i_no_split(model):
     names.update({"Qwen2DecoderLayer", "Qwen2_5_VLDecoderLayer", "Qwen2MoeDecoderLayer"})
     return list(names)
 
-def _f2i_place_model(model, device):
+def _formlogic_place_model(model, device):
     import os, torch
-    if _f2i_offload_enabled():
+    if _formlogic_offload_enabled():
         try:
             from accelerate import cpu_offload
-            print("[F2I] sequential CPU offload (slow, fits any size)", flush=True)
+            print("[FormLogic] sequential CPU offload (slow, fits any size)", flush=True)
             return cpu_offload(model, execution_device=torch.device(f"cuda:{device}"))
         except Exception as e:
-            print(f"[F2I] cpu_offload failed ({e}); single GPU {device}", flush=True)
+            print(f"[FormLogic] cpu_offload failed ({e}); single GPU {device}", flush=True)
             return model.to(device=device)
-    if _f2i_shard_enabled():
+    if _formlogic_shard_enabled():
         try:
             from accelerate import dispatch_model, infer_auto_device_map
             from accelerate.utils import get_balanced_memory
             n = torch.cuda.device_count()
-            per = os.getenv("F2I_LANCE_SHARD_MEM", "").strip()
-            no_split = _f2i_no_split(model)
+            per = os.getenv("FORMLOGIC_LANCE_SHARD_MEM", "").strip()
+            no_split = _formlogic_no_split(model)
             if per:
                 max_memory = {i: per for i in range(n)}
             else:
@@ -91,10 +91,10 @@ def _f2i_place_model(model, device):
                 no_split_module_classes=no_split,
             )
             devs = sorted({str(v) for v in dmap.values()})
-            print(f"[F2I] sharding Lance across {n} GPUs; devices: {devs}", flush=True)
+            print(f"[FormLogic] sharding Lance across {n} GPUs; devices: {devs}", flush=True)
             return dispatch_model(model, device_map=dmap)
         except Exception as e:
-            print(f"[F2I] device_map shard failed ({e}); single GPU {device}", flush=True)
+            print(f"[FormLogic] device_map shard failed ({e}); single GPU {device}", flush=True)
             return model.to(device=device)
     return model.to(device=device)
 
@@ -108,11 +108,11 @@ REPLACEMENTS = [
     ),
     (
         "model = model.to(device=self.device)",
-        "model = _f2i_place_model(model, self.device)",
+        "model = _formlogic_place_model(model, self.device)",
     ),
     (
         "        self.gpu_ids = gpu_ids\n",
-        "        gpu_ids = _f2i_maybe_collapse(gpu_ids)\n        self.gpu_ids = gpu_ids\n",
+        "        gpu_ids = _formlogic_maybe_collapse(gpu_ids)\n        self.gpu_ids = gpu_ids\n",
     ),
 ]
 
@@ -153,8 +153,8 @@ def main() -> int:
         print(f"[patch_lance] cannot write {path}: {e}")
         return 1
 
-    print("[patch_lance] applied. Set F2I_LANCE_SHARD=1 (device_map across GPUs)")
-    print("[patch_lance] or F2I_LANCE_OFFLOAD=1 (CPU offload) to activate it.")
+    print("[patch_lance] applied. Set FORMLOGIC_LANCE_SHARD=1 (device_map across GPUs)")
+    print("[patch_lance] or FORMLOGIC_LANCE_OFFLOAD=1 (CPU offload) to activate it.")
     return 0
 
 

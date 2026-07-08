@@ -6,7 +6,7 @@
 # the Windows .bat hasn't been ported + validated on a Linux GPU box.
 #
 # Manual setup on a CUDA Linux host:
-#   1. f2i venv create ltx2 --req "torch --index-url https://download.pytorch.org/whl/cu128" --req fastapi --req uvicorn
+#   1. formlogic venv create ltx2 --req "torch --index-url https://download.pytorch.org/whl/cu128" --req fastapi --req uvicorn
 #   2. Fetch the LTX-2 repo into <dataDir>/services/ltx2 and `uv sync` it.
 #   3. Point the ltx2-video template's run.command at <dataDir>/venvs/ltx2/bin/python
 #      and run ltx2_server.py.
