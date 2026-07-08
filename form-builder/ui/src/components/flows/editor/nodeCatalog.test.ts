@@ -10,10 +10,13 @@ import {
   NODE_SPECS,
   effectiveNodeData,
   evalShowIf,
+  formatChipInsert,
   getNodeSpec,
+  getReferenceSyntax,
   initialNodeData,
   isNodeAvailableInContext,
   type FlowEditorContext,
+  type NodePropertySpec,
 } from './nodeCatalog';
 import { EXECUTABLE_NODE_TYPES } from '../../../client-runtime/flows/nodes';
 
@@ -135,6 +138,85 @@ describe('evalShowIf (conditional property visibility)', () => {
     expect(evalShowIf(url.showIf, { action: 'goto' })).toBe(true);
     expect(evalShowIf(url.showIf, { action: 'evaluate' })).toBe(false);
     expect(evalShowIf(script.showIf, { action: 'evaluate' })).toBe(true);
+  });
+});
+
+describe('getReferenceSyntax + formatChipInsert (chip-insert must match the executor\'s resolution mechanism)', () => {
+  const field = (over: Partial<NodePropertySpec> = {}): NodePropertySpec => ({
+    key: 'x',
+    label: 'X',
+    type: 'text',
+    ...over,
+  });
+
+  it('defaults a plain text/textarea field to selector (resolveSelector / resolveDeep both want the bare string)', () => {
+    expect(getReferenceSyntax(field({ type: 'text' }))).toBe('selector');
+    expect(getReferenceSyntax(field({ type: 'textarea' }))).toBe('selector');
+  });
+
+  it('infers quickjs from a code field with quickjs:true, without needing an explicit override', () => {
+    expect(getReferenceSyntax(field({ type: 'code', quickjs: true }))).toBe('quickjs');
+  });
+
+  it('defaults a JSON code field (quickjs falsy) to selector — resolveDeep wants a bare selector string', () => {
+    expect(getReferenceSyntax(field({ type: 'code', quickjs: false, language: 'json' }))).toBe('selector');
+    expect(getReferenceSyntax(field({ type: 'code' }))).toBe('selector');
+  });
+
+  it('an explicit referenceSyntax always wins over the inferred default', () => {
+    expect(getReferenceSyntax(field({ type: 'textarea', referenceSyntax: 'template' }))).toBe('template');
+    expect(getReferenceSyntax(field({ type: 'code', quickjs: true, referenceSyntax: 'selector' }))).toBe('selector');
+  });
+
+  it('every field explicitly marked template in the real catalog resolves via interpolateTemplate in nodes.ts (cross-checked field list)', () => {
+    // Each pair is [nodeType, propertyKey] for a field this session confirmed is interpolateTemplate-resolved.
+    const expected: Array<[string, string]> = [
+      ['template', 'template'],
+      ['llm_chat', 'system'],
+      ['llm_chat', 'prompt'],
+      ['llm_chat', 'model'],
+      ['http_request', 'url'],
+      ['aokie_speak', 'text'],
+      ['browser_action', 'url'],
+      ['browser_action', 'text'],
+      ['image_gen', 'prompt'],
+      ['tts_speak', 'text'],
+    ];
+    for (const [type, key] of expected) {
+      const spec = getNodeSpec(type)!;
+      const prop = spec.properties.find((p) => p.key === key)!;
+      expect(prop, `${type}.${key} should exist`).toBeDefined();
+      expect(getReferenceSyntax(prop), `${type}.${key} should be 'template'`).toBe('template');
+    }
+  });
+
+  it('formatChipInsert: selector mode inserts the bare string unchanged', () => {
+    expect(formatChipInsert('$nodes.lookup.first', 'selector')).toBe('$nodes.lookup.first');
+    expect(formatChipInsert('$inputs.callerPhone', 'selector')).toBe('$inputs.callerPhone');
+    expect(formatChipInsert('$event', 'selector')).toBe('$event');
+  });
+
+  it('formatChipInsert: template mode wraps the selector in {{ }} (interpolateTemplate tolerates the leading $)', () => {
+    expect(formatChipInsert('$nodes.lookup.first', 'template')).toBe('{{ $nodes.lookup.first }}');
+    expect(formatChipInsert('$event', 'template')).toBe('{{ $event }}');
+  });
+
+  it('formatChipInsert: quickjs mode strips the leading $ to the plain JS variable the sandbox exposes', () => {
+    expect(formatChipInsert('$nodes.lookup.first', 'quickjs')).toBe('nodes.lookup.first');
+    expect(formatChipInsert('$inputs.name', 'quickjs')).toBe('inputs.name');
+    expect(formatChipInsert('$event', 'quickjs')).toBe('event');
+  });
+
+  it('formatChipInsert: quickjs mode bracket-quotes a node id containing a hyphen (real shape: mintNodeId yields `<type>-<n>`)', () => {
+    // A bare `.` would parse as `nodes.condition - 1` (subtraction), not a property lookup —
+    // this is the exact hint FlowEditor's insertHints emits for every non-trigger node.
+    expect(formatChipInsert('$nodes.condition-1', 'quickjs')).toBe('nodes["condition-1"]');
+    expect(formatChipInsert('$nodes.http_request-2', 'quickjs')).toBe('nodes["http_request-2"]');
+  });
+
+  it('formatChipInsert: quickjs mode bracket-quotes any non-identifier path segment, not just the node id', () => {
+    expect(formatChipInsert('$nodes.condition-1.found', 'quickjs')).toBe('nodes["condition-1"].found');
+    expect(formatChipInsert('$inputs.caller phone', 'quickjs')).toBe('inputs["caller phone"]');
   });
 });
 

@@ -92,6 +92,21 @@ export interface ShowIf {
   in?: unknown[];
 }
 
+/**
+ * Which of the executor's value-resolution mechanisms (client-runtime/flows/nodes.ts +
+ * the Rust mirror flows/runner.rs) a property's stored value is put through, and therefore
+ * which syntax a "insert a $nodes/$inputs reference" chip must produce for it to actually work:
+ *   - 'selector' — the WHOLE field value is resolved as one bare `$`-rooted selector string
+ *     (`resolveSelector`), or the field is JSON walked by `resolveDeep` (a selector-shaped
+ *     STRING VALUE inside it resolves the same way) — both want the bare `$nodes.x.y` string.
+ *   - 'quickjs'  — a `code` field with `quickjs: true` runs as literal JS in the sandbox, where
+ *     `inputs`/`nodes`/`event`/`upstream`/`app` are real JS variables (no `$`, no `{{ }}`).
+ *   - 'template' — resolved via `interpolateTemplate`, which only scans for `{{ ... }}`
+ *     placeholders in free text; a bare `$selector` dropped outside braces is never resolved and
+ *     ends up verbatim in the output (e.g. spoken on a live call).
+ */
+export type ReferenceSyntax = 'selector' | 'quickjs' | 'template';
+
 export interface NodePropertySpec {
   key: string;
   label: string;
@@ -109,6 +124,61 @@ export interface NodePropertySpec {
   required?: boolean;
   /** Show this property only when the predicate over the node's data holds (presentation only). */
   showIf?: ShowIf;
+  /**
+   * Override the inferred reference syntax (see `ReferenceSyntax`). Only needed for a field
+   * resolved via `interpolateTemplate` in the executor — everything else is inferred correctly
+   * by `getReferenceSyntax` (a `code` field with `quickjs: true` → 'quickjs', else 'selector').
+   */
+  referenceSyntax?: ReferenceSyntax;
+}
+
+/**
+ * The reference syntax a chip-insert must produce for this property to actually resolve
+ * (docs `ReferenceSyntax`). An explicit `referenceSyntax` always wins; otherwise a QuickJS
+ * `code` field infers 'quickjs' and everything else defaults to 'selector' — correct for both
+ * whole-value-selector fields (`resolveSelector`) AND JSON fields walked by `resolveDeep`,
+ * since both want the bare `$nodes.x.y` string. Only `interpolateTemplate` fields need the
+ * explicit 'template' override (set per-field below, cross-checked against nodes.ts).
+ */
+export function getReferenceSyntax(spec: NodePropertySpec): ReferenceSyntax {
+  if (spec.referenceSyntax) return spec.referenceSyntax;
+  if (spec.type === 'code' && spec.quickjs) return 'quickjs';
+  return 'selector';
+}
+
+/** True when `s` is safe as a bare `.seg` JS property access rather than needing `["seg"]`. */
+function isJsIdentifier(s: string): boolean {
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s);
+}
+
+/**
+ * Format a raw chip hint (`$nodes.<id>` / `$inputs.<name>` / `$event`) for insertion into
+ * a field of the given `ReferenceSyntax` so the executor actually resolves it:
+ *   - 'selector' — unchanged (the bare string IS the value the executor expects).
+ *   - 'template' — wrapped in `{{ }}` (a leading `$` inside braces is tolerated by
+ *     `interpolateTemplate`/`interpolate_template`, so no need to strip it).
+ *   - 'quickjs'  — the leading `$` is stripped so the root reads as the plain JS variable the
+ *     sandbox actually exposes (`$event` → `event`), and every path segment after the root is
+ *     emitted as `.seg` only when `seg` is a valid bare JS identifier, else as `["seg"]`. This
+ *     matters because every node id in this app is auto-minted as `<type>-<n>` (`condition-1`,
+ *     `http_request-2`, …, see canvasOps.ts `mintNodeId`) — `nodes.condition-1` would parse as
+ *     the subtraction `nodes.condition - 1`, not a lookup of `nodes['condition-1']`. So
+ *     `$nodes.condition-1` → `nodes["condition-1"]`, while `$inputs.name` → `inputs.name` and
+ *     `$event` → `event` stay dotted since those segments are valid identifiers.
+ */
+export function formatChipInsert(hint: string, mode: ReferenceSyntax): string {
+  switch (mode) {
+    case 'template':
+      return `{{ ${hint} }}`;
+    case 'quickjs': {
+      const path = hint.startsWith('$') ? hint.slice(1) : hint;
+      const [root, ...rest] = path.split('.');
+      return rest.reduce((acc, seg) => (isJsIdentifier(seg) ? `${acc}.${seg}` : `${acc}[${JSON.stringify(seg)}]`), root);
+    }
+    case 'selector':
+    default:
+      return hint;
+  }
 }
 
 /** One graph handle (a connectable port). Executor edges reference these by id. */
@@ -328,6 +398,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         required: true,
         placeholder: 'Hello {{inputs.name}}, thanks for calling.',
         help: '{{event.data.from}} / {{nodes.match.greeting}} interpolate; missing paths render empty.',
+        referenceSyntax: 'template',
       },
     ],
   },
@@ -371,7 +442,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'system', label: 'System prompt', type: 'textarea', placeholder: 'You are a concise note-taker.' },
+      { key: 'system', label: 'System prompt', type: 'textarea', placeholder: 'You are a concise note-taker.', referenceSyntax: 'template' },
       {
         key: 'prompt',
         label: 'Prompt',
@@ -379,9 +450,18 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         required: true,
         placeholder: 'Summarise this call:\n{{nodes.context.transcript}}',
         help: '{{...}} templating against the run scope.',
+        referenceSyntax: 'template',
       },
       { key: 'advanced', label: 'Show model & endpoint options', type: 'boolean', help: 'Reveal the model, sampling and endpoint override. Leave off to use the default provider.' },
-      { key: 'model', label: 'Model', type: 'text', placeholder: 'default (Desktop/provider decides)', showIf: { property: 'advanced', equals: true } },
+      {
+        key: 'model',
+        label: 'Model',
+        type: 'text',
+        placeholder: 'default (Desktop/provider decides)',
+        help: '{{...}} templating against the run scope (e.g. to pin a model from a config record).',
+        showIf: { property: 'advanced', equals: true },
+        referenceSyntax: 'template',
+      },
       { key: 'maxTokens', label: 'Max tokens', type: 'number', placeholder: '220', showIf: { property: 'advanced', equals: true } },
       { key: 'temperature', label: 'Temperature', type: 'number', placeholder: '0.7', showIf: { property: 'advanced', equals: true } },
       {
@@ -406,7 +486,15 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'url', label: 'URL', type: 'text', required: true, placeholder: '/api/v1/…  or  http://127.0.0.1:8787/…' },
+      {
+        key: 'url',
+        label: 'URL',
+        type: 'text',
+        required: true,
+        placeholder: '/api/v1/…  or  http://127.0.0.1:8787/…',
+        help: '{{...}} templating against the run scope.',
+        referenceSyntax: 'template',
+      },
       {
         key: 'method',
         label: 'Method',
@@ -582,7 +670,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'text', label: 'Text', type: 'textarea', placeholder: 'Thanks for calling {{inputs.name}}!', help: '{{...}} templating against the run scope.' },
+      { key: 'text', label: 'Text', type: 'textarea', placeholder: 'Thanks for calling {{inputs.name}}!', help: '{{...}} templating against the run scope.', referenceSyntax: 'template' },
       { key: 'textFrom', label: 'Text from (selector)', type: 'text', placeholder: '$nodes.summary.content', help: 'Optional. Takes precedence over Text.' },
     ],
   },
@@ -624,9 +712,9 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
         ],
         help: 'What this step does on the page.',
       },
-      { key: 'url', label: 'URL', type: 'text', required: true, placeholder: 'https://example.com  ({{...}} ok)', help: 'Navigated first when set. Required for "Go to URL".', showIf: { property: 'action', equals: 'goto' } },
+      { key: 'url', label: 'URL', type: 'text', required: true, placeholder: 'https://example.com  ({{...}} ok)', help: 'Navigated first when set. Required for "Go to URL".', showIf: { property: 'action', equals: 'goto' }, referenceSyntax: 'template' },
       { key: 'selector', label: 'Selector', type: 'text', placeholder: 'button.submit  /  #email', help: 'CSS selector for Click / Type / Extract.', showIf: { property: 'action', in: ['click', 'type', 'extract_text', 'extract_html'] } },
-      { key: 'text', label: 'Text to type', type: 'textarea', placeholder: 'hello@example.com  ({{...}} ok)', help: 'For the Type action.', showIf: { property: 'action', equals: 'type' } },
+      { key: 'text', label: 'Text to type', type: 'textarea', placeholder: 'hello@example.com  ({{...}} ok)', help: 'For the Type action.', showIf: { property: 'action', equals: 'type' }, referenceSyntax: 'template' },
       { key: 'script', label: 'Script (Evaluate JS)', type: 'code', language: 'javascript', placeholder: 'document.title', help: 'For the Evaluate action — runs in the page.', showIf: { property: 'action', equals: 'evaluate' } },
       { key: 'waitFor', label: 'Wait for selector', type: 'text', placeholder: '#results', help: 'Optional. Wait until this selector appears before the action.' },
       { key: 'sessionId', label: 'Reuse session (selector)', type: 'text', placeholder: '$nodes.open.sessionId', help: 'Optional. Reuse a page from a previous browser action.' },
@@ -647,7 +735,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     inputs: IN,
     outputs: OUT,
     properties: [
-      { key: 'prompt', label: 'Prompt', type: 'textarea', required: true, placeholder: 'A watercolour fox in a forest ({{...}} ok)', help: 'What to generate.' },
+      { key: 'prompt', label: 'Prompt', type: 'textarea', required: true, placeholder: 'A watercolour fox in a forest ({{...}} ok)', help: 'What to generate.', referenceSyntax: 'template' },
       { key: 'width', label: 'Width', type: 'number', placeholder: '1024' },
       { key: 'height', label: 'Height', type: 'number', placeholder: '1024' },
       { key: 'steps', label: 'Steps', type: 'number', placeholder: '8', help: 'Optional. Sampling steps.' },
@@ -691,7 +779,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'endpoint', label: 'Endpoint', type: 'text', required: true, placeholder: 'http://127.0.0.1:PORT/v1/audio/speech', help: 'A local OpenAI-compatible speech endpoint.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'tts-1', help: 'Optional.' },
       { key: 'voice', label: 'Voice', type: 'text', placeholder: 'alloy', help: 'Optional.' },
-      { key: 'text', label: 'Text', type: 'textarea', required: true, placeholder: 'Hello {{inputs.name}} ({{...}} ok)', help: 'The text to speak.' },
+      { key: 'text', label: 'Text', type: 'textarea', required: true, placeholder: 'Hello {{inputs.name}} ({{...}} ok)', help: 'The text to speak.', referenceSyntax: 'template' },
       { key: 'service', label: 'Service id', type: 'text', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
     ],
   },

@@ -16,9 +16,12 @@ import {
   getNodeSpec,
   evalShowIf,
   effectiveNodeData,
+  getReferenceSyntax,
+  formatChipInsert,
   EMPTY_FLOW_EDITOR_CONTEXT,
   type FlowEditorContext,
   type NodePropertySpec,
+  type ReferenceSyntax,
 } from './nodeCatalog';
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
@@ -602,8 +605,14 @@ function CodeField({
   const language = spec.language ?? (spec.quickjs ? 'javascript' : json ? 'json' : 'javascript');
   const text = toInput(value);
   const handle = (v: string) => onChange(json ? parseJsonField(v) : v);
+  // What syntax a chip-insert must produce here (bare selector / plain-JS / {{ }} template) —
+  // 'quickjs' for condition/logic_block's sandboxed expr, 'selector' for JSON/selector bodies
+  // (resolveDeep), matching nodes.ts exactly (see getReferenceSyntax).
+  const mode = getReferenceSyntax(spec);
 
   const fallback = (
+    // data-ref-syntax lets the panel's generic onPanelFocus format chip-inserts correctly if
+    // Monaco fails to mount (ErrorBoundary) — the Monaco path formats via onEditorMount below.
     <textarea
       value={text}
       placeholder={spec.placeholder}
@@ -611,14 +620,16 @@ function CodeField({
       spellCheck={false}
       onChange={(e) => handle(e.target.value)}
       className={MONO_CLS + ' resize-y'}
+      data-ref-syntax={mode}
     />
   );
 
   const onEditorMount = (editor: MonacoEditor) => {
     editor.onDidFocusEditorText(() => {
       setInserter((toInsert) => {
+        const formatted = formatChipInsert(toInsert, mode);
         const sel = editor.getSelection();
-        if (sel) editor.executeEdits('insert-selector', [{ range: sel, text: toInsert, forceMoveMarkers: true }]);
+        if (sel) editor.executeEdits('insert-selector', [{ range: sel, text: formatted, forceMoveMarkers: true }]);
         editor.focus();
       });
     });
@@ -712,6 +723,7 @@ function Field({
           spellCheck={false}
           onChange={(e) => onChange(e.target.value)}
           className={INPUT_CLS + ' resize-y'}
+          data-ref-syntax={getReferenceSyntax(spec)}
         />
         {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
       </label>
@@ -728,6 +740,7 @@ function Field({
         placeholder={spec.placeholder}
         onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
         className={INPUT_CLS}
+        data-ref-syntax={getReferenceSyntax(spec)}
       />
       {spec.help && <p className={HELP_CLS}>{spec.help}</p>}
     </label>
@@ -799,11 +812,16 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
     return 'copied';
   }, []);
   // Track focus of a plain text field so chip-insert lands at its caret (Monaco fields self-register).
+  // The field's `data-ref-syntax` (set by Field()/CodeField's fallback from the property spec) says
+  // which syntax the executor actually resolves there — absent (bespoke widgets: form picker,
+  // filters, connector pickers) defaults to 'selector', matching what those fields expect today.
   const onPanelFocus = useCallback((e: FocusEvent) => {
     const t = e.target as HTMLElement;
     const el = t as HTMLInputElement | HTMLTextAreaElement;
     const isText = (t.tagName === 'INPUT' && (el.type === 'text' || el.type === '')) || t.tagName === 'TEXTAREA';
-    if (isText && !t.closest('.monaco-editor')) activeInsertRef.current = (text: string) => insertIntoInput(el, text);
+    if (!isText || t.closest('.monaco-editor')) return;
+    const mode = (el.dataset.refSyntax as ReferenceSyntax | undefined) ?? 'selector';
+    activeInsertRef.current = (hint: string) => insertIntoInput(el, formatChipInsert(hint, mode));
   }, []);
 
   // showIf: hide a property whose predicate fails — unless it already holds a value (never hide config).
