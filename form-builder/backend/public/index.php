@@ -739,22 +739,40 @@ $app->get('/api/health/deep', function ($request, $response) use ($container) {
 // and worker processes (not just within a single PHP process).
 $rateLimiter = new \FormLogic\Services\RateLimiter($container->get(MySQLConnection::class)->getConnection());
 
-$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth');
+// Split from the old single shared 'auth' bucket: register/login and forgot/reset-password
+// used to share one 10/60s IP counter, so a user who fumbled login a few times could find
+// their password-reset attempt already throttled by budget login spent. Two independent
+// buckets (distinct keyPrefixes) fix that while keeping the same IP-keyed 10/60s strictness.
+$authRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_login');
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/register', [AuthController::class, 'register']);
     $group->post('/login', [AuthController::class, 'login']);
+})->add($authRateLimiter);
+
+$passwordResetRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_password_reset');
+$app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->post('/forgot-password', [AuthController::class, 'forgotPassword']);
     $group->post('/reset-password', [AuthController::class, 'resetPassword']);
-})->add($authRateLimiter);
+})->add($passwordResetRateLimiter);
 
 // Auth routes (protected)
 $app->group('/api/auth', function (RouteCollectorProxy $group) {
     $group->get('/me', [AuthController::class, 'me']);
-    $group->put('/me', [AuthController::class, 'updateProfile']);
     $group->get('/me/export', [AuthController::class, 'exportData']);
-    $group->delete('/me', [AuthController::class, 'deleteAccount']);
     $group->post('/logout', [AuthController::class, 'logout']);
 })->add($authRequired);
+
+// PUT/DELETE /me both re-verify the caller's real password via password_verify() with a
+// clean success/failure oracle - anyone holding a live session (stolen cookie, unattended
+// device, XSS that can fire authenticated fetches) could otherwise brute-force the real
+// password with zero throttling. Deliberately NOT applied to GET /me (hit on every page
+// load), GET /me/export, or POST /logout. Keyed by user (not IP) so an attacker holding one
+// stolen session can't bypass it by rotating IPs.
+$accountMutationRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'auth_me_mutation', true);
+$app->group('/api/auth', function (RouteCollectorProxy $group) {
+    $group->put('/me', [AuthController::class, 'updateProfile']);
+    $group->delete('/me', [AuthController::class, 'deleteAccount']);
+})->add($accountMutationRateLimiter)->add($authRequired);
 
 // Public no-signup demo: start a shared "Demo" session (mints a cookie, no password)
 // and list the demoable apps for the landing page. Rate-limited to deter abuse.

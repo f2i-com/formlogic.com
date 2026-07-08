@@ -395,6 +395,20 @@ class AuthController
                 // valid reset token at their own domain = account takeover).
                 $base = AppUrl::frontendBase($request) . '/reset-password';
                 $this->authService->requestPasswordReset($email, $base);
+            } catch (\RuntimeException $e) {
+                // The per-email rate limit is the ONE exception safe to surface distinctly:
+                // it only reveals "this email string was submitted too many times", a fact
+                // the caller already knows since they're the one submitting it — never
+                // whether an account exists. Every other error (including "no account",
+                // which never throws in the first place) falls through to the same generic
+                // 200 below, exactly as before.
+                if (str_contains($e->getMessage(), 'Too many password reset requests')) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'message' => $e->getMessage(),
+                    ], 429);
+                }
+                $this->logger->error('Password reset request error', ['exception' => $e->getMessage()]);
             } catch (\Throwable $e) {
                 $this->logger->error('Password reset request error', ['exception' => $e->getMessage()]);
             }

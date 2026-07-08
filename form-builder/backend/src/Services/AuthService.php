@@ -25,6 +25,14 @@ class AuthService
     public const MIN_PASSWORD_LENGTH = 10;
 
     /**
+     * Password-reset request cap, keyed per submitted email string. Deliberately a much
+     * longer window than login's 15-minute decay: legitimate reset requests are rare, and
+     * this exists to stop an attacker email-bombing one address, not to tolerate retries.
+     */
+    private const PASSWORD_RESET_MAX_ATTEMPTS = 4;
+    private const PASSWORD_RESET_DECAY_SECONDS = 3600; // 1 hour
+
+    /**
      * Validate password strength. Returns a human-readable error, or null if acceptable.
      * Used at both registration and password reset so the rules stay in one place.
      */
@@ -211,6 +219,15 @@ class AuthService
     private function getEmailRateLimitKey(string $email): string
     {
         return hash('sha256', 'email_only|' . strtolower($email));
+    }
+
+    /**
+     * Get rate limit key for per-email password-reset request limiting. A distinct
+     * namespace from getEmailRateLimitKey (login) so the two budgets never collide.
+     */
+    private function getPasswordResetRateLimitKey(string $email): string
+    {
+        return hash('sha256', 'password_reset_email|' . strtolower(trim($email)));
     }
 
     /**
@@ -465,6 +482,20 @@ class AuthService
      */
     public function requestPasswordReset(string $email, string $resetUrlBase): void
     {
+        // Per-email rate limit, checked BEFORE the existence lookup below and keyed on the
+        // raw submitted email string itself (never on whether an account was found). This
+        // way, hitting the limit only reveals "this email string has been submitted N times
+        // in the window" - a fact the caller already knows, since they are the one submitting
+        // it - and reveals nothing about whether an account exists behind it.
+        $resetKey = $this->getPasswordResetRateLimitKey($email);
+        $resetCount = $this->rateLimiter->hit($resetKey, self::PASSWORD_RESET_DECAY_SECONDS);
+        if ($resetCount > self::PASSWORD_RESET_MAX_ATTEMPTS) {
+            throw new \RuntimeException(
+                "Too many password reset requests for this email. Please try again in " .
+                ceil($this->rateLimiter->secondsUntilReset(self::PASSWORD_RESET_DECAY_SECONDS) / 60) . " minute(s)."
+            );
+        }
+
         $stmt = $this->mysql->prepare("SELECT id, name FROM users WHERE email = :email LIMIT 1");
         $stmt->execute(['email' => trim($email)]);
         $user = $stmt->fetch();
