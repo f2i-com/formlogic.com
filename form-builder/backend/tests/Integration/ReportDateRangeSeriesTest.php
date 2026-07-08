@@ -109,6 +109,65 @@ class ReportDateRangeSeriesTest extends TestCase
         $this->assertArrayNotHasKey('series', $noBucket, 'a non-date-bucketed groupBy adds no sparkline');
     }
 
+    public function testKpiSparklineKeepsMostRecent90BucketsAscending(): void
+    {
+        $form = 'sparklinerecency1';
+        $fields = [['id' => 'nm', 'type' => 'short_text', 'label' => 'Name']];
+        // 95 daily buckets; the sparkline trend is capped at 90 — it must keep the most RECENT 90
+        // buckets (chronologically ascending), not silently freeze on the oldest 90.
+        for ($i = 0; $i < 95; $i++) {
+            $this->insert($form, 'r' . $i, ['nm' => 'x'], gmdate('Y-m-d H:i:s', strtotime('-' . (94 - $i) . ' days')));
+        }
+        $spec = ['viz' => 'kpi', 'measure' => ['fn' => 'count'], 'sparkline' => true,
+            'groupBy' => ['field' => '__submitted_at', 'bucket' => 'day']];
+        $r = $this->service()->runReport($spec, $fields, $form, 'all', null);
+
+        $labels = array_column($r['series'], 'label');
+        $this->assertCount(90, $labels, 'sparkline trend is capped at 90 buckets');
+        $this->assertSame(gmdate('Y-m-d', strtotime('-89 days')), $labels[0], 'kept the most recent buckets, not the oldest');
+        $this->assertSame(gmdate('Y-m-d'), end($labels), 'today (the most recent bucket) is present');
+        $sorted = $labels;
+        sort($sorted);
+        $this->assertSame($sorted, $labels, 'buckets stay in ascending (oldest-to-newest) order');
+    }
+
+    public function testDateBucketSeriesKeepsMostRecentBucketsAscending(): void
+    {
+        $form = 'daybucketrecency1';
+        $fields = [['id' => 'nm', 'type' => 'short_text', 'label' => 'Name']];
+        // 55 daily buckets; the series cap is 50 — it must keep the most RECENT 50 buckets
+        // (ascending), not the oldest 50 (the bug this fix removed).
+        for ($i = 0; $i < 55; $i++) {
+            $this->insert($form, 'r' . $i, ['nm' => 'x'], gmdate('Y-m-d H:i:s', strtotime('-' . (54 - $i) . ' days')));
+        }
+        $spec = ['viz' => 'bar', 'groupBy' => ['field' => '__submitted_at', 'bucket' => 'day'], 'measure' => ['fn' => 'count']];
+        $r = $this->service()->runReport($spec, $fields, $form, 'all', null);
+
+        $labels = array_column($r['series'], 'label');
+        $this->assertCount(50, $labels, 'series is capped at 50 buckets');
+        $this->assertSame(gmdate('Y-m-d', strtotime('-49 days')), $labels[0], 'kept the most recent buckets, not the oldest');
+        $this->assertSame(gmdate('Y-m-d'), end($labels), 'today (the most recent bucket) is present');
+        $sorted = $labels;
+        sort($sorted);
+        $this->assertSame($sorted, $labels, 'buckets stay in ascending (oldest-to-newest) order');
+    }
+
+    public function testDateBucketUsesAppTimezoneNotUtc(): void
+    {
+        $form = 'tzbucket1';
+        $fields = [['id' => 'nm', 'type' => 'short_text', 'label' => 'Name']];
+        // 23:30 UTC on the 1st is 09:30 the NEXT day in UTC+10 — the bucket must follow the app
+        // timezone (matching how a same-field date filter is evaluated), not silently stay in UTC.
+        $this->insert($form, 'r1', ['nm' => 'x'], '2026-07-01 23:30:00');
+        $spec = ['viz' => 'bar', 'groupBy' => ['field' => '__submitted_at', 'bucket' => 'day'], 'measure' => ['fn' => 'count']];
+
+        $utc = $this->service()->runReport($spec, $fields, $form, 'all', null, [], 'UTC');
+        $this->assertSame('2026-07-01', $utc['series'][0]['label'], 'UTC app timezone: bucket stays on the 1st');
+
+        $plus10 = $this->service()->runReport($spec, $fields, $form, 'all', null, [], 'Etc/GMT-10');
+        $this->assertSame('2026-07-02', $plus10['series'][0]['label'], 'UTC+10 app timezone: bucket rolls to the 2nd');
+    }
+
     public function testDateRangeFieldUsesDateFieldOrFallsBackToSubmittedAt(): void
     {
         $form = 'rangeformfld1';
@@ -228,5 +287,44 @@ class ReportDateRangeSeriesTest extends TestCase
             ['label' => 'Alpha', 'value' => 9.0],
             ['label' => 'Beta', 'value' => 3.0],
         ], $r['series'], 'an unresolvable seriesBy ref never reaches SQL — legacy single-dim result');
+    }
+
+    public function testDateBucketSeriesByKeepsMostRecentLabelsAscending(): void
+    {
+        $form = 'daybucketpivot1';
+        $fields = [['id' => 'stat', 'type' => 'short_text', 'label' => 'Stat']];
+        // 55 daily buckets × 2 series values; the pivot's label cap is 50 dates — it must keep the
+        // most RECENT 50 dates (ascending), not the oldest 50 (the bug this fix removed one layer up
+        // from the SQL row cap, in pivotSeries()'s own PHP-side label truncation).
+        for ($i = 0; $i < 55; $i++) {
+            $ts = gmdate('Y-m-d H:i:s', strtotime('-' . (54 - $i) . ' days'));
+            $this->insert($form, 'ra' . $i, ['stat' => 's1'], $ts);
+            $this->insert($form, 'rb' . $i, ['stat' => 's2'], $ts);
+        }
+        $spec = [
+            'viz' => 'bar',
+            'groupBy' => ['field' => '__submitted_at', 'bucket' => 'day'],
+            'measure' => ['fn' => 'count'],
+            'seriesBy' => ['field' => 'stat', 'limit' => 5],
+        ];
+        $r = $this->service()->runReport($spec, $fields, $form, 'all', null);
+
+        $labels = [];
+        foreach ($r['series'] as $row) {
+            if (!in_array($row['label'], $labels, true)) { $labels[] = $row['label']; }
+        }
+        $this->assertCount(50, $labels, 'pivot label set is capped at 50 dates');
+        $this->assertSame(gmdate('Y-m-d', strtotime('-49 days')), $labels[0], 'kept the most recent dates, not the oldest');
+        $this->assertSame(gmdate('Y-m-d'), end($labels), 'today (the most recent date) is present');
+        $sorted = $labels;
+        sort($sorted);
+        $this->assertSame($sorted, $labels, 'dates stay in ascending (oldest-to-newest) order');
+
+        // Both series survive on the most-recent kept date — the recency cap and the earlier series
+        // (top-N-by-value) cap are independent axes.
+        $today = gmdate('Y-m-d');
+        $todaySeries = array_column(array_filter($r['series'], fn ($row) => $row['label'] === $today), 'series');
+        sort($todaySeries);
+        $this->assertSame(['s1', 's2'], $todaySeries);
     }
 }

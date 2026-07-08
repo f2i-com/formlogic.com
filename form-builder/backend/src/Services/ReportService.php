@@ -288,15 +288,21 @@ class ReportService
                     $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
                     if ($gcol !== null && in_array($bucket, ['day', 'month', 'year'], true)) {
                         $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
+                        // Bucket boundaries in the app timezone (same $localExpr as the filters above), so
+                        // a day/month/year bucket agrees with a same-field date filter near a boundary.
+                        $gIsDate = in_array($refField($gref)['type'] ?? '', self::DATE_TYPES, true) || $gref === '__submitted_at';
+                        $gVal = $gIsDate ? $localExpr('ge.value') : 'ge.value';
                         $key = match ($bucket) {
-                            'month' => "strftime('%Y-%m', ge.value)",
-                            'year'  => "strftime('%Y', ge.value)",
-                            default => 'date(ge.value)',
+                            'month' => "strftime('%Y-%m', $gVal)",
+                            'year'  => "strftime('%Y', $gVal)",
+                            default => "date($gVal)",
                         };
-                        $sq = $db->prepare(
-                            "SELECT $key AS k, " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS v
-                             FROM $from, json_each($normArr) ge WHERE $whereSql GROUP BY k ORDER BY k ASC LIMIT 90"
-                        );
+                        // Take the MOST RECENT 90 buckets (ORDER BY k DESC), then re-ascend so the sparkline
+                        // still reads oldest→newest — a plain ASC LIMIT would freeze on the OLDEST buckets
+                        // once a form has more than 90 buckets of history (same fix as the chart-series path).
+                        $sparkInner = "SELECT $key AS k, " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS v
+                             FROM $from, json_each($normArr) ge WHERE $whereSql GROUP BY k";
+                        $sq = $db->prepare("SELECT k, v FROM ($sparkInner ORDER BY k DESC LIMIT 90) sub ORDER BY k ASC");
                         $sq->execute($params);
                         $trend = [];
                         foreach ($sq->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -316,13 +322,18 @@ class ReportService
                 if ($gcol === null) { return ['viz' => $viz, 'series' => []]; }
                 $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
                 if (!in_array($bucket, self::BUCKETS, true)) { $bucket = 'none'; }
+                $isDateBucket = $bucket !== 'none';
                 // Normalise to a JSON array so multi-select answers group per-option and scalars stay 1:1.
                 $normArr = "CASE WHEN json_valid($gcol) AND json_type($gcol) = 'array' THEN $gcol ELSE json_array($gcol) END";
                 $groupFrom = "$from, json_each($normArr) ge";
+                // Bucket boundaries in the app timezone (same $localExpr as the filters above), so a
+                // day/month/year bucket agrees with a same-field date filter near a boundary.
+                $gIsDate = in_array($refField($gref)['type'] ?? '', self::DATE_TYPES, true) || $gref === '__submitted_at';
+                $gVal = $gIsDate ? $localExpr('ge.value') : 'ge.value';
                 $key = match ($bucket) {
-                    'month' => "strftime('%Y-%m', ge.value)",
-                    'year'  => "strftime('%Y', ge.value)",
-                    'day'   => "date(ge.value)",
+                    'month' => "strftime('%Y-%m', $gVal)",
+                    'year'  => "strftime('%Y', $gVal)",
+                    'day'   => "date($gVal)",
                     default => 'ge.value',
                 };
                 $agg = $aggExpr($spec['measure'] ?? ['fn' => 'count']);
@@ -342,7 +353,14 @@ class ReportService
                         $havingSql = " HAVING $agg " . self::OPS[$spec['having']['op']] . " CAST(:hv AS REAL)";
                         $params[':hv'] = (string) ($spec['having']['value'] ?? 0);
                     }
-                    $stmt = $db->prepare("SELECT $key AS k, se.value AS s, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k, s$havingSql ORDER BY k ASC LIMIT :lim");
+                    $pivotInner = "SELECT $key AS k, se.value AS s, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k, s$havingSql";
+                    // Date buckets: take the MOST RECENT :lim cells (ORDER BY k DESC), then re-ascend so the
+                    // pivot still sees chronological order — a plain ASC LIMIT would keep the OLDEST cells
+                    // once a report has more history than MAX_PIVOT_CELLS.
+                    $pivotSql = $isDateBucket
+                        ? "SELECT k, s, v FROM ($pivotInner ORDER BY k DESC LIMIT :lim) sub ORDER BY k ASC"
+                        : "$pivotInner ORDER BY k ASC LIMIT :lim";
+                    $stmt = $db->prepare($pivotSql);
                     foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
                     $stmt->bindValue(':lim', self::MAX_PIVOT_CELLS, PDO::PARAM_INT);
                     $stmt->execute();
@@ -352,14 +370,15 @@ class ReportService
                         $refField($sbRef),
                         (int) ($spec['seriesBy']['limit'] ?? 5),
                         min($limit, 50),
-                        $bucket !== 'none' || (($spec['seriesSort'] ?? '') === 'label'),
-                        ($spec['sort'] ?? 'desc') === 'asc'
+                        $isDateBucket || (($spec['seriesSort'] ?? '') === 'label'),
+                        ($spec['sort'] ?? 'desc') === 'asc',
+                        $isDateBucket
                     )];
                 }
 
                 // Chronological order for date buckets; else by label if asked, else by value.
                 $seriesSort = (string) ($spec['seriesSort'] ?? '');
-                if ($bucket !== 'none' || $seriesSort === 'label') {
+                if ($isDateBucket || $seriesSort === 'label') {
                     $orderBy = 'k ASC';
                 } else {
                     $dir = (($spec['sort'] ?? 'desc') === 'asc') ? 'ASC' : 'DESC';
@@ -371,7 +390,15 @@ class ReportService
                     $havingSql = " HAVING $agg " . self::OPS[$spec['having']['op']] . " CAST($hp AS REAL)";
                     $params[$hp] = (string) ($spec['having']['value'] ?? 0);
                 }
-                $stmt = $db->prepare("SELECT $key AS k, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k$havingSql ORDER BY $orderBy LIMIT :lim");
+                $seriesInner = "SELECT $key AS k, $agg AS v FROM $groupFrom WHERE $whereSql GROUP BY k$havingSql";
+                // Date buckets: take the MOST RECENT :lim buckets (ORDER BY k DESC), then re-ascend so the
+                // chart still reads oldest→newest left-to-right — a plain ASC LIMIT would freeze on the
+                // OLDEST buckets once a report has more history than the row cap (the non-date "rank by
+                // value" branch above is untouched: it already means the top-N values, not recency).
+                $seriesSql = $isDateBucket
+                    ? "SELECT k, v FROM ($seriesInner ORDER BY k DESC LIMIT :lim) sub ORDER BY k ASC"
+                    : "$seriesInner ORDER BY $orderBy LIMIT :lim";
+                $stmt = $db->prepare($seriesSql);
                 foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
                 $stmt->bindValue(':lim', min($limit, 50), PDO::PARAM_INT);
                 $stmt->execute();
@@ -409,7 +436,7 @@ class ReportService
                     $orderSql = "$sortExpr $sdir";
                 }
             }
-            $stmt = $db->prepare("SELECT $selectSql, r.submitted_at AS _sa FROM $from WHERE $whereSql ORDER BY $orderSql LIMIT :lim");
+            $stmt = $db->prepare("SELECT $selectSql FROM $from WHERE $whereSql ORDER BY $orderSql LIMIT :lim");
             foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
             $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
             $stmt->execute();
@@ -468,13 +495,17 @@ class ReportService
      * value, buckets the remainder into a literal 'Other', caps distinct labels, and maps stored values
      * to option labels. Rows arrive ORDER BY k ASC, so insertion order IS chronological/label order.
      *
-     * @param array  $rows        [['k' =>, 's' =>, 'v' =>], …] from the two-dim aggregation
-     * @param ?array $gfield      groupBy field definition (option-label mapping)
-     * @param ?array $sfield      seriesBy field definition
-     * @param bool   $byLabel     true = keep chronological/label order; false = order labels by total value
-     * @param bool   $asc         value-order direction when !$byLabel
+     * @param array  $rows          [['k' =>, 's' =>, 'v' =>], …] from the two-dim aggregation
+     * @param ?array $gfield        groupBy field definition (option-label mapping)
+     * @param ?array $sfield        seriesBy field definition
+     * @param bool   $byLabel       true = keep chronological/label order; false = order labels by total value
+     * @param bool   $asc           value-order direction when !$byLabel
+     * @param bool   $chronological true when $byLabel is chronological (a date bucket): the caller already
+     *   SQL-capped the rows to the most RECENT cells, so the most-recent $labelLimit labels are the TAIL of
+     *   the (ascending) list, not the head — unlike plain label-sort (e.g. alphabetical), which has no
+     *   "recency" and keeps the existing head-slice behaviour.
      */
-    private function pivotSeries(array $rows, ?array $gfield, ?array $sfield, int $seriesLimit, int $labelLimit, bool $byLabel, bool $asc): array
+    private function pivotSeries(array $rows, ?array $gfield, ?array $sfield, int $seriesLimit, int $labelLimit, bool $byLabel, bool $asc, bool $chronological = false): array
     {
         $seriesLimit = max(2, min($seriesLimit, 8));
         $cells = [];         // raw label key => raw series key => summed value
@@ -491,7 +522,9 @@ class ReportService
         if (!$byLabel) {
             $asc ? asort($labelTotals) : arsort($labelTotals);
         }
-        $labels = array_slice(array_keys($labelTotals), 0, $labelLimit);
+        $labels = $chronological
+            ? array_slice(array_keys($labelTotals), -$labelLimit)
+            : array_slice(array_keys($labelTotals), 0, $labelLimit);
         arsort($seriesTotals);
         $kept = array_slice(array_keys($seriesTotals), 0, $seriesLimit);
 
