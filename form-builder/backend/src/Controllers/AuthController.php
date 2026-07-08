@@ -63,15 +63,19 @@ class AuthController
     public function register(Request $request, Response $response): Response
     {
         $data = $request->getParsedBody();
+        // Trim as early as possible so a pasted trailing space/newline can't produce a
+        // stored email that silently mismatches the trimmed value login() looks up
+        // (requestPasswordReset already trims for the same reason).
+        $email = trim((string) ($data['email'] ?? ''));
 
-        if (empty($data['email']) || empty($data['password'])) {
+        if ($email === '' || empty($data['password'])) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Email and password are required',
             ], 400);
         }
 
-        if (!filter_var($data['email'], FILTER_VALIDATE_EMAIL)) {
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Invalid email format',
@@ -87,7 +91,7 @@ class AuthController
 
         try {
             $result = $this->authService->register(
-                $data['email'],
+                $email,
                 $data['password'],
                 $data['name'] ?? null
             );
@@ -123,8 +127,13 @@ class AuthController
     public function login(Request $request, Response $response): Response
     {
         $data = $request->getParsedBody();
+        // Trim as early as possible: a pasted trailing space/newline would otherwise flow into
+        // the rate-limit key and the `WHERE email = :email` lookup as a distinct string, making
+        // a legitimate login fail (and burn a rate-limit attempt) for a whitespace difference
+        // register()/requestPasswordReset() already tolerate.
+        $email = trim((string) ($data['email'] ?? ''));
 
-        if (empty($data['email']) || empty($data['password'])) {
+        if ($email === '' || empty($data['password'])) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Email and password are required',
@@ -135,7 +144,7 @@ class AuthController
         $ipAddress = $this->getClientIp($request);
 
         try {
-            $result = $this->authService->login($data['email'], $data['password'], $ipAddress);
+            $result = $this->authService->login($email, $data['password'], $ipAddress);
 
             // Set HttpOnly cookie with the token
             $response = $this->setAuthCookie($response, $result['token']);

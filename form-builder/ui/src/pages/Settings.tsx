@@ -32,13 +32,13 @@ import {
   Trash2,
   Plus,
   AlertTriangle,
-  AlertCircle,
   Download,
 } from 'lucide-react';
 import { useUIStore, type ThemeColor } from '../stores/uiStore';
 import { api } from '../lib/api';
 import type { AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection } from '../lib/api';
 import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
+import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
 // Local preferences stored in localStorage
 interface UserPreferences {
@@ -65,16 +65,6 @@ function getStoredPreferences(): UserPreferences {
 
 function savePreferences(prefs: UserPreferences): void {
   localStorage.setItem('formlogic_user_preferences', JSON.stringify(prefs));
-}
-
-// Inline error banner matching the auth pages' alert pattern
-function ErrorBanner({ message }: { message: string }) {
-  return (
-    <div role="alert" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20">
-      <AlertCircle className="h-4 w-4 flex-shrink-0" />
-      <span>{message}</span>
-    </div>
-  );
 }
 
 // In-page anchor rail sections (order mirrors the cards below)
@@ -150,7 +140,6 @@ export function Settings() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordError, setPasswordError] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   // Dedicated flag for the profile save so it doesn't share the global auth
   // `isLoading` with the password change (which spun/disabled the unrelated
@@ -200,6 +189,11 @@ export function Settings() {
 
   const emailChanged = email.trim().toLowerCase() !== (user?.email || '').toLowerCase();
 
+  // Client-side validation for the Change Password button below — surfaced as a disabled
+  // button rather than only after the user clicks Submit and gets a server error.
+  const newPasswordError = newPassword ? getPasswordError(newPassword) : null;
+  const confirmPasswordMismatch = confirmPassword !== '' && newPassword !== confirmPassword;
+
   const handleSaveProfile = async () => {
     // Changing the email requires the current password (the backend rejects it
     // otherwise). Surface that requirement instead of letting the save fail.
@@ -231,18 +225,16 @@ export function Settings() {
   };
 
   const handleChangePassword = async () => {
-    setPasswordError('');
-
     if (!currentPassword) {
-      setPasswordError('Current password is required');
+      toast.error('Current Password Required', 'Enter your current password.');
       return;
     }
-    if (newPassword.length < 10) {
-      setPasswordError('New password must be at least 10 characters');
+    if (newPasswordError) {
+      toast.error('Invalid Password', newPasswordError);
       return;
     }
-    if (newPassword !== confirmPassword) {
-      setPasswordError('Passwords do not match');
+    if (confirmPasswordMismatch) {
+      toast.error('Passwords Do Not Match', 'The new password and confirmation must match.');
       return;
     }
 
@@ -256,7 +248,7 @@ export function Settings() {
       setNewPassword('');
       setConfirmPassword('');
     } else {
-      setPasswordError(result.error || 'Failed to change password');
+      toast.error('Failed to Change Password', result.error || 'Failed to change password');
     }
   };
 
@@ -264,7 +256,6 @@ export function Settings() {
   const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const handleExportData = async () => {
     setIsExportingData(true);
@@ -278,13 +269,12 @@ export function Settings() {
   };
 
   const handleDeleteAccount = async () => {
-    if (!deletePassword) { setDeleteError('Enter your password to confirm.'); return; }
+    if (!deletePassword) { toast.error('Password Required', 'Enter your password to confirm.'); return; }
     setIsDeletingAccount(true);
-    setDeleteError(null);
     const result = await api.deleteAccount(deletePassword);
     if (result.error) {
       setIsDeletingAccount(false);
-      setDeleteError(result.error);
+      toast.error('Failed to Delete Account', result.error);
       return;
     }
     // Account gone — hard-redirect home to clear all client state.
@@ -330,26 +320,42 @@ export function Settings() {
     loadApiKeys();
   }, []);
 
-  const loadDesktopConnections = async () => {
-    setIsLoadingDesktops(true);
-    setDesktopLoadError(null);
+  // `silent`: used by the background poll below so a periodic refresh doesn't blank the
+  // already-rendered list behind a loading spinner (or an error state) — same convention
+  // as FormResponses' reloadResponses/isRefreshing split. The mount-time call still shows
+  // the spinner since there's nothing on screen yet.
+  const loadDesktopConnections = async (silent = false) => {
+    if (!silent) {
+      setIsLoadingDesktops(true);
+      setDesktopLoadError(null);
+    }
     try {
       const result = await api.getDesktopConnections();
       if (result.data) {
         setDesktopConnections(result.data.connections);
-      } else {
+        if (silent) setDesktopLoadError(null);
+      } else if (!silent) {
         setDesktopLoadError(typeof result.error === 'string' ? result.error : 'Could not load linked desktops');
       }
+      // Silent failures keep whatever is currently on screen rather than replacing it
+      // with an error state on a transient background hiccup.
     } catch {
-      setDesktopLoadError('Could not load linked desktops');
+      if (!silent) setDesktopLoadError('Could not load linked desktops');
     } finally {
-      setIsLoadingDesktops(false);
+      if (!silent) setIsLoadingDesktops(false);
     }
   };
 
-  // Load linked desktops on mount
+  // Load linked desktops on mount, then keep polling while this tab is visible so the
+  // "Online now" badge (derived from a freshness window) reflects a desktop that
+  // disconnects while Settings stays open, instead of only refreshing on next visit.
   useEffect(() => {
     loadDesktopConnections();
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      loadDesktopConnections(true);
+    }, 45_000);
+    return () => clearInterval(timer);
   }, []);
 
   const handleCreateApiKey = async () => {
@@ -478,6 +484,7 @@ export function Settings() {
                 placeholder="Your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                disabled={isSavingProfile}
               />
               <Input
                 label="Email"
@@ -485,6 +492,7 @@ export function Settings() {
                 placeholder="your@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={isSavingProfile}
               />
               {emailChanged && (
                 <PasswordInput
@@ -493,6 +501,7 @@ export function Settings() {
                   value={profilePassword}
                   onChange={(e) => setProfilePassword(e.target.value)}
                   autoComplete="current-password"
+                  disabled={isSavingProfile}
                 />
               )}
               <div className="pt-2">
@@ -656,28 +665,32 @@ export function Settings() {
                 label="Current Password"
                 placeholder="Enter current password"
                 value={currentPassword}
-                onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); }}
+                onChange={(e) => setCurrentPassword(e.target.value)}
                 autoComplete="current-password"
+                disabled={isChangingPassword}
               />
               <PasswordInput
                 label="New Password"
                 placeholder="Enter new password (min 10 characters)"
                 value={newPassword}
-                onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); }}
+                onChange={(e) => setNewPassword(e.target.value)}
                 autoComplete="new-password"
+                error={newPassword ? newPasswordError || undefined : undefined}
+                disabled={isChangingPassword}
               />
               <PasswordInput
                 label="Confirm New Password"
                 placeholder="Confirm new password"
                 value={confirmPassword}
-                onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); }}
+                onChange={(e) => setConfirmPassword(e.target.value)}
                 autoComplete="new-password"
+                error={confirmPasswordMismatch ? 'Passwords do not match' : undefined}
+                disabled={isChangingPassword}
               />
-              {passwordError && <ErrorBanner message={passwordError} />}
               <div className="pt-2">
                 <Button
                   onClick={handleChangePassword}
-                  disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword}
+                  disabled={!currentPassword || !newPassword || !confirmPassword || isChangingPassword || !!newPasswordError || confirmPasswordMismatch}
                   isLoading={isChangingPassword}
                 >
                   Change Password
@@ -853,7 +866,7 @@ export function Settings() {
                         </div>
                         <p className="text-xs text-gray-400 dark:text-slate-500 mt-1">
                           {key.lastUsedAt
-                            ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}`
+                            ? `Last used ${parseServerDate(key.lastUsedAt).toLocaleDateString()}${key.lastUsedIp ? ` from ${key.lastUsedIp}` : ''}`
                             : 'Never used'}
                           {' · '}Created {parseServerDate(key.createdAt).toLocaleDateString()}
                           {' · '}{key.expiresAt
@@ -897,7 +910,7 @@ export function Settings() {
               ) : desktopLoadError ? (
                 <div className="py-6 text-center text-sm">
                   <p className="text-gray-600 dark:text-slate-300">{desktopLoadError}</p>
-                  <button type="button" onClick={loadDesktopConnections} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
+                  <button type="button" onClick={() => loadDesktopConnections()} className="mt-2 text-primary-600 dark:text-primary-400 hover:underline cursor-pointer">Try again</button>
                 </div>
               ) : desktopConnections.length === 0 ? (
                 <EmptyState
@@ -1064,7 +1077,7 @@ export function Settings() {
                   <p className="font-medium text-gray-900 dark:text-white">Delete account</p>
                   <p className="text-sm text-gray-500 dark:text-slate-400">Permanently deletes your account, forms, and responses. This can't be undone.</p>
                 </div>
-                <Button variant="danger" onClick={() => { setDeleteAccountOpen(true); setDeletePassword(''); setDeleteError(null); }} leftIcon={<Trash2 className="h-4 w-4" />}>
+                <Button variant="danger" onClick={() => { setDeleteAccountOpen(true); setDeletePassword(''); }} leftIcon={<Trash2 className="h-4 w-4" />}>
                   Delete account
                 </Button>
               </div>
@@ -1103,8 +1116,8 @@ export function Settings() {
             onChange={(e) => setDeletePassword(e.target.value)}
             placeholder="Your current password"
             autoComplete="current-password"
+            disabled={isDeletingAccount}
           />
-          {deleteError && <ErrorBanner message={deleteError} />}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="ghost" onClick={() => setDeleteAccountOpen(false)} disabled={isDeletingAccount}>Cancel</Button>
             <Button variant="danger" onClick={handleDeleteAccount} isLoading={isDeletingAccount} disabled={!deletePassword}>Delete my account</Button>

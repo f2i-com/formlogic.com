@@ -222,6 +222,7 @@ class ApiKeyService
                 'scopes' => json_decode($row['scopes'], true) ?: [],
                 'formIds' => $row['form_ids'] !== null ? (json_decode($row['form_ids'], true) ?: []) : null,
                 'lastUsedAt' => $row['last_used_at'],
+                'lastUsedIp' => $row['last_used_ip'],
                 'expiresAt' => $row['expires_at'],
                 'createdAt' => $row['created_at'],
             ];

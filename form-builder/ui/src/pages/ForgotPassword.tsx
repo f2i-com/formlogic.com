@@ -4,23 +4,33 @@ import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Logo } from '../components/ui/Logo';
-import { Mail, CheckCircle2 } from 'lucide-react';
+import { Mail, CheckCircle2, AlertCircle } from 'lucide-react';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { emailConfigured, supportEmail } = usePublicConfig();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
     setSubmitting(true);
-    // The endpoint always responds success (no account enumeration), so we show
-    // the same confirmation regardless of whether the email exists.
-    await api.requestPasswordReset(email).catch(() => {});
+    setError(null);
+    // The endpoint always responds success (no account enumeration), so a normal 2xx
+    // shows the same confirmation regardless of whether the email exists. A network
+    // failure or non-2xx (e.g. rate limited, 5xx) is a distinct transport/status-level
+    // failure — it doesn't depend on whether the email exists, so surfacing it doesn't
+    // reintroduce enumeration risk. Without this branch the user was told "check your
+    // email" even when nothing was ever sent.
+    const result = await api.requestPasswordReset(email);
     setSubmitting(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
     setSent(true);
   };
 
@@ -82,6 +92,12 @@ export function ForgotPassword() {
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">Forgot password?</h1>
               <p className="text-gray-500 dark:text-slate-400 mb-6 text-sm">Enter your email and we'll send you a reset link.</p>
               <form onSubmit={handleSubmit} className="space-y-4">
+                {error && (
+                  <div role="alert" className="flex items-center gap-2.5 p-3.5 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200/80 dark:border-red-500/20">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
                 <Input
                   label="Email"
                   type="email"
@@ -90,6 +106,7 @@ export function ForgotPassword() {
                   placeholder="you@company.com"
                   leftIcon={<Mail className="h-4 w-4" />}
                   autoComplete="username"
+                  disabled={submitting}
                   required
                 />
                 <Button type="submit" className="w-full" size="lg" isLoading={submitting}>Send reset link</Button>

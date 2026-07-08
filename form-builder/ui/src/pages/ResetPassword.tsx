@@ -83,6 +83,7 @@ export function ResetPassword() {
                   placeholder="At least 10 characters"
                   leftIcon={<Lock className="h-4 w-4" />}
                   autoComplete="new-password"
+                  disabled={submitting}
                   required
                 />
                 <PasswordInput
@@ -93,6 +94,7 @@ export function ResetPassword() {
                   leftIcon={<Lock className="h-4 w-4" />}
                   autoComplete="new-password"
                   error={confirm && password !== confirm ? 'Passwords do not match' : undefined}
+                  disabled={submitting}
                   required
                 />
                 <Button type="submit" className="w-full" size="lg" isLoading={submitting}>Reset password</Button>

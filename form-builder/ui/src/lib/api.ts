@@ -2555,6 +2555,7 @@ interface ApiKey {
   scopes: string[];
   formIds: string[] | null;
   lastUsedAt: string | null;
+  lastUsedIp?: string | null;
   expiresAt: string | null;
   createdAt: string;
 }

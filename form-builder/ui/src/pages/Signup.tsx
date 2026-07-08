@@ -7,6 +7,7 @@ import { PasswordInput } from '../components/ui/PasswordInput';
 import { Logo, LogoWhite } from '../components/ui/Logo';
 import { Mail, Lock, User, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { useBetaMode } from '../hooks/useBetaMode';
+import { passwordError as getPasswordError } from '../lib/passwordPolicy';
 
 export function Signup() {
   const [email, setEmail] = useState('');
@@ -52,8 +53,9 @@ export function Signup() {
       return;
     }
 
-    if (password.length < 10) {
-      setLocalError('Password must be at least 10 characters');
+    const pwError = getPasswordError(password);
+    if (pwError) {
+      setLocalError(pwError);
       return;
     }
 
