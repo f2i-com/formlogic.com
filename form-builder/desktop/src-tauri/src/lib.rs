@@ -1213,6 +1213,10 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None::<Vec<&str>>,
+        ))
         .invoke_handler(tauri::generate_handler![
             open_path,
             open_url,
@@ -1368,6 +1372,17 @@ pub fn run() {
             {
                 let ph = plugin_host.clone();
                 tauri::async_runtime::spawn(async move { ph.autostart_installed(); });
+            }
+            // Launch FormLogic Desktop on login (one-time default-on so the flow runtime + connector
+            // relay are always available for remote/web-driven control; the user can turn it off in
+            // the OS startup settings). enable() is idempotent; we set it once so a later disable sticks.
+            if read_config_str(app.handle(), "autostartInitialized").is_none() {
+                use tauri_plugin_autostart::ManagerExt;
+                match app.autolaunch().enable() {
+                    Ok(()) => log::info!("autostart: enabled (launch on login)"),
+                    Err(e) => log::warn!("autostart: could not enable: {e}"),
+                }
+                let _ = write_config_str(app.handle(), "autostartInitialized", Some("1"));
             }
 
             // OAuth "Link account" machine (device-link, docs/MCP.md). One

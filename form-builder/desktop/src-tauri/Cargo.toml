@@ -23,6 +23,7 @@ gui = [
     "dep:tauri-plugin-shell",
     "dep:tauri-plugin-dialog",
     "dep:tauri-plugin-notification",
+    "dep:tauri-plugin-autostart",
     "dep:tauri-build",
 ]
 
@@ -55,6 +56,9 @@ tauri-plugin-dialog = { version = "2.0", optional = true }
 # Native OS notifications so a download/install finishing reaches the user
 # even when the companion window is hidden to the tray.
 tauri-plugin-notification = { version = "2.0", optional = true }
+# Launch FormLogic Desktop on login so the flow runtime + connector relay are
+# always available for remote/web-driven control (registry Run key on Windows).
+tauri-plugin-autostart = { version = "2.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
