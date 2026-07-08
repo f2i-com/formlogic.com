@@ -1286,8 +1286,15 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
         </li>
         <li style="margin-bottom:10px;">
           <strong>Desktop command relay cleanup</strong> — nightly prune of completed/expired
-          desktop-command relay rows older than 7 days:<br>
+          desktop-command relay rows older than 7 days (also promptly expires any command a desktop
+          claimed but crashed/lost connectivity before completing):<br>
           <code>23 3 * * * php <?= $backendAbsHtml ?>/bin/desktop-commands-cleanup.php &gt;&gt; /var/log/formlogic-desktop-commands.log 2&gt;&amp;1</code>
+        </li>
+        <li style="margin-bottom:10px;">
+          <strong>Stuck flow-run reclaim</strong> — every 5 minutes, reverts any flow run left at
+          'running' for more than 10 minutes (the claiming FormLogic Desktop/browser runtime crashed
+          or lost connectivity) to 'error' so anything waiting on it can retry:<br>
+          <code>0-59/5 * * * * php <?= $backendAbsHtml ?>/bin/flow-runs-reclaim.php &gt;&gt; /var/log/formlogic-flow-runs-reclaim.log 2&gt;&amp;1</code>
         </li>
         <li>
           <strong>Data drift report</strong> — weekly read-only consistency check between MySQL and the

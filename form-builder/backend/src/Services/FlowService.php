@@ -39,6 +39,8 @@ class FlowService
     public const RUN_ACTIVE_STATUSES = ['queued', 'running'];
     public const RUN_TERMINAL_STATUSES = ['done', 'error', 'timeout', 'cancelled'];
     public const RUN_ERROR_CODES = ['node_failed', 'timeout', 'cancelled', 'capability_denied', 'invalid_flow', 'runner_unavailable'];
+    /** reclaimStuckRuns() default staleness threshold — see that method's docblock for the reasoning. */
+    public const STUCK_RUN_DEFAULT_MAX_AGE_SECONDS = 600;
 
     /** Runtimes that may claim a queued run (queued→running exactly once). */
     public const RUNTIMES = ['browser', 'desktop'];
@@ -1408,6 +1410,76 @@ class FlowService
             throw new \RuntimeException('already_claimed');
         }
         return $this->getOwnerRun($ownerUserId, $runId);
+    }
+
+    /**
+     * Reclaim flow_run_logs rows stuck at 'running' past $maxAgeSeconds (bin/flow-runs-reclaim.php,
+     * run from cron — see that file's docblock for scheduling). Once claimRun()/claimOwnerRun()
+     * (queued→running) or a direct reserveRun()/reserveOwnerRun() (queued:false, straight into
+     * running) transitions a row to 'running', NOTHING else in this class ever revisits it: if the
+     * claiming runtime (FormLogic Desktop or a browser tab) crashes, loses power, or loses
+     * connectivity before calling completeRun()/completeOwnerRun(), the row — and anything gated on
+     * its completion — is stuck at 'running' forever with no automatic retry path.
+     *
+     * No new column was needed to detect this: started_at is ALREADY stamped to NOW() at the exact
+     * moment a row becomes 'running', both at direct-reserve time (reserveRun/reserveOwnerRun, see
+     * the INSERT's `started` value) and at claim time (claimRun/claimOwnerRun's `SET ... started_at
+     * = NOW()`). It already IS the "when did this run start executing" timestamp a staleness sweep
+     * needs.
+     *
+     * Default threshold 600s (10 min): a flow binding's own timeoutMs caps at TIMEOUT_MAX_MS
+     * (300000ms / 5 min) — a single per-RUN wall-clock budget the Rust desktop runner enforces as one
+     * shrinking deadline shared across every node in the run (see flows/runner.rs: one `Instant`-based
+     * deadline computed once, each node's execution wrapped in `tokio::time::timeout(remaining, …)`
+     * against that same shrinking budget), NOT a per-node allowance that stacks. So the true
+     * worst-case legitimate run duration is 300s; 600s gives a full 2x margin over that ceiling —
+     * real flows normally finish in well under a minute. 600s is also the EXACT threshold this
+     * codebase already uses elsewhere for "this reservation is abandoned, not just slow" (see
+     * ResponseController/AppPublicController's `idempotency_key` takeover: `created_at < NOW() -
+     * INTERVAL 600 SECOND`), so this sweep is consistent with an existing convention rather than
+     * inventing a new one.
+     *
+     * Never touches a 'queued' row (started_at is NULL until claimed — a stuck queue is a capacity
+     * problem visible via listQueuedRuns()/listOwnerQueuedRuns(), not a crash) or a 'running' row
+     * younger than the threshold (still genuinely in flight). Batched (like
+     * bin/desktop-commands-cleanup.php's DELETE loop) so a large stuck backlog — e.g. after an
+     * infra outage that took out every claiming instance at once — never holds one long table lock.
+     *
+     * @return int rows reclaimed, or (when $dryRun) rows that WOULD be reclaimed
+     */
+    public function reclaimStuckRuns(int $maxAgeSeconds = self::STUCK_RUN_DEFAULT_MAX_AGE_SECONDS, bool $dryRun = false): int
+    {
+        $maxAgeSeconds = max(1, $maxAgeSeconds);
+        $cutoffExpr = "(NOW() - INTERVAL {$maxAgeSeconds} SECOND)"; // sanitized int, safe to interpolate (mirrors listQueuedRuns' LIMIT)
+
+        if ($dryRun) {
+            $stmt = $this->mysql->query("
+                SELECT COUNT(*) FROM flow_run_logs
+                WHERE status = 'running' AND started_at IS NOT NULL AND started_at < {$cutoffExpr}
+            ");
+            return (int) $stmt->fetchColumn();
+        }
+
+        $errorJson = json_encode([
+            'code' => 'runner_unavailable',
+            'message' => 'Run exceeded its execution window and was never completed — the claiming instance likely crashed or lost connectivity.',
+        ]);
+
+        $batch = 5000;
+        $total = 0;
+        do {
+            $stmt = $this->mysql->prepare("
+                UPDATE flow_run_logs
+                SET status = 'error', error_json = :error, finished_at = NOW()
+                WHERE status = 'running' AND started_at IS NOT NULL AND started_at < {$cutoffExpr}
+                LIMIT {$batch}
+            ");
+            $stmt->execute(['error' => $errorJson]);
+            $affected = $stmt->rowCount();
+            $total += $affected;
+        } while ($affected === $batch);
+
+        return $total;
     }
 
     /** @return array{0: string, 1: ?string} [runtime, claimedBy] @throws \InvalidArgumentException */

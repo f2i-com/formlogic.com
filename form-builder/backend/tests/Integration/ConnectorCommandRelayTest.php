@@ -21,7 +21,11 @@ use Slim\Psr7\Factory\ServerRequestFactory;
  * Remote command relay: a web member enqueues a connector command (member + connector.<id>.<command>
  * grant gated) for the owner's paired desktop runtime, which long-polls, claims (pending→claimed
  * exactly-once) and completes it. Covers the permission gate, reserve-first idempotency, claim
- * exactly-once, complete transitions, and pending-expiry. Skipped without a test database.
+ * exactly-once, complete transitions, pending-expiry, and — the crashed-desktop reclaim gap fixed
+ * alongside FlowService::reclaimStuckRuns() — a 'claimed' row past CLAIMED_STALE_SECONDS since its
+ * own claimed_at being reaped by expireStale() (owner-scoped AND the cron's global sweep), while a
+ * still-live claimed row is left untouched EVEN when its creation-anchored expires_at has already
+ * passed (the exact case the fix corrects). Skipped without a test database.
  */
 class ConnectorCommandRelayTest extends TestCase
 {
@@ -355,6 +359,78 @@ class ConnectorCommandRelayTest extends TestCase
 
         // It can no longer be claimed, and its status is expired.
         $this->assertSame(409, $this->claim($id)['status']);
+        $this->assertSame('expired', $this->read($this->ownerId, $id)['body']['command']['status']);
+    }
+
+    // ── claimed-row reclaim (the desktop crashed/lost connectivity mid-command) ──
+
+    public function testClaimedCommandPastClaimedAtThresholdIsReapedByExpireStale(): void
+    {
+        $enq = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
+        $id = $enq['body']['commandId'];
+        $this->assertSame(200, $this->claim($id, ['instanceId' => 'desk-1'])['status']);
+        $this->assertSame('claimed', $this->read($this->ownerId, $id)['body']['command']['status']);
+
+        // The claiming desktop crashes before completing. claimed_at is set once at claim() time and
+        // never touched again — back it past CLAIMED_STALE_SECONDS to simulate genuine abandonment.
+        $stale = DesktopCommandService::CLAIMED_STALE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_commands SET claimed_at = DATE_SUB(NOW(), INTERVAL {$stale} SECOND) WHERE id = ?")->execute([$id]);
+
+        $expiredCount = self::$commands->expireStale($this->ownerId);
+        $this->assertGreaterThanOrEqual(1, $expiredCount, 'expireStale must reap the stale claimed row');
+
+        $this->assertSame('expired', $this->read($this->ownerId, $id)['body']['command']['status']);
+        // A reaped command can no longer be completed by the crashed (or any other) claimant.
+        $this->assertSame(409, $this->complete($id, ['status' => 'done'])['status']);
+    }
+
+    public function testClaimedCommandStillWithinClaimedAtThresholdIsNeverTouched(): void
+    {
+        $enq = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
+        $id = $enq['body']['commandId'];
+        $this->assertSame(200, $this->claim($id, ['instanceId' => 'desk-1'])['status']);
+
+        // Still well within its claimed_at staleness window — a genuinely in-flight command must
+        // never be reaped.
+        self::$commands->expireStale($this->ownerId);
+        $this->assertSame('claimed', $this->read($this->ownerId, $id)['body']['command']['status']);
+
+        // ...and can still be completed normally.
+        $this->assertSame(200, $this->complete($id, ['status' => 'done'])['status']);
+    }
+
+    public function testClaimedCommandPastExpiresAtButRecentlyClaimedIsNeverReaped(): void
+    {
+        // Regression test for the bug the claimed_at-anchored fix corrects: expires_at is fixed at
+        // enqueue() time and never extended by claim(), so it can legitimately fall into the past
+        // (e.g. the desktop claimed it late in its 60s window, or is working through a batch) while
+        // the desktop is still healthy and actively executing the command. Gating on expires_at
+        // instead of claimed_at would incorrectly reap this row and drop the real result.
+        $enq = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
+        $id = $enq['body']['commandId'];
+        $this->assertSame(200, $this->claim($id, ['instanceId' => 'desk-1'])['status']);
+        self::$pdo->prepare("UPDATE desktop_commands SET expires_at = DATE_SUB(NOW(), INTERVAL 5 SECOND) WHERE id = ?")->execute([$id]);
+
+        self::$commands->expireStale($this->ownerId);
+        $this->assertSame('claimed', $this->read($this->ownerId, $id)['body']['command']['status'],
+            'a claimed row must never be reaped merely because its creation-anchored expires_at passed');
+
+        // The legitimate, slightly-delayed completion must still succeed.
+        $this->assertSame(200, $this->complete($id, ['status' => 'done'])['status']);
+    }
+
+    public function testGlobalExpireStaleSweepsClaimedRowsAcrossOwners(): void
+    {
+        // The nightly desktop-commands-cleanup.php cron calls expireStale() with no owner filter —
+        // the sweep must still catch a stale claimed row.
+        $enq = $this->enqueue($this->ownerId, ['connectorId' => 'aokie', 'command' => 'call']);
+        $id = $enq['body']['commandId'];
+        $this->assertSame(200, $this->claim($id, ['instanceId' => 'desk-1'])['status']);
+        $stale = DesktopCommandService::CLAIMED_STALE_SECONDS + 5;
+        self::$pdo->prepare("UPDATE desktop_commands SET claimed_at = DATE_SUB(NOW(), INTERVAL {$stale} SECOND) WHERE id = ?")->execute([$id]);
+
+        self::$commands->expireStale();
+
         $this->assertSame('expired', $this->read($this->ownerId, $id)['body']['command']['status']);
     }
 }

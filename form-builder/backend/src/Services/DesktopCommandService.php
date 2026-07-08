@@ -14,13 +14,17 @@ use PDO;
  * COMPLETES it (claimed→done|failed). Web reads the result back.
  *
  * Reserve-first on the UNIQUE idempotency_key (same gate as flow runs): a duplicate enqueue returns
- * the existing row with created=false. Pending commands expire 60s after creation (opportunistically
- * swept to 'expired' on read); a stale desktop can never claim an ancient command.
+ * the existing row with created=false. An unclaimed 'pending' row expires 60s after creation; a
+ * 'claimed' row a desktop crashed/lost connectivity on before completing is reclaimed on its own,
+ * longer timer anchored to claimed_at (see expireStale()) — a stale desktop can never claim an
+ * ancient command, and a crashed claim can't hold a row hostage forever.
  */
 class DesktopCommandService
 {
     /** Pending commands are short-lived: a call the receptionist must pick up now, not in an hour. */
     public const COMMAND_TTL_SECONDS = 60;
+    /** expireStale()'s 'claimed' staleness threshold — see that method's docblock for the reasoning. */
+    public const CLAIMED_STALE_SECONDS = 300;
     public const MAX_PAYLOAD_BYTES = 16384;    // 16 KiB request payload
     public const MAX_RESULT_BYTES = 65536;     // 64 KiB result / error blob
     public const MAX_CONNECTOR_ID = 64;
@@ -275,21 +279,63 @@ class DesktopCommandService
     }
 
     /**
-     * Sweep pending commands past their expiry to 'expired' (opportunistic GC, owner-scoped). The
-     * existing cleanup cron should also call this globally — see docs/API.md §connector:relay.
-     * Fails soft.
+     * Sweep stale commands to 'expired' (opportunistic GC, owner-scoped when polled; the cleanup
+     * cron also calls this globally — see bin/desktop-commands-cleanup.php). Fails soft.
+     *
+     * Two branches, anchored on DIFFERENT timestamps because they answer different questions:
+     *   - 'pending' rows past their own `expires_at` (set once at enqueue() time) — the original
+     *     behavior: nothing ever claimed it in time.
+     *   - 'claimed' rows whose `claimed_at` (set once at claim() time, never touched again) is older
+     *     than CLAIMED_STALE_SECONDS — a command a desktop CLAIMED but crashed/lost connectivity
+     *     before completing.
+     *
+     * The claimed branch deliberately does NOT reuse `expires_at`: that column is fixed at
+     * enqueue()-time and never extended by claim(), so a command claimed late in its 60s pending
+     * window (e.g. the desktop was mid-backoff after a transient long-poll error, or is working
+     * through several commands claimed in the same poll batch) can still be genuinely in-flight —
+     * its claiming desktop healthy and actively executing it — for a few more seconds after
+     * `expires_at` has already passed. Gating on `expires_at` here would expire that still-live row
+     * out from under its own claimant: the eventual legitimate complete() call would then fail with
+     * 409 ('not_claimed') and the real result would be silently dropped. `claimed_at` is the
+     * timestamp of the event we're actually trying to detect abandonment SINCE — the same principle
+     * FlowService::reclaimStuckRuns() applies via `started_at` for flow runs.
+     *
+     * CLAIMED_STALE_SECONDS (300s / 5 min) is comfortably longer than any plausible legitimate
+     * claim→complete duration (long-poll + a single connector dispatch call normally completes in
+     * well under a second) while still reclaiming a genuinely crashed claim in a bounded, short
+     * window — not the 7-day retention period bin/desktop-commands-cleanup.php would otherwise take
+     * to eventually sweep away a 'claimed' row nothing else ever revisits.
+     *
+     * Each scope (owner-scoped / global) runs its two UPDATEs inside one transaction, so a mid-sweep
+     * failure can't half-apply (first UPDATE committed, second throws) while still reporting 0.
      */
     public function expireStale(?string $ownerUserId = null): int
     {
+        $claimedCutoff = self::CLAIMED_STALE_SECONDS; // int class constant, safe to interpolate
         try {
+            $this->mysql->beginTransaction();
+            $total = 0;
             if ($ownerUserId !== null) {
                 $stmt = $this->mysql->prepare("UPDATE desktop_commands SET status = 'expired' WHERE owner_user_id = :o AND status = 'pending' AND expires_at <= NOW()");
                 $stmt->execute(['o' => $ownerUserId]);
-                return $stmt->rowCount();
+                $total += $stmt->rowCount();
+
+                $stmt = $this->mysql->prepare("UPDATE desktop_commands SET status = 'expired' WHERE owner_user_id = :o AND status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND)");
+                $stmt->execute(['o' => $ownerUserId]);
+                $total += $stmt->rowCount();
+            } else {
+                $stmt = $this->mysql->query("UPDATE desktop_commands SET status = 'expired' WHERE status = 'pending' AND expires_at <= NOW()");
+                $total += $stmt->rowCount();
+
+                $stmt = $this->mysql->query("UPDATE desktop_commands SET status = 'expired' WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND)");
+                $total += $stmt->rowCount();
             }
-            $stmt = $this->mysql->query("UPDATE desktop_commands SET status = 'expired' WHERE status = 'pending' AND expires_at <= NOW()");
-            return $stmt->rowCount();
+            $this->mysql->commit();
+            return $total;
         } catch (\Throwable $e) {
+            if ($this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
+            }
             return 0;
         }
     }

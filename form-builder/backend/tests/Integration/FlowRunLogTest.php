@@ -241,6 +241,87 @@ class FlowRunLogTest extends TestCase
         $this->assertNull(self::$flows->completeRun($this->appId, 'no-such-run', ['status' => 'done']));
     }
 
+    // ── Stuck-run reclaim (a claiming instance crashed/lost connectivity before completing) ────
+
+    /** Backdate a run's started_at, simulating a run that has been 'running' for $secondsAgo seconds. */
+    private function backdateStartedAt(string $runId, int $secondsAgo): void
+    {
+        self::$pdo->prepare('UPDATE flow_run_logs SET started_at = DATE_SUB(NOW(), INTERVAL ' . (int) $secondsAgo . ' SECOND) WHERE id = ?')
+            ->execute([$runId]);
+    }
+
+    public function testReclaimStuckRunsRevertsOldRunningToErrorAndLeavesFreshRunAlone(): void
+    {
+        $this->makeFlow();
+
+        // Stuck: claimed 700s ago (past the 600s threshold), never completed — the claiming instance
+        // crashed or lost connectivity.
+        $stuck = self::$flows->reserveRun($this->appId, $this->userId, [
+            'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'stuck-1',
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(6)),
+        ]);
+        $this->backdateStartedAt($stuck['run']['runId'], 700);
+
+        // Fresh: reserved just now, still genuinely in flight — must never be touched.
+        $fresh = self::$flows->reserveRun($this->appId, $this->userId, [
+            'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'fresh-1',
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(6)),
+        ]);
+
+        $reclaimed = self::$flows->reclaimStuckRuns(600);
+        $this->assertGreaterThanOrEqual(1, $reclaimed, 'at least the seeded stuck run must be reclaimed');
+
+        $stuckAfter = self::$flows->getRun($this->appId, $stuck['run']['runId']);
+        $this->assertSame('error', $stuckAfter['status'], 'a run stuck past the threshold reverts to error');
+        $this->assertNotEmpty($stuckAfter['finishedAt'], 'reclaim stamps finished_at');
+        $this->assertSame('runner_unavailable', $stuckAfter['error']['code']);
+        $this->assertStringContainsString('crashed', $stuckAfter['error']['message']);
+        $this->assertStringContainsString('never completed', $stuckAfter['error']['message']);
+
+        $freshAfter = self::$flows->getRun($this->appId, $fresh['run']['runId']);
+        $this->assertSame('running', $freshAfter['status'], 'a run younger than the threshold must never be touched');
+        $this->assertEmpty($freshAfter['finishedAt']);
+    }
+
+    public function testReclaimStuckRunsDryRunReportsWithoutMutating(): void
+    {
+        $this->makeFlow();
+        $stuck = self::$flows->reserveRun($this->appId, $this->userId, [
+            'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'stuck-2',
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(6)),
+        ]);
+        $this->backdateStartedAt($stuck['run']['runId'], 700);
+
+        $wouldReclaim = self::$flows->reclaimStuckRuns(600, true);
+        $this->assertGreaterThanOrEqual(1, $wouldReclaim);
+
+        // Still running — a dry run must never mutate state.
+        $stillRunning = self::$flows->getRun($this->appId, $stuck['run']['runId']);
+        $this->assertSame('running', $stillRunning['status']);
+        $this->assertEmpty($stillRunning['finishedAt']);
+
+        // The real sweep still reclaims it afterward — the dry run didn't consume/mark the row.
+        $reclaimed = self::$flows->reclaimStuckRuns(600);
+        $this->assertGreaterThanOrEqual(1, $reclaimed);
+        $this->assertSame('error', self::$flows->getRun($this->appId, $stuck['run']['runId'])['status']);
+    }
+
+    public function testReclaimStuckRunsNeverTouchesQueuedRows(): void
+    {
+        $this->makeFlow();
+        $queued = self::$flows->reserveRun($this->appId, $this->userId, [
+            'flowSlug' => 'call-triage', 'triggerEvent' => 'manual', 'correlationId' => 'queued-1',
+            'idempotencyKey' => 'k-' . bin2hex(random_bytes(6)), 'queued' => true,
+        ]);
+        $this->assertSame('queued', $queued['run']['status']);
+        $this->assertNull($queued['run']['startedAt'], 'a queued run has no started_at until claimed');
+
+        self::$flows->reclaimStuckRuns(600);
+
+        $this->assertSame('queued', self::$flows->getRun($this->appId, $queued['run']['runId'])['status'],
+            'a queued row (started_at IS NULL) must never be touched by the running-only reclaim sweep');
+    }
+
     public function testTestRunRecordsRunningRowWithTestTrigger(): void
     {
         $flow = $this->makeFlow();

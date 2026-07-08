@@ -3,24 +3,28 @@
 declare(strict_types=1);
 
 /**
- * desktop_commands table cleanup (Tier-1 audit item #5).
+ * desktop_commands table cleanup (Tier-1 audit item #5; claimed-row expiry added for Tier-2 #5).
  *
  * DesktopCommandService::enqueue() writes one row per connector_command relay call (docs/API.md
  * §connector:relay); claim()/complete() advance it to a terminal status ('done'/'failed'), and
- * expireStale() opportunistically sweeps old unclaimed 'pending' rows to 'expired' on read. Nothing
- * ever DELETEs a row, so completed/failed/expired commands accumulate forever. This maintenance job
- * DELETEs rows in a TERMINAL status ('done', 'failed', 'expired') older than
+ * expireStale() opportunistically sweeps stale rows to 'expired' on read — BOTH an unclaimed
+ * 'pending' row nothing ever claimed AND a 'claimed' row whose claiming desktop crashed/lost
+ * connectivity before completing it (see DesktopCommandService::expireStale() docblock). Nothing
+ * ever DELETEs a row, so completed/failed/expired commands accumulate forever. This job first calls
+ * expireStale() globally — so a claimed-but-abandoned row flips to 'expired' promptly instead of
+ * sitting at 'claimed' for up to $days days before the DELETE below finally removes it outright —
+ * then DELETEs rows in a TERMINAL status ('done', 'failed', 'expired') older than
  * DESKTOP_COMMANDS_RETENTION_DAYS (default 7 — these are short-lived relay calls, not records anyone
  * needs to keep long-term), plus any leftover 'pending'/'claimed' row that is ALSO past its own
- * expires_at (a command a desktop never claimed/completed and nothing has swept yet) — never a row
- * that is still genuinely live within its expiry window, regardless of age.
+ * expires_at (in case expireStale() above failed soft) — never a row that is still genuinely live
+ * within its expiry window, regardless of age.
  *
  * Run from cron, e.g. once a day:
  *   23 3 * * * php /path/to/form-builder/backend/bin/desktop-commands-cleanup.php >> /var/log/formlogic-desktop-commands.log 2>&1
  *
  * Options:
  *   --days=N     override the retention window (else DESKTOP_COMMANDS_RETENTION_DAYS, else 7)
- *   --dry-run    report how many rows WOULD be deleted without deleting them
+ *   --dry-run    report how many rows WOULD be expired/deleted without changing them
  *
  * Deletes in bounded batches so a large backlog doesn't hold one long lock. Idempotent + safe to re-run.
  * The DB schema is created by the web app on boot; this job assumes the application has been deployed
@@ -33,6 +37,7 @@ require __DIR__ . '/../vendor/autoload.php';
 date_default_timezone_set('UTC');
 
 use FormLogic\Database\MySQLConnection;
+use FormLogic\Services\DesktopCommandService;
 
 /**
  * Parse the retention window (days): a --days=N CLI flag wins, else DESKTOP_COMMANDS_RETENTION_DAYS,
@@ -105,6 +110,24 @@ $where = "created_at < :cutoff AND (status IN ('done', 'failed', 'expired') OR e
 
 try {
     if ($dryRun) {
+        // Report (never mutate) how many stale pending/claimed rows expireStale() would flip to
+        // 'expired' — same TWO predicates that method applies (pending: past its own expires_at;
+        // claimed: past CLAIMED_STALE_SECONDS since its own claimed_at — NOT expires_at, which is
+        // fixed at enqueue() time and can pass while a claimed row is still genuinely in flight), just
+        // as a SELECT instead of an UPDATE.
+        $claimedCutoff = DesktopCommandService::CLAIMED_STALE_SECONDS;
+        $staleStmt = $pdo->query(
+            "SELECT COUNT(*) FROM desktop_commands WHERE "
+            . "(status = 'pending' AND expires_at <= NOW()) "
+            . "OR (status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at < (NOW() - INTERVAL {$claimedCutoff} SECOND))"
+        );
+        $staleWould = (int) $staleStmt->fetchColumn();
+        fwrite(STDOUT, sprintf(
+            "[%s] desktop_commands cleanup DRY RUN: %d stale pending/claimed row(s) would be expired.\n",
+            date('c'),
+            $staleWould
+        ));
+
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM desktop_commands WHERE {$where}");
         $stmt->execute(['cutoff' => $cutoff]);
         $would = (int) $stmt->fetchColumn();
@@ -117,6 +140,12 @@ try {
         ));
         exit(0);
     }
+
+    // Real run only: expire stale pending/claimed rows FIRST (see docblock) so a crashed desktop's
+    // claimed-but-abandoned command is visible as 'expired' well before the age-based delete below
+    // ever gets to it.
+    $expired = (new DesktopCommandService($mysql))->expireStale();
+    fwrite(STDOUT, sprintf("[%s] desktop_commands cleanup: expired %d stale pending/claimed row(s).\n", date('c'), $expired));
 
     // Delete in bounded batches so a large backlog doesn't take one long table lock.
     $batch = 5000;

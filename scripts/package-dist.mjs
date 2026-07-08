@@ -253,7 +253,8 @@ The wizard prints these ready-to-paste; the crontab lines are (use the full
 path to your PHP 8.1+ CLI binary if plain "php" isn't on cron's PATH):
   * * * * *  php <web-root>/api/bin/webhook-worker.php       # webhook retry delivery (lock-guarded; or run once with --loop as a service)
   17 3 * * * php <web-root>/api/bin/idempotency-cleanup.php  # nightly offline-sync ledger prune (rows older than 30 days)
-  23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php  # nightly desktop-command relay prune (rows older than 7 days)
+  23 3 * * * php <web-root>/api/bin/desktop-commands-cleanup.php  # nightly desktop-command relay prune (rows older than 7 days; also expires crashed/claimed rows)
+  0-59/5 * * * * php <web-root>/api/bin/flow-runs-reclaim.php     # every 5 min: revert flow runs stuck 'running' >10min (crashed claimant) to 'error'
   0 4 * * 1  php <web-root>/api/bin/reconcile.php            # weekly read-only MySQL<->SQLite drift report (--fix applies safe repairs)
 
 Troubleshooting

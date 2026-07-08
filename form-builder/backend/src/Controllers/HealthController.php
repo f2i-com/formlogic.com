@@ -11,6 +11,7 @@ use FormLogic\Services\AIService;
 use FormLogic\Services\QuickJsRunner;
 use FormLogic\Services\PayPalService;
 use FormLogic\Services\DocumentConverter;
+use FormLogic\Services\FlowService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -284,6 +285,38 @@ class HealthController
             }
         } catch (\Throwable $e) {
             $checks['desktop_commands_ledger'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
+        // Stuck flow runs — a flow_run_logs row claimed into 'running' whose claiming FormLogic
+        // Desktop/browser runtime crashed or lost connectivity before calling completeRun()/
+        // completeOwnerRun() sits at 'running' forever unless bin/flow-runs-reclaim.php is scheduled
+        // (see FlowService::reclaimStuckRuns()). Unlike the ledger-size checks above, this ISN'T a
+        // "grows forever, tidy it up eventually" concern — ANY row past the threshold means the
+        // reclaim cron probably isn't running (or a real incident is in progress), so warn on count > 0
+        // rather than waiting for a large backlog.
+        try {
+            $conn = $this->db->getConnection();
+            $tblStmt = $conn->query('SHOW TABLES LIKE ' . $conn->quote('flow_run_logs'));
+            if ($tblStmt && $tblStmt->fetchColumn() !== false) {
+                $staleSeconds = FlowService::STUCK_RUN_DEFAULT_MAX_AGE_SECONDS;
+                $countStmt = $conn->query(
+                    "SELECT COUNT(*) FROM flow_run_logs WHERE status = 'running' AND started_at IS NOT NULL "
+                    . "AND started_at < (NOW() - INTERVAL {$staleSeconds} SECOND)"
+                );
+                $stuckCount = $countStmt ? (int) $countStmt->fetchColumn() : 0;
+                $checks['flow_runs_stuck'] = [
+                    'ok' => $stuckCount === 0,
+                    'critical' => false,
+                    'detail' => $stuckCount === 0 ? 'no stuck runs' : $stuckCount . ' run(s) stuck at running',
+                ];
+                if ($stuckCount > 0) {
+                    $checks['flow_runs_stuck']['warning'] = $stuckCount . ' flow run(s) have been \'running\' for more than '
+                        . $staleSeconds . 's — schedule bin/flow-runs-reclaim.php '
+                        . '(reverts abandoned runs to \'error\' so anything waiting on them can retry).';
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks['flow_runs_stuck'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }
 
         // Native runtime build config (informational) — the Tauri shell that hosts custom apps.
