@@ -94,7 +94,7 @@ export interface PackDashboardWidget {
   layout: PackWidgetLayout;
   kind: 'report' | 'list' | 'text' | 'actions' | 'activity';
   spec?: PackReportSpec;
-  list?: { formId: string; titleField?: string; subtitleField?: string; limit?: number };
+  list?: { formId: string; titleField?: string; subtitleField?: string; metaField?: string; limit?: number };
   text?: { body: string };
 }
 

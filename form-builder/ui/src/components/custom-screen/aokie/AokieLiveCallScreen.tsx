@@ -17,6 +17,7 @@
 // read-only monitor — the setup/simulate card hides, the call card + transcript render
 // from stored Calls/Transcript Turns records, and both refresh every 10s while visible.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Cast,
   Laptop,
@@ -93,6 +94,7 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const permissions = usePermissions();
   const canSubmitCalls = useAppRuntimeStore((s) => s.canSubmit);
   const appSlug = useAppRuntimeStore((s) => s.appSlug);
+  const navigate = useNavigate();
 
   const [desktop, setDesktop] = useState(() => getDesktopInfo());
   const [paired, setPaired] = useState(() => isDesktopPaired());
@@ -182,10 +184,14 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
       const data = asRecord(envelope.data);
       const callId = typeof data.callId === 'string' ? data.callId : envelope.correlationId;
       switch (envelope.name) {
-        case 'aokie.call.incoming':
+        case 'aokie.call.incoming': {
           setTurns([]);
-          setCall(callFromEventData(callId, data, 'ringing'));
+          const incoming = callFromEventData(callId, data, 'ringing');
+          setCall(incoming);
+          // Surface it even when the operator isn't looking at this tab.
+          toast.info('Incoming call', incoming.callerName || incoming.from || 'Unknown caller');
           break;
+        }
         case 'aokie.call.answered':
           setCall((prev) => (prev ? { ...prev, state: 'active' } : callFromEventData(callId, data, 'active')));
           break;
@@ -391,7 +397,9 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
                 <p className="truncate text-base font-semibold text-gray-900 dark:text-white">
                   {active.callerName || active.from || 'Unknown caller'}
                 </p>
-                <p className="text-sm text-gray-500 dark:text-slate-400">{active.from ?? 'No caller id'}</p>
+                <p className="text-sm text-gray-500 dark:text-slate-400">
+                  {active.from ? <a href={`tel:${active.from}`}>{active.from}</a> : 'No caller id'}
+                </p>
               </div>
               {stateBadge}
             </div>
@@ -565,17 +573,48 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
           </p>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-slate-800">
-            {recent.rows.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <div className="min-w-0">
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {String(r.answers.caller_name || r.answers.caller_phone || 'Unknown caller')}
-                  </span>
-                  <span className="ml-2 text-xs text-gray-400 dark:text-slate-500">{String(r.answers.caller_phone || '')}</span>
-                </div>
-                <span className="text-xs capitalize text-gray-500 dark:text-slate-400">{String(r.answers.status || '')}</span>
-              </li>
-            ))}
+            {recent.rows.map((r) => {
+              const phone = String(r.answers.caller_phone || '');
+              const status = String(r.answers.status || '');
+              // Same severity-coloring convention as AokiePairingScreen's hardware events list.
+              const statusClass =
+                status === 'missed' || status === 'failed'
+                  ? 'text-red-600 dark:text-red-400'
+                  : status === 'completed' || status === 'answered'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-gray-500 dark:text-slate-400';
+              // Click through to the record detail when the app runtime + Calls form are known.
+              const openDetail = () => {
+                if (appSlug && callsFormId) navigate(`/app/${appSlug}/form/${callsFormId}/responses/${r.id}`);
+              };
+              const clickable = !!appSlug && !!callsFormId;
+              return (
+                <li
+                  key={r.id}
+                  role={clickable ? 'button' : undefined}
+                  tabIndex={clickable ? 0 : undefined}
+                  onClick={clickable ? openDetail : undefined}
+                  onKeyDown={clickable ? (e) => { if (e.key === 'Enter') openDetail(); } : undefined}
+                  className={`flex flex-wrap items-center justify-between gap-2 py-2 text-sm ${clickable ? 'cursor-pointer rounded-lg px-1 -mx-1 hover:bg-gray-50 dark:hover:bg-slate-800/50' : ''}`}
+                >
+                  <div className="min-w-0">
+                    <span className="font-medium text-gray-900 dark:text-white">
+                      {String(r.answers.caller_name || phone || 'Unknown caller')}
+                    </span>
+                    {phone && (
+                      <a
+                        href={`tel:${phone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-2 text-xs text-gray-400 dark:text-slate-500"
+                      >
+                        {phone}
+                      </a>
+                    )}
+                  </div>
+                  <span className={`text-xs font-medium capitalize ${statusClass}`}>{status}</span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

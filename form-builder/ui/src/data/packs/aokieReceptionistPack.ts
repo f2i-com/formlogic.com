@@ -1007,7 +1007,7 @@ export const aokieReceptionistPack: PackData = {
           cols: 12,
           widgets: [
             { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona.' } },
-            { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', limit: 5 } },
+            { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', metaField: 'active', limit: 5 } },
           ],
         },
       },
@@ -1058,7 +1058,7 @@ export const aokieReceptionistPack: PackData = {
           refreshInterval: 30,
           widgets: [
             { id: 'k1', title: "Today's calls", layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
-            { id: 'k2', title: 'Missed calls', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'missed' }] } },
+            { id: 'k2', title: 'Missed calls', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'missed' }, { field: '__submitted_at', op: 'today' }] } },
             { id: 'k3', title: 'Bookings', layout: { x: 6, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:appointments', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'k4', title: 'Orders', layout: { x: 9, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:orders', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'k5', title: 'Avg call (sec)', layout: { x: 0, y: 1, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'avg', field: 'duration_seconds' } } },
