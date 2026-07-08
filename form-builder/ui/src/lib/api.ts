@@ -634,8 +634,13 @@ class ApiClient {
   }
 
   // Analytics
-  async getFormAnalytics(formId: string): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
-    return this.request(`/forms/${formId}/analytics`);
+  // tzOffsetMinutes: the viewer's local timezone expressed as minutes AHEAD of UTC (e.g.
+  // AEST/UTC+10 = +600, US Eastern EST/UTC-5 = -300), so the server can bucket
+  // "Responses over time" by the viewer's local calendar day instead of UTC. Optional —
+  // omitting it (or passing undefined) preserves the exact pre-existing UTC-bucketed behavior.
+  async getFormAnalytics(formId: string, tzOffsetMinutes?: number): Promise<ApiResponse<{ analytics: FormAnalytics }>> {
+    const query = tzOffsetMinutes === undefined ? '' : `?tzOffsetMinutes=${encodeURIComponent(tzOffsetMinutes)}`;
+    return this.request(`/forms/${formId}/analytics${query}`);
   }
 
   // Export

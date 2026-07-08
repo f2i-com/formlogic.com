@@ -114,7 +114,12 @@ export default function FormAnalytics() {
       if (storageMode === 'api' && user && formId) {
         setIsLoading(true);
         try {
-          const result = await api.getFormAnalytics(formId);
+          // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
+          // minutes AHEAD of UTC, so negate it — this makes the server bucket
+          // "Responses over time" by this viewer's local calendar day, matching the
+          // local-day keys the chart below is already built from.
+          const tzOffsetMinutes = -new Date().getTimezoneOffset();
+          const result = await api.getFormAnalytics(formId, tzOffsetMinutes);
           if (cancelled) return;
           if (result.data?.analytics) {
             setAnalytics(result.data.analytics);

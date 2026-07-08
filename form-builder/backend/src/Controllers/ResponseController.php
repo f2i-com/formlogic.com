@@ -988,6 +988,9 @@ class ResponseController
         $options = [
             'from' => $queryParams['from'] ?? null,
             'to' => $queryParams['to'] ?? null,
+            // Raw pass-through — getFormAnalytics() itself validates/clamps this
+            // (numeric, -840..840, defaults to 0/UTC), so no duplicate validation here.
+            'tzOffsetMinutes' => $queryParams['tzOffsetMinutes'] ?? null,
         ];
 
         $analytics = $this->responseService->getFormAnalytics($formId, $options);

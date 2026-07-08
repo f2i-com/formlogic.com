@@ -1490,16 +1490,45 @@ class ResponseService
                 $this->logger->warning('Analytics avgTime calculation error', ['formId' => $formId, 'exception' => $e->getMessage()]);
             }
 
-            // Responses by date (last 30 days)
+            // Responses by date (last 30 days), bucketed by the CALLER'S local calendar day.
+            //
+            // tzOffsetMinutes = minutes AHEAD of UTC for the caller's local timezone
+            // (e.g. Australia AEST/UTC+10 = +600, US Eastern EST/UTC-5 = -300). NOTE the sign:
+            // this is the OPPOSITE convention from JavaScript's Date.prototype.getTimezoneOffset(),
+            // which returns minutes BEHIND UTC — callers must negate that value before sending it.
+            //
+            // Validated/clamped here (never trust raw input): must be numeric and within
+            // -840..840 (±14h, covers every real-world UTC offset). Missing, non-numeric, or
+            // out-of-range values default to 0 (UTC) — i.e. byte-identical to the pre-fix behavior
+            // for every existing caller that doesn't send this parameter.
+            $tzOffsetMinutesRaw = $options['tzOffsetMinutes'] ?? null;
+            $tzOffsetMinutes = is_numeric($tzOffsetMinutesRaw) ? (int)$tzOffsetMinutesRaw : 0;
+            if ($tzOffsetMinutes < -840 || $tzOffsetMinutes > 840) {
+                $tzOffsetMinutes = 0;
+            }
+            // Built server-side from the validated integer ONLY — never accept a raw SQLite
+            // modifier string from the caller. sprintf('%+d', ...) always emits an explicit sign,
+            // so 0 becomes '+0 minutes', a harmless no-op. Still passed as a BOUND parameter
+            // (not concatenated into the SQL) for consistency with every other bound value here.
+            $tzModifier = sprintf('%+d minutes', $tzOffsetMinutes);
+
             $responsesByDate = [];
             try {
-                $stmt = $db->query("
-                    SELECT date(submitted_at) as date, COUNT(*) as count
+                // The WHERE window must compare LOCAL calendar dates on both sides, not a raw
+                // UTC column against a tz-shifted-then-truncated threshold — otherwise the two
+                // are in inconsistent frames and the boundary is off by exactly the tz offset
+                // (confirmed: e.g. UTC+10 silently drops the first 10 local hours of the window;
+                // UTC-5 silently includes 5 extra stale hours). So `submitted_at` is shifted by
+                // the same modifier in the WHERE clause too, matching the GROUP BY bucket exactly.
+                $stmt = $db->prepare("
+                    SELECT date(submitted_at, :tzOffset) as date, COUNT(*) as count
                     FROM responses
-                    WHERE submitted_at >= date('now', '-30 days')
-                    GROUP BY date(submitted_at)
+                    WHERE date(submitted_at, :tzOffset) >= date('now', :tzOffset, '-30 days')
+                    GROUP BY date(submitted_at, :tzOffset)
                     ORDER BY date ASC
                 ");
+                $stmt->bindValue(':tzOffset', $tzModifier, PDO::PARAM_STR);
+                $stmt->execute();
 
                 while ($row = $stmt->fetch()) {
                     $responsesByDate[] = [
