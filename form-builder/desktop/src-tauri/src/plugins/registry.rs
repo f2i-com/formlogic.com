@@ -348,6 +348,35 @@ impl PluginHost {
         map.get(id).map(|slot| snapshot_of(id, slot))
     }
 
+    /// Autostart at boot: start every installed, enabled plugin whose entry binary is present, so a
+    /// connector like the Aokie phone bridge is LIVE — ready to emit events (incoming call/SMS) and
+    /// to serve relayed connector commands — without a manual click each session. The persistent
+    /// opt-out is `user_disabled` (Disable), which this skips; a transient Stop does not survive a
+    /// restart (Disable is the durable off switch). Must be called from a Tokio context (start()
+    /// spawns a supervisor task). Idempotent: already-active plugins are skipped by start().
+    pub fn autostart_installed(self: &Arc<Self>) {
+        let ids: Vec<String> = {
+            let map = self.lock_plugins();
+            map.iter()
+                .filter(|(_, slot)| {
+                    !slot.user_disabled
+                        && matches!(slot.state, PluginState::Installed | PluginState::Stopped)
+                        && slot
+                            .manifest
+                            .as_ref()
+                            .is_some_and(|m| binary_missing_reason(&slot.dir, m).is_none())
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in ids {
+            match self.start(&id) {
+                Ok(()) => log::info!("plugin autostart: {id}"),
+                Err(e) => log::warn!("plugin autostart {id} skipped: {e}"),
+            }
+        }
+    }
+
     pub fn logs(&self, id: &str, tail: Option<usize>) -> Option<Vec<crate::services::runner::LogLine>> {
         let map = self.lock_plugins();
         map.get(id).map(|slot| slot.logs.snapshot(tail))

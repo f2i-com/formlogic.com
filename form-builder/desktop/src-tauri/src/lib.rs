@@ -1361,6 +1361,14 @@ pub fn run() {
                 let fr = flow_runtime.clone();
                 tauri::async_runtime::spawn(async move { fr.start(); });
             }
+            // Autostart installed+enabled plugins (e.g. the Aokie phone bridge) so their connectors
+            // are live for events + relayed commands without a manual click. start() spawns a
+            // supervisor via tokio::spawn, so run it on Tauri's async runtime (setup isn't a Tokio
+            // context) — same reason as the flow runtime above.
+            {
+                let ph = plugin_host.clone();
+                tauri::async_runtime::spawn(async move { ph.autostart_installed(); });
+            }
 
             // OAuth "Link account" machine (device-link, docs/MCP.md). One
             // attempt at a time; the UI drives it via the formlogic_oauth_* commands.

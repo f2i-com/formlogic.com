@@ -226,6 +226,9 @@ async fn main() {
     // release binary has no debug_assertions escape hatch.
     let dev_mode = std::env::var("FORMLOGIC_DEV_MODE").is_ok_and(|v| v == "1");
     let plugin_host: PluginHostHandle = PluginHost::new(&data_dir, dev_mode, EventBus::new());
+    // Autostart installed+enabled plugins (e.g. the Aokie phone bridge) so their connectors are live
+    // for events + relayed connector commands without any UI. Runs in this tokio main context.
+    plugin_host.autostart_installed();
     // Headless has no separate config dir; pairing state sits in the data dir.
     // With no GUI to approve requests, pairing works only via the
     // FORMLOGIC_DESKTOP_DEV_ALLOW_ORIGIN bypass — otherwise administer the
