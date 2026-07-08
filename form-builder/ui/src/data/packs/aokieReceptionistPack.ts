@@ -258,6 +258,34 @@ const FLOW_MISSED_TASK = `(function () {
   };
 })()`;
 
+// Live conversation context: gather the transcript turns already stored for this
+// call (prior turns) into a compact history string the LLM can condition on, so
+// replies remember what was said earlier in the call. The current caller line is
+// appended from the input in case its Transcript Turns row hasn't landed yet
+// (the app-logic writer and this flow both fire on the same turn.final event).
+const FLOW_LIVE_CONTEXT = `(function () {
+  var callId = String(inputs.callId || '');
+  var latest = String(inputs.text || '').trim();
+  var turnRows = (nodes.turns && nodes.turns.responses) || [];
+  var picked = [];
+  for (var j = 0; j < turnRows.length; j++) {
+    var t = (turnRows[j] && turnRows[j].answers) || {};
+    if (callId && String(t.call_id || '') === callId) {
+      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });
+    }
+  }
+  picked.sort(function (a, b) { return a.idx - b.idx; });
+  var lines = [];
+  var sawLatest = false;
+  for (var k = 0; k < picked.length; k++) {
+    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';
+    lines.push(who + ': ' + picked[k].text);
+    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;
+  }
+  if (latest && !sawLatest) lines.push('Caller: ' + latest);
+  return { transcript: lines.join('\\n'), latest: latest };
+})()`;
+
 // ── Pack data ───────────────────────────────────────────────────────────────
 
 export const aokieReceptionistPack: PackData = {
@@ -1190,6 +1218,44 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Live Reply',
+      slug: 'live-reply',
+      description:
+        'The real-time receptionist: on each final caller turn, read the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). Gated to caller turns so Aokie never answers itself.',
+      nodeCapabilities: ['model.llm.local', 'formlogic.responses.read', 'connector.aokie.call.operatorSpeak'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'text', example: 'Are you open on Sunday?' }] },
+          },
+          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
+          { id: 'context', type: 'logic_block', data: { expr: FLOW_LIVE_CONTEXT } },
+          {
+            id: 'reply',
+            type: 'llm_chat',
+            data: {
+              system:
+                'You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.',
+              prompt: 'Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:',
+              maxTokens: 90,
+              temperature: 0.5,
+            },
+          },
+          { id: 'say', type: 'aokie_speak', data: { textFrom: '$nodes.reply.content' } },
+          { id: 'out', type: 'output', data: { value: { spoken: '$nodes.reply.content' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'turns' },
+          { source: 'turns', target: 'context' },
+          { source: 'context', target: 'reply' },
+          { source: 'reply', target: 'say' },
+          { source: 'say', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Missed Call Follow-up',
       slug: 'missed-call-follow-up',
       description:
@@ -1306,6 +1372,28 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 5,
+    },
+    {
+      flow: 'live-reply',
+      event: 'aokie.call.turn.final',
+      connectorId: 'aokie',
+      // async, not sync: an LLM reply can exceed the 2–4s live-call sync budget,
+      // and the half-duplex plugin already mutes its mic while Aokie speaks the
+      // reply, so turns stay ordered without blocking the event loop.
+      mode: 'async',
+      timeoutMs: 15000,
+      // Only reply to the CALLER's turns — Aokie's own 'bot' turns also emit
+      // turn.final (for the transcript), and answering them would loop forever.
+      condition: {
+        type: 'expression',
+        expr: "event && event.data ? String(event.data.speaker || 'caller') === 'caller' : false",
+      },
+      inputMap: { callId: '$event.data.callId', text: '$event.data.text' },
+      fallbackPolicy: {
+        onError: 'log_and_continue',
+        fallbackReply: "Sorry, I didn't catch that — could you say it again?",
+      },
+      sortOrder: 6,
     },
   ],
 };

@@ -264,9 +264,9 @@ class PackFlowImportTest extends TestCase
         $appId = $result['apps'][0]['id'];
 
         $flows = self::$flows->listFlows($appId);
-        $this->assertCount(5, $flows);
+        $this->assertCount(6, $flows);
         $bindings = self::$flows->listBindings($appId);
-        $this->assertCount(5, $bindings);
+        $this->assertCount(6, $bindings);
         $this->assertStringNotContainsString('@pack:', json_encode($flows));
         $this->assertStringNotContainsString('@pack:', json_encode($bindings));
 

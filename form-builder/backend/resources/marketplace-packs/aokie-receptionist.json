@@ -3144,13 +3144,30 @@
           "nodes": [
             {
               "id": "in",
-              "type": "input"
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callerPhone",
+                    "example": "+61400000000"
+                  },
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  }
+                ]
+              }
             },
             {
               "id": "customers",
               "type": "formlogic_list_responses",
               "data": {
                 "form": "@pack:customers",
+                "return": "all",
                 "limit": 200
               }
             },
@@ -3158,7 +3175,7 @@
               "id": "match",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var rows = nodes.customers || [];\n  var hit = null;\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (phone && String(a.phone || '') === phone) { hit = rows[i]; break; }\n  }\n  var name = hit ? String((hit.answers || {}).name || '') : '';\n  return {\n    found: !!hit,\n    customerId: hit ? hit.id : null,\n    name: name,\n    greeting: hit\n      ? 'Hi ' + name + ', thanks for calling back. Are you calling about your last booking or something new?'\n      : 'Thanks for calling. How can I help you today?'\n  };\n})()"
+                "expr": "(function () {\n  var phone = String(inputs.callerPhone || inputs.from || '');\n  var rows = (nodes.customers && nodes.customers.responses) || [];\n  var hit = null;\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (phone && String(a.phone || '') === phone) { hit = rows[i]; break; }\n  }\n  var name = hit ? String((hit.answers || {}).name || '') : '';\n  return {\n    found: !!hit,\n    customerId: hit ? hit.id : null,\n    name: name,\n    greeting: hit\n      ? 'Hi ' + name + ', thanks for calling back. Are you calling about your last booking or something new?'\n      : 'Thanks for calling. How can I help you today?'\n  };\n})()"
               }
             },
             {
@@ -3203,13 +3220,22 @@
           "nodes": [
             {
               "id": "in",
-              "type": "input"
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  }
+                ]
+              }
             },
             {
               "id": "calls",
               "type": "formlogic_list_responses",
               "data": {
                 "form": "@pack:calls",
+                "return": "all",
                 "limit": 200
               }
             },
@@ -3218,6 +3244,7 @@
               "type": "formlogic_list_responses",
               "data": {
                 "form": "@pack:transcript-turns",
+                "return": "all",
                 "limit": 200
               }
             },
@@ -3225,7 +3252,7 @@
               "id": "context",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var callRows = nodes.calls || [];\n  var call = null;\n  for (var i = 0; i < callRows.length; i++) {\n    var a = (callRows[i] && callRows[i].answers) || {};\n    if (callId && String(a.call_id || '') === callId) { call = callRows[i]; break; }\n  }\n  var turnRows = nodes.turns || [];\n  var lines = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      lines.push(String(t.speaker || 'caller') + ': ' + String(t.text || ''));\n    }\n  }\n  return { responseId: call ? call.id : null, transcript: lines.join('\\n') };\n})()"
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var callRows = (nodes.calls && nodes.calls.responses) || [];\n  var call = null;\n  for (var i = 0; i < callRows.length; i++) {\n    var a = (callRows[i] && callRows[i].answers) || {};\n    if (callId && String(a.call_id || '') === callId) { call = callRows[i]; break; }\n  }\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var lines = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      lines.push(String(t.speaker || 'caller') + ': ' + String(t.text || ''));\n    }\n  }\n  return { responseId: call ? call.id : null, transcript: lines.join('\\n') };\n})()"
               }
             },
             {
@@ -3298,7 +3325,19 @@
           "nodes": [
             {
               "id": "in",
-              "type": "input"
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  },
+                  {
+                    "name": "body",
+                    "example": "Are you open Sunday?"
+                  }
+                ]
+              }
             },
             {
               "id": "draft",
@@ -3344,6 +3383,100 @@
         }
       },
       {
+        "name": "Live Reply",
+        "slug": "live-reply",
+        "description": "The real-time receptionist: on each final caller turn, read the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). Gated to caller turns so Aokie never answers itself.",
+        "nodeCapabilities": [
+          "model.llm.local",
+          "formlogic.responses.read",
+          "connector.aokie.call.operatorSpeak"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "text",
+                    "example": "Are you open on Sunday?"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "turns",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:transcript-turns",
+                "return": "all",
+                "limit": 200
+              }
+            },
+            {
+              "id": "context",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var latest = String(inputs.text || '').trim();\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var picked = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });\n    }\n  }\n  picked.sort(function (a, b) { return a.idx - b.idx; });\n  var lines = [];\n  var sawLatest = false;\n  for (var k = 0; k < picked.length; k++) {\n    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';\n    lines.push(who + ': ' + picked[k].text);\n    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;\n  }\n  if (latest && !sawLatest) lines.push('Caller: ' + latest);\n  return { transcript: lines.join('\\n'), latest: latest };\n})()"
+              }
+            },
+            {
+              "id": "reply",
+              "type": "llm_chat",
+              "data": {
+                "system": "You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.",
+                "prompt": "Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:",
+                "maxTokens": 90,
+                "temperature": 0.5
+              }
+            },
+            {
+              "id": "say",
+              "type": "aokie_speak",
+              "data": {
+                "textFrom": "$nodes.reply.content"
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "spoken": "$nodes.reply.content"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "turns"
+            },
+            {
+              "source": "turns",
+              "target": "context"
+            },
+            {
+              "source": "context",
+              "target": "reply"
+            },
+            {
+              "source": "reply",
+              "target": "say"
+            },
+            {
+              "source": "say",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
         "name": "Missed Call Follow-up",
         "slug": "missed-call-follow-up",
         "description": "Async after a missed aokie.call.ended (binding condition gates on the missed outcome): raise a high-priority call-back task. Pure — no models, no hardware.",
@@ -3354,7 +3487,23 @@
           "nodes": [
             {
               "id": "in",
-              "type": "input"
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callerPhone",
+                    "example": "+61400000000"
+                  },
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  }
+                ]
+              }
             },
             {
               "id": "task",
@@ -3394,13 +3543,25 @@
           "nodes": [
             {
               "id": "in",
-              "type": "input"
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "message",
+                    "example": "Bluetooth dongle disconnected"
+                  },
+                  {
+                    "name": "dongleId",
+                    "example": "dongle_1"
+                  }
+                ]
+              }
             },
             {
               "id": "note",
               "type": "template",
               "data": {
-                "template": "Aokie hardware issue: {{inputs.message}}"
+                "template": "Aokie hardware issue: {{$inputs.message}}"
               }
             },
             {
@@ -3552,6 +3713,26 @@
           "onError": "log_and_continue"
         },
         "sortOrder": 5
+      },
+      {
+        "flow": "live-reply",
+        "event": "aokie.call.turn.final",
+        "connectorId": "aokie",
+        "mode": "async",
+        "timeoutMs": 15000,
+        "condition": {
+          "type": "expression",
+          "expr": "event && event.data ? String(event.data.speaker || 'caller') === 'caller' : false"
+        },
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "text": "$event.data.text"
+        },
+        "fallbackPolicy": {
+          "onError": "log_and_continue",
+          "fallbackReply": "Sorry, I didn't catch that — could you say it again?"
+        },
+        "sortOrder": 6
       }
     ]
   }
