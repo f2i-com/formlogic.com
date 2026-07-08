@@ -75,7 +75,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
           {/* Placeholder only applies to free-text controls — native date/time pickers and
               the phone input ignore it, so don't offer a setting that does nothing. */}
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden', 'phone', 'date', 'time', 'datetime'].includes(field.type) && (
+          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden', 'phone', 'date', 'time', 'datetime', 'multiple_choice', 'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'location'].includes(field.type) && (
             <Input
               label="Placeholder"
               value={field.placeholder || ''}

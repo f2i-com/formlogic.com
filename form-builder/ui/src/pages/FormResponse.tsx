@@ -116,7 +116,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
             style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
             autoFocus={autoFocus}
           />
@@ -131,7 +131,7 @@ export function FieldResponse({
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
             rows={4}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl resize-none transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl resize-none transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -152,7 +152,7 @@ export function FieldResponse({
               onChange(isNaN(val) ? undefined : val);
             }}
             placeholder={field.placeholder || '0'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -166,7 +166,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors cursor-pointer"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors cursor-pointer"
             autoFocus={autoFocus}
           />
         );
@@ -179,7 +179,7 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -192,7 +192,7 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-none py-2 text-xl transition-colors"
+            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 text-xl transition-colors"
             autoFocus={autoFocus}
           />
         );
@@ -287,7 +287,7 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-none py-3 px-4 rounded-lg text-xl transition-colors"
+            className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-3 px-4 rounded-lg text-xl transition-colors"
             style={{ borderColor: value ? primaryColor : undefined }}
             autoFocus={autoFocus}
           >
@@ -407,23 +407,34 @@ export function FieldResponse({
       }
 
       case 'file_upload':
+        // role="group" + aria-label + tabIndex=-1 mirror the multiple_choice/checkboxes
+        // wrapper pattern above: it gives the aria-invalid/aria-describedby cloning below
+        // (which targets the top element this case returns) a real, nameable, focusable
+        // DOM node to land on — FileUploadField itself doesn't forward those props to
+        // anything — AND makes failClassic's `[role="group"]` focus query actually match it.
         return (
-          <FileUploadField
-            field={field}
-            value={value}
-            onChange={onChange}
-            primaryColor={primaryColor}
-            formId={formId}
-          />
+          <div tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
+            <FileUploadField
+              field={field}
+              value={value}
+              onChange={onChange}
+              primaryColor={primaryColor}
+              formId={formId}
+            />
+          </div>
         );
 
       case 'location':
+        // See file_upload above: LocationField doesn't forward aria-invalid/
+        // aria-describedby, so wrap it in a focusable, nameable node the cloning can target.
         return (
-          <LocationField
-            value={value}
-            onChange={onChange}
-            primaryColor={primaryColor}
-          />
+          <div tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
+            <LocationField
+              value={value}
+              onChange={onChange}
+              primaryColor={primaryColor}
+            />
+          </div>
         );
 
       case 'signature': {
@@ -431,7 +442,7 @@ export function FieldResponse({
         const isTypedSignature = typeof value === 'string' && value.startsWith('typed:');
         const typedName = isTypedSignature ? (value as string).slice(6) : '';
         return (
-          <div className="space-y-3">
+          <div className="space-y-3" tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
             {/* Mode toggle */}
             <div className="flex gap-2 text-sm">
               <button
@@ -472,7 +483,7 @@ export function FieldResponse({
                   onChange={(e) => onChange(`typed:${e.target.value}`)}
                   placeholder="Type your full name"
                   aria-label="Type your signature"
-                  className="w-full px-4 py-3 border-2 rounded-xl bg-white text-lg transition-colors focus:outline-none"
+                  className="w-full px-4 py-3 border-2 rounded-xl bg-white text-lg transition-colors focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500"
                   style={{
                     borderColor: typedName ? primaryColor : `${textColor || '#1f2937'}30`,
                     fontFamily: "'Dancing Script', 'Segoe Script', 'Comic Sans MS', cursive",
@@ -655,22 +666,28 @@ export function FieldResponse({
         // Owner (authenticated) gets a working picker scoped to their own records; anonymous public
         // viewers still see the notice (they have no records to reference).
         if (currentUser && formId && lrProps.targetFormId) {
+          // See file_upload/location above: LinkedRecordInput has a closed prop interface and
+          // doesn't forward aria-invalid/aria-describedby, so wrap it in a focusable, nameable
+          // node the cloning can target — linked_record is required-validatable (not in the
+          // skip-list below), so its error can actually fire.
           return (
-            <LinkedRecordInput
-              formId={formId}
-              targetFormId={lrProps.targetFormId}
-              displayFieldIds={lrProps.displayFieldIds}
-              searchFieldIds={lrProps.searchFieldIds}
-              allowMultiple={lrProps.allowMultiple}
-              value={value}
-              onChange={onChange}
-              primaryColor={primaryColor}
-              lookup={ownedLookup}
-            />
+            <div tabIndex={-1} role="group" aria-label={field.label} aria-required={required || undefined}>
+              <LinkedRecordInput
+                formId={formId}
+                targetFormId={lrProps.targetFormId}
+                displayFieldIds={lrProps.displayFieldIds}
+                searchFieldIds={lrProps.searchFieldIds}
+                allowMultiple={lrProps.allowMultiple}
+                value={value}
+                onChange={onChange}
+                primaryColor={primaryColor}
+                lookup={ownedLookup}
+              />
+            </div>
           );
         }
         return (
-          <p className="opacity-50 text-sm">
+          <p className="opacity-50 text-sm" tabIndex={-1}>
             Linked record fields are available in published apps only.
           </p>
         );
@@ -982,6 +999,30 @@ export default function FormResponse() {
     startRecordedRef.current = true;
     api.recordFormStart(formId);
   }, [currentAnswers, formId]);
+
+  // Whether currentAnswers reflects real user input, as opposed to only the hidden-field
+  // static defaults that the effect above auto-seeds on mount regardless of user action
+  // (source/UTM-style tracking fields etc.). A plain `Object.keys(currentAnswers).length`
+  // check would arm the beforeunload warning below for every visitor of a form that uses a
+  // hidden default, before they've touched anything. Memoized to a stable boolean (rather
+  // than depending on the currentAnswers object, which is a new reference on every
+  // keystroke) so the listener effect doesn't tear down/re-add on every field edit.
+  const hasUnsavedAnswers = useMemo(() => {
+    const hiddenIds = new Set(hiddenFields.map((f) => f.id));
+    return Object.keys(currentAnswers).some((id) => !hiddenIds.has(id));
+  }, [currentAnswers, hiddenFields]);
+
+  // Warn before an accidental refresh/back/close discards in-progress answers.
+  // responseStore's partialize deliberately zeroes out answer values before
+  // persisting to localStorage (see stores/responseStore.ts), so a respondent
+  // mid-way through a signature/upload/long free-text field would otherwise lose
+  // everything with no warning. Skip once the form has actually been submitted.
+  useEffect(() => {
+    if (isSubmitted || !hasUnsavedAnswers || typeof window === 'undefined') return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isSubmitted, hasUnsavedAnswers]);
 
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
