@@ -588,10 +588,16 @@ class ApiClient {
     return this.request(`/forms/${formId}/responses/${responseId}`);
   }
 
-  async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number }): Promise<ApiResponse<{ response: FormResponse }>> {
+  async submitResponse(formId: string, data: { answers: Record<string, unknown>; completionTime?: number; idempotencyKey?: string }): Promise<ApiResponse<{ response: FormResponse }>> {
+    // Stamp a stable idempotency key so a replayed submission (Workbox background-sync replaying a
+    // request up to 24h later, or a manual retry after a dropped ack) returns the SAME response
+    // instead of creating a duplicate row — same one-line pattern as createAppResponse/
+    // createAppResponseResult above. The key rides in the same JSON body Workbox captures + replays,
+    // so a replay of this exact request is byte-identical and hits the server's dedup by design.
+    const body = data.idempotencyKey == null ? { ...data, idempotencyKey: newIdempotencyKey() } : data;
     return this.request(`/forms/${formId}/responses`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
     });
   }
 

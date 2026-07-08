@@ -1209,6 +1209,28 @@ class MySQLConnection
             // Table not present yet on some ordering — the CREATE TABLE above includes the index.
         }
 
+        // Classic public-form submission idempotency ledger: one row per (form, idempotency_key).
+        // Same purpose as app_submission_idempotency above (a replayed submission — Workbox
+        // background-sync / manual retry — returns the SAME response instead of creating a
+        // duplicate), but for the standalone POST /api/forms/{formId}/responses endpoint, which has
+        // no app_id (a classic form is not necessarily part of an app). Deliberately a SEPARATE
+        // table, not a shared one with a nullable app_id — see ResponseController's idempotency*
+        // methods, which mirror AppPublicController's by hand.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS form_submission_idempotency (
+                id VARCHAR(36) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                user_id VARCHAR(36) NULL,
+                idempotency_key VARCHAR(128) NOT NULL,
+                response_id VARCHAR(36) NULL,
+                payload_hash VARCHAR(128) NOT NULL,
+                status VARCHAR(32) NOT NULL DEFAULT 'completed',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_form_key (form_id, idempotency_key),
+                INDEX idx_form_idem_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // FormLogic Flows tables for existing installs (CREATE TABLE IF NOT EXISTS; shared with
         // initializeSchema so fresh and migrated schemas match byte-for-byte).
         $this->createFlowTables($pdo);

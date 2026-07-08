@@ -10,6 +10,10 @@ declare(strict_types=1);
  * useful for as long as a client might replay a queued submission — after that they are dead weight, so
  * this maintenance job DELETEs rows older than IDEMPOTENCY_RETENTION_DAYS (default 30).
  *
+ * Also prunes form_submission_idempotency, the SAME ledger but for the classic public submission
+ * endpoint (POST /api/forms/{formId}/responses; see ResponseController::idempotencyReserve), using
+ * the identical cutoff/batch logic.
+ *
  * Run from cron, e.g. once a day:
  *   17 3 * * * php /path/to/form-builder/backend/bin/idempotency-cleanup.php >> /var/log/formlogic-idempotency.log 2>&1
  *
@@ -92,38 +96,51 @@ if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
 
 $cutoff = (new \DateTimeImmutable("-{$days} days"))->format('Y-m-d H:i:s');
 
+// Both idempotency ledgers share this retention policy: the app-runtime ledger
+// (app_submission_idempotency) and the classic public-form ledger (form_submission_idempotency,
+// scoped by form_id only — see ResponseController::idempotencyReserve). Same cutoff, same bounded-
+// batch DELETE logic, applied to each table in turn. Table names are fixed constants, never
+// user input, so string-interpolating them into SQL here is safe.
+$idempotencyTables = ['app_submission_idempotency', 'form_submission_idempotency'];
+
 try {
     if ($dryRun) {
-        $stmt = $pdo->prepare('SELECT COUNT(*) FROM app_submission_idempotency WHERE created_at < :cutoff');
-        $stmt->execute(['cutoff' => $cutoff]);
-        $would = (int) $stmt->fetchColumn();
-        fwrite(STDOUT, sprintf(
-            "[%s] idempotency cleanup DRY RUN: %d row(s) older than %d day(s) (< %s) would be deleted.\n",
-            date('c'),
-            $would,
-            $days,
-            $cutoff
-        ));
+        foreach ($idempotencyTables as $table) {
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM {$table} WHERE created_at < :cutoff");
+            $stmt->execute(['cutoff' => $cutoff]);
+            $would = (int) $stmt->fetchColumn();
+            fwrite(STDOUT, sprintf(
+                "[%s] idempotency cleanup DRY RUN (%s): %d row(s) older than %d day(s) (< %s) would be deleted.\n",
+                date('c'),
+                $table,
+                $would,
+                $days,
+                $cutoff
+            ));
+        }
         exit(0);
     }
 
     // Delete in bounded batches so a large backlog doesn't take one long table lock.
     $batch = 5000;
-    $total = 0;
-    do {
-        $stmt = $pdo->prepare('DELETE FROM app_submission_idempotency WHERE created_at < :cutoff LIMIT ' . $batch);
-        $stmt->execute(['cutoff' => $cutoff]);
-        $deleted = $stmt->rowCount();
-        $total += $deleted;
-    } while ($deleted === $batch);
+    foreach ($idempotencyTables as $table) {
+        $total = 0;
+        do {
+            $stmt = $pdo->prepare("DELETE FROM {$table} WHERE created_at < :cutoff LIMIT " . $batch);
+            $stmt->execute(['cutoff' => $cutoff]);
+            $deleted = $stmt->rowCount();
+            $total += $deleted;
+        } while ($deleted === $batch);
 
-    fwrite(STDOUT, sprintf(
-        "[%s] idempotency cleanup: deleted %d row(s) older than %d day(s) (< %s).\n",
-        date('c'),
-        $total,
-        $days,
-        $cutoff
-    ));
+        fwrite(STDOUT, sprintf(
+            "[%s] idempotency cleanup (%s): deleted %d row(s) older than %d day(s) (< %s).\n",
+            date('c'),
+            $table,
+            $total,
+            $days,
+            $cutoff
+        ));
+    }
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] idempotency cleanup error: %s\n", date('c'), $e->getMessage()));
     exit(1);

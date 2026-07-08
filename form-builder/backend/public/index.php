@@ -238,7 +238,8 @@ $container->set(ResponseController::class, function (Container $c) {
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
         $c->get(\FormLogic\Services\EmailService::class),
-        $c->get(\FormLogic\Services\AppService::class)
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(MySQLConnection::class)
     );
 });
 

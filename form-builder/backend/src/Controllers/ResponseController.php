@@ -11,12 +11,14 @@ use FormLogic\Services\EmailService;
 use FormLogic\Services\ScriptRejection;
 use FormLogic\Services\AuditService;
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
+use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Helpers\IpResolver;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use PDO;
 
 class ResponseController
 {
@@ -35,8 +37,12 @@ class ResponseController
     private ?AuditService $auditService;
     private ?EmailService $emailService;
     private ?AppService $appService;
+    // Idempotency ledger connection for the classic public submission endpoint (create()). Nullable
+    // so a caller that can't supply a MySQLConnection (e.g. a narrow unit test) still gets a working
+    // controller — idempotencyReserve() fails open (submits without idempotency protection) when null.
+    private ?PDO $mysql;
 
-    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?EmailService $emailService = null, ?AppService $appService = null)
+    public function __construct(ResponseService $responseService, FormService $formService, SQLiteConnection $sqlite, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?EmailService $emailService = null, ?AppService $appService = null, ?MySQLConnection $mysql = null)
     {
         $this->responseService = $responseService;
         $this->formService = $formService;
@@ -46,6 +52,7 @@ class ResponseController
         $this->auditService = $auditService;
         $this->emailService = $emailService;
         $this->appService = $appService;
+        $this->mysql = $mysql?->getConnection();
     }
 
     /**
@@ -293,26 +300,123 @@ class ResponseController
     /**
      * Submit a new response (public endpoint)
      * POST /api/forms/{formId}/responses
+     *
+     * Idempotency (additive, opt-in): mirrors AppPublicController::processSubmission's design —
+     * reserve the client's idempotencyKey BEFORE doing any work, complete it on success, release it
+     * on failure. See form_submission_idempotency (MySQLConnection::runMigrations) and the
+     * idempotency* helpers below, which are a deliberate hand-kept duplicate of
+     * AppPublicController's app_submission_idempotency pattern, scoped by form_id only (a standalone
+     * form has no app_id). A request that omits idempotencyKey takes the exact same path as before
+     * this feature existed — see runCreatePipeline(), extracted byte-for-byte from the prior body of
+     * this method.
      */
     public function create(Request $request, Response $response, array $args): Response
     {
         $formId = $args['formId'];
         $data = $request->getParsedBody();
 
+        $key = (is_array($data) && isset($data['idempotencyKey']) && is_string($data['idempotencyKey']) && $data['idempotencyKey'] !== '')
+            ? $data['idempotencyKey'] : null;
+
+        // No key: run the pipeline directly — no idempotency guarantees, and no behavior change
+        // from before idempotency support existed.
+        if ($key === null) {
+            $result = $this->runCreatePipeline($request, $formId, $data);
+            return $this->jsonResponse($response, $result['payload'], $result['status']);
+        }
+
+        // Reserve the key BEFORE any work, using the table's UNIQUE(form_id, idempotency_key)
+        // constraint as the atomic gate (closes the check-then-act race). The hash is over the RAW
+        // client answers so an exact replay matches and a reused key with a different body is a
+        // conflict. Classic public submissions are almost always anonymous; userId is best-effort
+        // metadata only (this route carries no auth middleware).
+        $userId = $request->getAttribute('userId');
+        $userId = (is_string($userId) && $userId !== '') ? $userId : null;
+        $answersForHash = (is_array($data) && isset($data['answers'])) ? $data['answers'] : [];
+        $payloadHash = hash('sha256', (string) json_encode($answersForHash));
+
+        $reserved = $this->idempotencyReserve($formId, $userId, $key, $payloadHash);
+        if (is_array($reserved)) {
+            // A row already exists for this (form, key).
+            if (($reserved['payload_hash'] ?? '') !== $payloadHash) {
+                return $this->jsonResponse($response, ['error' => true, 'conflict' => true,
+                    'message' => 'This idempotency key was already used with a different submission.'], 409);
+            }
+            if (is_string($reserved['response_id'] ?? null) && $reserved['response_id'] !== '') {
+                // Completed replay — return the original response, create nothing new.
+                return $this->jsonResponse($response, ['response' => ['id' => $reserved['response_id']], 'idempotent' => true], 200);
+            }
+            // Same payload, reservation still 'pending'. A YOUNG row means a concurrent submit is
+            // genuinely in flight — ask the caller to retry. A STALE row is an ABANDONED reservation
+            // (the owning request died between reserve and complete/release); retake it atomically —
+            // the DELETE is guarded on status='pending' + age entirely DB-side, so two racers can't
+            // both win.
+            $takenOver = false;
+            try {
+                $del = $this->mysql->prepare(
+                    "DELETE FROM form_submission_idempotency
+                     WHERE form_id = :f AND idempotency_key = :k
+                       AND status = 'pending' AND created_at < (NOW() - INTERVAL 600 SECOND)"
+                );
+                $del->execute(['f' => $formId, 'k' => $key]);
+                if ($del->rowCount() > 0) {
+                    $takenOver = ($this->idempotencyReserve($formId, $userId, $key, $payloadHash) === 'owner');
+                }
+            } catch (\Throwable $e) {
+                // Takeover is best-effort; fall through to the normal processing response.
+            }
+            if (!$takenOver) {
+                return $this->jsonResponse($response, ['error' => true, 'processing' => true,
+                    'message' => 'This submission is already being processed. Please retry in a moment.'], 409);
+            }
+            $reserved = 'owner';
+        }
+        // $reserved is 'owner' (we won the reservation) or 'unavailable' (the ledger write failed for
+        // a non-duplicate reason, or no MySQL connection is available) — fail OPEN and submit without
+        // idempotency rather than reject a real submission.
+        $ownsReservation = ($reserved === 'owner');
+
+        $result = $this->runCreatePipeline($request, $formId, $data);
+
+        if ($ownsReservation) {
+            $respId = ($result['status'] === 201) ? ($result['payload']['response']['id'] ?? null) : null;
+            if (is_string($respId) && $respId !== '') {
+                $this->idempotencyComplete($formId, $key, $respId);
+            } else {
+                // Validation / quota / rejection / error: release the reservation so a legitimate
+                // retry of a genuinely-failed submit isn't poisoned by a stale 'pending' row.
+                $this->idempotencyRelease($formId, $key);
+            }
+        }
+        return $this->jsonResponse($response, $result['payload'], $result['status']);
+    }
+
+    /**
+     * The server-authoritative submission pipeline for the classic public endpoint (validation,
+     * quota, persistence, onSubmit script) — independent of idempotency. This is the body that used
+     * to live directly in create() before idempotency support was added, extracted verbatim (not
+     * rewritten) so the no-idempotencyKey path is unaffected: same checks, same order, same
+     * exception handling, same status codes and payload shapes.
+     *
+     * @param mixed $data
+     * @return array{status:int, payload:array<string,mixed>}
+     */
+    private function runCreatePipeline(Request $request, string $formId, $data): array
+    {
         // Check form exists and is published
         $form = $this->formService->getForm($formId);
         if (!$form) {
-            return $this->jsonResponse($response, [
+            return ['status' => 404, 'payload' => [
                 'error' => true,
                 'message' => 'Form not found',
-            ], 404);
+            ]];
         }
 
         if ($form['status'] !== 'published') {
-            return $this->jsonResponse($response, [
+            return ['status' => 403, 'payload' => [
                 'error' => true,
                 'message' => 'Form is not accepting responses',
-            ], 403);
+            ]];
         }
 
         // App-scoped forms must be submitted through the authenticated app runtime
@@ -320,17 +424,17 @@ class ResponseController
         // Mirror FileController::serve so the standalone public path can't bypass app
         // RBAC and poison app data anonymously.
         if ($this->appService && $this->appService->isFormInAnyApp($formId)) {
-            return $this->jsonResponse($response, [
+            return ['status' => 404, 'payload' => [
                 'error' => true,
                 'message' => 'Form not found',
-            ], 404);
+            ]];
         }
 
         // Check if form is closed
         $settings = $form['settings'] ?? [];
         if (!empty($settings['isClosed'])) {
             $closedMessage = $settings['closedMessage'] ?? 'This form is no longer accepting responses.';
-            return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+            return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
         }
 
         // Check quota limit
@@ -338,7 +442,7 @@ class ResponseController
             $responseCount = $this->responseService->getResponseCount($formId);
             if ($responseCount >= (int)$settings['quotaLimit']) {
                 $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
             }
         }
 
@@ -355,26 +459,26 @@ class ResponseController
         $data['answers'] = $this->responseService->applyCalculatedFields($form['fields'] ?? [], $data['answers']);
         $__fe = $this->responseService->validateFileAnswers($form['fields'] ?? [], $data['answers'], (string) ($form['id'] ?? ''));
         if (!empty($__fe)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe], 400);
+            return ['status' => 400, 'payload' => ['error' => true, 'message' => 'Validation failed', 'errors' => $__fe]];
         }
 
         // Hard-cap the total serialized answer size before we persist it (defends the
         // unauthenticated endpoint against disk-exhaustion via oversized answers).
         if (strlen((string) json_encode($data['answers'])) > self::MAX_ANSWER_BYTES) {
-            return $this->jsonResponse($response, [
+            return ['status' => 413, 'payload' => [
                 'error' => true,
                 'message' => 'Submission is too large.',
-            ], 413);
+            ]];
         }
 
         // Validate answers against form fields (honors conditional visibility)
         $validationErrors = $this->validateAnswers($form['fields'] ?? [], $data['answers']);
         if (!empty($validationErrors)) {
-            return $this->jsonResponse($response, [
+            return ['status' => 400, 'payload' => [
                 'error' => true,
                 'message' => 'Validation failed',
                 'errors' => $validationErrors,
-            ], 400);
+            ]];
         }
 
         // Add request metadata
@@ -398,7 +502,7 @@ class ResponseController
                 if ($this->responseService->getResponseCount($formId) >= (int)$settings['quotaLimit']) {
                     $this->responseService->releaseFormLock($quotaLock);
                     $closedMessage = $settings['closedMessage'] ?? 'This form has reached its maximum number of responses.';
-                    return $this->jsonResponse($response, ['error' => true, 'message' => $closedMessage], 403);
+                    return ['status' => 403, 'payload' => ['error' => true, 'message' => $closedMessage]];
                 }
             }
             try {
@@ -409,11 +513,11 @@ class ResponseController
 
             // Handle rejection from script
             if ($result instanceof ScriptRejection) {
-                return $this->jsonResponse($response, [
+                return ['status' => 422, 'payload' => [
                     'error' => true,
                     'message' => $result->message,
                     'rejected' => true,
-                ], 422);
+                ]];
             }
 
             // Write inverse linked_record links so "related records" lookups work
@@ -424,19 +528,140 @@ class ResponseController
             $this->maybeNotifyNewResponse($form);
 
             $this->audit($request, 'response.create', 'response', $result['id'] ?? '', ['formId' => $formId]);
-            return $this->jsonResponse($response, ['response' => $result], 201);
+            return ['status' => 201, 'payload' => ['response' => $result]];
         } catch (\RuntimeException | \InvalidArgumentException $e) {
-            return $this->jsonResponse($response, [
+            return ['status' => 400, 'payload' => [
                 'error' => true,
                 'message' => $e->getMessage(),
-            ], 400);
+            ]];
         } catch (\Exception $e) {
             $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
-            return $this->jsonResponse($response, [
+            return ['status' => 500, 'payload' => [
                 'error' => true,
                 'message' => 'An unexpected error occurred',
-            ], 500);
+            ]];
+        } catch (\Throwable $e) {
+            // \Throwable (not just \Exception): an \Error (TypeError, DivisionByZeroError, etc.)
+            // escaping here would propagate past create()'s call site, which has no try/catch of its
+            // own — skipping the idempotencyComplete()/idempotencyRelease() call entirely and
+            // stranding a 'pending' row in form_submission_idempotency for up to 600s (every retry
+            // in that window gets 409 "processing" even though nothing ever actually succeeded).
+            // AppPublicController::runSubmissionPipeline guards against exactly this for the
+            // app-runtime path; mirror it here so this path fails the SAME way (a clean 500 that
+            // still releases the reservation) instead of leaking the reservation.
+            $this->logger->error('Response creation error', ['exception' => $e->getMessage()]);
+            return ['status' => 500, 'payload' => [
+                'error' => true,
+                'message' => 'An unexpected error occurred',
+            ]];
         }
+    }
+
+    /**
+     * Idempotency ledger for the CLASSIC public submission endpoint (create() above), operating on
+     * form_submission_idempotency. This trio (idempotencyReserve/idempotencyComplete/
+     * idempotencyRelease, plus idempotencyFind and uuidV4 below) is a DELIBERATE, hand-kept duplicate
+     * of AppPublicController::idempotencyReserve/idempotencyComplete/idempotencyRelease against
+     * app_submission_idempotency — same reserve-first-via-unique-constraint design, same
+     * payload-hash conflict detection, same 600-second stale-pending takeover, same
+     * fail-open-on-ledger-error behavior — scoped by form_id only (no app_id, since a standalone
+     * form need not belong to an app). If that pattern changes, update both by hand; this is not
+     * shared/extracted on purpose, to avoid risking the already-working app-runtime path.
+     *
+     * Returns:
+     *   'owner'        — we won the reservation (caller must complete or release it),
+     *   'unavailable'  — the ledger write failed for a non-duplicate reason, or there is no MySQL
+     *                    connection (caller should fail open),
+     *   array{response_id:?string, payload_hash:string, status:string} — an existing row (replay/conflict/in-flight).
+     * @return string|array<string,mixed>
+     */
+    private function idempotencyReserve(string $formId, ?string $userId, string $key, string $payloadHash)
+    {
+        if ($this->mysql === null) {
+            return 'unavailable';
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "INSERT INTO form_submission_idempotency (id, form_id, user_id, idempotency_key, response_id, payload_hash, status, created_at)
+                 VALUES (:id, :f, :u, :k, NULL, :h, 'pending', NOW())"
+            );
+            $stmt->execute([
+                'id' => $this->uuidV4(),
+                'f' => $formId, 'u' => $userId, 'k' => $key, 'h' => $payloadHash,
+            ]);
+            return 'owner';
+        } catch (\PDOException $e) {
+            // 23000 / MySQL 1062 = duplicate key → a row already exists for this key.
+            $dup = $e->getCode() === '23000' || (isset($e->errorInfo[1]) && (int) $e->errorInfo[1] === 1062);
+            if ($dup) {
+                // If it vanished between the failed insert and this read (a racing release), fail open.
+                return $this->idempotencyFind($formId, $key) ?? 'unavailable';
+            }
+            // Any other DB error: fail open — idempotency is best-effort, never block a real submit.
+            return 'unavailable';
+        }
+    }
+
+    /** @return array{response_id:?string, payload_hash:string, status:string}|null */
+    private function idempotencyFind(string $formId, string $key): ?array
+    {
+        $stmt = $this->mysql->prepare(
+            "SELECT response_id, payload_hash, status FROM form_submission_idempotency
+             WHERE form_id = :f AND idempotency_key = :k LIMIT 1"
+        );
+        $stmt->execute(['f' => $formId, 'k' => $key]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+        return [
+            'response_id' => is_string($row['response_id'] ?? null) ? $row['response_id'] : null,
+            'payload_hash' => (string) ($row['payload_hash'] ?? ''),
+            'status' => (string) ($row['status'] ?? ''),
+        ];
+    }
+
+    /** Mark a reservation completed, pointing it at the created response. Best-effort. */
+    private function idempotencyComplete(string $formId, string $key, string $responseId): void
+    {
+        if ($this->mysql === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "UPDATE form_submission_idempotency SET response_id = :r, status = 'completed'
+                 WHERE form_id = :f AND idempotency_key = :k"
+            );
+            $stmt->execute(['r' => $responseId, 'f' => $formId, 'k' => $key]);
+        } catch (\Throwable $e) {
+            // ignore — the response is already persisted; a failed ledger update only risks a future
+            // duplicate on replay, never data loss.
+        }
+    }
+
+    /** Release an unfulfilled reservation (only our own 'pending' row) so a retry can proceed. */
+    private function idempotencyRelease(string $formId, string $key): void
+    {
+        if ($this->mysql === null) {
+            return;
+        }
+        try {
+            $stmt = $this->mysql->prepare(
+                "DELETE FROM form_submission_idempotency
+                 WHERE form_id = :f AND idempotency_key = :k AND status = 'pending'"
+            );
+            $stmt->execute(['f' => $formId, 'k' => $key]);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+    }
+
+    private function uuidV4(): string
+    {
+        $data = random_bytes(16);
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40);
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80);
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
     /**
