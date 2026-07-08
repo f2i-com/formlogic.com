@@ -17,23 +17,18 @@ import {
   FileJson,
   Table,
   Share2,
-  Globe,
-  Settings,
   LayoutTemplate,
   Clock,
   ArrowRight,
   Inbox,
   Sparkles,
   BookOpen,
-  Zap,
-  TrendingUp,
   Package,
   Boxes,
   ChevronRight,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
-import { StatCard } from '../components/ui/StatCard';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Button } from '../components/ui/Button';
@@ -55,35 +50,6 @@ import type { Form } from '../types/form';
 
 interface DashboardStats {
   totalResponses: number;
-  avgCompletionRate: number;
-}
-
-// Quick Action Button Component
-function QuickActionButton({
-  icon: Icon,
-  label,
-  onClick,
-  primary = false,
-}: {
-  icon: React.ElementType;
-  label: string;
-  onClick: () => void;
-  primary?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-2.5 p-4 min-h-[5.5rem] rounded-xl border motion-safe:transition-all motion-safe:duration-200 motion-safe:hover:-translate-y-0.5 cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950 ${primary
-        ? 'bg-primary-600 border-primary-500 text-primary-foreground hover:bg-primary-500 shadow-md shadow-primary-600/15'
-        : 'bg-white dark:bg-slate-900/50 backdrop-blur-sm border-gray-200/80 dark:border-white/[0.06] text-gray-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-500/40 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-slate-800/50 hover:shadow-sm'
-        }`}
-    >
-      <Icon className={`h-5 w-5 ${primary ? 'text-primary-foreground' : 'text-gray-400 dark:text-slate-400 group-hover:text-gray-600 dark:group-hover:text-slate-200'} motion-safe:transition-colors`} />
-      <span className={`text-[13px] font-medium ${primary ? 'text-primary-foreground' : 'text-gray-600 dark:text-slate-300'}`}>
-        {label}
-      </span>
-    </button>
-  );
 }
 
 // App accents are user/pack-authored hex values; validate strictly before injecting into an
@@ -119,6 +85,155 @@ function AppIdentityTile({ app }: { app: App }) {
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// The 14-day pulse strip — the dashboard's signature element. One row per form:
+// a bar per local calendar day (oldest → today), fill opacity graded by that
+// day's response count so the shape registers even on a quiet form, with
+// today's bar always at full opacity to mark the live edge of the ledger.
+// ---------------------------------------------------------------------------
+
+const PULSE_DAYS = 14;
+
+interface PulseDay {
+  /** Local calendar date, 'YYYY-MM-DD'. */
+  key: string;
+  count: number;
+  isToday: boolean;
+}
+
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// The last `n` local calendar dates, oldest first, ending with today.
+function lastNDayKeys(n: number): string[] {
+  const now = new Date();
+  const keys: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    keys.push(localDateKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)));
+  }
+  return keys;
+}
+
+function weekdayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short' });
+}
+
+// API mode: the backend already buckets into local-calendar-day counts (when we pass
+// tzOffsetMinutes), but only returns days that had ≥1 response, over a 30-day window.
+// Zero-fill onto the last PULSE_DAYS days so quiet days still render a bar.
+function buildPulseFromSparse(sparse: Array<{ date: string; count: number }> | undefined): PulseDay[] {
+  const keys = lastNDayKeys(PULSE_DAYS);
+  const todayKey = keys[keys.length - 1];
+  const counts = new Map((sparse ?? []).map((d) => [d.date, d.count] as const));
+  return keys.map((key) => ({ key, count: counts.get(key) ?? 0, isToday: key === todayKey }));
+}
+
+// Local storage mode: bucket raw response timestamps into local calendar days ourselves.
+function buildPulseFromTimestamps(timestamps: string[]): PulseDay[] {
+  const keys = lastNDayKeys(PULSE_DAYS);
+  const todayKey = keys[keys.length - 1];
+  const counts = new Map<string, number>();
+  for (const ts of timestamps) {
+    const key = localDateKey(parseServerDate(ts));
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return keys.map((key) => ({ key, count: counts.get(key) ?? 0, isToday: key === todayKey }));
+}
+
+const EMPTY_PULSE_BAR_H = 2; // px — the sliver a zero-response day still shows
+
+function PulseStrip({ days, className }: { days: PulseDay[]; className?: string }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  // `realMax` is the true busiest-day count (0 for a quiet form); `scaleMax` floors that
+  // to 1 purely so the height/opacity math below never divides by zero. Keep these
+  // separate — the floor is a rendering detail, not a fact to report in the aria-label.
+  const realMax = Math.max(...days.map((d) => d.count));
+  const scaleMax = Math.max(1, realMax);
+  const barW = 5;
+  const gap = 3;
+  const w = days.length * barW + (days.length - 1) * gap;
+  const h = 28;
+
+  return (
+    <div className={cn('relative inline-block', className)} style={{ width: w, height: h }}>
+      <svg
+        width={w}
+        height={h}
+        viewBox={`0 0 ${w} ${h}`}
+        role="img"
+        aria-label={`Responses over the last ${days.length} days: ${days.reduce((s, d) => s + d.count, 0)} total, busiest day ${realMax}`}
+      >
+        {days.map((d, i) => {
+          const barH = Math.max(EMPTY_PULSE_BAR_H, Math.round((d.count / scaleMax) * (h - EMPTY_PULSE_BAR_H)));
+          const x = i * (barW + gap);
+          const y = h - barH;
+          // Opacity is graded by count (min 0.15 so a quiet day still registers);
+          // today is always full-opacity — the live edge of the ledger.
+          const opacity = d.isToday ? 1 : 0.15 + (d.count / scaleMax) * 0.85;
+          return (
+            <g key={d.key}>
+              {/* Full-height, gap-inclusive hit area — the visible bar can be as
+                  short as 2px, too small a target to hover reliably on its own. */}
+              <rect
+                x={x - gap / 2}
+                y={0}
+                width={barW + gap}
+                height={h}
+                fill="transparent"
+                onMouseEnter={() => setHoverIndex(i)}
+                onMouseLeave={() => setHoverIndex((cur) => (cur === i ? null : cur))}
+              >
+                <title>{`${weekdayLabel(d.key)} · ${d.count} response${d.count === 1 ? '' : 's'}`}</title>
+              </rect>
+              <rect
+                x={x}
+                y={y}
+                width={barW}
+                height={barH}
+                rx={1}
+                fill="rgb(var(--primary-600))"
+                style={{ opacity }}
+                pointerEvents="none"
+              />
+            </g>
+          );
+        })}
+      </svg>
+      {hoverIndex !== null && (
+        <div
+          className="pointer-events-none absolute -top-7 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] text-gray-700 dark:text-slate-200 shadow-md motion-safe:transition-opacity"
+          style={{ left: `${((hoverIndex + 0.5) / days.length) * 100}%` }}
+        >
+          {weekdayLabel(days[hoverIndex].key)} · {days[hoverIndex].count} response{days[hoverIndex].count === 1 ? '' : 's'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Per-form accent dots in the activity rail — real categorical identity (same color =
+// same form) replacing the old uniform green "Zap" chip, which carried no information.
+// Assigned by a stable hash of the form id (not by position in a recency-sorted list),
+// so a form's dot color survives reordering as `updatedAt` changes across renders.
+const ACTIVITY_ACCENT_DOTS = ['bg-blue-500', 'bg-violet-500', 'bg-teal-500', 'bg-amber-500', 'bg-rose-500', 'bg-cyan-500'];
+
+function hashToIndex(id: string, mod: number): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % mod;
+}
+
+function accentDotForForm(formId: string): string {
+  return ACTIVITY_ACCENT_DOTS[hashToIndex(formId, ACTIVITY_ACCENT_DOTS.length)];
 }
 
 // Dropdown Menu component for form actions — uses createPortal to escape stacking context
@@ -346,11 +461,17 @@ export function Dashboard() {
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
   const { getResponsesByFormId, responses } = useResponseStore();
   const user = useAuthStore((state) => state.user);
-  const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0, avgCompletionRate: 0 });
+  const [stats, setStats] = useState<DashboardStats>({ totalResponses: 0 });
+  // Whether `stats` reflects a completed fetch (api mode) rather than the zeroed initial
+  // value — so the headline can hold its '—' dash instead of flashing "0 responses" while
+  // the analytics fetch is still in flight.
+  const [statsReady, setStatsReady] = useState(false);
   // Cloud (API) mode keeps responses on the server, not in the local store, so
   // per-form counts + Recent Activity must come from the API (else the cards show
   // 0 / "No submissions yet" while the Total Responses stat shows the real number).
   const [responseCounts, setResponseCounts] = useState<Record<string, number>>({});
+  // Per-form 14-day activity, for the pulse strip (api mode; local mode derives its own below).
+  const [apiPulses, setApiPulses] = useState<Record<string, PulseDay[]>>({});
   const [apiRecent, setApiRecent] = useState<Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>>([]);
   // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is
   // part of (badge only — preview routing does its own fresh per-click context lookup).
@@ -424,8 +545,6 @@ export function Dashboard() {
 
   // Calculate various stats
   const totalForms = forms.length;
-  const publishedForms = forms.filter(f => f.status === 'published').length;
-  const draftForms = totalForms - publishedForms;
 
   // Calculate stats from local responses
   const localStats = useMemo(() => {
@@ -433,13 +552,21 @@ export function Dashboard() {
       (sum, form) => sum + getResponsesByFormId(form.id).length,
       0
     );
-    const formsWithResponses = forms.filter(form => getResponsesByFormId(form.id).length > 0);
-    const avgCompletionRate = forms.length > 0
-      ? Math.round((formsWithResponses.length / forms.length) * 100)
-      : 0;
-    return { totalResponses, avgCompletionRate };
+    return { totalResponses };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
+
+  // Per-form 14-day pulse (local storage mode) — bucketed client-side from raw timestamps.
+  const localPulses = useMemo(() => {
+    const map: Record<string, PulseDay[]> = {};
+    for (const form of forms) {
+      map[form.id] = buildPulseFromTimestamps(getResponsesByFormId(form.id).map((r) => r.submittedAt));
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
+  }, [forms, responses, getResponsesByFormId]);
+
+  const pulseByForm = storageMode === 'api' ? apiPulses : localPulses;
 
   // Fetch stats from API when in API mode
   useEffect(() => {
@@ -448,34 +575,25 @@ export function Dashboard() {
       if (storageMode === 'api' && user && forms.length > 0) {
         try {
           let totalResponses = 0;
-          let totalCompletionRate = 0;
-          let formsWithAnalytics = 0;
-
+          // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
+          // minutes AHEAD — negate it (see api.getFormAnalytics doc) so responsesByDate (and
+          // therefore the pulse strip) buckets by the viewer's local calendar day.
+          const tzOffsetMinutes = -new Date().getTimezoneOffset();
           const analyticsResults = await Promise.all(
-            forms.map((form) => api.getFormAnalytics(form.id))
+            forms.map((form) => api.getFormAnalytics(form.id, tzOffsetMinutes))
           );
           if (cancelled) return;
           for (const result of analyticsResults) {
             if (result.data?.analytics) {
-              const a = result.data.analytics;
-              totalResponses += a.totalResponses;
-              // Include every form that has received traffic in the average —
-              // even genuine 0% completion forms — so the average isn't biased
-              // upward by silently dropping them from the denominator.
-              if ((a.totalViews ?? 0) > 0 || (a.totalStarts ?? 0) > 0) {
-                totalCompletionRate += a.completionRate;
-                formsWithAnalytics++;
-              }
+              totalResponses += result.data.analytics.totalResponses;
             }
           }
 
-          setStats({
-            totalResponses,
-            avgCompletionRate: formsWithAnalytics > 0 ? Math.round(totalCompletionRate / formsWithAnalytics) : 0,
-          });
+          setStats({ totalResponses });
 
-          // Per-form counts for the cards (reuse the analytics we just fetched).
+          // Per-form counts + 14-day pulse for the ledger rows (reuse the analytics we just fetched).
           const counts: Record<string, number> = {};
+          const pulses: Record<string, PulseDay[]> = {};
           // Last submission time per form, derived from the analytics we already have,
           // so Recent Activity ranks by submission recency. Submissions no longer bump
           // forms.updatedAt, so updatedAt alone would miss the newest activity.
@@ -483,6 +601,7 @@ export function Dashboard() {
           analyticsResults.forEach((result, i) => {
             if (result.data?.analytics) {
               counts[forms[i].id] = result.data.analytics.totalResponses;
+              pulses[forms[i].id] = buildPulseFromSparse(result.data.analytics.responsesByDate);
               const dated = (result.data.analytics.responsesByDate || []).filter((d) => d.count > 0);
               if (dated.length) {
                 lastActivity[forms[i].id] = Math.max(...dated.map((d) => parseServerDate(d.date).getTime()));
@@ -491,6 +610,7 @@ export function Dashboard() {
           });
           if (cancelled) return;
           setResponseCounts(counts);
+          setApiPulses(pulses);
 
           // Recent Activity: pull a few recent rows from the forms that have responses.
           const formsWithResponses = forms
@@ -516,14 +636,17 @@ export function Dashboard() {
           );
           merged.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
           setApiRecent(merged.slice(0, 5));
+          setStatsReady(true);
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
           toast.warning('Connection issue', 'Using local data. Some stats may not be up to date.');
           setStats(localStats);
+          setStatsReady(true);
         }
       } else {
         setStats(localStats);
+        setStatsReady(true);
       }
     }
 
@@ -532,7 +655,21 @@ export function Dashboard() {
   }, [forms, storageMode, user, localStats]);
 
   const totalResponses = stats.totalResponses;
-  const avgCompletionRate = stats.avgCompletionRate;
+
+  // "This week" = the most recent 7 of the 14 days each form's pulse already covers —
+  // no extra fetch, and it keeps the headline and the pulse strips reading the same window.
+  const weekly = useMemo(() => {
+    let weeklyResponses = 0;
+    let activeForms = 0;
+    for (const form of forms) {
+      const days = pulseByForm[form.id];
+      if (!days) continue;
+      const sum = days.slice(-7).reduce((s, d) => s + d.count, 0);
+      weeklyResponses += sum;
+      if (sum > 0) activeForms++;
+    }
+    return { responses: weeklyResponses, activeForms };
+  }, [forms, pulseByForm]);
 
   // Load which app each form belongs to (cloud mode) so Recent Forms can tag it (badge only).
   useEffect(() => {
@@ -581,103 +718,58 @@ export function Dashboard() {
   }, [forms, responses, getResponsesByFormId]);
   const recentResponses = storageMode === 'api' ? apiRecent : localRecentResponses;
 
-  // Format date for welcome message
-  const today = new Date().toLocaleDateString(undefined, {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
-
   // Show getting started only for genuinely-new users — not during the initial
   // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
   const showGettingStarted = forms.length === 0 && !formsLoading;
   const showWelcome = showGettingStarted && !welcomeDismissed;
+
+  // The headline band — one prose sentence, data figures set in primary color.
+  // A stable order (dash discipline) while forms/stats are still loading; otherwise
+  // the sentence reports either the empty-account state or the real weekly figures.
+  // The old "completion rate" stat (which meant two different things in local vs api
+  // mode) is retired here rather than carried forward under a new name.
+  const headlineReady = !formsLoading && statsReady;
+  let headline: React.ReactNode;
+  const num = (n: number | string) => (
+    <span className="tabular-nums text-primary-600 dark:text-primary-400">{n}</span>
+  );
+  if (!headlineReady) {
+    headline = <>{num('—')} responses arrived across {num('—')} forms this week.</>;
+  } else if (totalForms === 0) {
+    headline = <>Create your first form to start collecting responses.</>;
+  } else if (totalResponses === 0) {
+    headline = <>No responses yet — share a form link and watch them arrive here.</>;
+  } else if (weekly.responses === 0) {
+    headline = <>No new responses this week — {num(totalResponses)} total so far.</>;
+  } else {
+    headline = (
+      <>
+        {num(weekly.responses)} response{weekly.responses === 1 ? '' : 's'} arrived across{' '}
+        {num(weekly.activeForms)} form{weekly.activeForms === 1 ? '' : 's'} this week.
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen">
       <Header title="Dashboard" />
 
       <div className="flex-1 w-full p-4 sm:p-6 lg:p-8">
-        {/* Welcome Section */}
+        {/* Headline band — the intake ledger reads as one live sentence, not four stat cards. */}
         <div className="mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
-            Welcome back{user?.name ? `, ${user.name}` : ''}!
+          <h1 className="text-3xl font-semibold tracking-tight text-gray-900 dark:text-white">
+            {headline}
           </h1>
-          <p className="text-gray-500 dark:text-slate-400 mt-1">{today}</p>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8">
-          <StatCard
-            className="fade-in-up stagger-1"
-            icon={FileText}
-            iconBg="bg-primary-50 dark:bg-primary-500/10"
-            iconColor="text-primary-600 dark:text-primary-400"
-            value={formsLoading ? '—' : totalForms}
-            label="Total forms"
-            subtext={formsLoading ? 'Loading…' : totalForms === 0 ? 'Create your first form' : draftForms > 0 ? `${draftForms} draft${draftForms === 1 ? '' : 's'}` : 'All published'}
-          />
-          <StatCard
-            className="fade-in-up stagger-2"
-            icon={Globe}
-            iconBg="bg-green-50 dark:bg-green-500/10"
-            iconColor="text-green-600 dark:text-green-400"
-            value={formsLoading ? '—' : publishedForms}
-            label="Published"
-            subtext={formsLoading ? 'Loading…' : totalForms > 0 ? `${Math.round((publishedForms / totalForms) * 100)}% of forms` : 'No forms yet'}
-          />
-          <StatCard
-            className="fade-in-up stagger-3"
-            icon={Inbox}
-            iconBg="bg-blue-50 dark:bg-blue-500/10"
-            iconColor="text-blue-600 dark:text-blue-400"
-            value={formsLoading ? '—' : totalResponses}
-            label="Total responses"
-            subtext="Across all forms"
-          />
-          <StatCard
-            className="fade-in-up stagger-4"
-            icon={TrendingUp}
-            iconBg="bg-amber-50 dark:bg-amber-500/10"
-            iconColor="text-amber-600 dark:text-amber-400"
-            value={formsLoading ? '—' : totalForms > 0 ? `${avgCompletionRate}%` : '—'}
-            label="Completion rate"
-            subtext={formsLoading ? 'Loading…' : totalForms > 0 ? 'Average across forms' : 'No forms yet'}
-          />
-        </div>
-
-        {/* Quick Actions */}
-        <div className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider mb-3">
-            Quick actions
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-            <QuickActionButton
-              icon={Plus}
-              label="New form"
-              onClick={handleCreateForm}
-              primary
-            />
-            <QuickActionButton
-              icon={FileText}
-              label="All forms"
-              onClick={() => navigate('/forms')}
-            />
-            <QuickActionButton
-              icon={LayoutTemplate}
-              label="Templates"
-              onClick={() => setShowTemplateSelector(true)}
-            />
-            <QuickActionButton
-              icon={Package}
-              label="Manage packs"
-              onClick={() => setShowPackImport(true)}
-            />
-            <QuickActionButton
-              icon={Settings}
-              label="Settings"
-              onClick={() => navigate('/settings')}
-            />
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
+              New form
+            </Button>
+            <Button variant="outline" onClick={() => setShowTemplateSelector(true)} leftIcon={<LayoutTemplate className="h-4 w-4" />}>
+              Templates
+            </Button>
+            <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
+              Import pack
+            </Button>
           </div>
         </div>
 
@@ -718,54 +810,6 @@ export function Dashboard() {
                 </div>
               </CardContent>
             </Card>
-          </div>
-        )}
-
-        {/* Apps strip — the user's most recently updated apps, mirroring the Apps page cards. */}
-        {recentApps.length > 0 && (
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Apps</h2>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => navigate('/apps')}
-                className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
-              >
-                View all
-                <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {recentApps.map((app) => {
-                // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
-                const formCount = app.formCount ?? app.navConfig?.length ?? 0;
-                return (
-                  <button
-                    key={app.id}
-                    onClick={() => navigate(`/apps/${app.id}/settings`)}
-                    title={`Manage ${app.name}`}
-                    className={cn(
-                      'flex items-center gap-3 p-4 min-w-0 rounded-xl border text-left group cursor-pointer',
-                      'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
-                      'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
-                    )}
-                  >
-                    <AppIdentityTile app={app} />
-                    <div className="min-w-0 flex-1">
-                      <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
-                        {app.name}
-                      </span>
-                      <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
-                        {formCount} form{formCount === 1 ? '' : 's'} · <span className="capitalize">{app.status}</span>
-                      </span>
-                    </div>
-                    <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
-                  </button>
-                );
-              })}
-            </div>
           </div>
         )}
 
@@ -812,6 +856,8 @@ export function Dashboard() {
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
+                  const n = storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length;
+                  const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
                   return (
                     <Card
                       key={form.id}
@@ -831,40 +877,48 @@ export function Dashboard() {
                     >
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-4 min-w-0 flex-1">
-                            <div className="p-2.5 bg-primary-50 dark:bg-primary-500/10 rounded-xl flex-shrink-0 hidden sm:flex">
-                              <DynamicIcon name={form.icon} className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                <h4 className="font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
-                                  {form.title || 'Untitled Form'}
-                                </h4>
-                                <Badge
-                                  variant={form.status === 'published' ? 'success' : 'default'}
-                                  size="sm"
-                                  className="capitalize"
-                                >
-                                  {form.status}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <h4 className="font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
+                                {form.title || 'Untitled Form'}
+                              </h4>
+                              <Badge
+                                variant={form.status === 'published' ? 'success' : 'default'}
+                                size="sm"
+                                className="capitalize"
+                              >
+                                {form.status}
+                              </Badge>
+                              {appOfForm[form.id] && (
+                                <Badge variant="info" size="sm" className="inline-flex items-center gap-1 max-w-[10rem]" title={`In the ${appOfForm[form.id]} app`}>
+                                  <Boxes className="h-3 w-3 flex-shrink-0" />
+                                  <span className="truncate">{appOfForm[form.id]}</span>
                                 </Badge>
-                                {appOfForm[form.id] && (
-                                  <Badge variant="info" size="sm" className="inline-flex items-center gap-1 max-w-[10rem]" title={`In the ${appOfForm[form.id]} app`}>
-                                    <Boxes className="h-3 w-3 flex-shrink-0" />
-                                    <span className="truncate">{appOfForm[form.id]}</span>
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
-                                <span className="flex items-center gap-1">
-                                  <Clock className="h-3.5 w-3.5" />
-                                  {formatRelativeTime(form.updatedAt)}
-                                </span>
-                                <span className="hidden sm:inline">•</span>
-                                <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
-                                <span>•</span>
-                                {(() => { const n = storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length; return <span>{n} response{n === 1 ? '' : 's'}</span>; })()}
-                              </div>
+                              )}
                             </div>
+                            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-slate-400 tabular-nums">
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3.5 w-3.5" />
+                                <span className="font-mono text-xs">{formatRelativeTime(form.updatedAt)}</span>
+                              </span>
+                              <span className="hidden sm:inline">•</span>
+                              <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
+                              <span className="sm:hidden">•</span>
+                              <span className="sm:hidden">{n} response{n === 1 ? '' : 's'}</span>
+                            </div>
+                          </div>
+
+                          {/* Right rail: the 14-day pulse strip + the response count as a data figure —
+                              this replaces the meta-line response count on ≥sm (kept above, for mobile,
+                              where the strip is hidden to avoid crowding the row). */}
+                          <div className="hidden sm:flex items-center gap-3 flex-none">
+                            <PulseStrip days={days} />
+                            <span
+                              className="w-10 flex-none truncate text-right text-lg font-semibold tabular-nums text-gray-900 dark:text-white"
+                              title={String(n)}
+                            >
+                              {n}
+                            </span>
                           </div>
 
                           {/* stopPropagation: the whole row navigates to the builder — inner
@@ -929,6 +983,56 @@ export function Dashboard() {
                 })}
               </div>
             )}
+
+            {/* Apps strip — the user's most recently updated apps, mirroring the Apps page
+                cards. Lives under My forms (sharing its 2/3-width column), not as a full-width
+                strip — the AppIdentityTile treatment itself is unchanged ("as-is"). */}
+            {recentApps.length > 0 && (
+              <div className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Apps</h2>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => navigate('/apps')}
+                    className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+                  >
+                    View all
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {recentApps.map((app) => {
+                    // Real count from the list endpoint; navConfig.length is empty on pack-provisioned apps.
+                    const formCount = app.formCount ?? app.navConfig?.length ?? 0;
+                    return (
+                      <button
+                        key={app.id}
+                        onClick={() => navigate(`/apps/${app.id}/settings`)}
+                        title={`Manage ${app.name}`}
+                        className={cn(
+                          'flex items-center gap-3 p-4 min-w-0 rounded-xl border text-left group cursor-pointer',
+                          'bg-white dark:bg-slate-900/50 border-gray-200/80 dark:border-white/[0.06] shadow-sm shadow-gray-900/[0.03]',
+                          'hover:bg-gray-50 dark:hover:bg-slate-800/60 hover:border-gray-300 dark:hover:border-slate-600 motion-safe:transition-colors',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950'
+                        )}
+                      >
+                        <AppIdentityTile app={app} />
+                        <div className="min-w-0 flex-1">
+                          <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors">
+                            {app.name}
+                          </span>
+                          <span className="block text-xs text-gray-500 dark:text-slate-400 truncate tabular-nums">
+                            {formCount} form{formCount === 1 ? '' : 's'} · <span className="capitalize">{app.status}</span>
+                          </span>
+                        </div>
+                        <ChevronRight className="h-4 w-4 flex-none text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 motion-safe:transition-colors" aria-hidden="true" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Recent Activity - Takes 1/3 on desktop */}
@@ -942,8 +1046,8 @@ export function Dashboard() {
                 {recentResponses.length === 0 ? (
                   <EmptyState
                     icon={Inbox}
-                    title="No submissions yet"
-                    description="Responses will appear here as they come in."
+                    title="No responses yet"
+                    description="Share a form link and watch them arrive here."
                     action={
                       forms.length > 0 ? (
                         <Button variant="outline" size="sm" onClick={() => navigate('/forms')}>
@@ -962,15 +1066,18 @@ export function Dashboard() {
                         className="w-full p-4 text-left hover:bg-gray-50 dark:hover:bg-slate-800/50 motion-safe:transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
                       >
                         <div className="flex items-start gap-3">
-                          <div className="p-2 bg-green-500/10 rounded-lg flex-shrink-0">
-                            <Zap className="h-4 w-4 text-green-600 dark:text-green-500" />
-                          </div>
+                          {/* Per-form accent dot — same color = same form, real identity in
+                              place of the old uniform green "Zap" chip. */}
+                          <span
+                            className={cn('mt-1.5 h-2.5 w-2.5 flex-shrink-0 rounded-full', accentDotForForm(response.formId))}
+                            aria-hidden="true"
+                          />
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {response.formTitle}
                             </p>
                             <p className="text-xs text-gray-500 dark:text-slate-500 mt-0.5">
-                              New submission • {formatRelativeTime(response.submittedAt)}
+                              New submission · <span className="font-mono">{formatRelativeTime(response.submittedAt)}</span>
                             </p>
                           </div>
                           <ArrowRight className="h-4 w-4 flex-shrink-0 self-center text-gray-300 dark:text-slate-600 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 motion-safe:transition-opacity" aria-hidden="true" />
