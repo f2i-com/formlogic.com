@@ -602,7 +602,7 @@ code {
 
 .form-row { display: flex; flex-direction: column; gap: 5px; flex: 1; }
 
-.form-row input {
+.form-row input, .form-row select, .form-row textarea {
   background: var(--bg-0);
   border: 1px solid var(--line-2);
   color: var(--ink);
@@ -612,13 +612,27 @@ code {
   font-size: 12.5px;
   transition: border-color 0.14s, box-shadow 0.14s;
 }
-.form-row input::placeholder { color: var(--ink-faint); }
-.form-row input:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
-.form-row input:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-row input::placeholder, .form-row textarea::placeholder { color: var(--ink-faint); }
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.form-row input:disabled, .form-row select:disabled, .form-row textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-row textarea { resize: vertical; font-family: inherit; min-height: 72px; }
 
 .form-row-pair { display: flex; gap: 10px; flex-wrap: wrap; }
+.form-row-checkbox { flex-direction: row; align-items: center; gap: 8px; }
 .form-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .form-hint { margin: 0; font-size: 11.5px; color: var(--ink-faint); line-height: 1.55; }
+
+/* light-touch group label INSIDE a .dl-form — unlike .section-title this
+   isn't a top-of-panel heading, so it skips the display face + glow tick. */
+.form-group-title {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
 
 .dl-row {
   background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
