@@ -113,7 +113,7 @@ describe('aokie_speak', () => {
     const deps = fakeDeps({ connectorRequest });
     const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { text: 'Hello {{event.data.name}}' } };
     await executeNode(ctxFor(node, deps, { scope: { event: { data: { name: 'Sam' } } } }));
-    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { message: 'Hello Sam' });
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'Hello Sam' });
   });
 
   it('supports textFrom selectors', async () => {
@@ -121,7 +121,7 @@ describe('aokie_speak', () => {
     const deps = fakeDeps({ connectorRequest });
     const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { textFrom: '$inputs.line' } };
     await executeNode(ctxFor(node, deps, { scope: { inputs: { line: 'Connecting now' } } }));
-    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { message: 'Connecting now' });
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'Connecting now' });
   });
 });
 

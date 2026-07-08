@@ -183,7 +183,7 @@ describe('performRelayCommand — optimistic overlay', () => {
     const overlays: (CallOverlay | null)[] = [];
     const onReload = vi.fn();
     const runner = vi.fn(async () => ({ status: 'done' } as RelayOutcome));
-    await performRelayCommand({} as RelayApi, 'slug', 'call.operatorSpeak', 'c1', { message: 'hi' }, {
+    await performRelayCommand({} as RelayApi, 'slug', 'call.operatorSpeak', 'c1', { text: 'hi' }, {
       onOptimistic: (o) => overlays.push(o),
       onReload,
       runner,

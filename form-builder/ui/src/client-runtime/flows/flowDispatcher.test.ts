@@ -214,7 +214,7 @@ describe('binding matching + output actions', () => {
     expect(harness.toasts).toEqual([{ message: 'Caller +614', level: 'info' }]);
     // call.speak routes through the aokie connector's operatorSpeak command.
     expect(harness.connectorCalls).toEqual([
-      { connectorId: 'aokie', command: 'call.operatorSpeak', payload: { message: 'Connecting +614' } },
+      { connectorId: 'aokie', command: 'call.operatorSpeak', payload: { text: 'Connecting +614' } },
     ]);
     // The third action's `when` selector was falsy — sms.send never fired.
   });

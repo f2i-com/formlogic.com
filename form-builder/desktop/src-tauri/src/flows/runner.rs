@@ -850,7 +850,9 @@ async fn execute_node(
             let text = text.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
                 FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' aokie_speak text did not resolve to a string", node.id), Some(node.id.clone()))
             })?;
-            connector_request(node, deps, "aokie", "call.operatorSpeak", Some(json!({ "message": text }))).await
+            // The aokie plugin's call.operatorSpeak requires `text` (and rejects
+            // unknown fields), so send `text`, not `message`.
+            connector_request(node, deps, "aokie", "call.operatorSpeak", Some(json!({ "text": text }))).await
         }
 
         "storage_get" => {

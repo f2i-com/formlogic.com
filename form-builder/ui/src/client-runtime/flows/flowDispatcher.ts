@@ -768,9 +768,10 @@ async function applyOutputAction(
     }
     case 'call.speak':
       // Speak into the live call via the aokie connector's operatorSpeak command; the
-      // standard connector permission gate applies at the connector layer.
+      // standard connector permission gate applies at the connector layer. The plugin
+      // requires the `text` field (and rejects unknown fields).
       await d.connectorRequest('aokie', 'call.operatorSpeak', {
-        message: interpolateTemplate(action.message ?? '', templateCtx),
+        text: interpolateTemplate(action.message ?? '', templateCtx),
       });
       return;
   }

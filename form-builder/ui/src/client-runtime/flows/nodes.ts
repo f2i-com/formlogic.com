@@ -1036,7 +1036,9 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       if (typeof text !== 'string' || text === '') {
         throw new FlowExecError('node_failed', `Node '${node.id}' aokie_speak text did not resolve to a string`, node.id);
       }
-      return await deps.connectorRequest('aokie', 'call.operatorSpeak', { message: text });
+      // The aokie plugin's call.operatorSpeak requires the `text` field (and
+      // rejects unknown fields), so send `text`, not `message`.
+      return await deps.connectorRequest('aokie', 'call.operatorSpeak', { text });
     }
 
     // ── Desktop-service-backed nodes (docs §4) ──────────────────────────────────────────────

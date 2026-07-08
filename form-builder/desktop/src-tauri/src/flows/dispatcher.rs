@@ -777,7 +777,8 @@ impl FlowRuntime {
             }
             "call.speak" => {
                 let msg = interpolate_template(action.get("message").and_then(Value::as_str).unwrap_or(""), &tctx);
-                self.connector("aokie", "call.operatorSpeak", Some(json!({ "message": msg }))).await
+                // The aokie plugin requires the `text` field (and rejects unknown fields).
+                self.connector("aokie", "call.operatorSpeak", Some(json!({ "text": msg }))).await
             }
             _ => Ok(()),
         }

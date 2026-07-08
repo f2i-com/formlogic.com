@@ -229,9 +229,9 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   );
 
   const handleSpeak = useCallback(async () => {
-    const message = speakText.trim();
-    if (!message) return;
-    await runCommand('call.operatorSpeak', { message }, 'Sent to the caller');
+    const text = speakText.trim();
+    if (!text) return;
+    await runCommand('call.operatorSpeak', { text }, 'Sent to the caller');
     setSpeakText('');
   }, [runCommand, speakText]);
 
@@ -265,10 +265,10 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
 
   const handleRelaySpeak = useCallback(
     async (callId: string | undefined) => {
-      const message = speakText.trim();
-      if (!message) return;
+      const text = speakText.trim();
+      if (!text) return;
       setSpeakText('');
-      await runRelay('call.operatorSpeak', callId, { message });
+      await runRelay('call.operatorSpeak', callId, { text });
     },
     [runRelay, speakText]
   );
