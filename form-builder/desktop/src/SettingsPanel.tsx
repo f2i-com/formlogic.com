@@ -427,7 +427,7 @@ export default function SettingsPanel() {
             <span>…or type/paste a path</span>
             <input
               type="text"
-              placeholder="D:\\F2I  or  C:\\Users\\me\\F2I-data"
+              placeholder="D:\\FormLogic  or  C:\\Users\\me\\FormLogic-data"
               value={manualPath}
               onChange={(e) => setManualPath(e.target.value)}
               disabled={busy}

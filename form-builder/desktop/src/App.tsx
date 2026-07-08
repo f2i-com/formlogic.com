@@ -93,7 +93,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="brand">
-          <span className="brand-mark">F2I</span>
+          <span className="brand-mark">FL</span>
           <div className="brand-titles">
             <h1>FormLogic Desktop</h1>
             <p className="tagline">Local models, plugins &amp; hardware for FormLogic apps</p>

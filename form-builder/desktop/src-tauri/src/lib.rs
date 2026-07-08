@@ -1,4 +1,4 @@
-//! F2I Companion — entry point.
+//! FormLogic Desktop — entry point.
 //!
 //! Phase 1: bring up the Tauri shell + a tray icon + a localhost HTTP API
 //! that f2i-web can discover.
@@ -188,7 +188,7 @@ fn open_url(url: String) -> Result<(), String> {
 fn default_data_dir(app: &tauri::AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
-        .unwrap_or_else(|_| std::env::temp_dir().join("F2I"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("FormLogic"))
 }
 
 /// Path to the tiny bootstrap pointer file that records the user's chosen
@@ -1336,7 +1336,7 @@ pub fn run() {
                 .handle()
                 .path()
                 .app_config_dir()
-                .unwrap_or_else(|_| std::env::temp_dir().join("F2I"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("FormLogic"))
                 .join("pairing.json");
             let pairing: PairingHandle = PairingStore::new(
                 pairing_path,

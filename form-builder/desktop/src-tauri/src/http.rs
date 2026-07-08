@@ -1579,7 +1579,7 @@ pub async fn serve(
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    log::info!("F2I API listening on http://{addr}");
+    log::info!("FormLogic Desktop API listening on http://{addr}");
     axum::serve(listener, app).await?;
     Ok(())
 }
