@@ -264,7 +264,7 @@ const FLOW_MISSED_TASK = `(function () {
 // appended from the input in case its Transcript Turns row hasn't landed yet
 // (the app-logic writer and this flow both fire on the same turn.final event).
 const DEFAULT_PERSONA =
-  'You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.';
+  'You are a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.';
 
 const FLOW_LIVE_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
@@ -302,6 +302,38 @@ const FLOW_LIVE_CONTEXT = `(function () {
   }
   if (latest && !sawLatest) lines.push('Caller: ' + latest);
   return { transcript: lines.join('\\n'), latest: latest, persona: persona, model: model };
+})()`;
+
+// Agent config push: read the newest active Receptionist Settings record and shape
+// it into what the Aokie plugin's in-plugin voice agent consumes (via settings.set,
+// which live-reconfigures the running receptionist). This is what makes the AI
+// receptionist configurable from FormLogic — edit the Settings form and the next
+// call uses the new persona, greeting, voice and model, no flow-graph or code edits.
+const FLOW_AGENT_CONFIG = `(function () {
+  // formlogic_list_responses returns the array directly on the desktop f2i runner
+  // (nodes.settings) but {responses:[...]} in the TS executor — handle both.
+  var node = nodes.settings;
+  var rows = node && node.responses ? node.responses : (Array.isArray(node) ? node : []);
+  var cfg = {};
+  for (var i = 0; i < rows.length; i++) {
+    var a = (rows[i] && rows[i].answers) || {};
+    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }
+  }
+  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
+  var business = String(cfg.business_name || '').trim();
+  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+  var greeting = String(cfg.greeting || '').trim();
+  if (!greeting) {
+    greeting = business
+      ? 'Thank you for calling ' + business + '! How can I help you today?'
+      : 'Thanks for calling! How can I help you today?';
+  }
+  return {
+    persona: persona,
+    greeting: greeting,
+    voice: String(cfg.voice || '').trim(),
+    model: String(cfg.model || '').trim()
+  };
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -938,7 +970,32 @@ export const aokieReceptionistPack: PackData = {
               'e.g. Be warm and concise. Offer to book appointments Mon–Fri 9–5. If asked about prices, give the standard checkup price of $90 and offer to book.',
           },
         },
+        {
+          id: 'greeting',
+          type: 'short_text',
+          label: 'Greeting (spoken first, blank = friendly default)',
+          required: false,
+          properties: { placeholder: 'e.g. Thanks for calling Bright Smile Dental! How can I help?' },
+        },
         { id: 'model', type: 'short_text', label: 'LLM model (blank = auto-detect)', required: false, properties: { placeholder: 'e.g. llama3.1:8b' } },
+        {
+          id: 'voice',
+          type: 'dropdown',
+          label: 'Voice (blank = default)',
+          required: false,
+          properties: {
+            options: [
+              { id: 'default', label: 'Default', value: '' },
+              { id: 'alba', label: 'Alba', value: 'alba' },
+              { id: 'cosette', label: 'Cosette', value: 'cosette' },
+              { id: 'eponine', label: 'Eponine', value: 'eponine' },
+              { id: 'fantine', label: 'Fantine', value: 'fantine' },
+              { id: 'javert', label: 'Javert', value: 'javert' },
+              { id: 'jean', label: 'Jean', value: 'jean' },
+              { id: 'marius', label: 'Marius', value: 'marius' },
+            ],
+          },
+        },
         { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
       ],
       customScreen: {
@@ -1209,6 +1266,42 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'Configure Receptionist',
+      slug: 'configure-receptionist',
+      description:
+        "On each incoming call, read the newest Receptionist Settings record and push its persona, greeting, voice and model to the Aokie plugin (settings.set), which live-reconfigures the in-plugin AI receptionist. This is what makes the receptionist configurable from FormLogic — edit the Settings form and the next call uses the new config, no flow-graph or code changes. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
+      nodeCapabilities: ['formlogic.responses.read', 'connector.aokie.settings.set'],
+      flowJson: {
+        nodes: [
+          { id: 'in', type: 'input', data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }] } },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
+          { id: 'cfg', type: 'logic_block', data: { expr: FLOW_AGENT_CONFIG } },
+          {
+            id: 'push',
+            type: 'connector_request',
+            data: {
+              connectorId: 'aokie',
+              command: 'settings.set',
+              // Keys the plugin maps to the live voice agent (persona/greeting/voice/model).
+              payload: {
+                persona: '$nodes.cfg.persona',
+                greeting: '$nodes.cfg.greeting',
+                ttsVoice: '$nodes.cfg.voice',
+                aiModel: '$nodes.cfg.model',
+              },
+            },
+          },
+          { id: 'out', type: 'output', data: { value: { persona: '$nodes.cfg.persona', greeting: '$nodes.cfg.greeting' } } },
+        ],
+        edges: [
+          { source: 'in', target: 'settings' },
+          { source: 'settings', target: 'cfg' },
+          { source: 'cfg', target: 'push' },
+          { source: 'push', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Call Summary + Follow-up',
       slug: 'call-summary-follow-up',
       description:
@@ -1369,6 +1462,18 @@ export const aokieReceptionistPack: PackData = {
   ],
 
   flowBindings: [
+    {
+      flow: 'configure-receptionist',
+      event: 'aokie.call.incoming',
+      connectorId: 'aokie',
+      // sync + first (sortOrder 0) so the plugin is reconfigured from the Settings
+      // form before it plays the greeting / takes the first turn on this call.
+      mode: 'sync',
+      timeoutMs: 3000,
+      inputMap: { callId: '$event.data.callId', from: '$event.data.from' },
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 0,
+    },
     {
       flow: 'incoming-caller-lookup',
       event: 'aokie.call.incoming',
