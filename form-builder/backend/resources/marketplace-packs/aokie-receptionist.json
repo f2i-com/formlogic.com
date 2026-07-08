@@ -607,6 +607,7 @@
           "dashboard": {
             "version": 1,
             "cols": 12,
+            "refreshInterval": 30,
             "widgets": [
               {
                 "id": "k1",
@@ -2471,6 +2472,7 @@
           "dashboard": {
             "version": 1,
             "cols": 12,
+            "refreshInterval": 30,
             "widgets": [
               {
                 "id": "k1",

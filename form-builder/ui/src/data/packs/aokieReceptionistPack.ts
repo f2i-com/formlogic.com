@@ -481,6 +481,7 @@ export const aokieReceptionistPack: PackData = {
         dashboard: {
           version: 1,
           cols: 12,
+          refreshInterval: 30, // live transcript activity without a manual reload
           widgets: [
             { id: 'k1', title: 'Turns logged', layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:transcript-turns', viz: 'kpi', measure: { fn: 'count' } } },
             { id: 'k2', title: 'Calls covered', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:transcript-turns', viz: 'kpi', measure: { fn: 'countDistinct', field: 'call_id' } } },
@@ -933,6 +934,9 @@ export const aokieReceptionistPack: PackData = {
         dashboard: {
           version: 1,
           cols: 12,
+          // Auto-refresh so calls appear on the home screen as they happen without
+          // a manual reload (the widget dashboard re-runs its reports every 30s).
+          refreshInterval: 30,
           widgets: [
             { id: 'k1', title: "Today's calls", layout: { x: 0, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: '__submitted_at', op: 'today' }] } },
             { id: 'k2', title: 'Missed calls', layout: { x: 3, y: 0, w: 3, h: 1 }, kind: 'report', spec: { formId: '@pack:calls', viz: 'kpi', measure: { fn: 'count' }, filters: [{ field: 'status', op: 'eq', value: 'missed' }] } },

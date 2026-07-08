@@ -972,6 +972,27 @@ async fn run_http_request(node: &GraphNode, scope: &SelectorScope, deps: &RunDep
     Ok(json!({ "status": status.as_u16(), "ok": status.is_success(), "body": body }))
 }
 
+/// Best-effort: the first model id the OpenAI-compatible service at
+/// `chat_endpoint` advertises (`…/v1/models`). Returns None on any failure, so a
+/// server that serves a single model without needing the field (llama.cpp) is
+/// unaffected, while Ollama — which rejects a model-less request — gets a model.
+async fn discover_default_model(chat_endpoint: &str, http: &reqwest::Client) -> Option<String> {
+    let models_url = chat_endpoint.replace("/chat/completions", "/models");
+    let resp = http.get(&models_url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    let v = serde_json::from_str::<Value>(&text).ok()?;
+    let data = v.get("data")?.as_array()?;
+    for m in data {
+        if let Some(id) = m.get("id").and_then(Value::as_str) {
+            return Some(id.to_string());
+        }
+    }
+    None
+}
+
 async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -> Result<Value, FlowError> {
     let data = node_data(node);
     // Endpoint resolution: node.data.endpoint (allow-listed) → resolved local service.
@@ -1014,6 +1035,11 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
     let mut body = json!({ "messages": messages });
     if let Some(model) = data.get("model").and_then(Value::as_str).filter(|s| !s.is_empty()) {
         body["model"] = json!(model);
+    } else if let Some(m) = discover_default_model(&endpoint, &deps.http).await {
+        // Ollama (and other strict OpenAI-compatible servers) reject a request
+        // with no model. If the flow didn't pin one, use the first model the
+        // local service advertises so model-less flows work out of the box.
+        body["model"] = json!(m);
     }
     if let Some(t) = data.get("temperature").and_then(Value::as_f64) {
         body["temperature"] = json!(t);

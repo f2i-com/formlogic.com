@@ -237,7 +237,7 @@ describe('llm_chat endpoint resolution', () => {
     const fetchFn = okFetch();
     const resolveDesktopLlmEndpoint = vi.fn(async () => ({ endpoint: 'http://127.0.0.1:11434/v1/chat/completions', service: 'ollama' }));
     const deps = fakeDeps({ fetchFn, resolveDesktopLlmEndpoint, getAppAiBase: () => null });
-    await executeNode(ctxFor(llmNode({}), deps));
+    await executeNode(ctxFor(llmNode({ model: 'm' }), deps)); // model set → skips the /models probe
     expect(resolveDesktopLlmEndpoint).toHaveBeenCalled();
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://127.0.0.1:11434/v1/chat/completions');
   });
@@ -249,8 +249,32 @@ describe('llm_chat endpoint resolution', () => {
       resolveDesktopLlmEndpoint: vi.fn(async () => null),
       getAppAiBase: () => 'http://localhost:8001/v1',
     });
-    await executeNode(ctxFor(llmNode({}), deps));
+    await executeNode(ctxFor(llmNode({ model: 'm' }), deps)); // model set → skips the /models probe
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe('http://localhost:8001/v1/chat/completions');
+  });
+
+  it('discovers a model from /v1/models when the node pins none (Ollama requires one)', async () => {
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.endsWith('/v1/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'llama3.1:8b' }] }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'pong' } }] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const deps = fakeDeps({
+      fetchFn,
+      resolveDesktopLlmEndpoint: vi.fn(async () => ({ endpoint: 'http://127.0.0.1:11434/v1/chat/completions', service: 'ollama' })),
+      getAppAiBase: () => null,
+    });
+    await executeNode(ctxFor(llmNode({}), deps));
+    const calls = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0][0]).toBe('http://127.0.0.1:11434/v1/models'); // probes /models first
+    const chat = calls.find((c) => String(c[0]).endsWith('/chat/completions'));
+    expect(JSON.parse((chat![1] as RequestInit).body as string).model).toBe('llama3.1:8b');
   });
 
   it('node_failed naming all three options when no endpoint can be resolved', async () => {

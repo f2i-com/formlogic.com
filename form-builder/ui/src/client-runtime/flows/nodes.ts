@@ -413,6 +413,25 @@ async function resolveLlmChatEndpoint(ctx: FlowNodeContext): Promise<string> {
   );
 }
 
+/** Best-effort: the first model id the OpenAI-compatible service advertises at
+ *  `…/v1/models`. Returns null on any failure (a single-model server that
+ *  doesn't need the field is unaffected; Ollama, which requires it, gets one). */
+async function discoverDefaultModel(
+  chatEndpoint: string,
+  doFetch: typeof fetch,
+  signal?: AbortSignal
+): Promise<string | null> {
+  try {
+    const res = await doFetch(chatEndpoint.replace('/chat/completions', '/models'), { signal });
+    if (!res.ok) return null;
+    const payload = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const id = payload?.data?.find((m) => typeof m?.id === 'string')?.id;
+    return typeof id === 'string' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   const { node, deps } = ctx;
   const data = nodeData(node);
@@ -437,11 +456,20 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
     throw new FlowExecError('invalid_flow', `Node '${node.id}' llm_chat has no prompt/messages`, node.id);
   }
   const body: Record<string, unknown> = { messages };
-  if (typeof data.model === 'string' && data.model !== '') body.model = data.model;
+  const doFetch = deps.fetchFn ?? fetch;
+  if (typeof data.model === 'string' && data.model !== '') {
+    body.model = data.model;
+  } else {
+    // Ollama (and other strict OpenAI-compatible servers) reject a model-less
+    // request. If the flow didn't pin a model, use the first the service
+    // advertises so model-less flows work out of the box.
+    const fallback = await discoverDefaultModel(endpoint, doFetch, ctx.signal);
+    if (fallback) body.model = fallback;
+  }
   if (typeof data.temperature === 'number') body.temperature = data.temperature;
   if (typeof data.maxTokens === 'number') body.max_tokens = data.maxTokens;
 
-  const doFetch = deps.fetchFn ?? fetch;
+
   let res: Response;
   try {
     res = await doFetch(endpoint, {
