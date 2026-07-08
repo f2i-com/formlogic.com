@@ -18,6 +18,9 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   const [showManual, setShowManual] = useState(false);
   // Opt-in: also let the AI drive this account's FormLogic Desktop connectors (e.g. the Aokie phone).
   const [connectorAccess, setConnectorAccess] = useState(false);
+  // Opt-in: also let the AI read submitted responses/data (`responses:read`). Deliberately no
+  // write option here — see ConnectAiModal task notes / the OAuth consent page for why.
+  const [responsesAccess, setResponsesAccess] = useState(false);
   // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
   const isDemo = useAuthStore((s) => s.user?.isDemo === true);
 
@@ -35,7 +38,7 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
 
   const generate = async () => {
     setGenerating(true);
-    const r = await api.createMcpToken(appId, creator, connectorAccess);
+    const r = await api.createMcpToken(appId, creator, connectorAccess, responsesAccess ? ['responses:read'] : []);
     setGenerating(false);
     if (r.error || !r.data) { toast.error('Could not create a connection.'); return; }
     setFresh(r.data);
@@ -55,6 +58,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   };
 
   const configJson = fresh ? JSON.stringify({ mcpServers: { formlogic: { url: fresh.mcpUrl, headers: { Authorization: `Bearer ${fresh.token}` } } } }, null, 2) : '';
+
+  // What the manual token still CANNOT do, given the current checkboxes — used by the access
+  // summary below. Built as parts (joined with "or") rather than string-concatenated, since
+  // whether "read submission data" applies now depends on the responsesAccess checkbox.
+  const cannotParts = [!responsesAccess && 'read submission data', creator && 'touch your existing apps'].filter(Boolean) as string[];
 
   const title = (
     <span className="flex items-center gap-2">
@@ -120,7 +128,11 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
                     </p>
                   ) : (
                     <p className="text-[11px] text-gray-500 dark:text-slate-400">
-                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens — <span className="font-medium">cannot read submission data</span>{creator ? ' or touch your existing apps' : ''}.
+                      Access: <span className="font-medium text-gray-700 dark:text-slate-300">{creator ? 'only the app it creates' : appId ? 'this app only' : 'all your apps'}</span> · can build forms, apps &amp; screens{responsesAccess && (
+                        <> and <span className="font-medium text-gray-700 dark:text-slate-300">read submitted response data</span></>
+                      )}{cannotParts.length > 0 && (
+                        <> — <span className="font-medium">cannot {cannotParts.join(' or ')}</span></>
+                      )}.
                       {connectorAccess && (
                         <> Also lets it <span className="font-medium text-gray-700 dark:text-slate-300">control your linked FormLogic Desktop and its connectors</span> — that access covers your whole account, not just {creator ? 'the app it creates' : appId ? 'this app' : 'the apps you build'}.</>
                       )}
@@ -151,10 +163,16 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
               ) : (
                 <div className="space-y-3">
                   {!isDemo && (
-                    <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
-                      <input type="checkbox" checked={connectorAccess} onChange={(e) => setConnectorAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
-                      <span>Also let this AI <span className="font-medium">control your FormLogic Desktop</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
-                    </label>
+                    <>
+                      <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                        <input type="checkbox" checked={connectorAccess} onChange={(e) => setConnectorAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
+                        <span>Also let this AI <span className="font-medium">control your FormLogic Desktop</span> connectors — e.g. answer/hang up calls on the Aokie phone (<code>connector_command</code>). Needs a linked, running desktop.</span>
+                      </label>
+                      <label className="flex items-start gap-2 text-xs text-gray-600 dark:text-slate-300 cursor-pointer">
+                        <input type="checkbox" checked={responsesAccess} onChange={(e) => setResponsesAccess(e.target.checked)} className="mt-0.5 accent-primary-600" />
+                        <span>Also let this AI <span className="font-medium">read submitted responses/data</span> (<code>responses:read</code>).</span>
+                      </label>
+                    </>
                   )}
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs text-gray-500 dark:text-slate-400">For clients without OAuth support (Cursor, custom scripts): generate a temporary Bearer token.</p>

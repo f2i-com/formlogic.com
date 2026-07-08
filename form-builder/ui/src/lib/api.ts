@@ -1030,8 +1030,18 @@ class ApiClient {
   }
 
   // MCP: ephemeral tokens that let an external AI drive the API via the MCP server.
-  async createMcpToken(appId?: string, creator = false, connectorAccess = false): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
-    return this.request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ appId, creator, connectorAccess }) });
+  // `extraScopes` (e.g. ['responses:read']) opts into scopes beyond the default builder set.
+  // The backend REPLACES its default scopes with whatever `scopes` array is sent (no merge), so
+  // whenever we opt into anything extra we resend the base builder scopes too — otherwise a
+  // manually-generated token would lose apps/forms/screens access. When nothing extra is
+  // requested we omit `scopes` entirely, so the request (and the resulting token) is unchanged
+  // from before extraScopes existed.
+  async createMcpToken(appId?: string, creator = false, connectorAccess = false, extraScopes: string[] = []): Promise<ApiResponse<{ token: string; expiresAt: string; idleTimeout: number; mcpUrl: string }>> {
+    const BASE_SCOPES = ['apps:read', 'apps:write', 'forms:read', 'forms:write', 'screens:write'];
+    const scopes = (connectorAccess || extraScopes.length > 0)
+      ? Array.from(new Set([...BASE_SCOPES, ...(connectorAccess ? ['connector:command'] : []), ...extraScopes]))
+      : undefined;
+    return this.request('/mcp/tokens', { method: 'POST', body: JSON.stringify({ appId, creator, connectorAccess, ...(scopes ? { scopes } : {}) }) });
   }
   async listMcpTokens(appId?: string): Promise<ApiResponse<{ sessions: Array<{ id: string; appId: string | null; creator?: boolean; scopes?: string[]; expiresAt: string; idleTimeout: number; lastUsedAt: string | null; createdAt: string }> }>> {
     return this.request(`/mcp/tokens${appId ? `?appId=${appId}` : ''}`);
