@@ -278,6 +278,82 @@ describe('binding matching + output actions', () => {
     expect(harness.toasts).toEqual([{ message: 'One moment please.', level: 'warning' }]);
   });
 
+  it('a sync binding whose flow succeeds but whose output action throws still persists \'done\', yet triggers the fallback', async () => {
+    // The bug this guards: a thrown output action (e.g. the aokie connector's
+    // operatorSpeak rejecting a bad payload) used to be swallowed into
+    // `result.outputActionErrors` with NO effect on the fallback decision, because
+    // `outcome.status` stayed 'done'. The fix threads the collected actionErrors back onto
+    // the returned outcome so `runBinding`'s fallback check can see them.
+    const harness = installDeps({
+      connectorRequest: async () => {
+        throw new Error('plugin busy');
+      },
+    });
+    __setRuntimeFlowsForTests(
+      {
+        flows: [passthroughGraph()],
+        bindings: [
+          binding({
+            outputActions: [{ type: 'call.speak', message: 'Thanks {{result}}' }],
+            fallbackPolicy: { onError: 'log_and_continue', fallbackReply: 'Sorry, one moment.' },
+          }),
+        ],
+      },
+      'my-app'
+    );
+
+    await dispatchFormEvent('form.submitted', { formId: 'form-1', responseId: 'r10', answers: { phone: '+617' } });
+
+    // (c) the terminal status persisted to the run log is UNCHANGED: the flow graph itself
+    // succeeded, so it still completes 'done' — only the in-memory fallback decision differs.
+    expect(harness.completeCalls).toHaveLength(1);
+    expect(harness.completeCalls[0].payload.status).toBe('done');
+    // (a) the collected action error made it onto the persisted result (proves actionErrors
+    // was actually populated — the only source for `result.outputActionErrors`).
+    expect(harness.completeCalls[0].payload.result).toEqual({
+      value: '+617',
+      outputActionErrors: ['call.speak: plugin busy'],
+    });
+    // (b) applyFallback actually fired despite status:'done', because outcome.actionErrors was
+    // non-empty — this is the exact new branch of runBinding's fallback condition.
+    expect(harness.toasts).toEqual([{ message: 'Sorry, one moment.', level: 'warning' }]);
+  });
+
+  it('a sync binding whose flow succeeds and whose output action ALSO succeeds never triggers the fallback', async () => {
+    const harness = installDeps();
+    __setRuntimeFlowsForTests(
+      {
+        flows: [passthroughGraph()],
+        bindings: [
+          binding({
+            outputActions: [{ type: 'call.speak', message: 'Thanks {{result}}' }],
+            fallbackPolicy: { onError: 'log_and_continue', fallbackReply: 'Sorry, one moment.' },
+          }),
+        ],
+      },
+      'my-app'
+    );
+
+    await dispatchFormEvent('form.submitted', { formId: 'form-1', responseId: 'r11', answers: { phone: '+618' } });
+
+    expect(harness.completeCalls[0].payload.status).toBe('done');
+    expect(harness.completeCalls[0].payload.result).toEqual({ value: '+618' }); // no outputActionErrors key
+    expect(harness.toasts).toEqual([]); // no fallback — nothing failed
+  });
+
+  it('a sync binding with NO output actions configured never triggers the fallback', async () => {
+    const harness = installDeps();
+    __setRuntimeFlowsForTests(
+      { flows: [passthroughGraph()], bindings: [binding({ fallbackPolicy: { fallbackReply: 'Sorry, one moment.' } })] },
+      'my-app'
+    );
+
+    await dispatchFormEvent('form.submitted', { formId: 'form-1', responseId: 'r12', answers: { phone: '+619' } });
+
+    expect(harness.completeCalls[0].payload.status).toBe('done');
+    expect(harness.toasts).toEqual([]);
+  });
+
   it('retries per retryPolicy up to maxAttempts before completing with the failure', async () => {
     let attempts = 0;
     const harness = installDeps({

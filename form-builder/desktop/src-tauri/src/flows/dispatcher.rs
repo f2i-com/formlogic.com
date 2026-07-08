@@ -549,6 +549,91 @@ impl FlowRuntime {
             }
         }
         self.complete(client, &run_id, &outcome, &action_errors).await;
+
+        // fallbackPolicy (browser `applyFallback` parity, docs/FORMLOGIC_FLOWS.md
+        // §fallbackPolicy): fires when the flow graph itself failed OR it succeeded but a
+        // downstream output action threw — either way the caller may be left with no reply.
+        // `status` is exactly what was just persisted above via self.complete(); this is a
+        // purely in-memory follow-up decision, same as the browser dispatcher's runBinding.
+        // Live-call (sync) bindings are ALWAYS dispatched through this event path (never the
+        // claim loop below), so this is the only place fallbackPolicy needs to apply.
+        if outcome.status != "done" || !action_errors.is_empty() {
+            self.apply_fallback(binding, event, &outcome, &action_errors).await;
+        }
+    }
+
+    /// The Rust twin of the browser dispatcher's `applyFallback` — same trigger, same
+    /// `fallbackPolicy` fields (`mode`/`fallbackReply`/`onError`), but a different delivery
+    /// channel: this runtime drives LIVE CALLS and has no toast/UI surface, so where the
+    /// browser toasts a sync binding's `fallbackReply`, Desktop instead SPEAKS it back down
+    /// the same call. It resolves which connector the triggering event came in on the same
+    /// way `matching_bindings` does (a binding-scoped `connectorId` wins; otherwise whatever
+    /// connector the event itself carries), then drives it through the exact same connector
+    /// path the "call.speak" output action above already uses (`connectors::dispatch` →
+    /// `call.operatorSpeak`). That means it inherits whatever gating the aokie plugin already
+    /// applies there — e.g. it silently drops operatorSpeak while its own in-plugin AI
+    /// receptionist owns replies — by design; working around that gate is out of scope here.
+    ///
+    /// `onError: 'surface_error'` (non-sync, or sync with no `fallbackReply` configured) has
+    /// no toast equivalent on this runtime either; the closest existing channel for "tell the
+    /// desktop UI something went wrong" is `note_error`, which already feeds `status()`
+    /// (`GET /api/desktop/info`) and the window badge, so that's what's used. The documented
+    /// default (no policy, or `onError: 'log_and_continue'`) is a deliberate no-op beyond
+    /// that: the failed/partial run is already durably recorded via `self.complete()` above —
+    /// the run-history row IS the log, mirroring the browser comment ("already logged;
+    /// nothing surfaces to the viewer").
+    async fn apply_fallback(&self, binding: &Value, event: &Value, outcome: &FlowOutcome, action_errors: &[String]) {
+        let binding_id = binding.get("id").and_then(Value::as_str).unwrap_or("?");
+        let mode = binding.get("mode").and_then(Value::as_str).unwrap_or("");
+        let policy = binding.get("fallbackPolicy");
+        let fallback_reply = policy
+            .and_then(|p| p.get("fallbackReply"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty());
+
+        if mode == "sync" {
+            if let Some(reply) = fallback_reply {
+                match Self::fallback_connector_id(binding, event) {
+                    Some(connector_id) => {
+                        if let Err(e) = self.connector(&connector_id, "call.operatorSpeak", Some(json!({ "text": reply }))).await {
+                            self.note_error(format!("binding {binding_id} fallback speak via {connector_id}: {e}"));
+                        }
+                    }
+                    None => {
+                        self.note_error(format!(
+                            "binding {binding_id} fallback: could not resolve which connector to speak the fallbackReply through"
+                        ));
+                    }
+                }
+                return;
+            }
+        }
+
+        let on_error = policy.and_then(|p| p.get("onError")).and_then(Value::as_str).unwrap_or("log_and_continue");
+        if on_error == "surface_error" {
+            let msg = outcome.error.as_ref().map(|e| e.message.clone()).unwrap_or_else(|| {
+                if action_errors.is_empty() {
+                    format!("Flow binding '{binding_id}' failed")
+                } else {
+                    format!("Flow binding '{binding_id}' output action(s) failed: {}", action_errors.join("; "))
+                }
+            });
+            self.note_error(format!("binding {binding_id} surfaced: {msg}"));
+        }
+        // Default log_and_continue: the run is already durably recorded via self.complete() above.
+    }
+
+    /// Which connector a fallback speak should target: a binding-scoped `connectorId` wins
+    /// (it already gated which events could match this binding — see `matching_bindings`
+    /// above); otherwise the incoming event's own `connectorId`/`source`, read the same way
+    /// `matching_bindings` reads it for a binding with no connector-side filter.
+    fn fallback_connector_id(binding: &Value, event: &Value) -> Option<String> {
+        binding
+            .get("connectorId")
+            .and_then(Value::as_str)
+            .or_else(|| event.get("connectorId").and_then(Value::as_str))
+            .or_else(|| event.get("source").and_then(Value::as_str))
+            .map(str::to_string)
     }
 
     // ── claim loop ───────────────────────────────────────────────────────────────
@@ -1315,5 +1400,211 @@ mod tests {
         assert_eq!(body["result"], json!("hi ada"));
         let run_id = body["runId"].as_str().unwrap();
         assert_eq!(rt.cached_run(run_id).unwrap()["status"], "done");
+    }
+
+    /// fallbackPolicy (docs/FORMLOGIC_FLOWS.md §fallbackPolicy) — integration-style: exercises
+    /// the WHOLE `run_binding` path (reserve → execute → outputActions → complete → fallback)
+    /// against a real (stub) FormLogic Cloud server + a real, plugin-less `PluginHost` — the
+    /// same combination production wires together. No earlier test in this file needed a live
+    /// `FormLogicClient` (the others either skip it entirely or use the inline `flow.run`
+    /// branch), so this spins up a tiny in-process axum stub of `/api/v1/flow-runs*`.
+    mod fallback_policy {
+        use super::*;
+        use axum::{
+            extract::{Path, State},
+            routing::{patch, post},
+            Json, Router,
+        };
+
+        /// Captures every `PATCH /flow-runs/{id}` body (i.e. every `complete_run` call), so a
+        /// test can assert what was actually PERSISTED separately from the in-memory fallback
+        /// decision (the whole point of this fix: the two must be allowed to disagree).
+        struct RunLogStub {
+            completed: Mutex<Vec<Value>>,
+        }
+
+        async fn stub_reserve(Json(_body): Json<Value>) -> Json<Value> {
+            // Always "creates" — no idempotent-replay path is exercised by these tests.
+            Json(json!({ "run": { "runId": "run-1" }, "created": true }))
+        }
+
+        async fn stub_complete(
+            State(stub): State<Arc<RunLogStub>>,
+            Path(_run_id): Path<String>,
+            Json(body): Json<Value>,
+        ) -> Json<Value> {
+            stub.completed.lock().unwrap().push(body);
+            Json(json!({}))
+        }
+
+        /// Binds an ephemeral loopback port serving just enough of `/api/v1/flow-runs*` for
+        /// `run_binding`'s reserve/complete calls, seeds the runtime's snapshot with one flow
+        /// (slug "echo") built from `flow_json`, and returns the runtime + a client pointed at
+        /// the stub + a handle to the captured `complete_run` payloads.
+        async fn harness(flow_json: Value) -> (Arc<FlowRuntime>, Arc<FormLogicClient>, Arc<RunLogStub>) {
+            let stub = Arc::new(RunLogStub { completed: Mutex::new(Vec::new()) });
+            let app = Router::new()
+                .route("/api/v1/flow-runs", post(stub_reserve))
+                .route("/api/v1/flow-runs/:run_id", patch(stub_complete))
+                .with_state(stub.clone());
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let base_url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+            tokio::spawn(async move {
+                let _ = axum::serve(listener, app).await;
+            });
+
+            let rt = runtime();
+            *rt.snapshot.lock().unwrap() = Some(CachedSnapshot {
+                flows: vec![json!({ "slug": "echo", "flowJson": flow_json, "enabled": true })],
+                bindings: vec![],
+                applogic: vec![],
+                fetched_at: Instant::now(),
+            });
+            let client = Arc::new(FormLogicClient::new(&FormLogicConfig { base_url, api_key: "test-key".into() }).unwrap());
+            (rt, client, stub)
+        }
+
+        /// A trivially successful flow graph (mirrors the browser dispatcher tests' passthrough
+        /// fixture): input straight to a fixed-value output.
+        fn passthrough_flow() -> Value {
+            json!({
+                "nodes": [ { "id": "in", "type": "input" }, { "id": "out", "type": "output", "data": { "value": "ok" } } ],
+                "edges": [ { "source": "in", "target": "out" } ]
+            })
+        }
+
+        /// A flow that fails outright (unknown node type → `invalid_flow`, same fixture shape
+        /// as `runner.rs`'s `unknown_node_type_fails_loudly`).
+        fn broken_flow() -> Value {
+            json!({
+                "nodes": [ { "id": "a", "type": "input" }, { "id": "b", "type": "quantum_flux" } ],
+                "edges": [ { "source": "a", "target": "b" } ]
+            })
+        }
+
+        /// The triggering event a real incoming Aokie call would carry (the desktop event bus
+        /// stamps `connectorId`/`source` — see `matching_bindings` above, which this fallback
+        /// path's connector resolution mirrors).
+        fn call_event() -> Value {
+            json!({
+                "name": "aokie.call.incoming",
+                "correlationId": "corr-1",
+                "idempotencyKey": "idem-1",
+                "connectorId": "aokie",
+                "data": {},
+            })
+        }
+
+        /// Trigger path 1 (NEW in this fix, both runtimes): the flow graph SUCCEEDS but its only
+        /// outputAction — `call.speak`, the same "speak the reply" action a live-call binding
+        /// would configure — throws. Here it throws because no aokie plugin is registered in
+        /// this test's `PluginHost`, which naturally reproduces "plugin busy/disconnected" in
+        /// production without any extra mocking. The persisted status must STILL read 'done'
+        /// (constraint: don't change what gets logged) while the fallback fires anyway.
+        #[tokio::test]
+        async fn output_action_failure_still_attempts_the_fallback_speak() {
+            let (rt, client, stub) = harness(passthrough_flow()).await;
+            let binding = json!({
+                "id": "b-live-call",
+                "flow": "echo",
+                "mode": "sync",
+                "outputActions": [ { "type": "call.speak", "message": "Thanks, connecting you now." } ],
+                "fallbackPolicy": { "onError": "log_and_continue", "fallbackReply": "One moment please." },
+            });
+
+            rt.run_binding(&binding, &call_event(), &client).await;
+
+            // Persisted status is untouched: the flow graph itself succeeded.
+            {
+                let completed = stub.completed.lock().unwrap();
+                assert_eq!(completed.len(), 1);
+                assert_eq!(completed[0]["status"], "done");
+                let action_errors = completed[0]["result"]["outputActionErrors"].as_array().cloned().unwrap_or_default();
+                assert_eq!(action_errors.len(), 1);
+                // `apply_output_action`'s "call.speak" arm surfaces the raw connector failure
+                // (no action-type prefix — unlike the browser's `${action.type}: ${msg}`; not
+                // something this fix touches).
+                assert!(action_errors[0].as_str().unwrap().contains("no plugin exposes connector"));
+            }
+
+            // ...but the fallback speak was actually attempted anyway, down the SAME connector
+            // ("aokie") the triggering event carried — proven by the dispatch reaching the real
+            // (plugin-less) connector gateway and failing there (connector_missing), not by
+            // some earlier logic short-circuit.
+            let status = rt.status();
+            assert_eq!(status.errors, 1);
+            assert!(status
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("binding b-live-call fallback speak via aokie"));
+        }
+
+        /// Trigger path 2: the flow graph itself fails outright, never reaching outputActions.
+        /// Before this fix Rust had NO fallbackPolicy implementation at all (confirmed by a
+        /// full-text search turning up zero `fallback`/`fallbackReply` references in this
+        /// file) — this is the first time this trigger path does anything on this runtime.
+        #[tokio::test]
+        async fn flow_failure_still_attempts_the_fallback_speak() {
+            let (rt, client, stub) = harness(broken_flow()).await;
+            let binding = json!({
+                "id": "b-live-call-2",
+                "flow": "echo",
+                "mode": "sync",
+                "fallbackPolicy": { "fallbackReply": "Sorry, please hold." },
+            });
+
+            rt.run_binding(&binding, &call_event(), &client).await;
+
+            {
+                let completed = stub.completed.lock().unwrap();
+                assert_eq!(completed.len(), 1);
+                assert_eq!(completed[0]["status"], "error");
+            }
+
+            let status = rt.status();
+            assert_eq!(status.errors, 1);
+            assert!(status
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("binding b-live-call-2 fallback speak via aokie"));
+        }
+
+        /// No `fallbackPolicy` at all: the documented default (`log_and_continue`) stays a
+        /// silent no-op even though the flow failed outright — no connector dispatch is
+        /// attempted (there is nothing configured to speak).
+        #[tokio::test]
+        async fn no_fallback_policy_configured_is_a_silent_no_op() {
+            let (rt, client, stub) = harness(broken_flow()).await;
+            let binding = json!({ "id": "b-no-policy", "flow": "echo", "mode": "sync" });
+
+            rt.run_binding(&binding, &call_event(), &client).await;
+
+            assert_eq!(stub.completed.lock().unwrap().len(), 1);
+            assert_eq!(rt.status().errors, 0);
+        }
+
+        /// An ASYNC binding (not a live call) with `onError: 'surface_error'` and no
+        /// `fallbackReply`: no connector speak is attempted (that branch is sync-only), but the
+        /// failure is surfaced through this runtime's closest equivalent to a toast — the
+        /// `note_error`/`status()` channel the window badge already reads.
+        #[tokio::test]
+        async fn surface_error_on_non_sync_binding_uses_the_status_channel_not_a_speak() {
+            let (rt, client, stub) = harness(broken_flow()).await;
+            let binding = json!({
+                "id": "b-async",
+                "flow": "echo",
+                "mode": "async",
+                "fallbackPolicy": { "onError": "surface_error" },
+            });
+
+            rt.run_binding(&binding, &call_event(), &client).await;
+
+            assert_eq!(stub.completed.lock().unwrap().len(), 1);
+            let status = rt.status();
+            assert_eq!(status.errors, 1);
+            assert!(status.last_error.as_deref().unwrap_or_default().contains("binding b-async surfaced"));
+        }
     }
 }

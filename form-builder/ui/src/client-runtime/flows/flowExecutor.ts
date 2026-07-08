@@ -22,6 +22,16 @@ export interface FlowRunOutcome {
   error?: FlowRunError;
   /** How many nodes actually executed (diagnostics). */
   nodesExecuted: number;
+  /**
+   * BROWSER-DISPATCHER-ONLY, ADDITIVE. `executeFlow` itself never sets this — it is populated
+   * by `flowDispatcher.ts`'s `executeRun` when status === 'done' but one or more binding
+   * outputActions threw. The terminal `status` PERSISTED to the run log stays 'done' (the flow
+   * graph genuinely succeeded); this field only lets `runBinding` decide, in-memory, whether a
+   * downstream side-effect failure should still trigger `fallbackPolicy` (docs/FORMLOGIC_FLOWS.md
+   * §fallbackPolicy) — e.g. a sync/live-call binding whose only outputAction (speaking the reply)
+   * threw must not look identical to a clean success.
+   */
+  actionErrors?: string[];
 }
 
 export interface ExecuteFlowOptions {

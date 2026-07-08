@@ -8,18 +8,14 @@ import { RefreshCw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
+import { statusChipStyle } from './runHistoryChip';
 import type { FlowRunLog, FlowRunStatus } from '../../types/flows';
 
 const STATUSES: (FlowRunStatus | 'all')[] = ['all', 'done', 'error', 'timeout', 'queued', 'running', 'cancelled'];
 
-function statusChip(status: string) {
-  const cls =
-    status === 'done'
-      ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200/70 dark:border-emerald-500/25'
-      : status === 'running' || status === 'queued'
-        ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200/70 dark:border-blue-500/25'
-        : 'bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-200/70 dark:border-red-500/25';
-  return <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-medium ${cls}`}>{status}</span>;
+function statusChip(run: FlowRunLog) {
+  const { cls, label } = statusChipStyle(run);
+  return <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-medium ${cls}`}>{label}</span>;
 }
 
 function runDuration(run: FlowRunLog): string {
@@ -110,7 +106,7 @@ function RunRow({ run, expanded, onToggle }: { run: FlowRunLog; expanded: boolea
     <>
       <tr onClick={onToggle} className="border-b border-gray-100 dark:border-slate-800 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800/40">
         <td className="px-3 py-2 font-mono text-xs text-gray-600 dark:text-slate-400">{run.triggerEvent}</td>
-        <td className="px-3 py-2">{statusChip(run.status)}</td>
+        <td className="px-3 py-2">{statusChip(run)}</td>
         <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">{run.startedAt ?? run.createdAt}</td>
         <td className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">{runDuration(run)}</td>
       </tr>

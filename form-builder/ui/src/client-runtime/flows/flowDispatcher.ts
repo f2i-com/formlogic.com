@@ -553,7 +553,11 @@ async function runBinding(
 
   const outcome = await executeAndComplete(slug, binding, flow, inputs, event, reservation.runId);
 
-  if (outcome.status !== 'done') {
+  // Fallback fires when the flow graph itself failed (unchanged) OR it succeeded but a
+  // downstream output action threw (e.g. a sync/live-call binding's only reply-carrying
+  // action) — the run log still reads 'done' either way; this is purely an in-memory
+  // follow-up decision, not a change to what got persisted.
+  if (outcome.status !== 'done' || (outcome.actionErrors && outcome.actionErrors.length > 0)) {
     applyFallback(binding, outcome);
   }
   return outcome;
@@ -657,6 +661,14 @@ async function executeRun(opts: {
     }
   } catch (err) {
     logger.warn('[flows] completeRun failed:', err);
+  }
+
+  // Surface the collected outputAction failures on the RETURNED outcome (in-memory only —
+  // what was just persisted above via opts.complete is untouched: status stays 'done' when
+  // the flow graph itself succeeded). This is what lets runBinding's fallback check below
+  // catch "the flow succeeded but its only reply-carrying side effect didn't".
+  if (actionErrors.length > 0) {
+    outcome = { ...outcome, actionErrors };
   }
 
   return outcome;
