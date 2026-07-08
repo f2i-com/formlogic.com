@@ -4,9 +4,10 @@
 // canvas (or click-to-add at the viewport centre). Desktop-service-backed nodes (browser_action /
 // image_gen / stt_transcribe / tts_speak) are fully insertable and render a functional "Runs on
 // FormLogic Desktop" badge — they execute against a local Desktop service at run time.
-import { useMemo, useRef, useState } from 'react';
-import { MonitorDown, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { MonitorDown, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import { Button } from '../../ui/Button';
 import {
   NODE_CATEGORIES,
   NODE_SPECS,
@@ -76,6 +77,9 @@ interface NodePaletteProps {
   onAddNode: (type: string) => void;
   /** App/connector context — hides connector-gated nodes (e.g. aokie_speak) when unavailable (docs §4). */
   context?: FlowEditorContext;
+  /** Collapsed to a narrow icon-only rail (space-reclaiming; never hides the panel's existence). */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: string) => void }) {
@@ -148,8 +152,16 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
   );
 }
 
-export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT }: NodePaletteProps) {
+export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT, collapsed = false, onToggleCollapsed }: NodePaletteProps) {
   const [query, setQuery] = useState('');
+
+  // Collapsing swaps in a whole different (icon-rail) subtree, which unmounts the results list —
+  // restore its scroll offset on re-expand rather than snapping back to the top every time.
+  const resultsRef = useRef<HTMLDivElement | null>(null);
+  const resultsScrollTop = useRef(0);
+  useEffect(() => {
+    if (!collapsed && resultsRef.current) resultsRef.current.scrollTop = resultsScrollTop.current;
+  }, [collapsed]);
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -164,10 +176,27 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT }: 
     })).filter((g) => g.specs.length > 0);
   }, [query, context]);
 
+  if (collapsed) {
+    return (
+      <div className="flex h-full min-h-0 w-14 flex-none flex-col items-center gap-2 border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40 py-2.5">
+        <Button
+          variant="ghost"
+          size="iconOnly"
+          onClick={onToggleCollapsed}
+          aria-label="Expand node palette"
+          title="Expand node palette"
+          className="h-8 w-8"
+        >
+          <PanelLeftOpen className="h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 w-64 flex-none flex-col border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/60 dark:bg-slate-900/40">
-      <div className="border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
-        <div className="relative">
+      <div className="flex items-center gap-1.5 border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input
             value={query}
@@ -177,8 +206,24 @@ export function NodePalette({ onAddNode, context = EMPTY_FLOW_EDITOR_CONTEXT }: 
             className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
+        {onToggleCollapsed && (
+          <Button
+            variant="ghost"
+            size="iconOnly"
+            onClick={onToggleCollapsed}
+            aria-label="Collapse node palette"
+            title="Collapse node palette"
+            className="h-8 w-8 flex-none"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4">
+      <div
+        ref={resultsRef}
+        onScroll={(e) => { resultsScrollTop.current = e.currentTarget.scrollTop; }}
+        className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
+      >
         {grouped.length === 0 && (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">No nodes match "{query}".</p>
         )}

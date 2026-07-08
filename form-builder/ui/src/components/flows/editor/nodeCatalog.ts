@@ -181,6 +181,28 @@ export function formatChipInsert(hint: string, mode: ReferenceSyntax): string {
   }
 }
 
+/**
+ * Insert `text` at an input/textarea's caret via the native value setter so React's onChange
+ * still fires (plain `el.value = …` bypasses React's tracked-value machinery and the change is
+ * silently dropped). Shared by every plain-field chip-insert UI (NodeProperties' InsertHints,
+ * FlowsPanel's ChipRow) — the caret/setter mechanics are identical regardless of which fields a
+ * given panel happens to expose.
+ */
+export function insertIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const next = el.value.slice(0, start) + text + el.value.slice(end);
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  const caret = start + text.length;
+  requestAnimationFrame(() => {
+    try { el.focus(); el.setSelectionRange(caret, caret); } catch { /* field detached */ }
+  });
+}
+
 /** One graph handle (a connectable port). Executor edges reference these by id. */
 export interface NodeHandleSpec {
   id: string;

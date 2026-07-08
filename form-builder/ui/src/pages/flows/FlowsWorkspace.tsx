@@ -5,10 +5,10 @@
 // canvas, node palette, properties, autosave). Right (lg+): run history for the selected flow +
 // a Test Run drawer that executes the flow through the browser executor. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  ChevronLeft, MoreVertical, Copy, Pencil, Plus, Search, Trash2, Workflow,
+  ChevronLeft, MoreVertical, Copy, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Search, Trash2, Workflow,
 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -16,6 +16,7 @@ import { Switch } from '../../components/ui/Switch';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { cn } from '../../lib/utils';
+import { usePersistentBoolean } from '../../hooks/usePersistentBoolean';
 import { api } from '../../lib/api';
 import { demoApplyFlowOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
@@ -46,6 +47,9 @@ export function FlowsWorkspace() {
   const [showNew, setShowNew] = useState(false);
   const [creating, setCreating] = useState(false);
   const [rightPanel, setRightPanel] = useState<'history' | 'test' | null>(null);
+  // Opt-in space reclaim: collapse the flow library to a narrow rail once you don't need it (e.g.
+  // a flow is open and Test Run/History is open too). Defaults open — today's layout, unchanged.
+  const [libraryCollapsed, setLibraryCollapsed] = usePersistentBoolean('flows.libraryCollapsed', false);
   const [historyKey, setHistoryKey] = useState(0);
   const [pendingDelete, setPendingDelete] = useState<FlowDefinition | null>(null);
   // Live per-node run status from the Test Run drawer's onNodeStatus — lights up the canvas pills.
@@ -270,7 +274,9 @@ export function FlowsWorkspace() {
           onToggleEnabled={toggleEnabled}
           onDelete={setPendingDelete}
           onNew={() => setShowNew(true)}
-          className={cn('w-full md:w-72', selectedFlow ? 'hidden md:flex' : 'flex')}
+          collapsed={libraryCollapsed}
+          onToggleCollapsed={() => setLibraryCollapsed((c) => !c)}
+          className={cn(libraryCollapsed ? 'w-14' : 'w-full md:w-72', selectedFlow ? 'hidden md:flex' : 'flex')}
         />
 
         {/* Editor */}
@@ -350,7 +356,7 @@ export function FlowsWorkspace() {
 // ---------------------------------------------------------------------------
 
 function FlowLibrary({
-  groups, loading, query, onQuery, selectedId, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete, onNew, className,
+  groups, loading, query, onQuery, selectedId, onSelect, onDuplicate, onRename, onToggleEnabled, onDelete, onNew, collapsed = false, onToggleCollapsed, className,
 }: {
   groups: FlowGroup[];
   loading: boolean;
@@ -363,6 +369,9 @@ function FlowLibrary({
   onToggleEnabled: (flow: FlowDefinition, enabled: boolean) => void;
   onDelete: (flow: FlowDefinition) => void;
   onNew: () => void;
+  /** Collapsed to a narrow icon-only rail (space-reclaiming; never hides the panel's existence). */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   className?: string;
 }) {
   const q = query.trim().toLowerCase();
@@ -371,10 +380,31 @@ function FlowLibrary({
     .filter((g) => g.flows.length > 0);
   const total = groups.reduce((n, g) => n + g.flows.length, 0);
 
+  // Collapsing swaps in a whole different (icon-rail) subtree, which unmounts the flow list —
+  // restore its scroll offset on re-expand rather than snapping back to the top every time.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const listScrollTop = useRef(0);
+  useEffect(() => {
+    if (!collapsed && listRef.current) listRef.current.scrollTop = listScrollTop.current;
+  }, [collapsed]);
+
+  if (collapsed) {
+    return (
+      <aside className={cn('min-h-0 flex-none flex-col items-center gap-2 border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/50 dark:bg-slate-900/30 py-2.5', className)}>
+        <Button variant="ghost" size="iconOnly" onClick={onToggleCollapsed} aria-label="Expand flow library" title="Expand flow library" className="h-8 w-8">
+          <PanelLeftOpen className="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="iconOnly" onClick={onNew} aria-label="New flow" title="New flow">
+          <Plus className="h-4 w-4" />
+        </Button>
+      </aside>
+    );
+  }
+
   return (
     <aside className={cn('min-h-0 flex-none flex-col border-r border-gray-200/80 dark:border-slate-700/60 bg-gray-50/50 dark:bg-slate-900/30', className)}>
-      <div className="border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
-        <div className="relative">
+      <div className="flex items-center gap-1.5 border-b border-gray-200/80 dark:border-slate-700/60 p-2.5">
+        <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
           <input
             value={query}
@@ -384,9 +414,25 @@ function FlowLibrary({
             className="w-full rounded-lg border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-800 py-1.5 pl-8 pr-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
           />
         </div>
+        {onToggleCollapsed && (
+          <Button
+            variant="ghost"
+            size="iconOnly"
+            onClick={onToggleCollapsed}
+            aria-label="Collapse flow library"
+            title="Collapse flow library"
+            className="h-8 w-8 flex-none"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4">
+      <div
+        ref={listRef}
+        onScroll={(e) => { listScrollTop.current = e.currentTarget.scrollTop; }}
+        className="min-h-0 flex-1 overflow-y-auto p-2.5 space-y-4"
+      >
         {loading ? (
           <p className="px-1 text-xs text-gray-400 dark:text-slate-500">Loading…</p>
         ) : total === 0 ? (

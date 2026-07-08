@@ -18,6 +18,7 @@ import {
 } from '@xyflow/react';
 import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History } from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
 import { FlowCanvas } from './FlowCanvas';
 import { FlowFormsContext, FlowNodeSignalsContext } from './flowNodeContext';
@@ -73,6 +74,9 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<FlowRFEdge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Opt-in space reclaim: collapse the palette to a narrow rail once you don't need it (e.g. a node
+  // is selected and Test Run/History is open). Defaults open — today's layout, unchanged.
+  const [paletteCollapsed, setPaletteCollapsed] = usePersistentBoolean('flows.paletteCollapsed', false);
 
   const currentGraph = useMemo(() => reactFlowToGraph(nodes, edges), [nodes, edges]);
   const serialized = useMemo(() => JSON.stringify(currentGraph), [currentGraph]);
@@ -371,7 +375,14 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
       {/* Body: palette | canvas | properties. Palette + properties are lg+ only so the editor
           never overflows horizontally on smaller viewports (the canvas stays usable at any size). */}
       <div className="flex min-h-0 flex-1">
-        <div className="hidden lg:flex"><NodePalette onAddNode={addNodeCenter} context={context} /></div>
+        <div className="hidden lg:flex">
+          <NodePalette
+            onAddNode={addNodeCenter}
+            context={context}
+            collapsed={paletteCollapsed}
+            onToggleCollapsed={() => setPaletteCollapsed((c) => !c)}
+          />
+        </div>
         <div className="relative min-w-0 flex-1">
           {nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">

@@ -18,6 +18,7 @@ import {
   effectiveNodeData,
   getReferenceSyntax,
   formatChipInsert,
+  insertIntoInput,
   EMPTY_FLOW_EDITOR_CONTEXT,
   type FlowEditorContext,
   type NodePropertySpec,
@@ -27,22 +28,6 @@ import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
 
 type MonacoEditor = import('monaco-editor').editor.IStandaloneCodeEditor;
-
-/** Insert `text` at an input/textarea's caret via the native value setter so React's onChange fires. */
-function insertIntoInput(el: HTMLInputElement | HTMLTextAreaElement, text: string): void {
-  const start = el.selectionStart ?? el.value.length;
-  const end = el.selectionEnd ?? el.value.length;
-  const next = el.value.slice(0, start) + text + el.value.slice(end);
-  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  if (setter) setter.call(el, next);
-  else el.value = next;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
-  const caret = start + text.length;
-  requestAnimationFrame(() => {
-    try { el.focus(); el.setSelectionRange(caret, caret); } catch { /* field detached */ }
-  });
-}
 
 /** Does a stored field value read as "set"? (drives showIf's never-hide-a-configured-field safety.) */
 function fieldHasValue(v: unknown): boolean {

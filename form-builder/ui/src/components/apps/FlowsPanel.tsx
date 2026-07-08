@@ -4,15 +4,18 @@
 // first-class Flows workspace (/flows — visual graph editor, node palette, test runs);
 // this panel lists the app's flows with an "Open in Flows workspace" deep link per flow
 // (/flows?flow=<id>) and keeps the binding editor, which stays app-scoped.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronRight, ExternalLink, Plus, RefreshCw, Trash2, Workflow } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Plus, RefreshCw, Trash2, Workflow } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Switch } from '../ui/Switch';
 import { EmptyState } from '../ui/EmptyState';
+import { formatChipInsert, insertIntoInput, type ReferenceSyntax } from '../flows/editor/nodeCatalog';
+import { declaredInputNames } from '../flows/editor/nodeSummary';
+import { generateId } from '../../lib/utils';
 import type {
   FlowBinding,
   FlowBindingMode,
@@ -30,6 +33,24 @@ const EVENT_SUGGESTIONS = [
   'aokie.sms.received',
   'form.submitted',
   'manual',
+];
+
+// Common fields the packs' call/SMS events carry on `event.data` (aokie.call.* / aokie.sms.*
+// bindings' own inputMap conventions). Offered as one-click chip inserts on the Condition +
+// Input-map fields below — a static list is fine here (docs: this doesn't need to be derived
+// from a live event schema). Written the canonical `$`-rooted way (matching the node editor's
+// insert-hint convention, e.g. NodeProperties' `$inputs.foo`); `formatChipInsert` reshapes each
+// one for whichever field's actual resolution mode it lands in.
+const EVENT_DATA_HINTS = [
+  '$event.data',
+  '$event.data.callId',
+  '$event.data.from',
+  '$event.data.callerPhone',
+  '$event.data.body',
+  '$event.data.text',
+  '$event.data.speaker',
+  '$event.data.outcome',
+  '$event.data.durationSeconds',
 ];
 
 const MODES: FlowBindingMode[] = ['sync', 'async', 'background', 'manual'];
@@ -119,6 +140,37 @@ function FlowRow({ appId, flow, onSaved }: {
   );
 }
 
+/**
+ * A row of "insert a $event.data.* value" chips, shared by the Condition field (quickjs mode —
+ * bare JS, no `$`) and the Input-map value fields (selector mode — the `$`-prefixed string is
+ * the value verbatim). Chips always DISPLAY the canonical `$event.data.foo` hint (matching the
+ * node-properties panel's InsertHints convention) but INSERT the mode-appropriate text.
+ */
+function ChipRow({ mode, onInsert }: { mode: ReferenceSyntax; onInsert: (formatted: string) => 'inserted' | 'copied' }) {
+  const [flash, setFlash] = useState<{ h: string; kind: 'inserted' | 'copied' } | null>(null);
+  const activate = (h: string) => {
+    const kind = onInsert(formatChipInsert(h, mode));
+    setFlash({ h, kind });
+    setTimeout(() => setFlash((f) => (f?.h === h ? null : f)), 1200);
+  };
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1">
+      {EVENT_DATA_HINTS.map((h) => (
+        <button
+          key={h}
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => activate(h)}
+          title="Insert at cursor (or copy)"
+          className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 hover:bg-primary-100 hover:text-primary-700 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-primary-500/20 dark:hover:text-primary-200"
+        >
+          {flash?.h === h ? (flash.kind === 'inserted' ? 'inserted!' : 'copied!') : h}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Binding card (event → flow wiring).
 // ---------------------------------------------------------------------------
@@ -128,7 +180,10 @@ interface BindingDraft {
   flow: string;
   mode: FlowBindingMode;
   conditionExpr: string;
-  inputRows: Array<{ key: string; value: string }>;
+  // `id` is a client-only React key (never sent to the API — see draftToPayload) so a row's
+  // chip-insert target/DOM identity survives a sibling row above it being deleted; keying by
+  // array index instead let a stale focus ref silently redirect an insert to the wrong row.
+  inputRows: Array<{ id: string; key: string; value: string }>;
   actions: FlowOutputAction[];
   timeoutMs: number;
   enabled: boolean;
@@ -140,7 +195,7 @@ function draftFromBinding(binding: FlowBinding | null, flows: FlowDefinition[]):
     flow: binding?.flow ?? flows[0]?.slug ?? '',
     mode: binding?.mode ?? 'async',
     conditionExpr: binding?.condition?.expr ?? '',
-    inputRows: Object.entries(binding?.inputMap ?? {}).map(([key, value]) => ({ key, value: cellToString(value) })),
+    inputRows: Object.entries(binding?.inputMap ?? {}).map(([key, value]) => ({ id: generateId(), key, value: cellToString(value) })),
     actions: (binding?.outputActions ?? []).map((a) => ({ ...a })),
     timeoutMs: binding?.timeoutMs ?? 30000,
     enabled: binding?.enabled ?? true,
@@ -190,6 +245,25 @@ function BindingCard({ appId, binding, flows, eventsListId, onSaved, onDelete }:
 
   const patchAction = (index: number, p: Partial<FlowOutputAction>) =>
     setDraft((d) => ({ ...d, actions: d.actions.map((a, i) => (i === index ? { ...a, ...p } : a)) }));
+
+  // The target flow's declared Trigger inputs (same `data.inputs: [{name, example?}]` shape
+  // NodeProperties.tsx's TriggerInputsField edits) — powers the input-map key mismatch warning.
+  const selectedFlowDef = flows.find((f) => f.slug === draft.flow) ?? null;
+  const declaredInputs = useMemo(() => {
+    const trigger = selectedFlowDef?.flowJson?.nodes?.find((n) => n.type === 'input');
+    return trigger ? declaredInputNames(trigger.data ?? {}) : [];
+  }, [selectedFlowDef]);
+
+  // Selector-insert targets, mirroring NodeProperties.tsx's activeInsertRef pattern but adapted to
+  // this panel's two plain-input cases: the single Condition field, and whichever Input-map value
+  // field last had focus (there can be several rows).
+  const conditionInputRef = useRef<HTMLInputElement | null>(null);
+  const activeInputRowRef = useRef<HTMLInputElement | null>(null);
+  const insertOrCopy = (el: HTMLInputElement | null, formatted: string): 'inserted' | 'copied' => {
+    if (el && el.isConnected) { insertIntoInput(el, formatted); return 'inserted'; }
+    void navigator.clipboard?.writeText(formatted).catch(() => {});
+    return 'copied';
+  };
 
   const save = async () => {
     if (!draft.flow) {
@@ -241,12 +315,14 @@ function BindingCard({ appId, binding, flows, eventsListId, onSaved, onDelete }:
         <div>
           <label className={LABEL_CLS}>Condition (sandboxed boolean over <span className="font-mono">event</span>; optional)</label>
           <input
+            ref={conditionInputRef}
             value={draft.conditionExpr}
             onChange={(e) => patch({ conditionExpr: e.target.value })}
             placeholder="event.data.direction === 'incoming'"
             aria-label="Binding condition expression"
             className={MONO_INPUT_CLS}
           />
+          <ChipRow mode="quickjs" onInsert={(formatted) => insertOrCopy(conditionInputRef.current, formatted)} />
         </div>
         <div>
           <label className={LABEL_CLS}>Timeout (ms)</label>
@@ -266,36 +342,51 @@ function BindingCard({ appId, binding, flows, eventsListId, onSaved, onDelete }:
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <span className={LABEL_CLS + ' mb-0'}>Input map (flow input ← selector or literal)</span>
-          <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: [...draft.inputRows, { key: '', value: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
+          <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: [...draft.inputRows, { id: generateId(), key: '', value: '' }] })} leftIcon={<Plus className="h-3.5 w-3.5" />}>
             Add input
           </Button>
         </div>
+        <p className="text-[10px] text-gray-400 dark:text-slate-500">Insert into the focused value field:</p>
+        <ChipRow mode="selector" onInsert={(formatted) => insertOrCopy(activeInputRowRef.current, formatted)} />
         {draft.inputRows.length === 0 && (
-          <p className="text-xs text-gray-400 dark:text-slate-500">No inputs — the flow runs with an empty inputs object.</p>
+          <p className="mt-1.5 text-xs text-gray-400 dark:text-slate-500">No inputs — the flow runs with an empty inputs object.</p>
         )}
-        <div className="space-y-1.5">
-          {draft.inputRows.map((row, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                value={row.key}
-                onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)) })}
-                placeholder="callerPhone"
-                aria-label={`Input name ${i + 1}`}
-                className={MONO_INPUT_CLS + ' max-w-[12rem]'}
-              />
-              <span className="text-gray-400 text-xs">←</span>
-              <input
-                value={row.value}
-                onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })}
-                placeholder="$event.data.from"
-                aria-label={`Input selector ${i + 1}`}
-                className={MONO_INPUT_CLS}
-              />
-              <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: draft.inputRows.filter((_, j) => j !== i) })} aria-label={`Remove input ${i + 1}`}>
-                <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
-              </Button>
-            </div>
-          ))}
+        <div className="mt-1.5 space-y-1.5">
+          {draft.inputRows.map((row, i) => {
+            const key = row.key.trim();
+            const undeclared = key !== '' && declaredInputs.length > 0 && !declaredInputs.includes(key);
+            return (
+              <div key={row.id}>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={row.key}
+                    onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, key: e.target.value } : r)) })}
+                    placeholder="callerPhone"
+                    aria-label={`Input name ${i + 1}`}
+                    className={MONO_INPUT_CLS + ' max-w-[12rem]'}
+                  />
+                  <span className="text-gray-400 text-xs">←</span>
+                  <input
+                    onFocus={(e) => { activeInputRowRef.current = e.currentTarget; }}
+                    value={row.value}
+                    onChange={(e) => patch({ inputRows: draft.inputRows.map((r, j) => (j === i ? { ...r, value: e.target.value } : r)) })}
+                    placeholder="$event.data.from"
+                    aria-label={`Input selector ${i + 1}`}
+                    className={MONO_INPUT_CLS}
+                  />
+                  <Button variant="ghost" size="sm" onClick={() => patch({ inputRows: draft.inputRows.filter((_, j) => j !== i) })} aria-label={`Remove input ${i + 1}`}>
+                    <Trash2 className="h-3.5 w-3.5 text-gray-400 hover:text-red-500" />
+                  </Button>
+                </div>
+                {undeclared && (
+                  <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3 w-3 flex-none" />
+                    "{key}" isn't one of {selectedFlowDef?.name ?? 'the target flow'}'s declared Trigger inputs ({declaredInputs.join(', ')}) — check for a typo.
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
