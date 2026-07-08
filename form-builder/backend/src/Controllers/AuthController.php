@@ -556,7 +556,14 @@ class AuthController
 
         // Invalidate the user's outstanding JWTs (sign out everywhere), so a token
         // that was captured before logout can no longer be used.
-        if ($userId) {
+        // Exception: the shared public demo account. Every visitor shares this one
+        // user row, so bumping its token_version here would sign out every OTHER
+        // concurrent demo visitor too (trivial platform-wide DoS on the live demo).
+        // A real "everywhere" revoke is unnecessary anyway for a shared/ephemeral
+        // identity — the cookie clear below already ends this visitor's session.
+        $user = $request->getAttribute('user');
+        $isDemo = $user && $user->email === $this->demoEmail();
+        if ($userId && !$isDemo) {
             $this->authService->revokeTokens($userId);
         }
 
