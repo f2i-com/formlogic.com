@@ -547,9 +547,19 @@ impl FlowRuntime {
         let flow = match self.find_flow(flow_def_id.as_deref(), &flow_slug) {
             Some(f) => f,
             None => {
-                let e = runner::FlowError { code: runner::FlowErrorCode::RunnerUnavailable, message: format!("Flow '{flow_slug}' not loaded in this runtime"), node_id: None };
-                self.complete(client, run_id, &FlowOutcome { status: "error", result: None, error: Some(e), nodes_executed: 0 }, &[]).await;
-                return;
+                // The flow may have been created or updated since our last snapshot fetch (TTL 60s).
+                // Force ONE refresh before giving up, so a freshly-created flow's first run isn't
+                // failed spuriously (previously it errored terminally within that window).
+                *self.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                self.ensure_snapshot(client).await;
+                match self.find_flow(flow_def_id.as_deref(), &flow_slug) {
+                    Some(f) => f,
+                    None => {
+                        let e = runner::FlowError { code: runner::FlowErrorCode::RunnerUnavailable, message: format!("Flow '{flow_slug}' not loaded in this runtime"), node_id: None };
+                        self.complete(client, run_id, &FlowOutcome { status: "error", result: None, error: Some(e), nodes_executed: 0 }, &[]).await;
+                        return;
+                    }
+                }
             }
         };
         let app_id = flow.get("appId").and_then(Value::as_str).map(str::to_string);
