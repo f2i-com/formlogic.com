@@ -142,6 +142,9 @@ describe('executeFlow — nodes', () => {
     };
     const outcome = await executeFlow(graph, {
       deps: fakeDeps({ connectorRequest: vi.fn(async () => { throw new Error('no dongle'); }) }),
+      // Declared so the throw under test comes from the connector dispatch itself, not the
+      // capability gate (see nodes.test.ts for the capability_denied cases).
+      capabilities: ['connector.aokie.sms.send'],
     });
     expect(outcome.status).toBe('error');
     expect(outcome.error?.code).toBe('node_failed');

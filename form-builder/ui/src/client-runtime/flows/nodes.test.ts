@@ -159,7 +159,12 @@ describe('aokie_speak', () => {
     const connectorRequest = vi.fn(async () => ({ ok: true }));
     const deps = fakeDeps({ connectorRequest });
     const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { text: 'Hello {{event.data.name}}' } };
-    await executeNode(ctxFor(node, deps, { scope: { event: { data: { name: 'Sam' } } } }));
+    await executeNode(
+      ctxFor(node, deps, {
+        scope: { event: { data: { name: 'Sam' } } },
+        capabilities: ['connector.aokie.call.operatorSpeak'],
+      })
+    );
     expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'Hello Sam' });
   });
 
@@ -167,8 +172,91 @@ describe('aokie_speak', () => {
     const connectorRequest = vi.fn(async () => ({ ok: true }));
     const deps = fakeDeps({ connectorRequest });
     const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { textFrom: '$inputs.line' } };
-    await executeNode(ctxFor(node, deps, { scope: { inputs: { line: 'Connecting now' } } }));
+    await executeNode(
+      ctxFor(node, deps, {
+        scope: { inputs: { line: 'Connecting now' } },
+        capabilities: ['connector.aokie.call.operatorSpeak'],
+      })
+    );
     expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'Connecting now' });
+  });
+});
+
+// Capability gate shared by connector_request and aokie_speak (docs: declare-then-grant,
+// same model as storage_set/KV_WRITE_CAPABILITY above). aokie_speak is inlined sugar for
+// connector_request aokie/call.operatorSpeak in nodes.ts, so it must be gated identically —
+// these fixtures mirror the Rust twin's `mod tests` 1:1 (runner.rs).
+describe('connector_request / aokie_speak capability gate', () => {
+  it('connector_request is capability_denied with no nodeCapabilities declared', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = {
+      id: 'c',
+      type: 'connector_request',
+      data: { connectorId: 'aokie', command: 'call.operatorSpeak' },
+    };
+    await expect(executeNode(ctxFor(node, deps, { capabilities: [] }))).rejects.toMatchObject({
+      code: 'capability_denied',
+    });
+    expect(connectorRequest).not.toHaveBeenCalled();
+  });
+
+  it('aokie_speak is capability_denied with no nodeCapabilities declared (closes the TS bypass)', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { text: 'hi' } };
+    await expect(executeNode(ctxFor(node, deps, { capabilities: [] }))).rejects.toMatchObject({
+      code: 'capability_denied',
+    });
+    expect(connectorRequest).not.toHaveBeenCalled();
+  });
+
+  it('connector_request succeeds with the exact connector.<id>.<command> capability', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = {
+      id: 'c',
+      type: 'connector_request',
+      data: { connectorId: 'aokie', command: 'call.operatorSpeak' },
+    };
+    const out = await executeNode(ctxFor(node, deps, { capabilities: ['connector.aokie.call.operatorSpeak'] }));
+    expect(out).toEqual({ ok: true });
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', undefined);
+  });
+
+  it('connector_request succeeds with the connector.<id>.* wildcard capability', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = {
+      id: 'c',
+      type: 'connector_request',
+      data: { connectorId: 'aokie', command: 'call.operatorSpeak' },
+    };
+    const out = await executeNode(ctxFor(node, deps, { capabilities: ['connector.aokie.*'] }));
+    expect(out).toEqual({ ok: true });
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', undefined);
+  });
+
+  it('aokie_speak succeeds with the connector.aokie.* wildcard capability', async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = { id: 'sp', type: 'aokie_speak', data: { text: 'hi' } };
+    await executeNode(ctxFor(node, deps, { capabilities: ['connector.aokie.*'] }));
+    expect(connectorRequest).toHaveBeenCalledWith('aokie', 'call.operatorSpeak', { text: 'hi' });
+  });
+
+  it("a different connector's capability does not grant aokie", async () => {
+    const connectorRequest = vi.fn(async () => ({ ok: true }));
+    const deps = fakeDeps({ connectorRequest });
+    const node: WorkflowGraphNode = {
+      id: 'c',
+      type: 'connector_request',
+      data: { connectorId: 'aokie', command: 'call.operatorSpeak' },
+    };
+    await expect(
+      executeNode(ctxFor(node, deps, { capabilities: ['connector.other.*'] }))
+    ).rejects.toMatchObject({ code: 'capability_denied' });
+    expect(connectorRequest).not.toHaveBeenCalled();
   });
 });
 

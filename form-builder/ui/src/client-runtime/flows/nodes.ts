@@ -218,6 +218,26 @@ function requireString(node: WorkflowGraphNode, data: Record<string, unknown>, k
   );
 }
 
+/**
+ * Capability gate shared by connector_request and aokie_speak (its inlined sugar form) —
+ * a flow must declare EITHER the exact 'connector.<id>.<command>' capability OR the
+ * connector-wide wildcard 'connector.<id>.*' in nodeCapabilities before it may dispatch to
+ * the connector gateway. Same declare-then-grant model as KV_WRITE_CAPABILITY above; keep
+ * both call sites routed through this one function so they can't drift out of sync.
+ */
+function requireConnectorCapability(ctx: FlowNodeContext, connectorId: string, command: string, nodeId: string): void {
+  const exact = `connector.${connectorId}.${command}`;
+  const wildcard = `connector.${connectorId}.*`;
+  const granted = ctx.capabilities ?? [];
+  if (!granted.includes(exact) && !granted.includes(wildcard)) {
+    throw new FlowExecError(
+      'capability_denied',
+      `Node '${nodeId}' requires the '${exact}' capability — add \`${exact}\` or \`${wildcard}\` to the flow's nodeCapabilities`,
+      nodeId
+    );
+  }
+}
+
 /** JSON expression context shared by condition/logic_block (keys become sandbox globals). */
 function exprContext(ctx: FlowNodeContext): Record<string, unknown> {
   return {
@@ -1020,6 +1040,7 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
     case 'connector_request': {
       const connectorId = requireString(node, data, ['connectorId', 'connector']);
       const command = requireString(node, data, ['command']);
+      requireConnectorCapability(ctx, connectorId, command, node.id);
       const payload = data.payload !== undefined ? resolveDeep(data.payload, ctx.scope) : undefined;
       return await deps.connectorRequest(connectorId, command, payload);
     }
@@ -1057,8 +1078,10 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
     }
 
     case 'aokie_speak': {
-      // Sugar for connector_request aokie call.operatorSpeak: {text|textFrom}. The
-      // standard connector permission gate still applies at the connector layer.
+      // Sugar for connector_request aokie call.operatorSpeak: {text|textFrom}. Routed
+      // through the same requireConnectorCapability gate as connector_request — this is
+      // still a connector dispatch under the hood, not a separate capability surface.
+      requireConnectorCapability(ctx, 'aokie', 'call.operatorSpeak', node.id);
       let text: unknown;
       if (typeof data.textFrom === 'string') {
         text = resolveSelector(data.textFrom, ctx.scope);

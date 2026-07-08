@@ -306,6 +306,9 @@ describe('binding matching + output actions', () => {
               ],
               edges: [{ source: 'in', target: 'req' }],
             },
+            // Declared so retries exercise the connector dispatch under test, not the
+            // capability gate (see nodes.test.ts for the capability_denied cases).
+            nodeCapabilities: ['connector.aokie.call.current'],
           },
         ],
         bindings: [binding({ flow: 'flaky', retryPolicy: { maxAttempts: 3, backoff: 'none' } })],

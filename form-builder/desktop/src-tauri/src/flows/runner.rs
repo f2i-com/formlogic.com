@@ -848,7 +848,7 @@ async fn execute_node(
             } else {
                 None
             };
-            connector_request(node, deps, &connector_id, &command, payload).await
+            connector_request(node, deps, &opts.capabilities, &connector_id, &command, payload).await
         }
 
         "aokie_speak" => {
@@ -861,8 +861,10 @@ async fn execute_node(
                 FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}' aokie_speak text did not resolve to a string", node.id), Some(node.id.clone()))
             })?;
             // The aokie plugin's call.operatorSpeak requires `text` (and rejects
-            // unknown fields), so send `text`, not `message`.
-            connector_request(node, deps, "aokie", "call.operatorSpeak", Some(json!({ "text": text }))).await
+            // unknown fields), so send `text`, not `message`. Routed through the same
+            // connector_request() helper as the "connector_request" node above, so the
+            // capability gate below covers both node types from one call site.
+            connector_request(node, deps, &opts.capabilities, "aokie", "call.operatorSpeak", Some(json!({ "text": text }))).await
         }
 
         "storage_get" => {
@@ -921,13 +923,27 @@ fn resolve_kv_key(node: &GraphNode, scope: &SelectorScope) -> Result<String, Flo
     })
 }
 
+/// Shared by the "connector_request" and "aokie_speak" node types (the latter is sugar for
+/// aokie/call.operatorSpeak) — gated by the SAME declare-then-grant capability model as
+/// KV_WRITE_CAPABILITY: the flow must declare either the exact `connector.<id>.<command>`
+/// capability or the connector-wide wildcard `connector.<id>.*` before it may dispatch here.
 async fn connector_request(
     node: &GraphNode,
     deps: &RunDeps,
+    capabilities: &[String],
     connector_id: &str,
     command: &str,
     payload: Option<Value>,
 ) -> Result<Value, FlowError> {
+    let exact = format!("connector.{connector_id}.{command}");
+    let wildcard = format!("connector.{connector_id}.*");
+    if !capabilities.iter().any(|c| c == &exact || c == &wildcard) {
+        return Err(FlowError::new(
+            FlowErrorCode::CapabilityDenied,
+            format!("Node '{}' requires the '{exact}' capability — add `{exact}` or `{wildcard}` to the flow's nodeCapabilities", node.id),
+            Some(node.id.clone()),
+        ));
+    }
     let host = deps.host.as_ref().ok_or_else(|| {
         FlowError::new(FlowErrorCode::RunnerUnavailable, format!("Node '{}': no local connector gateway", node.id), Some(node.id.clone()))
     })?;
@@ -1592,6 +1608,78 @@ mod tests {
             "edges": []
         });
         let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
+    }
+
+    // ── connector_request / aokie_speak capability gate ─────────────────────
+    // `deps().host` is None, so a request that clears the capability gate falls through to
+    // RunnerUnavailable (no real plugin gateway) rather than actually dispatching — that's
+    // the "stub" for these tests: it proves the gate was passed without needing a real plugin.
+
+    fn opts_with_capabilities(caps: &[&str]) -> RunOptions {
+        RunOptions { capabilities: caps.iter().map(|s| s.to_string()).collect(), ..opts() }
+    }
+
+    #[tokio::test]
+    async fn connector_request_requires_capability_when_none_declared() {
+        let flow = json!({
+            "nodes": [ { "id": "c", "type": "connector_request", "data": { "connectorId": "aokie", "command": "call.operatorSpeak" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&[])).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn aokie_speak_requires_capability_when_none_declared() {
+        // Proves the aokie_speak sugar path is gated too, not just the raw connector_request node.
+        let flow = json!({
+            "nodes": [ { "id": "a", "type": "aokie_speak", "data": { "text": "hi" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&[])).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
+    }
+
+    #[tokio::test]
+    async fn connector_request_exact_capability_clears_the_gate() {
+        let flow = json!({
+            "nodes": [ { "id": "c", "type": "connector_request", "data": { "connectorId": "aokie", "command": "call.operatorSpeak" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&["connector.aokie.call.operatorSpeak"])).await;
+        // Not capability_denied: it got past the gate and failed for the unrelated reason
+        // that this test's deps() has no plugin host.
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::RunnerUnavailable);
+    }
+
+    #[tokio::test]
+    async fn connector_request_wildcard_capability_clears_the_gate() {
+        let flow = json!({
+            "nodes": [ { "id": "c", "type": "connector_request", "data": { "connectorId": "aokie", "command": "call.operatorSpeak" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&["connector.aokie.*"])).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::RunnerUnavailable);
+    }
+
+    #[tokio::test]
+    async fn aokie_speak_wildcard_capability_clears_the_gate() {
+        let flow = json!({
+            "nodes": [ { "id": "a", "type": "aokie_speak", "data": { "text": "hi" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&["connector.aokie.*"])).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::RunnerUnavailable);
+    }
+
+    #[tokio::test]
+    async fn connector_request_other_connectors_capability_does_not_grant_aokie() {
+        let flow = json!({
+            "nodes": [ { "id": "c", "type": "connector_request", "data": { "connectorId": "aokie", "command": "call.operatorSpeak" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts_with_capabilities(&["connector.other.*"])).await;
         assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
     }
 
