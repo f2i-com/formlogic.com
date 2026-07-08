@@ -1284,6 +1284,11 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
           30 days (replayed offline submissions no longer need them):<br>
           <code>17 3 * * * php <?= $backendAbsHtml ?>/bin/idempotency-cleanup.php &gt;&gt; /var/log/formlogic-idempotency.log 2&gt;&amp;1</code>
         </li>
+        <li style="margin-bottom:10px;">
+          <strong>Desktop command relay cleanup</strong> — nightly prune of completed/expired
+          desktop-command relay rows older than 7 days:<br>
+          <code>23 3 * * * php <?= $backendAbsHtml ?>/bin/desktop-commands-cleanup.php &gt;&gt; /var/log/formlogic-desktop-commands.log 2&gt;&amp;1</code>
+        </li>
         <li>
           <strong>Data drift report</strong> — weekly read-only consistency check between MySQL and the
           per-form response databases (exit 1 = drift found; review the log, then run it manually with

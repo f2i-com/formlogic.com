@@ -260,6 +260,32 @@ class HealthController
             $checks['idempotency_ledger'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
         }
 
+        // Desktop-command relay table size — one row per connector_command relay call (docs/API.md
+        // §connector:relay). Nothing ever DELETEs a row (only advances it to a terminal status), so
+        // completed/failed/expired commands accumulate forever. Warn (non-critical) past a threshold so
+        // an operator knows to schedule bin/desktop-commands-cleanup.php.
+        try {
+            $conn = $this->db->getConnection();
+            $tblStmt = $conn->query('SHOW TABLES LIKE ' . $conn->quote('desktop_commands'));
+            if ($tblStmt && $tblStmt->fetchColumn() !== false) {
+                $threshold = 100000;
+                $countStmt = $conn->query('SELECT COUNT(*) FROM desktop_commands');
+                $rowCount = $countStmt ? (int) $countStmt->fetchColumn() : 0;
+                $checks['desktop_commands_ledger'] = [
+                    'ok' => true, // non-critical: a large table is a maintenance issue, not an outage
+                    'critical' => false,
+                    'detail' => number_format($rowCount) . ' row(s)',
+                ];
+                if ($rowCount > $threshold) {
+                    $checks['desktop_commands_ledger']['warning'] = 'desktop_commands has ' . number_format($rowCount)
+                        . ' rows (> ' . number_format($threshold) . ') — schedule bin/desktop-commands-cleanup.php '
+                        . '(prunes terminal-status rows older than DESKTOP_COMMANDS_RETENTION_DAYS, default 7).';
+                }
+            }
+        } catch (\Throwable $e) {
+            $checks['desktop_commands_ledger'] = ['ok' => true, 'critical' => false, 'detail' => 'unavailable'];
+        }
+
         // Native runtime build config (informational) — the Tauri shell that hosts custom apps.
         $tauriConf = dirname($base) . '/native-runtime/src-tauri/tauri.conf.json';
         $hasNative = is_file($tauriConf);

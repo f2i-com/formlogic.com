@@ -374,7 +374,11 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         // connector_command is gated by the SAME per-user 30-per-60s budget as the web enqueue path
         // (POST /api/app/{slug}/connector-commands), since it calls DesktopCommandService directly and
         // so never passes through that route's RateLimitMiddleware.
-        $c->get(\FormLogic\Services\RateLimiter::class)
+        $c->get(\FormLogic\Services\RateLimiter::class),
+        null,
+        // Same account form-count quota FormController enforces on the web create path — MCP calls
+        // FormService directly and would otherwise let an AI create forms past the plan limit.
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -1313,7 +1317,9 @@ $app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response)
 })->add($authRequired);
 
 // API Key management routes (cookie auth, protected, rate limited)
-$apiKeyMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'api_key_mgmt');
+// keyByUser needs $authRequired to run FIRST so userId is set; Slim middleware is LIFO (the last
+// ->add() runs first), so $authRequired must be the LAST one added here (mirrors the AI/flow routes).
+$apiKeyMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'api_key_mgmt', true);
 $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(ApiKeyController::class)->index($request, $response);
@@ -1324,7 +1330,7 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ApiKeyController::class)->revoke($request, $response, $getArgs($request));
     });
-})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+})->add($apiKeyMgmtRateLimiter)->add($authRequired);
 
 // MCP server (Model Context Protocol over HTTP). The endpoint self-authenticates via the Bearer MCP
 // token — NO session middleware. Token management below is session-authenticated (the app owner).
@@ -1333,6 +1339,9 @@ $app->post('/api/mcp', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpController::class)->handle($request, $response);
 })->add($mcpRateLimiter);
 
+// Own bucket (was sharing api_key_mgmt's — heavy API-key activity could starve MCP token management
+// and vice versa). $authRequired must be added LAST (Slim LIFO) so it runs first and sets userId.
+$mcpTokenMgmtRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'mcp_token_mgmt', true);
 $app->group('/api/mcp/tokens', function (RouteCollectorProxy $group) use ($container, $getArgs) {
     $group->get('', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\McpController::class)->listTokens($request, $response);
@@ -1343,7 +1352,7 @@ $app->group('/api/mcp/tokens', function (RouteCollectorProxy $group) use ($conta
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\McpController::class)->revokeToken($request, $response, $getArgs($request));
     });
-})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+})->add($mcpTokenMgmtRateLimiter)->add($authRequired);
 
 // ── MCP OAuth 2.1 (paste '<origin>/api/mcp' into Claude/ChatGPT; the 401 from /api/mcp points here) ──
 // Discovery documents (public GETs; the deploy's .htaccess must funnel the two root well-known paths
@@ -1379,9 +1388,12 @@ $oauthInfoRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'oauth_inf
 $app->get('/api/oauth/authorize-info', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizeInfo($request, $response);
 })->add($oauthInfoRateLimiter);
+// Own bucket (was sharing api_key_mgmt's). $authRequired must be added LAST (Slim LIFO) so it runs
+// first and sets userId before the rate limiter's keyByUser check.
+$oauthApproveRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_approve', true);
 $app->post('/api/oauth/approve', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->approve($request, $response);
-})->add($authRequired)->add($apiKeyMgmtRateLimiter);
+})->add($oauthApproveRateLimiter)->add($authRequired);
 
 // Billing (pay-as-you-go cloud months via PayPal) — authenticated, own rate-limit bucket.
 $billingRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'billing');

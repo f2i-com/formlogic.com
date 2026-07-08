@@ -12,6 +12,7 @@ use FormLogic\Services\AppReportService;
 use FormLogic\Services\DesktopCommandService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\McpTokenService;
+use FormLogic\Services\PlanService;
 use FormLogic\Services\RateLimiter;
 use FormLogic\Services\ResponseService;
 use PDO;
@@ -183,9 +184,9 @@ class McpTest extends TestCase
     }
 
     /** A fresh McpController sharing the same real services/DB as self::$ctrl, but with its own
-     *  RateLimiter / connector-batch ceiling override — for tests that need to isolate those from the
-     *  shared self::$ctrl used everywhere else. */
-    private function makeCtrl(?RateLimiter $rateLimiter, ?int $connectorBatchCeilingMs = null): McpController
+     *  RateLimiter / connector-batch ceiling / PlanService override — for tests that need to isolate
+     *  those from the shared self::$ctrl used everywhere else. */
+    private function makeCtrl(?RateLimiter $rateLimiter, ?int $connectorBatchCeilingMs = null, ?PlanService $planService = null): McpController
     {
         return new McpController(
             self::$tokens,
@@ -197,7 +198,8 @@ class McpTest extends TestCase
             self::$reportValidator,
             self::$desktopCommands,
             $rateLimiter,
-            $connectorBatchCeilingMs
+            $connectorBatchCeilingMs,
+            $planService
         );
     }
 
@@ -695,5 +697,132 @@ class McpTest extends TestCase
     {
         $tok = self::$tokens->create($this->userId, $this->appA)['token'];
         $this->assertTrue($this->tool($tok, 'create_document', ['appId' => $this->appA, 'name' => 'Empty', 'blocks' => []])['isError'], 'a document with no blocks is rejected');
+    }
+
+    // ── Tier-1 batch: form-count quota, exception leakage, per-user request rate limit, scope bug ──
+
+    /**
+     * create_form / create_app_form now enforce the SAME account form-count quota FormController's
+     * checkFormQuota gates on the web create path — a mock PlanService reporting "over quota" rejects
+     * both tools with a plan-limit message; the DEFAULT (no PlanService injected, self::$ctrl) behavior
+     * — today's unconfigured/self-hosted default — must be completely unchanged (still succeeds).
+     */
+    public function testCreateFormAndCreateAppFormRejectedWhenPlanServiceReportsOverQuota(): void
+    {
+        $planService = $this->createMock(PlanService::class);
+        $planService->method('canCreateForms')->willReturn(false);
+        $planService->method('formLimit')->willReturn(5);
+        $ctrl = $this->makeCtrl(null, null, $planService);
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+
+        $res = $this->tool($tok, 'create_form', ['title' => 'Over quota'], $ctrl);
+        $this->assertTrue($res['isError'], $res['text']);
+        $this->assertStringContainsString('5 forms', $res['text']);
+
+        $res2 = $this->tool($tok, 'create_app_form', ['title' => 'Over quota 2'], $ctrl);
+        $this->assertTrue($res2['isError'], $res2['text']);
+        $this->assertStringContainsString('5 forms', $res2['text']);
+    }
+
+    public function testCreateFormNotRejectedWhenPlanServiceIsNull(): void
+    {
+        // self::$ctrl carries no PlanService — today's default (self-hosted, no CLOUD_PLAN_ENFORCED)
+        // — this must keep working exactly as before.
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'create_form', ['title' => 'No enforcement configured']);
+        $this->assertFalse($res['isError'], $res['text']);
+    }
+
+    public function testCreateFormNotRejectedWhenPlanServiceReportsUnderQuota(): void
+    {
+        $planService = $this->createMock(PlanService::class);
+        $planService->method('canCreateForms')->willReturn(true);
+        $ctrl = $this->makeCtrl(null, null, $planService);
+        $tok = self::$tokens->create($this->userId, $this->appA)['token'];
+        $res = $this->tool($tok, 'create_form', ['title' => 'Under quota'], $ctrl);
+        $this->assertFalse($res['isError'], $res['text']);
+    }
+
+    /**
+     * An unexpected non-\Exception \Throwable (a \TypeError from a called service) must return the
+     * generic "unexpected error" message and never leak its original text — while a plain \Exception
+     * (the file's established "safe to show the caller" convention, e.g. a validation failure) still
+     * returns its own specific message exactly as before.
+     */
+    public function testUnexpectedThrowableIsGenericButPlainExceptionStillLeaksItsOwnSafeMessage(): void
+    {
+        $formService = $this->createMock(FormService::class);
+        $formService->method('getAllForms')->willThrowException(new \TypeError('raw internal detail that must never reach the client'));
+        $ctrl = new McpController(
+            self::$tokens,
+            $formService,
+            self::$apps,
+            self::$responses,
+            null,
+            null,
+            self::$reportValidator,
+            self::$desktopCommands
+        );
+        $tok = self::$tokens->create($this->userId)['token']; // account-wide token -> list_forms calls getAllForms()
+
+        $res = $this->tool($tok, 'list_forms', [], $ctrl);
+        $this->assertTrue($res['isError']);
+        $this->assertSame('Error: an unexpected error occurred. Please try again.', $res['text']);
+        $this->assertStringNotContainsString('raw internal detail', $res['text']);
+
+        // A normal \Exception (validateFormInput rejects a malformed field before FormService is ever
+        // touched) is unaffected: it still returns its own specific, safe message.
+        $bad = $this->tool($tok, 'create_form', ['title' => 'X', 'fields' => ['not-an-object']], $ctrl);
+        $this->assertTrue($bad['isError']);
+        $this->assertStringContainsString('malformed', $bad['text']);
+    }
+
+    /**
+     * /api/mcp's route-level rate limiter is IP-keyed (no session middleware runs first). Inside
+     * McpController::handle(), a SEPARATE per-account 120-per-60s check now rejects once an
+     * authenticated user's own budget is exhausted (a JSON-RPC error, before any dispatch work),
+     * while normal usage well under the budget is completely unaffected.
+     */
+    public function testPerUserMcpRequestRateLimitRejectsOverBudgetAndAllowsNormalUsage(): void
+    {
+        $rateLimiter = new RateLimiter(self::$mysql->getConnection());
+        $ctrl = $this->makeCtrl($rateLimiter);
+        $tok = self::$tokens->create($this->userId)['token'];
+
+        // Avoid straddling the limiter's 60s fixed window mid-test.
+        $secondsLeft = $rateLimiter->secondsUntilReset(60);
+        if ($secondsLeft < 15) {
+            usleep(($secondsLeft + 1) * 1000000);
+        }
+
+        // Comfortably under budget: normal usage is unaffected.
+        for ($i = 1; $i <= 5; $i++) {
+            $r = $this->rpc($tok, ['jsonrpc' => '2.0', 'id' => $i, 'method' => 'ping'], $ctrl);
+            $this->assertArrayNotHasKey('error', $r, "call #{$i} should succeed well within the 120/60s budget");
+        }
+        // Spend the rest of the budget up to the 120-request ceiling.
+        for ($i = 6; $i <= 120; $i++) {
+            $r = $this->rpc($tok, ['jsonrpc' => '2.0', 'id' => $i, 'method' => 'ping'], $ctrl);
+            $this->assertArrayNotHasKey('error', $r, "call #{$i} should still be within the 120/60s budget");
+        }
+        // The 121st request in the same window exceeds the budget and is rejected before dispatch.
+        $r121 = $this->rpc($tok, ['jsonrpc' => '2.0', 'id' => 121, 'method' => 'ping'], $ctrl);
+        $this->assertSame(-32000, $r121['error']['code'] ?? null, (string) json_encode($r121));
+        $this->assertStringContainsStringIgnoringCase('too many', $r121['error']['message'] ?? '');
+    }
+
+    /**
+     * create_app_form's actual case in callTool() requires apps:write (on top of the forms:write it's
+     * listed under) — so it must be HIDDEN from tools/list for a session that only has forms:write
+     * (it would otherwise be advertised and then fail every real call with a confusing scope error),
+     * and shown once the session has both scopes.
+     */
+    public function testCreateAppFormHiddenWithoutAppsWriteAndShownWithBothScopes(): void
+    {
+        $formsOnly = self::$tokens->create($this->userId, null, 3600, 900, ['forms:write'])['token'];
+        $this->assertNotContains('create_app_form', $this->toolNames($formsOnly), 'create_app_form needs apps:write too — must be hidden without it');
+
+        $both = self::$tokens->create($this->userId, null, 3600, 900, ['forms:write', 'apps:write'])['token'];
+        $this->assertContains('create_app_form', $this->toolNames($both));
     }
 }

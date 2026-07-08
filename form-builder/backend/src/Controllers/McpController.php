@@ -13,6 +13,7 @@ use FormLogic\Services\AppReportService;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\RateLimiter;
+use FormLogic\Services\PlanService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Log\LoggerInterface;
@@ -44,6 +45,10 @@ class McpController
         // Overridable only by tests, to prove the shared batch-deadline cap (below) engages without a
         // real ~25s sleep. Production never passes this — it always falls back to the real ceiling.
         private ?int $connectorBatchCeilingMs = null,
+        // Same form-count quota FormController::checkFormQuota enforces on the web create path — MCP
+        // calls FormService directly and would otherwise bypass it. Null (self-hosted default, plan
+        // enforcement off) makes every check below a no-op, exactly like FormController's.
+        private ?PlanService $planService = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -126,6 +131,19 @@ class McpController
             // (Claude/ChatGPT ignore the header on 200s; the 401 is the discovery moment).
             return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32001, 'message' => 'Unauthorized: invalid or expired MCP token']], 401)
                 ->withHeader('WWW-Authenticate', McpOAuthService::wwwAuthenticateHeader($request));
+        }
+
+        // The route-level $mcpRateLimiter (public/index.php) is IP-keyed — /api/mcp self-authenticates
+        // with no earlier session middleware, so its keyByUser would silently do nothing anyway. Now
+        // that the token is validated and we have a real userId, apply a SEPARATE, correctly per-account
+        // budget (same 120-per-60s ceiling) so rotating source IPs can't bypass it. This must reject
+        // BEFORE any expensive work — outside callTool()'s try/catch, so a plain JSON-RPC error, not a
+        // thrown \Exception.
+        if ($this->rateLimiter !== null) {
+            $hits = $this->rateLimiter->hit('mcp_request:u:' . hash('sha256', $session['userId']), 60);
+            if ($hits > 120) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32000, 'message' => 'Too many MCP requests — please slow down (max 120 per minute).']], 429);
+            }
         }
 
         // Slim's body-parsing middleware already decoded the JSON body; fall back to the raw stream.
@@ -259,6 +277,7 @@ class McpController
                     $data = $this->ownForm((string) ($args['formId'] ?? ''), $userId);
                     break;
                 case 'create_form':
+                    $this->checkFormQuota($userId);
                     $this->validateFormInput($args);
                     $data = $this->createFormSanitized($args, $userId);
                     // App-scoped token: auto-attach the new form to the scoped app so it's usable + stays in scope.
@@ -284,6 +303,7 @@ class McpController
                     $this->requireScope($session, 'apps:write');
                     $this->assertAppScope($session, $target);
                     $this->ownApp($target, $userId);
+                    $this->checkFormQuota($userId);
                     $this->validateFormInput($args);
                     $form = $this->createFormSanitized($args, $userId);
                     $this->appService->addFormToApp($target, (string) $form['id'], $args['displayName'] ?? null);
@@ -539,8 +559,15 @@ class McpController
                     throw new \Exception("Unknown or unavailable tool: {$name}");
             }
             return ['content' => [['type' => 'text', 'text' => json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)]]];
-        } catch (\Throwable $e) {
+        } catch (\Exception $e) {
+            // Every intentional throw in this file is a plain \Exception with a deliberately
+            // user-safe message — that's the convention for "safe to show the MCP caller".
             return ['content' => [['type' => 'text', 'text' => 'Error: ' . $e->getMessage()]], 'isError' => true];
+        } catch (\Throwable $e) {
+            // Anything else (TypeError, PDOException, etc.) was never crafted to be user-facing and
+            // may carry internals (SQL fragments, file paths) — log it, don't echo it to the client.
+            $this->logger?->error('MCP tool call failed unexpectedly', ['tool' => $name, 'error' => $e->getMessage()]);
+            return ['content' => [['type' => 'text', 'text' => 'Error: an unexpected error occurred. Please try again.']], 'isError' => true];
         }
     }
 
@@ -548,6 +575,15 @@ class McpController
     {
         if (!in_array($scope, $session['scopes'] ?? [], true)) {
             throw new \Exception("This MCP token lacks the required scope: {$scope}");
+        }
+    }
+
+    /** Same form-count quota FormController::checkFormQuota enforces on the web create path — a
+     *  no-op unless $this->planService is set AND plan enforcement is on (self-hosted default). */
+    private function checkFormQuota(string $userId): void
+    {
+        if ($this->planService && !$this->planService->canCreateForms($userId, 1)) {
+            throw new \Exception('You\'ve reached your plan\'s limit of ' . $this->planService->formLimit($userId) . ' forms. Delete a form or upgrade to add more.');
         }
     }
 
@@ -740,7 +776,8 @@ class McpController
         return $out;
     }
 
-    /** Tool definitions visible to a session — filtered by its scopes (and app-scope for create_app). */
+    /** Tool definitions visible to a session — filtered by its scopes (and app-scope for create_app;
+     *  create_app_form additionally requires apps:write, since its own case in callTool() does too). */
     private function toolDefs(array $session): array
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
@@ -774,6 +811,9 @@ class McpController
             }
             if ($t['name'] === 'create_app' && $scopedApp !== null) {
                 continue; // app-scoped tokens can't create new apps
+            }
+            if ($t['name'] === 'create_app_form' && !in_array('apps:write', $scopes, true)) {
+                continue; // callTool() also requires apps:write; hide it unless the session actually has both
             }
             unset($t['scope']);
             $out[] = $t;
