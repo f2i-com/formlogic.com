@@ -714,28 +714,38 @@ fn client_err(node: &GraphNode, e: impl std::fmt::Display) -> FlowError {
     FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {e}", node.id), Some(node.id.clone()))
 }
 
-/// HTTP allow-list (docs §4): the FormLogic base URL and local loopback only.
+/// HTTP allow-list (docs §4): the FormLogic base URL ONLY. Deliberately does NOT fall through
+/// to loopback — mirrors the browser executor's `isAllowedFlowUrl` (ui/src/client-runtime/flows/
+/// nodes.ts), which likewise never treats loopback as implicitly allowed. Call sites that
+/// legitimately need a local desktop service (the `service`-branch of `http_request`, and the
+/// `browser_action`/`image_gen`/`stt_transcribe`/`tts_speak` node handlers) OR this explicitly
+/// with `is_loopback_url` at the call site — exactly like their TS twins do.
 fn is_allowed_flow_url(url: &str, base: &str) -> bool {
     let base = base.trim_end_matches('/');
-    if !base.is_empty() && (url == base || url.starts_with(&format!("{base}/"))) {
-        return true;
-    }
-    is_loopback_url(url)
+    !base.is_empty() && (url == base || url.starts_with(&format!("{base}/")))
 }
 
+/// True for loopback-only http(s) URLs (127.0.0.1 / localhost / ::1). Uses REAL URL parsing
+/// (`url::Url`, WHATWG URL Standard) rather than hand-rolled string splitting: a naive splitter
+/// that only knows `/` and `@` as boundaries can be fooled by a fragment, e.g.
+/// `http://attacker.example.com#@127.0.0.1/` — the `#` starts the fragment, so the actual host
+/// (what `reqwest` resolves and connects to) is `attacker.example.com`, but a splitter ignorant
+/// of `#` sees `@127.0.0.1` after its "first `/`" and misreads it as loopback. Matches the
+/// browser executor's `isLoopbackUrl` (nodes.ts) semantics exactly, including checking the
+/// bracketed form of an IPv6 literal (`Url::host_str()` keeps the brackets, same as
+/// `URL.hostname` in JS) and treating an unparseable URL as not-loopback.
 fn is_loopback_url(url: &str) -> bool {
-    let rest = match url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) {
-        Some(r) => r,
-        None => return false,
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
     };
-    let host = rest.split('/').next().unwrap_or(rest);
-    let host = host.split('@').last().unwrap_or(host);
-    let host = if let Some(inner) = host.strip_prefix('[') {
-        return inner.split(']').next() == Some("::1");
-    } else {
-        host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
-    };
-    host == "127.0.0.1" || host == "localhost" || host == "::1"
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return false;
+    }
+    match parsed.host_str() {
+        Some(h) => h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "[::1]",
+        None => false,
+    }
 }
 
 /// Execute one node. Returns its output value or a typed FlowError.
@@ -1205,7 +1215,7 @@ fn resolve_browser_base(node: &GraphNode, deps: &RunDeps) -> Result<String, Flow
     let data = node_data(node);
     if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
         let base = ep.trim_end_matches('/');
-        if !is_allowed_flow_url(base, &deps.base_url) {
+        if !is_allowed_flow_url(base, &deps.base_url) && !is_loopback_url(base) {
             return Err(FlowError::new(
                 FlowErrorCode::CapabilityDenied,
                 format!("Node '{}' endpoint is not allow-listed (a local loopback service or the FormLogic API only)", node.id),
@@ -1323,7 +1333,7 @@ async fn run_image_gen(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) 
     let data = node_data(node).clone();
     let service_id = data.get("service").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(IMAGE_SERVICE);
     let endpoint = if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
-        if !is_allowed_flow_url(ep, &deps.base_url) {
+        if !is_allowed_flow_url(ep, &deps.base_url) && !is_loopback_url(ep) {
             return Err(FlowError::new(
                 FlowErrorCode::CapabilityDenied,
                 format!("Node '{}' image_gen endpoint is not allow-listed (a local loopback service or the FormLogic API only)", node.id),
@@ -1374,7 +1384,7 @@ async fn run_image_gen(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) 
 fn resolve_configured_endpoint(node: &GraphNode, deps: &RunDeps, default_path: &str, human: &str) -> Result<String, FlowError> {
     let data = node_data(node);
     if let Some(ep) = data.get("endpoint").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
-        if !is_allowed_flow_url(ep, &deps.base_url) {
+        if !is_allowed_flow_url(ep, &deps.base_url) && !is_loopback_url(ep) {
             return Err(FlowError::new(
                 FlowErrorCode::CapabilityDenied,
                 format!("Node '{}' endpoint is not allow-listed (a local loopback service or the FormLogic API only)", node.id),
@@ -1595,12 +1605,63 @@ mod tests {
         assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
     }
 
+    // (f) The bare (non-`service`) http_request branch must NOT reach loopback — only the
+    // FormLogic base URL. Before the fix, `is_allowed_flow_url`'s fallthrough silently allowed
+    // this for every caller, including this one.
+    #[tokio::test]
+    async fn http_request_bare_branch_rejects_plain_loopback() {
+        let flow = json!({
+            "nodes": [ { "id": "h", "type": "http_request", "data": { "url": "http://127.0.0.1:5000/" } } ],
+            "edges": []
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.error.unwrap().code, FlowErrorCode::CapabilityDenied);
+    }
+
+    // (e) Base-URL matching (the sole remaining branch of `is_allowed_flow_url`) is unaffected
+    // by the loopback split, and a non-base host is still rejected.
     #[test]
-    fn allow_list_matches_base_and_loopback() {
+    fn allow_list_matches_base_but_not_bare_loopback() {
         assert!(is_allowed_flow_url("http://formlogic.local/api/v1/flows", "http://formlogic.local"));
-        assert!(is_allowed_flow_url("http://127.0.0.1:11434/v1/chat/completions", "http://formlogic.local"));
-        assert!(is_loopback_url("http://localhost:8080/x"));
         assert!(!is_allowed_flow_url("https://evil.example/api", "http://formlogic.local"));
+        // Loopback is real (`is_loopback_url` says so)...
+        assert!(is_loopback_url("http://127.0.0.1:11434/v1/chat/completions"));
+        // ...but `is_allowed_flow_url` alone no longer grants it (this is the second bug's
+        // fix): only call sites that explicitly OR it with `is_loopback_url` — the
+        // service-backed node handlers — get loopback access.
+        assert!(!is_allowed_flow_url("http://127.0.0.1:11434/v1/chat/completions", "http://formlogic.local"));
+    }
+
+    // (c), (d) Genuinely loopback URLs — including a port, bare localhost, and a bracketed IPv6
+    // literal — are still correctly identified after the rewrite to real URL parsing.
+    #[test]
+    fn is_loopback_url_accepts_real_loopback() {
+        assert!(is_loopback_url("http://127.0.0.1:8080/foo"));
+        assert!(is_loopback_url("http://localhost/"));
+        assert!(is_loopback_url("http://localhost:8080/x"));
+        assert!(is_loopback_url("http://[::1]/"));
+    }
+
+    // (a) The confirmed adversarial PoC: a fragment (`#`) is never part of the authority per the
+    // WHATWG URL Standard, so the real (and only) host here is `attacker.example.com` — exactly
+    // what `reqwest` resolves and connects to. The old hand-rolled splitter didn't know about
+    // `#` and misread the `@127.0.0.1/` trailing the fragment as loopback.
+    #[test]
+    fn is_loopback_url_rejects_fragment_userinfo_spoof() {
+        let url = "http://attacker.example.com#@127.0.0.1/";
+        assert_eq!(url::Url::parse(url).unwrap().host_str(), Some("attacker.example.com"));
+        assert!(!is_loopback_url(url));
+        assert!(!is_allowed_flow_url(url, "http://formlogic.local"));
+    }
+
+    // (b) The same class of bug via literal userinfo syntax instead of a fragment: `user@host`
+    // means `127.0.0.1` is discarded as userinfo and `attacker.example.com` is the real host.
+    #[test]
+    fn is_loopback_url_rejects_userinfo_spoof() {
+        let url = "http://127.0.0.1@attacker.example.com/";
+        assert_eq!(url::Url::parse(url).unwrap().host_str(), Some("attacker.example.com"));
+        assert!(!is_loopback_url(url));
+        assert!(!is_allowed_flow_url(url, "http://formlogic.local"));
     }
 
     // ── formlogic_list_responses FROZEN CONTRACT parity ───────────────────────

@@ -108,6 +108,50 @@ pub struct FlowRuntime {
     run_cache: Mutex<(VecDeque<String>, HashMap<String, Value>)>,
 }
 
+/// True iff a redirect hop from `origin` (the first URL in the chain — i.e. the URL that was
+/// already allow-list-checked by `runner::is_allowed_flow_url`/`is_loopback_url` before the
+/// request was sent) to `target` (the next hop reqwest is about to follow) stays within the
+/// SAME origin (scheme + host + port). Deliberately does NOT special-case loopback here: the
+/// allow-list intentionally treats "bare" nodes (plain `http_request`, `llm_chat`) differently
+/// from "service" nodes (`browser_action`/`image_gen`/`stt_transcribe`/`tts_speak`, and the
+/// `service`-branch of `http_request`) — the former may only reach the FormLogic base URL, the
+/// latter may also reach loopback. That distinction is made once, at the original URL, based on
+/// which node handler is calling; a redirect-time check has no way to know which handler
+/// initiated the request, so re-granting loopback to every redirect (regardless of origin) would
+/// silently undo the split for bare nodes. Requiring the redirect to stay same-origin as
+/// whatever was already validated preserves both halves of the split with no extra state.
+fn redirect_target_allowed(origin: &reqwest::Url, target: &reqwest::Url) -> bool {
+    origin.scheme() == target.scheme()
+        && origin.host_str() == target.host_str()
+        && origin.port_or_known_default() == target.port_or_known_default()
+}
+
+/// Redirect policy for the shared flows HTTP client. Without this, reqwest's default policy
+/// (follow up to 10 hops, resending the full body and all headers except `Authorization` on a
+/// cross-origin hop) would let an already allow-listed origin — the FormLogic base URL, or a
+/// local desktop service the endpoint allow-list resolved to — silently exfiltrate a flow's
+/// request body to an attacker-chosen host via a single HTTP redirect response, since
+/// `is_allowed_flow_url`/`is_loopback_url` are only ever checked once, against the pre-redirect
+/// URL (see every call site in `runner.rs`). Mirrors the re-validate-every-hop defense the team
+/// already applies to model downloads (`services/downloads.rs`), narrowed here to "stay on the
+/// origin you started on" since that's all the flow allow-list ever legitimately grants.
+fn flow_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.stop();
+        }
+        let allowed = attempt
+            .previous()
+            .first()
+            .is_some_and(|origin| redirect_target_allowed(origin, attempt.url()));
+        if allowed {
+            attempt.follow()
+        } else {
+            attempt.error("redirect left the allow-listed origin")
+        }
+    })
+}
+
 impl FlowRuntime {
     pub fn new(
         host: Arc<PluginHost>,
@@ -116,6 +160,7 @@ impl FlowRuntime {
     ) -> Arc<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
+            .redirect(flow_redirect_policy())
             .build()
             .unwrap_or_default();
         let client = FormLogicClient::new(&config).map(Arc::new);
@@ -1142,6 +1187,47 @@ mod tests {
     fn runtime() -> Arc<FlowRuntime> {
         let host = PluginHost::new(&std::env::temp_dir().join(format!("flrt-{}", uuid::Uuid::new_v4().simple())), false, crate::events::EventBus::new());
         FlowRuntime::new(host, None, FormLogicConfig { base_url: String::new(), api_key: String::new() })
+    }
+
+    // Redirect-hop re-validation (see `flow_redirect_policy`): a redirect must stay on the same
+    // origin as the request that was already allow-list-checked. Without this, reqwest's default
+    // policy would follow a redirect from an already-allowed origin to an arbitrary third-party
+    // host, resending the body/headers — closing exactly the class of gap the loopback-URL fix
+    // (runner.rs `is_loopback_url`) closed for the initial request, but at the redirect hop.
+    #[test]
+    fn redirect_target_allowed_rejects_cross_origin_hop() {
+        let origin = reqwest::Url::parse("http://formlogic.local/api/v1/flows").unwrap();
+        let evil = reqwest::Url::parse("http://attacker.example.com/steal").unwrap();
+        assert!(!redirect_target_allowed(&origin, &evil));
+    }
+
+    #[test]
+    fn redirect_target_allowed_rejects_loopback_from_non_loopback_origin() {
+        // A bare http_request/llm_chat node only ever starts at the FormLogic base URL (never
+        // loopback — see `is_allowed_flow_url`'s removed fallthrough). A redirect from there to a
+        // local service must NOT be silently granted at the redirect hop; that would undo the
+        // bare/service split under redirect.
+        let origin = reqwest::Url::parse("http://formlogic.local/api/v1/flows").unwrap();
+        let internal = reqwest::Url::parse("http://127.0.0.1:9999/admin").unwrap();
+        assert!(!redirect_target_allowed(&origin, &internal));
+    }
+
+    #[test]
+    fn redirect_target_allowed_permits_same_origin_path_change() {
+        let origin = reqwest::Url::parse("http://formlogic.local/api/v1/flows").unwrap();
+        let same_origin_other_path = reqwest::Url::parse("http://formlogic.local/api/v1/flows/2").unwrap();
+        assert!(redirect_target_allowed(&origin, &same_origin_other_path));
+    }
+
+    #[test]
+    fn redirect_target_allowed_rejects_scheme_or_port_downgrade() {
+        let origin = reqwest::Url::parse("https://formlogic.local/api").unwrap();
+        let http_downgrade = reqwest::Url::parse("http://formlogic.local/api").unwrap();
+        assert!(!redirect_target_allowed(&origin, &http_downgrade));
+
+        let origin = reqwest::Url::parse("http://127.0.0.1:5000/x").unwrap();
+        let other_port = reqwest::Url::parse("http://127.0.0.1:5001/x").unwrap();
+        assert!(!redirect_target_allowed(&origin, &other_port));
     }
 
     #[test]

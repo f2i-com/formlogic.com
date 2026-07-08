@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeNode, FlowExecError, KV_WRITE_CAPABILITY, type FlowExecutorDeps, type FlowNodeContext } from './nodes';
+import {
+  executeNode,
+  FlowExecError,
+  isAllowedFlowUrl,
+  isLoopbackUrl,
+  KV_WRITE_CAPABILITY,
+  type FlowExecutorDeps,
+  type FlowNodeContext,
+} from './nodes';
 import type { WorkflowGraphNode } from '../../types/flows';
 import type { SelectorScope } from './selectors';
 
@@ -34,6 +42,45 @@ function ctxFor(
     flowSlug: extra.flowSlug,
   };
 }
+
+// Shared adversarial-URL fixture table, pinned against the Rust twin's identical assertions
+// (flows/runner.rs `is_loopback_url` / `is_allowed_flow_url` tests). TS was never vulnerable to
+// the fragment/userinfo host-spoofing bug fixed on the Rust side — it already parses with
+// `new URL()` — but both runtimes are exercised against the SAME strings here so a future change
+// to either side that reintroduces divergence is caught immediately.
+describe('isLoopbackUrl / isAllowedFlowUrl', () => {
+  it('resolves the fragment-userinfo PoC to the attacker host, not loopback', () => {
+    // `#` starts the fragment per the WHATWG URL Standard, so `@127.0.0.1/` after it is inert
+    // fragment text, never part of the authority. The real (and only) host is attacker.example.com.
+    const url = 'http://attacker.example.com#@127.0.0.1/';
+    expect(new URL(url).hostname).toBe('attacker.example.com');
+    expect(isLoopbackUrl(url)).toBe(false);
+    expect(isAllowedFlowUrl(url)).toBe(false);
+  });
+
+  it('resolves the userinfo-syntax PoC to the attacker host, not loopback', () => {
+    // `user@host` syntax: `127.0.0.1` is discarded as userinfo; the real host is
+    // attacker.example.com.
+    const url = 'http://127.0.0.1@attacker.example.com/';
+    expect(new URL(url).hostname).toBe('attacker.example.com');
+    expect(isLoopbackUrl(url)).toBe(false);
+    expect(isAllowedFlowUrl(url)).toBe(false);
+  });
+
+  it('still recognizes genuinely loopback URLs (port, bare host, bracketed IPv6)', () => {
+    expect(isLoopbackUrl('http://127.0.0.1:8080/foo')).toBe(true);
+    expect(isLoopbackUrl('http://localhost/')).toBe(true);
+    expect(isLoopbackUrl('http://[::1]/')).toBe(true);
+  });
+
+  it('isAllowedFlowUrl never falls back to loopback (Desktop base / FormLogic API only)', () => {
+    // Loopback is real (isLoopbackUrl says so)...
+    expect(isLoopbackUrl('http://127.0.0.1:11434/v1/chat/completions')).toBe(true);
+    // ...but isAllowedFlowUrl alone doesn't grant it — only call sites that explicitly OR it
+    // with isLoopbackUrl (the service-backed node handlers) get loopback access.
+    expect(isAllowedFlowUrl('http://127.0.0.1:11434/v1/chat/completions')).toBe(false);
+  });
+});
 
 describe('storage_get', () => {
   it('reads via kvGet with the resolved scope + key', async () => {
