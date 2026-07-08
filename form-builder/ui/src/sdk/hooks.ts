@@ -94,10 +94,19 @@ export interface UseResponsesResult {
 /**
  * Recent responses for a form (newest first). Demo-aware; resolves to [] if the user
  * can't view (the store's fetchRecentRows swallows a 403 and returns []).
+ *
+ * `pollInterval` (seconds) opts into live updates: the list silently re-fetches on
+ * that cadence while the tab is visible, so views that watch incoming records (e.g.
+ * a call feed) stay current for any viewer — remote or plain-web — without a manual
+ * reload, since every client polls the same backend the desktop writes to.
  */
-export function useResponses(formKey: string, options?: { limit?: number }): UseResponsesResult {
+export function useResponses(
+  formKey: string,
+  options?: { limit?: number; pollInterval?: number }
+): UseResponsesResult {
   const fetchRecentRows = useAppRuntimeStore((s) => s.fetchRecentRows);
   const limit = options?.limit ?? 20;
+  const pollInterval = options?.pollInterval;
   const [rows, setRows] = useState<SdkResponseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +121,15 @@ export function useResponses(formKey: string, options?: { limit?: number }): Use
       .catch((e) => { if (!cancelled) { setError(e instanceof Error ? e.message : 'Failed to load'); setLoading(false); } });
     return () => { cancelled = true; };
   }, [fetchRecentRows, formKey, limit, nonce]);
+
+  // Live polling: bump the fetch nonce on an interval while the tab is visible.
+  useEffect(() => {
+    if (!pollInterval || pollInterval <= 0 || typeof document === 'undefined') return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') setNonce((n) => n + 1);
+    }, pollInterval * 1000);
+    return () => window.clearInterval(timer);
+  }, [pollInterval]);
 
   return { rows, loading, error, reload: () => setNonce((n) => n + 1) };
 }

@@ -102,6 +102,8 @@ export interface PackDashboardWidget {
 export interface PackDashboardScreen {
   version: 1;
   cols?: number;
+  /** Auto-refresh cadence in seconds (30 | 60 | 300); absent = no auto-refresh. */
+  refreshInterval?: number;
   widgets: PackDashboardWidget[];
 }
 

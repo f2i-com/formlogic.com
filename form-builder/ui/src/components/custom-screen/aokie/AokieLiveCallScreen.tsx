@@ -105,11 +105,14 @@ export function AokieLiveCallScreen({ params }: { params?: Record<string, unknow
   const [overlay, setOverlay] = useState<CallOverlay | null>(null);
   const [relayBusy, setRelayBusy] = useState<string | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
-  const recent = useResponses(callsFormId ?? '', { limit: 8 });
-
   // Runtime presence: local bridge / remote desktop / neither (§14 remote viewer).
   const presence = useAokiePresence();
   const remoteMode = presence.kind === 'remote';
+
+  // In local/no-desktop mode the recent-calls list has no other refresh, so poll
+  // it every 10s to track in-flight calls (not just 1.5s after one ends). Remote
+  // mode already polls both lists on its own timer below, so skip it there.
+  const recent = useResponses(callsFormId ?? '', { limit: 8, pollInterval: remoteMode ? undefined : 10 });
 
   // Remote mode reads the stored Transcript Turns records (the local hub feed cannot exist
   // here). The form is resolved by its app display name — the same convention the pack's
