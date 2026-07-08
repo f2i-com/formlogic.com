@@ -285,6 +285,7 @@ export default function FormPreview() {
         onClose={() => setShowEmbedModal(false)}
         formId={form.id}
         formTitle={form.title}
+        formStatus={form.status}
       />
 
       {/* Preview Area */}

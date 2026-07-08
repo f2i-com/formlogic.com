@@ -40,6 +40,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
+import { useAppStore } from '../stores/appStore';
 import { useResponseStore } from '../stores/responseStore';
 import { toast } from '../stores/toastStore';
 import { formatRelativeTime, parseServerDate } from '../lib/utils';
@@ -203,7 +204,7 @@ const FormCard = memo(function FormCard({
   /** In-app forms open the real app runtime at this form (new tab); standalone forms use /preview. */
   onPreview: (id: string) => void;
   onDuplicate: (id: string) => void;
-  onEmbed: (id: string, title: string) => void;
+  onEmbed: (id: string, title: string, status: Form['status']) => void;
   onDelete: (id: string, title: string) => void;
   onStatusChange: (id: string, status: 'draft' | 'published' | 'archived') => void;
 }) {
@@ -356,7 +357,7 @@ const FormCard = memo(function FormCard({
                     <Copy className="h-4 w-4" /> Duplicate
                   </button>
                   <button
-                    onClick={() => { onEmbed(form.id, form.title); onMenuClose(); }}
+                    onClick={() => { onEmbed(form.id, form.title, form.status); onMenuClose(); }}
                     role="menuitem"
                     className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                   >
@@ -463,6 +464,7 @@ export function FormsList() {
   useDocumentTitle('My Forms');
   const navigate = useNavigate();
   const { forms, setActiveForm, deleteForm, duplicateForm, updateForm } = useFormStore();
+  const addFormToApp = useAppStore((s) => s.addFormToApp);
   // "New Form" / "Create Form" open the New Form picker (template or blank).
   const { openNewForm, newFormPicker } = useCreateFormFlow();
   const formsLoading = useFormStore((s) => s.isLoading || !s.isInitialized);
@@ -475,7 +477,7 @@ export function FormsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'modified' | 'name' | 'responses'>('modified');
   const [activeMenu, setActiveMenu] = useState<{ id: string; rect: DOMRect } | null>(null);
-  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
+  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
   const [packFilter, setPackFilter] = useState<string>('all');
@@ -647,6 +649,13 @@ export function FormsList() {
     try {
       const newForm = await duplicateForm(id);
       if (newForm) {
+        // duplicateForm() only clones the form row — app membership (app_forms) is a
+        // separate relation the backend never copies. Re-attach the copy to the same
+        // app it was duplicated from so it doesn't silently fall out into "standalone".
+        // Only applies when duplicating from inside a drilled-in app view.
+        if (selectedAppId) {
+          await addFormToApp(selectedAppId, newForm.id, newForm.title);
+        }
         setActiveForm(newForm.id);
         navigate(`/builder/${newForm.id}`);
       }
@@ -655,7 +664,7 @@ export function FormsList() {
       toast.error('Failed to duplicate form', 'Please try again');
     }
     setActiveMenu(null);
-  }, [duplicateForm, setActiveForm, navigate]);
+  }, [duplicateForm, setActiveForm, navigate, selectedAppId, addFormToApp]);
 
   const handleMenuToggle = useCallback((id: string, rect: DOMRect) => {
     setActiveMenu({ id, rect });
@@ -665,8 +674,8 @@ export function FormsList() {
     setActiveMenu(null);
   }, []);
 
-  const handleEmbed = useCallback((id: string, title: string) => {
-    setEmbedModalForm({ id, title });
+  const handleEmbed = useCallback((id: string, title: string, status: Form['status']) => {
+    setEmbedModalForm({ id, title, status });
   }, []);
 
   const handleDelete = useCallback((id: string, title: string) => {
@@ -691,14 +700,43 @@ export function FormsList() {
     return Array.from(seen, ([id, name]) => ({ id, name }));
   }, [installedPacks]);
 
-  // The same search box also filters the apps rail (name or description).
+  // formId -> title, so an app's member forms can be matched by name even though they're
+  // not in `viewForms` at the top level (viewForms only holds standalone forms there).
+  const formTitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const f of forms) map.set(f.id, f.title);
+    return map;
+  }, [forms]);
+
+  // Per-app titles of its member forms that match the current search query. Lets the Apps
+  // rail search reach forms tucked inside an app, not just the app's own name/description —
+  // otherwise a form becomes unfindable the moment it's organized into an app. Apps whose own
+  // name/description already match are skipped here — showing "found via a form inside" on
+  // top of an obvious match would just be noise, and it lets the render loop below reuse this
+  // map directly instead of re-deriving the same own-match check per row.
+  const appMemberMatches = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return {} as Record<string, string[]>;
+    const map: Record<string, string[]> = {};
+    for (const g of appGroups) {
+      const ownMatch = g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q);
+      if (ownMatch) continue;
+      const titles = g.formIds
+        .map((id) => formTitleById.get(id))
+        .filter((t): t is string => !!t && t.toLowerCase().includes(q));
+      if (titles.length > 0) map[g.id] = titles;
+    }
+    return map;
+  }, [appGroups, searchQuery, formTitleById]);
+
+  // The same search box also filters the apps rail (name, description, or a member form's title).
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return appGroups;
     return appGroups.filter((g) =>
-      g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q)
+      g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q) || appMemberMatches[g.id]
     );
-  }, [appGroups, searchQuery]);
+  }, [appGroups, searchQuery, appMemberMatches]);
 
   const filteredForms = useMemo(() =>
     viewForms
@@ -855,7 +893,11 @@ export function FormsList() {
             ) : (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {filteredApps.slice(0, appLimit).map((g) => (
+                  {filteredApps.slice(0, appLimit).map((g) => {
+                    // appMemberMatches already excludes apps with an obvious own-name/description
+                    // match (see its definition above), so no need to re-derive that here.
+                    const memberMatches = appMemberMatches[g.id];
+                    return (
                     <button
                       key={g.id}
                       onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
@@ -871,7 +913,17 @@ export function FormsList() {
                       <div className="min-w-0 flex-1">
                         <span className="block text-sm font-medium text-gray-900 dark:text-slate-100 truncate">{g.name}</span>
                         <span className="block text-xs text-gray-500 dark:text-slate-400">{g.formIds.length} form{g.formIds.length === 1 ? '' : 's'}</span>
-                        {appPackMap[g.id] && (
+                        {memberMatches && memberMatches.length > 0 ? (
+                          <span
+                            className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-primary-600 dark:text-primary-400"
+                            title={`Contains matching form${memberMatches.length === 1 ? '' : 's'}: ${memberMatches.join(', ')}`}
+                          >
+                            <Search className="h-3 w-3 shrink-0" />
+                            <span className="truncate">
+                              in app: "{memberMatches[0]}"{memberMatches.length > 1 ? ` +${memberMatches.length - 1} more` : ''}
+                            </span>
+                          </span>
+                        ) : appPackMap[g.id] && (
                           <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500" title={`From the ${appPackMap[g.id]} pack`}>
                             <Package className="h-3 w-3 shrink-0" />
                             <span className="truncate">{appPackMap[g.id]}</span>
@@ -880,7 +932,8 @@ export function FormsList() {
                       </div>
                       <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
               </>
@@ -1046,6 +1099,7 @@ export function FormsList() {
           onClose={() => setEmbedModalForm(null)}
           formId={embedModalForm.id}
           formTitle={embedModalForm.title}
+          formStatus={embedModalForm.status}
         />
       )}
 

@@ -1461,6 +1461,7 @@ function FormResponses() {
         onClose={() => setShowEmbedModal(false)}
         formId={form.id}
         formTitle={form.title}
+        formStatus={form.status}
       />
 
       {/* CSV Import Wizard */}

@@ -1074,6 +1074,7 @@ export default function FormBuilder() {
         onClose={closeModal}
         formId={form.id}
         formTitle={form.title}
+        formStatus={form.status}
       />
 
       {activeModal === 'screen' && form.customScreen?.enabled && (

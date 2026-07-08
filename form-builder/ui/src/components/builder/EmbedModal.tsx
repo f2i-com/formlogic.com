@@ -1,23 +1,27 @@
 import { useState, useRef, useEffect } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode } from 'lucide-react';
+import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode, AlertTriangle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
+import type { Form } from '../../types/form';
 
 interface EmbedModalProps {
   isOpen: boolean;
   onClose: () => void;
   formId: string;
   formTitle: string;
+  /** When provided and not 'published', shows a draft warning — the generated link/embed/QR
+   *  all point at the public form endpoint, which 403s for non-owners until the form is published. */
+  formStatus?: Form['status'];
 }
 
 type EmbedType = 'standard' | 'fullpage' | 'popup';
 type ActiveTab = 'link' | 'embed' | 'export' | 'qr';
 
-export function EmbedModal({ isOpen, onClose, formId, formTitle }: EmbedModalProps) {
+export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus }: EmbedModalProps) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('link');
   const [embedType, setEmbedType] = useState<EmbedType>('standard');
   const [width, setWidth] = useState('100%');
@@ -277,6 +281,19 @@ function closeFormPopup() {
             </button>
           ))}
         </div>
+
+        {/* Draft warning — the link/embed/QR below all resolve to the public form endpoint,
+            which only serves published forms to anonymous visitors (the owner's own session
+            can still open it, which is what makes this easy to miss while testing). */}
+        {formStatus && formStatus !== 'published' && (
+          <div className="mx-6 mt-4 flex items-start gap-2.5 text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 p-3 rounded-lg border border-amber-200 dark:border-amber-500/30">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-amber-500" />
+            <span>
+              This form is still a {formStatus === 'archived' ? 'archived' : 'draft'}. The link, embed code, and QR
+              code below will not work for visitors until you publish it.
+            </span>
+          </div>
+        )}
 
         {/* Content — fixed height so the dialog doesn't jump between tabs. */}
         <div className="h-[460px] max-h-[60vh] overflow-y-auto p-6">

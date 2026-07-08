@@ -51,6 +51,7 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormTemplate } from '../data/formTemplates';
 import type { App } from '../types/app';
+import type { Form } from '../types/form';
 
 interface DashboardStats {
   totalResponses: number;
@@ -354,7 +355,7 @@ export function Dashboard() {
   // formId -> the app it belongs to (cloud mode), so Recent Forms can tag which app a form is
   // part of (badge only — preview routing does its own fresh per-click context lookup).
   const [appOfForm, setAppOfForm] = useState<Record<string, string>>({});
-  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string } | null>(null);
+  const [embedModalForm, setEmbedModalForm] = useState<{ id: string; title: string; status: Form['status'] } | null>(null);
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
@@ -458,10 +459,10 @@ export function Dashboard() {
             if (result.data?.analytics) {
               const a = result.data.analytics;
               totalResponses += a.totalResponses;
-              // Include every form that has received responses in the average —
+              // Include every form that has received traffic in the average —
               // even genuine 0% completion forms — so the average isn't biased
               // upward by silently dropping them from the denominator.
-              if (a.totalResponses > 0) {
+              if ((a.totalViews ?? 0) > 0 || (a.totalStarts ?? 0) > 0) {
                 totalCompletionRate += a.completionRate;
                 formsWithAnalytics++;
               }
@@ -918,7 +919,7 @@ export function Dashboard() {
                               onPreview={() => previewForm(form.id)}
                               onAnalytics={() => navigate(`/analytics/${form.id}`)}
                               onViewData={() => navigate(`/responses/${form.id}`)}
-                              onShare={() => setEmbedModalForm({ id: form.id, title: form.title })}
+                              onShare={() => setEmbedModalForm({ id: form.id, title: form.title, status: form.status })}
                             />
                           </div>
                         </div>
@@ -1010,6 +1011,7 @@ export function Dashboard() {
           onClose={() => setEmbedModalForm(null)}
           formId={embedModalForm.id}
           formTitle={embedModalForm.title}
+          formStatus={embedModalForm.status}
         />
       )}
 

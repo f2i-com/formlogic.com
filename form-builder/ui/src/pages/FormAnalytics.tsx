@@ -827,6 +827,7 @@ export default function FormAnalytics() {
         onClose={() => setShowEmbedModal(false)}
         formId={form.id}
         formTitle={form.title}
+        formStatus={form.status}
       />
     </div>
   );

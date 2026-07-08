@@ -38,11 +38,16 @@ const OPERATORS = [
   { value: 'empty', label: 'is empty' },
 ];
 
+// 'hide' and 'skip' execute byte-identical logic on both the client (useFormLogic) and the
+// server (ResponseService) — both simply mark the field not-visible when the condition is
+// false. Offering them as two distinct choices here just confused users, since nothing
+// changes when switching between them. 'skip' is intentionally NOT removed from the runtime
+// (useFormLogic.ts / ResponseService.php) — only the duplicate menu entry is gone, so any
+// form logic rule saved with action:'skip' before this change keeps behaving exactly as before.
 const ACTIONS = [
   { value: 'show', label: 'Show this field' },
   { value: 'hide', label: 'Hide this field' },
   { value: 'require', label: 'Make this field required' },
-  { value: 'skip', label: 'Skip this field' },
 ];
 
 function simpleConditionToExpression(
@@ -283,7 +288,11 @@ export function LogicEditor({
           </label>
           <Dropdown
             options={ACTIONS}
-            value={action}
+            // Legacy rules saved with action:'skip' have no matching option now — display them
+            // as 'hide' (their real behavior is identical) rather than showing an empty
+            // placeholder. `action` state itself stays 'skip' until the user actively changes
+            // this dropdown, so re-saving without touching it doesn't rewrite the stored value.
+            value={action === 'skip' ? 'hide' : action}
             onChange={setAction}
           />
         </div>
