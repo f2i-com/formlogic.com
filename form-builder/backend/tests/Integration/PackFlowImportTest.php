@@ -259,7 +259,7 @@ class PackFlowImportTest extends TestCase
         $this->assertIsArray($pack);
 
         $result = self::$packs->importPack($pack, $this->userId);
-        $this->assertCount(10, $result['forms']);
+        $this->assertCount(11, $result['forms']);
         $this->assertCount(1, $result['apps']);
         $appId = $result['apps'][0]['id'];
 

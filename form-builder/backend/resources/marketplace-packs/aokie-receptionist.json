@@ -2386,6 +2386,121 @@
             "title": "Device Setup"
           }
         }
+      },
+      {
+        "packFormId": "receptionist-settings",
+        "title": "Receptionist Settings",
+        "icon": "Settings",
+        "description": "Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so changes take effect on the next caller turn.",
+        "settings": {
+          "presentationMode": "both",
+          "defaultPresentationMode": "focused",
+          "showProgressBar": true,
+          "allowBackNavigation": true,
+          "submitButtonText": "Submit",
+          "notifications": {
+            "emailNotifications": false
+          },
+          "isClosed": false
+        },
+        "theme": {
+          "primaryColor": "#0284c7",
+          "backgroundColor": "#ffffff",
+          "textColor": "#1f2937",
+          "fontFamily": "Inter",
+          "borderRadius": "medium"
+        },
+        "fields": [
+          {
+            "id": "business_name",
+            "type": "short_text",
+            "label": "Business name",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Bright Smile Dental"
+            }
+          },
+          {
+            "id": "instructions",
+            "type": "long_text",
+            "label": "How should the receptionist talk & behave?",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Be warm and concise. Offer to book appointments Mon–Fri 9–5. If asked about prices, give the standard checkup price of $90 and offer to book."
+            }
+          },
+          {
+            "id": "model",
+            "type": "short_text",
+            "label": "LLM model (blank = auto-detect)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. llama3.1:8b"
+            }
+          },
+          {
+            "id": "active",
+            "type": "dropdown",
+            "label": "Active",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "yes",
+                  "label": "Yes",
+                  "value": "yes"
+                },
+                {
+                  "id": "no",
+                  "label": "No",
+                  "value": "no"
+                }
+              ]
+            }
+          }
+        ],
+        "customScreen": {
+          "enabled": true,
+          "allowNewResponses": true,
+          "kind": "dashboard",
+          "dashboard": {
+            "version": 1,
+            "cols": 12,
+            "widgets": [
+              {
+                "id": "t1",
+                "title": "AI Receptionist configuration",
+                "layout": {
+                  "x": 0,
+                  "y": 0,
+                  "w": 12,
+                  "h": 1
+                },
+                "kind": "text",
+                "text": {
+                  "body": "Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona."
+                }
+              },
+              {
+                "id": "l1",
+                "title": "Current settings",
+                "layout": {
+                  "x": 0,
+                  "y": 1,
+                  "w": 12,
+                  "h": 3
+                },
+                "kind": "list",
+                "list": {
+                  "formId": "@pack:receptionist-settings",
+                  "titleField": "business_name",
+                  "subtitleField": "model",
+                  "limit": 5
+                }
+              }
+            ]
+          }
+        }
       }
     ],
     "apps": [
@@ -2463,6 +2578,12 @@
             "packFormId": "hardware-events",
             "displayName": "Device Setup",
             "sortOrder": 10,
+            "isVisible": true
+          },
+          {
+            "packFormId": "receptionist-settings",
+            "displayName": "Receptionist Settings",
+            "sortOrder": 11,
             "isVisible": true
           }
         ],
@@ -3387,7 +3508,7 @@
       {
         "name": "Live Reply",
         "slug": "live-reply",
-        "description": "The real-time receptionist: on each final caller turn, read the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). Gated to caller turns so Aokie never answers itself.",
+        "description": "The real-time receptionist: on each final caller turn, read the Receptionist Settings config + the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). The persona + model come from the newest Receptionist Settings record (editable, no flow-graph changes) with a built-in default. Gated to caller turns so Aokie never answers itself.",
         "nodeCapabilities": [
           "model.llm.local",
           "formlogic.responses.read",
@@ -3412,6 +3533,15 @@
               }
             },
             {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
               "id": "turns",
               "type": "formlogic_list_responses",
               "data": {
@@ -3424,15 +3554,16 @@
               "id": "context",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var latest = String(inputs.text || '').trim();\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var picked = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });\n    }\n  }\n  picked.sort(function (a, b) { return a.idx - b.idx; });\n  var lines = [];\n  var sawLatest = false;\n  for (var k = 0; k < picked.length; k++) {\n    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';\n    lines.push(who + ': ' + picked[k].text);\n    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;\n  }\n  if (latest && !sawLatest) lines.push('Caller: ' + latest);\n  return { transcript: lines.join('\\n'), latest: latest };\n})()"
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var latest = String(inputs.text || '').trim();\n\n  // Receptionist Settings: the newest active config record (user-editable), or a\n  // built-in default. This is what makes the receptionist configurable without\n  // touching the flow graph — editing the record changes persona + model live.\n  var cfgRows = (nodes.settings && nodes.settings.responses) || [];\n  var cfg = {};\n  for (var c = 0; c < cfgRows.length; c++) {\n    var a = (cfgRows[c] && cfgRows[c].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n  var model = String(cfg.model || '').trim();\n\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var picked = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });\n    }\n  }\n  picked.sort(function (a, b) { return a.idx - b.idx; });\n  var lines = [];\n  var sawLatest = false;\n  for (var k = 0; k < picked.length; k++) {\n    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';\n    lines.push(who + ': ' + picked[k].text);\n    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;\n  }\n  if (latest && !sawLatest) lines.push('Caller: ' + latest);\n  return { transcript: lines.join('\\n'), latest: latest, persona: persona, model: model };\n})()"
               }
             },
             {
               "id": "reply",
               "type": "llm_chat",
               "data": {
-                "system": "You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.",
+                "system": "{{nodes.context.persona}}",
                 "prompt": "Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:",
+                "model": "{{nodes.context.model}}",
                 "maxTokens": 90,
                 "temperature": 0.5
               }
@@ -3457,6 +3588,10 @@
           "edges": [
             {
               "source": "in",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
               "target": "turns"
             },
             {

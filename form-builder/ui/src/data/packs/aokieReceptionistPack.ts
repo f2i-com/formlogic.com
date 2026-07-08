@@ -263,9 +263,27 @@ const FLOW_MISSED_TASK = `(function () {
 // replies remember what was said earlier in the call. The current caller line is
 // appended from the input in case its Transcript Turns row hasn't landed yet
 // (the app-logic writer and this flow both fire on the same turn.final event).
+const DEFAULT_PERSONA =
+  'You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.';
+
 const FLOW_LIVE_CONTEXT = `(function () {
   var callId = String(inputs.callId || '');
   var latest = String(inputs.text || '').trim();
+
+  // Receptionist Settings: the newest active config record (user-editable), or a
+  // built-in default. This is what makes the receptionist configurable without
+  // touching the flow graph — editing the record changes persona + model live.
+  var cfgRows = (nodes.settings && nodes.settings.responses) || [];
+  var cfg = {};
+  for (var c = 0; c < cfgRows.length; c++) {
+    var a = (cfgRows[c] && cfgRows[c].answers) || {};
+    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }
+  }
+  var persona = String(cfg.instructions || '').trim() || ${JSON.stringify(DEFAULT_PERSONA)};
+  var business = String(cfg.business_name || '').trim();
+  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;
+  var model = String(cfg.model || '').trim();
+
   var turnRows = (nodes.turns && nodes.turns.responses) || [];
   var picked = [];
   for (var j = 0; j < turnRows.length; j++) {
@@ -283,7 +301,7 @@ const FLOW_LIVE_CONTEXT = `(function () {
     if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;
   }
   if (latest && !sawLatest) lines.push('Caller: ' + latest);
-  return { transcript: lines.join('\\n'), latest: latest };
+  return { transcript: lines.join('\\n'), latest: latest, persona: persona, model: model };
 })()`;
 
 // ── Pack data ───────────────────────────────────────────────────────────────
@@ -894,6 +912,49 @@ export const aokieReceptionistPack: PackData = {
         sdkScreen: { screenId: 'aokie-pairing', title: 'Device Setup' },
       },
     },
+
+    // ── 11. Receptionist Settings (user-editable AI config the live flow reads) ──
+    // One record configures how the AI receptionist talks and which model it uses.
+    // The `live-reply` flow reads the newest record at call time, so editing this
+    // record changes the receptionist's behaviour live — no flow-graph editing.
+    // Empty/absent → the flow falls back to a sensible built-in persona.
+    {
+      packFormId: 'receptionist-settings',
+      title: 'Receptionist Settings',
+      icon: 'Settings',
+      description:
+        'Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so changes take effect on the next caller turn.',
+      settings: { ...defaultSettings },
+      theme: { ...defaultTheme },
+      fields: [
+        { id: 'business_name', type: 'short_text', label: 'Business name', required: false, properties: { placeholder: 'e.g. Bright Smile Dental' } },
+        {
+          id: 'instructions',
+          type: 'long_text',
+          label: 'How should the receptionist talk & behave?',
+          required: false,
+          properties: {
+            placeholder:
+              'e.g. Be warm and concise. Offer to book appointments Mon–Fri 9–5. If asked about prices, give the standard checkup price of $90 and offer to book.',
+          },
+        },
+        { id: 'model', type: 'short_text', label: 'LLM model (blank = auto-detect)', required: false, properties: { placeholder: 'e.g. llama3.1:8b' } },
+        { id: 'active', type: 'dropdown', label: 'Active', required: false, properties: { options: [{ id: 'yes', label: 'Yes', value: 'yes' }, { id: 'no', label: 'No', value: 'no' }] } },
+      ],
+      customScreen: {
+        enabled: true,
+        allowNewResponses: true,
+        kind: 'dashboard',
+        dashboard: {
+          version: 1,
+          cols: 12,
+          widgets: [
+            { id: 't1', title: 'AI Receptionist configuration', layout: { x: 0, y: 0, w: 12, h: 1 }, kind: 'text', text: { body: 'Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona.' } },
+            { id: 'l1', title: 'Current settings', layout: { x: 0, y: 1, w: 12, h: 3 }, kind: 'list', list: { formId: '@pack:receptionist-settings', titleField: 'business_name', subtitleField: 'model', limit: 5 } },
+          ],
+        },
+      },
+    },
   ],
 
   // ────────────────────────────────────────────────────────────────────────
@@ -925,6 +986,7 @@ export const aokieReceptionistPack: PackData = {
         { packFormId: 'transcript-turns', displayName: 'Transcript Turns', sortOrder: 8, isVisible: true },
         { packFormId: 'flow-runs', displayName: 'Flow Runs', sortOrder: 9, isVisible: true },
         { packFormId: 'hardware-events', displayName: 'Device Setup', sortOrder: 10, isVisible: true },
+        { packFormId: 'receptionist-settings', displayName: 'Receptionist Settings', sortOrder: 11, isVisible: true },
       ],
 
       // App home: the receptionist's day at a glance.
@@ -1225,7 +1287,7 @@ export const aokieReceptionistPack: PackData = {
       name: 'Live Reply',
       slug: 'live-reply',
       description:
-        'The real-time receptionist: on each final caller turn, read the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). Gated to caller turns so Aokie never answers itself.',
+        'The real-time receptionist: on each final caller turn, read the Receptionist Settings config + the call so far, ask the local LLM for one short spoken reply, and speak it back down the line with aokie_speak (call.operatorSpeak). The persona + model come from the newest Receptionist Settings record (editable, no flow-graph changes) with a built-in default. Gated to caller turns so Aokie never answers itself.',
       nodeCapabilities: ['model.llm.local', 'formlogic.responses.read', 'connector.aokie.call.operatorSpeak'],
       flowJson: {
         nodes: [
@@ -1234,15 +1296,18 @@ export const aokieReceptionistPack: PackData = {
             type: 'input',
             data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'text', example: 'Are you open on Sunday?' }] },
           },
+          { id: 'settings', type: 'formlogic_list_responses', data: { form: '@pack:receptionist-settings', return: 'all', limit: 5 } },
           { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
           { id: 'context', type: 'logic_block', data: { expr: FLOW_LIVE_CONTEXT } },
           {
             id: 'reply',
             type: 'llm_chat',
             data: {
-              system:
-                'You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.',
+              // Persona + model come from the Receptionist Settings record via the
+              // context node (templated), so editing that record reconfigures the AI.
+              system: '{{nodes.context.persona}}',
               prompt: 'Call so far:\n{{nodes.context.transcript}}\n\nReply to the caller now:',
+              model: '{{nodes.context.model}}',
               maxTokens: 90,
               temperature: 0.5,
             },
@@ -1251,7 +1316,8 @@ export const aokieReceptionistPack: PackData = {
           { id: 'out', type: 'output', data: { value: { spoken: '$nodes.reply.content' } } },
         ],
         edges: [
-          { source: 'in', target: 'turns' },
+          { source: 'in', target: 'settings' },
+          { source: 'settings', target: 'turns' },
           { source: 'turns', target: 'context' },
           { source: 'context', target: 'reply' },
           { source: 'reply', target: 'say' },

@@ -1033,7 +1033,13 @@ async fn run_llm_chat(node: &GraphNode, scope: &SelectorScope, deps: &RunDeps) -
         return Err(FlowError::new(FlowErrorCode::InvalidFlow, format!("Node '{}' llm_chat has no prompt/messages", node.id), Some(node.id.clone())));
     }
     let mut body = json!({ "messages": messages });
-    if let Some(model) = data.get("model").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+    // Model may be templated ({{...}}) so a config record / upstream node can drive it.
+    let model_str = data
+        .get("model")
+        .and_then(Value::as_str)
+        .map(|m| interpolate_template(m, &tctx).trim().to_string())
+        .filter(|m| !m.is_empty());
+    if let Some(model) = model_str {
         body["model"] = json!(model);
     } else if let Some(m) = discover_default_model(&endpoint, &deps.http).await {
         // Ollama (and other strict OpenAI-compatible servers) reject a request

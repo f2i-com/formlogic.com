@@ -457,8 +457,10 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   }
   const body: Record<string, unknown> = { messages };
   const doFetch = deps.fetchFn ?? fetch;
-  if (typeof data.model === 'string' && data.model !== '') {
-    body.model = data.model;
+  // Model may be templated ({{...}}) so a config record / upstream node can drive it.
+  const modelStr = typeof data.model === 'string' ? interpolateTemplate(data.model, templateCtx).trim() : '';
+  if (modelStr) {
+    body.model = modelStr;
   } else {
     // Ollama (and other strict OpenAI-compatible servers) reject a model-less
     // request. If the flow didn't pin a model, use the first the service
