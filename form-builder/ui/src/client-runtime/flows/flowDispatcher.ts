@@ -172,10 +172,18 @@ function buildKvDeps(): Pick<FlowExecutorDeps, 'kvGet' | 'kvSet' | 'kvList'> {
 
 function buildDefaultExecutorDeps(): FlowExecutorDeps {
   return {
-    evaluateBoolean: defaultEvaluateCondition,
-    evaluateExpression: async (expr, ctx) => {
-      const { calculateValue } = await import('../../lib/formlogic');
-      return calculateValue(expr, ctx);
+    // NOTE: these forward the node's clamped `timeoutMs` (nodes.ts) as `budgetMs` — the
+    // BINDING-level `defaultEvaluateCondition` above is a separate, 2-arg-only evaluator
+    // and is NOT reused here for exactly that reason.
+    evaluateBoolean: async (expr, ctx, budgetMs) => {
+      const { evaluateCondition } = await import('../../lib/formlogic');
+      return evaluateCondition(expr, ctx, budgetMs);
+    },
+    evaluateExpression: async (expr, ctx, budgetMs) => {
+      // logic_block uses the non-swallowing variant: a timeout/error must fail the
+      // flow run loudly (docs §4), not resolve to null like the calculated-field path.
+      const { calculateValueForFlow } = await import('../../lib/formlogic');
+      return calculateValueForFlow(expr, ctx, budgetMs);
     },
     listResponses: async (formId, query) => {
       const { useAppRuntimeStore } = await import('../../stores/appRuntimeStore');
@@ -213,10 +221,13 @@ function buildDefaultExecutorDeps(): FlowExecutorDeps {
  */
 export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
   return {
-    evaluateBoolean: defaultEvaluateCondition,
-    evaluateExpression: async (expr, ctx) => {
-      const { calculateValue } = await import('../../lib/formlogic');
-      return calculateValue(expr, ctx);
+    evaluateBoolean: async (expr, ctx, budgetMs) => {
+      const { evaluateCondition } = await import('../../lib/formlogic');
+      return evaluateCondition(expr, ctx, budgetMs);
+    },
+    evaluateExpression: async (expr, ctx, budgetMs) => {
+      const { calculateValueForFlow } = await import('../../lib/formlogic');
+      return calculateValueForFlow(expr, ctx, budgetMs);
     },
     listResponses: async (formId, query) => {
       const res = await api.getResponses(formId, {

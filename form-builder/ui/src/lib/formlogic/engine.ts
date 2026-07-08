@@ -108,13 +108,20 @@ function evaluate(
  * Evaluate a condition expression with form data context.
  * Throws on error so the caller (useConditionalLogic) can distinguish
  * "condition is false" from "condition errored" and fail OPEN.
+ *
+ * `budgetMs` defaults to DEFAULT_BUDGET_MS, preserving the exact existing
+ * behavior for useConditionalLogic (which never passes one). FormLogic Flows'
+ * `condition` node (flowDispatcher.ts) passes its own clamped `data.timeoutMs`
+ * so the sandbox's real interrupt deadline matches the node's declared budget
+ * instead of always falling back to this default.
  */
 export async function evaluateCondition(
   expression: string,
-  formData: Record<string, unknown>
+  formData: Record<string, unknown>,
+  budgetMs = DEFAULT_BUDGET_MS
 ): Promise<boolean> {
   try {
-    const result = await evaluate('condition', expression, formData);
+    const result = await evaluate('condition', expression, formData, budgetMs);
     return Boolean(result);
   } catch (error) {
     logger.error('Error evaluating condition:', error);
@@ -146,6 +153,13 @@ export async function validateWithExpression(
 
 /**
  * Calculate a field value using an expression.
+ *
+ * Any error (syntax/runtime/budget overrun) is swallowed to `null` — a broken
+ * calculated-field expression degrades to "no value" instead of breaking the
+ * whole form. This is load-bearing for useFormLogic.ts's `useCalculatedField`
+ * and must NOT change; FormLogic Flows' `logic_block` node needs the OPPOSITE
+ * behavior (a timeout/error must fail the run loudly, matching `condition` and
+ * the Rust runner) and uses `calculateValueForFlow` below instead of this.
  */
 export async function calculateValue(
   expression: string,
@@ -157,6 +171,28 @@ export async function calculateValue(
     logger.error('Error calculating value:', error);
     return null;
   }
+}
+
+/**
+ * Calculate a value exactly like `calculateValue()`, but for the Flows
+ * `logic_block` node ONLY: does NOT catch-to-null. A budget overrun or a
+ * guest script error propagates as a rejected promise so the flow run fails
+ * loudly (matching `condition`'s existing throw-on-error behavior and the
+ * Rust desktop runner), instead of silently degrading like the calculated
+ * -field use case above. `budgetMs` defaults to DEFAULT_BUDGET_MS; flowDispatcher.ts
+ * passes the node's own clamped `data.timeoutMs` so the sandbox's real
+ * interrupt deadline matches the node's declared budget.
+ *
+ * Reserved for flowDispatcher.ts's FlowExecutorDeps.evaluateExpression — do
+ * not use this for calculated fields (useFormLogic.ts must keep calling
+ * calculateValue()).
+ */
+export async function calculateValueForFlow(
+  expression: string,
+  formData: Record<string, unknown>,
+  budgetMs = DEFAULT_BUDGET_MS
+): Promise<unknown> {
+  return evaluate('calc', expression, formData, budgetMs);
 }
 
 /**

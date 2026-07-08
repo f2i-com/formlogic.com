@@ -5,6 +5,7 @@ import {
   isAllowedFlowUrl,
   isLoopbackUrl,
   KV_WRITE_CAPABILITY,
+  LOGIC_BLOCK_DEFAULT_TIMEOUT_MS,
   type FlowExecutorDeps,
   type FlowNodeContext,
 } from './nodes';
@@ -151,6 +152,93 @@ describe('logic_block frozen ctx', () => {
     expect(seen).not.toBeNull();
     expect(Object.isFrozen(seen)).toBe(true);
     expect((seen as unknown as { kv: unknown }).kv).toEqual({ total: 7 });
+  });
+});
+
+// Cross-runtime timeout parity (docs/FORMLOGIC_FLOWS.md §4): a declared data.timeoutMs
+// (clamped 100ms..30s) must become the REAL budget the sandbox evaluates against — not
+// just an outer wall-clock race — so logic_block/condition behave identically to the Rust
+// desktop runner regardless of which value (or none) a node declares.
+describe('logic_block timeoutMs threading', () => {
+  it('defaults budgetMs to LOGIC_BLOCK_DEFAULT_TIMEOUT_MS when data.timeoutMs is absent', async () => {
+    const evaluateExpression = vi.fn(async () => 1);
+    const deps = fakeDeps({ evaluateExpression });
+    const node: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1' } };
+    await executeNode(ctxFor(node, deps));
+    expect(evaluateExpression).toHaveBeenCalledWith('1', expect.anything(), LOGIC_BLOCK_DEFAULT_TIMEOUT_MS);
+  });
+
+  it('clamps a declared timeoutMs into [100, 30000] and passes the SAME value as budgetMs', async () => {
+    const evaluateExpression = vi.fn(async () => 1);
+    const deps = fakeDeps({ evaluateExpression });
+
+    const tooLow: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 10 } };
+    await executeNode(ctxFor(tooLow, deps));
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 100);
+
+    const tooHigh: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 999999 } };
+    await executeNode(ctxFor(tooHigh, deps));
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 30000);
+
+    const inRange: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: '1', timeoutMs: 5000 } };
+    await executeNode(ctxFor(inRange, deps));
+    expect(evaluateExpression).toHaveBeenLastCalledWith('1', expect.anything(), 5000);
+  });
+
+  it('FAILS the node (not a silent null) when evaluateExpression hangs past the declared timeoutMs', async () => {
+    vi.useFakeTimers();
+    try {
+      // A dep that never settles simulates the sandbox's own budget/backstop never
+      // resolving in time — logic_block must now fail loudly (matching condition), not
+      // resolve to null the way the old calculateValue()-swallowing wiring did.
+      const deps = fakeDeps({ evaluateExpression: () => new Promise(() => {}) });
+      const node: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: 'neverResolves()', timeoutMs: 500 } };
+      const promise = executeNode(ctxFor(node, deps));
+      const assertion = expect(promise).rejects.toMatchObject({ code: 'timeout', nodeId: 'lb' });
+      await vi.advanceTimersByTimeAsync(500);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('propagates a rejected evaluateExpression as a real failure (does not swallow to null)', async () => {
+    const deps = fakeDeps({ evaluateExpression: async () => { throw new Error('sandbox budget exceeded'); } });
+    const node: WorkflowGraphNode = { id: 'lb', type: 'logic_block', data: { expr: 'x' } };
+    await expect(executeNode(ctxFor(node, deps))).rejects.toThrow(/sandbox budget exceeded/);
+  });
+});
+
+describe('condition timeoutMs threading', () => {
+  it('passes undefined budgetMs when data.timeoutMs is absent (preserves the sandbox default)', async () => {
+    const evaluateBoolean = vi.fn(async () => true);
+    const deps = fakeDeps({ evaluateBoolean });
+    const node: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true' } };
+    await executeNode(ctxFor(node, deps));
+    expect(evaluateBoolean).toHaveBeenCalledWith('true', expect.anything(), undefined);
+  });
+
+  it('clamps a declared timeoutMs into [100, 30000] and passes it as budgetMs', async () => {
+    const evaluateBoolean = vi.fn(async () => true);
+    const deps = fakeDeps({ evaluateBoolean });
+
+    const tooLow: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 10 } };
+    await executeNode(ctxFor(tooLow, deps));
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 100);
+
+    const tooHigh: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 999999 } };
+    await executeNode(ctxFor(tooHigh, deps));
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 30000);
+
+    const inRange: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'true', timeoutMs: 1500 } };
+    await executeNode(ctxFor(inRange, deps));
+    expect(evaluateBoolean).toHaveBeenLastCalledWith('true', expect.anything(), 1500);
+  });
+
+  it('still throws when evaluateBoolean rejects (unchanged fail-closed behavior)', async () => {
+    const deps = fakeDeps({ evaluateBoolean: async () => { throw new Error('condition budget exceeded'); } });
+    const node: WorkflowGraphNode = { id: 'c', type: 'condition', data: { expr: 'x', timeoutMs: 300 } };
+    await expect(executeNode(ctxFor(node, deps))).rejects.toThrow(/condition budget exceeded/);
   });
 });
 

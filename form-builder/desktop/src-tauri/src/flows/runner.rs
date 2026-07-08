@@ -45,6 +45,12 @@ pub const LIST_RESPONSES_DEFAULT_LIMIT: u32 = 200;
 /// Hard cap on rows `formlogic_list_responses` will scan.
 pub const LIST_RESPONSES_MAX_LIMIT: u32 = 500;
 
+/// Bounds for a `condition`/`logic_block` node's declared `data.timeoutMs` override
+/// (docs §4) — mirrors the TS twin's `NODE_TIMEOUT_MIN_MS`/`NODE_TIMEOUT_MAX_MS` in
+/// `ui/src/client-runtime/flows/nodes.ts`.
+pub const NODE_TIMEOUT_MIN_MS: u64 = 100;
+pub const NODE_TIMEOUT_MAX_MS: u64 = 30_000;
+
 /// Typed flow-run-result error code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowErrorCode {
@@ -492,6 +498,20 @@ fn clamp_list_limit(raw: Option<&Value>) -> u32 {
     n.clamp(1, LIST_RESPONSES_MAX_LIMIT as i64) as u32
 }
 
+/// Clamp a `condition`/`logic_block` node's declared `data.timeoutMs` into
+/// `[NODE_TIMEOUT_MIN_MS, NODE_TIMEOUT_MAX_MS]`, or `None` when absent/not a
+/// finite number — callers then fall back to `quickjs::QJS_TIMEOUT`, preserving
+/// today's behavior for nodes that don't declare an override (mirrors
+/// `clampDeclaredTimeoutMs` in nodes.ts).
+fn clamp_declared_timeout(data: &Value) -> Option<Duration> {
+    let f = data.get("timeoutMs").and_then(Value::as_f64)?;
+    if !f.is_finite() {
+        return None;
+    }
+    let ms = (f as i64).clamp(NODE_TIMEOUT_MIN_MS as i64, NODE_TIMEOUT_MAX_MS as i64) as u64;
+    Some(Duration::from_millis(ms))
+}
+
 /// First defined non-empty STRING among the candidates (tolerant field aliasing).
 fn first_string(candidates: &[Option<&Value>]) -> Option<String> {
     for c in candidates {
@@ -767,8 +787,14 @@ async fn execute_node(
 
         "condition" => {
             let expr = require_string(node, &["expr", "expression", "condition"])?;
-            quickjs::eval_bool(&expr, &expr_context(scope))
-                .await
+            // A declared data.timeoutMs (100ms..30s, docs §4) becomes the sandbox's real
+            // deadline; when absent, eval_bool's QJS_TIMEOUT default applies, exactly as
+            // before.
+            let result = match clamp_declared_timeout(&data) {
+                Some(timeout) => quickjs::eval_bool_with_timeout(&expr, &expr_context(scope), timeout).await,
+                None => quickjs::eval_bool(&expr, &expr_context(scope)).await,
+            };
+            result
                 .map(Value::Bool)
                 .map_err(|e| FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {e}", node.id), Some(node.id.clone())))
         }
@@ -791,9 +817,14 @@ async fn execute_node(
             if let Value::Object(m) = &mut ctx {
                 m.insert("kv".into(), kv);
             }
-            quickjs::eval_expr(&expr, &ctx)
-                .await
-                .map_err(|e| FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {e}", node.id), Some(node.id.clone())))
+            // Same clamped-timeoutMs threading as `condition` above — the sandbox's real
+            // deadline now matches the node's declared budget instead of always the fixed
+            // QJS_TIMEOUT default.
+            let result = match clamp_declared_timeout(&data) {
+                Some(timeout) => quickjs::eval_expr_with_timeout(&expr, &ctx, timeout).await,
+                None => quickjs::eval_expr(&expr, &ctx).await,
+            };
+            result.map_err(|e| FlowError::new(FlowErrorCode::NodeFailed, format!("Node '{}': {e}", node.id), Some(node.id.clone())))
         }
 
         "llm_chat" => run_llm_chat(node, scope, deps).await,
@@ -1563,6 +1594,88 @@ mod tests {
         let out = execute_flow(&flow, &deps(), &opts()).await;
         assert_eq!(out.status, "done");
         assert_eq!(out.result, Some(json!("big")));
+    }
+
+    /// A busy-wait expression that blocks for roughly `ms` milliseconds (deterministic CPU
+    /// spin — the qjs guest environment has no timer API).
+    fn busy_wait_expr(ms: u64, return_value: &str) -> String {
+        format!(
+            "(function(){{ var s = Date.now(); while (Date.now() - s < {ms}) {{}} return {return_value}; }})()"
+        )
+    }
+
+    #[tokio::test]
+    async fn logic_block_honors_a_longer_declared_timeout_than_the_default() {
+        // 1.2s of real work: past a tight declared budget but well inside a longer one —
+        // proves data.timeoutMs, not the fixed QJS_TIMEOUT default, is the real deadline.
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "lb", "type": "logic_block", "data": { "expr": busy_wait_expr(1200, "99"), "timeoutMs": 6000 } },
+                { "id": "out", "type": "output", "data": { "value": "$upstream" } }
+            ],
+            "edges": [ { "source": "in", "target": "lb" }, { "source": "lb", "target": "out" } ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "done");
+        assert_eq!(out.result, Some(json!(99)));
+    }
+
+    #[tokio::test]
+    async fn logic_block_fails_the_flow_using_its_own_declared_timeout_value() {
+        // A genuinely-too-slow script (800ms) against a SHORT declared budget (300ms) —
+        // well UNDER the fixed 2s default, so this only fails if the node's own value is
+        // actually threaded through (not the hardcoded default). Rust already fails the
+        // whole flow on a QuickJS timeout for both node types; only the deadline value
+        // used is new.
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "lb", "type": "logic_block", "data": { "expr": busy_wait_expr(800, "1"), "timeoutMs": 300 } }
+            ],
+            "edges": [ { "source": "in", "target": "lb" } ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "error");
+        let err = out.error.unwrap();
+        assert_eq!(err.code, FlowErrorCode::NodeFailed);
+        assert!(err.message.contains("300ms"), "message should cite the declared 300ms deadline: {}", err.message);
+    }
+
+    #[tokio::test]
+    async fn condition_honors_a_longer_declared_timeout_than_the_default() {
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "c", "type": "condition", "data": { "expr": busy_wait_expr(1200, "true"), "timeoutMs": 6000 } },
+                { "id": "yes", "type": "output", "data": { "value": "big" } },
+                { "id": "no", "type": "output", "data": { "value": "small" } }
+            ],
+            "edges": [
+                { "source": "in", "target": "c" },
+                { "source": "c", "target": "yes", "sourceHandle": "true" },
+                { "source": "c", "target": "no", "sourceHandle": "false" }
+            ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "done");
+        assert_eq!(out.result, Some(json!("big")));
+    }
+
+    #[tokio::test]
+    async fn condition_fails_the_flow_using_its_own_declared_timeout_value() {
+        let flow = json!({
+            "nodes": [
+                { "id": "in", "type": "input" },
+                { "id": "c", "type": "condition", "data": { "expr": busy_wait_expr(800, "true"), "timeoutMs": 300 } }
+            ],
+            "edges": [ { "source": "in", "target": "c" } ]
+        });
+        let out = execute_flow(&flow, &deps(), &opts()).await;
+        assert_eq!(out.status, "error");
+        let err = out.error.unwrap();
+        assert_eq!(err.code, FlowErrorCode::NodeFailed);
+        assert!(err.message.contains("300ms"), "message should cite the declared 300ms deadline: {}", err.message);
     }
 
     #[tokio::test]

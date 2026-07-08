@@ -56,8 +56,9 @@ export type ExecutableNodeType = (typeof EXECUTABLE_NODE_TYPES)[number];
 
 /** Default wall-clock budget for one logic_block evaluation (docs §4). */
 export const LOGIC_BLOCK_DEFAULT_TIMEOUT_MS = 2000;
-const LOGIC_BLOCK_MIN_TIMEOUT_MS = 100;
-const LOGIC_BLOCK_MAX_TIMEOUT_MS = 30000;
+/** Bounds for a node-declared `data.timeoutMs` override, shared by logic_block AND condition (docs §4). */
+const NODE_TIMEOUT_MIN_MS = 100;
+const NODE_TIMEOUT_MAX_MS = 30000;
 
 /** Capability a flow must declare (nodeCapabilities) before storage_set / formlogic.store may write. */
 export const KV_WRITE_CAPABILITY = 'formlogic.kv.write';
@@ -120,10 +121,19 @@ export class FlowExecError extends Error {
  * QuickJS engine, the app runtime store and the connector client; tests inject fakes.
  */
 export interface FlowExecutorDeps {
-  /** Sandboxed boolean expression over a JSON context (QuickJS — never eval). */
-  evaluateBoolean(expr: string, ctx: Record<string, unknown>): Promise<boolean>;
-  /** Sandboxed value expression over a JSON context (QuickJS — never eval). */
-  evaluateExpression(expr: string, ctx: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Sandboxed boolean expression over a JSON context (QuickJS — never eval).
+   * `budgetMs`, when given, is the node's own clamped `data.timeoutMs`
+   * (100ms–30s) — the real in-VM interrupt deadline should match it instead
+   * of always falling back to the sandbox's internal default.
+   */
+  evaluateBoolean(expr: string, ctx: Record<string, unknown>, budgetMs?: number): Promise<boolean>;
+  /**
+   * Sandboxed value expression over a JSON context (QuickJS — never eval).
+   * `budgetMs` is logic_block's clamped `data.timeoutMs` (or the 2s default) —
+   * see `evaluateBoolean`.
+   */
+  evaluateExpression(expr: string, ctx: Record<string, unknown>, budgetMs?: number): Promise<unknown>;
   /** Read a form's responses with the viewer's session/permissions. */
   listResponses(formId: string, query?: Record<string, unknown>): Promise<unknown[]>;
   /** Submit through the normal authenticated pipeline (validation + onSubmit + idempotency). */
@@ -263,6 +273,18 @@ function resolveKvKey(node: WorkflowGraphNode, data: Record<string, unknown>, ct
     throw new FlowExecError('node_failed', `Node '${node.id}' key did not resolve to a string`, node.id);
   }
   return resolved;
+}
+
+/**
+ * Clamp a node's declared `data.timeoutMs` into [100, 30000] (docs §4), or
+ * `undefined` when absent/not a finite number — callers then fall back to
+ * their own default budget, preserving today's behavior for nodes that don't
+ * declare an override.
+ */
+function clampDeclaredTimeoutMs(data: Record<string, unknown>): number | undefined {
+  return typeof data.timeoutMs === 'number' && Number.isFinite(data.timeoutMs)
+    ? Math.min(Math.max(data.timeoutMs, NODE_TIMEOUT_MIN_MS), NODE_TIMEOUT_MAX_MS)
+    : undefined;
 }
 
 /** Race a node-scoped promise against a wall-clock deadline (logic_block's 2s default). */
@@ -951,8 +973,13 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       return data.value !== undefined ? resolveDeep(data.value, ctx.scope) : ctx.scope.upstream;
 
     case 'condition': {
+      // A declared data.timeoutMs (100ms..30s, docs §4) becomes the sandbox's real
+      // interrupt budget; when absent, evaluateBoolean's own default budget applies,
+      // exactly as before. condition keeps its existing throw-on-error/timeout
+      // behavior — only the ACTUAL budget used is now configurable.
       const expr = requireString(node, data, ['expr', 'expression', 'condition']);
-      return await deps.evaluateBoolean(expr, exprContext(ctx));
+      const budgetMs = clampDeclaredTimeoutMs(data);
+      return await deps.evaluateBoolean(expr, exprContext(ctx), budgetMs);
     }
 
     case 'template': {
@@ -976,10 +1003,15 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
         }
       }
       const frozenCtx = Object.freeze({ ...exprContext(ctx), kv });
-      const timeoutMs = typeof data.timeoutMs === 'number'
-        ? Math.min(Math.max(data.timeoutMs, LOGIC_BLOCK_MIN_TIMEOUT_MS), LOGIC_BLOCK_MAX_TIMEOUT_MS)
-        : LOGIC_BLOCK_DEFAULT_TIMEOUT_MS;
-      return await withNodeTimeout(deps.evaluateExpression(expr, frozenCtx), timeoutMs, node);
+      const timeoutMs = clampDeclaredTimeoutMs(data) ?? LOGIC_BLOCK_DEFAULT_TIMEOUT_MS;
+      // Thread the SAME timeoutMs into the sandbox as its real interrupt budget
+      // (previously the sandbox always used its own fixed 1s default regardless of
+      // this value, so a script could be silently cut off well before — or run well
+      // past — the node's declared deadline). evaluateExpression is now also
+      // non-swallowing for the flow path: a timeout/error propagates as a rejection
+      // instead of resolving to `null`, so withNodeTimeout's race and a sandbox
+      // rejection both surface as a real flow failure, matching condition's behavior.
+      return await withNodeTimeout(deps.evaluateExpression(expr, frozenCtx, timeoutMs), timeoutMs, node);
     }
 
     case 'llm_chat':

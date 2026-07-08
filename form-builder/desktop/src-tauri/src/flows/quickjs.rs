@@ -131,30 +131,48 @@ pub fn is_available() -> bool {
 }
 
 /// Evaluate a boolean condition expression against `ctx` (keys become sandbox
-/// globals). Errors (syntax/runtime/timeout) surface as `QjsError`.
+/// globals), using the default `QJS_TIMEOUT` deadline. Errors
+/// (syntax/runtime/timeout) surface as `QjsError`.
 pub async fn eval_bool(expr: &str, ctx: &Value) -> Result<bool, QjsError> {
+    eval_bool_with_timeout(expr, ctx, QJS_TIMEOUT).await
+}
+
+/// Same as [`eval_bool`], but with an explicit wall-clock budget instead of the
+/// fixed `QJS_TIMEOUT` default. The flow runner's `condition` node handler uses
+/// this to make a node's declared (clamped) `data.timeoutMs` the REAL deadline
+/// instead of always falling back to the hardcoded 2s.
+pub async fn eval_bool_with_timeout(expr: &str, ctx: &Value, timeout: Duration) -> Result<bool, QjsError> {
     let job = serde_json::json!({ "mode": "bool", "expr": expr, "ctx": ctx });
-    let v = run_job(&job).await?;
+    let v = run_job(&job, timeout).await?;
     Ok(v.as_bool().unwrap_or(false))
 }
 
-/// Evaluate a value expression against `ctx` (keys become sandbox globals).
+/// Evaluate a value expression against `ctx` (keys become sandbox globals),
+/// using the default `QJS_TIMEOUT` deadline.
 pub async fn eval_expr(expr: &str, ctx: &Value) -> Result<Value, QjsError> {
+    eval_expr_with_timeout(expr, ctx, QJS_TIMEOUT).await
+}
+
+/// Same as [`eval_expr`], but with an explicit wall-clock budget — see
+/// [`eval_bool_with_timeout`]. Used by the flow runner's `logic_block` node
+/// handler so its declared `data.timeoutMs` actually governs the sandbox.
+pub async fn eval_expr_with_timeout(expr: &str, ctx: &Value, timeout: Duration) -> Result<Value, QjsError> {
     let job = serde_json::json!({ "mode": "expr", "expr": expr, "ctx": ctx });
-    run_job(&job).await
+    run_job(&job, timeout).await
 }
 
 /// Run a custom app-logic hook `source` (declares `function run(ctx){…}`) and
 /// return its result object. The whole `ctx` is passed to `run` — mirrors the
-/// browser `quickjs-host.ts` 'applogic' wrapper.
+/// browser `quickjs-host.ts` 'applogic' wrapper. Always uses the default
+/// `QJS_TIMEOUT` (app-logic hooks have no per-call declared timeout).
 pub async fn run_applogic(source: &str, ctx: &Value) -> Result<Value, QjsError> {
     let job = serde_json::json!({ "mode": "applogic", "source": source, "ctx": ctx });
-    run_job(&job).await
+    run_job(&job, QJS_TIMEOUT).await
 }
 
 /// Spawn one `qjs`, feed the job line, read the single reply line, enforce the
-/// deadline, and unwrap `{ok,value}` / `{ok:false,error}`.
-async fn run_job(job: &Value) -> Result<Value, QjsError> {
+/// given deadline, and unwrap `{ok,value}` / `{ok:false,error}`.
+async fn run_job(job: &Value, timeout: Duration) -> Result<Value, QjsError> {
     let (qjs, prelude) = ensure_resources()?;
     let mut line = serde_json::to_string(job).map_err(|e| QjsError::new(e.to_string()))?;
     line.push('\n');
@@ -192,7 +210,7 @@ async fn run_job(job: &Value) -> Result<Value, QjsError> {
 
     let mut buf = Vec::with_capacity(256);
     let read = stdout.read_to_end(&mut buf);
-    match tokio::time::timeout(QJS_TIMEOUT, read).await {
+    match tokio::time::timeout(timeout, read).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => {
             let _ = child.start_kill();
@@ -202,7 +220,7 @@ async fn run_job(job: &Value) -> Result<Value, QjsError> {
         Err(_) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
-            return Err(QjsError::new("evaluation exceeded 2000ms"));
+            return Err(QjsError::new(format!("evaluation exceeded {}ms", timeout.as_millis())));
         }
     }
     let _ = child.wait().await;
@@ -259,6 +277,125 @@ mod tests {
         let err = eval_bool("while (true) {}", &json!({})).await.unwrap_err();
         assert!(err.message.contains("2000ms") || !err.message.is_empty());
         assert!(started.elapsed() < Duration::from_secs(6), "must not hang past the deadline");
+    }
+
+    /// A busy-wait expression that blocks for roughly `ms` milliseconds (deterministic
+    /// CPU spin, not an OS sleep — the qjs prelude's guest environment has no timer API).
+    fn busy_wait_expr(ms: u64, return_value: &str) -> String {
+        format!(
+            "(function(){{ var s = Date.now(); while (Date.now() - s < {ms}) {{}} return {return_value}; }})()"
+        )
+    }
+
+    #[tokio::test]
+    async fn eval_expr_with_timeout_honors_a_longer_declared_budget() {
+        // A script that legitimately takes ~2.6s: past the fixed QJS_TIMEOUT (2s) default,
+        // but comfortably inside a node's own longer declared timeoutMs (6s). Proves the
+        // REAL deadline used is now the caller-supplied one, not always the hardcoded 2s.
+        let expr = busy_wait_expr(2600, "42");
+
+        // Control: against the unmodified default, this must still time out exactly as
+        // before (nothing regressed for callers that don't pass an override).
+        let default_err = eval_expr(&expr, &json!({})).await.unwrap_err();
+        assert!(default_err.message.contains("2000ms"), "default budget message: {}", default_err.message);
+
+        // With an explicit longer budget, the same slow script now succeeds.
+        let v = eval_expr_with_timeout(&expr, &json!({}), Duration::from_secs(6)).await.unwrap();
+        assert_eq!(v, json!(42));
+    }
+
+    #[tokio::test]
+    async fn eval_bool_with_timeout_honors_a_longer_declared_budget() {
+        let expr = busy_wait_expr(2600, "true");
+        let default_err = eval_bool(&expr, &json!({})).await.unwrap_err();
+        assert!(default_err.message.contains("2000ms"), "default budget message: {}", default_err.message);
+        assert!(eval_bool_with_timeout(&expr, &json!({}), Duration::from_secs(6)).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn eval_expr_with_timeout_still_fails_when_the_declared_budget_is_also_exceeded() {
+        // A genuinely wedged guest must still hard-fail the node (Rust already fails the
+        // whole flow on a QuickJS timeout for both node types) — only the ACTUAL deadline
+        // value changes, not the fail-the-run behavior.
+        let started = std::time::Instant::now();
+        // "expr" mode wraps the guest text as `return (<expr>)`, so it must be a single
+        // expression, not a `while` statement — an IIFE containing the infinite loop.
+        let err = eval_expr_with_timeout("(function(){ while (true) {} })()", &json!({}), Duration::from_millis(500))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("500ms"), "message: {}", err.message);
+        assert!(started.elapsed() < Duration::from_secs(4), "must not hang past its own deadline");
+    }
+
+    /// SECURITY REGRESSION GUARD — QuickJS sandbox-escape defense (see flow-prelude.js's
+    /// header + `reply()`). The prelude deletes `std`/`os`/`bjson`/`scriptArgs` from the
+    /// global object before running untrusted code, specifically because a deferred
+    /// `.then()` callback could otherwise re-acquire the host module via dynamic
+    /// `import('qjs:std')` (the lock-down only deletes the global property, not the
+    /// module loader's registration) and use it for a host-privileged action (arbitrary
+    /// FS write here — real-world equivalents: std.popen exec, getenv, urlGet SSRF) AFTER
+    /// the harness's own synchronous "done" reply. The defense is `reply()` calling
+    /// `std.exit(0)` synchronously right after writing the reply, so the interpreter's
+    /// job queue is NEVER pumped and that deferred callback can never run.
+    ///
+    /// This test schedules exactly that attack (a microtask that tries to re-import
+    /// `qjs:std` and write a marker file) against the REAL sandbox and asserts the file
+    /// is never created — i.e. either the deferred job never runs (the intended defense)
+    /// or the guest's attempt to reach it is rejected outright. Either is an acceptable
+    /// PASS; the only FAIL condition is the marker file actually appearing, which would
+    /// mean the sandbox is genuinely escapable.
+    #[tokio::test]
+    async fn deferred_promise_cannot_reacquire_std_after_reply() {
+        let dir = std::env::temp_dir().join(format!("formlogic-qjs-escape-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create test scratch dir");
+        let marker = dir.join("pwned.txt");
+        let _ = std::fs::remove_file(&marker); // clean slate if a previous run left it
+
+        // JSON-escape the path (Windows backslashes) for embedding as a JS string literal.
+        let marker_json = serde_json::to_string(&marker.to_string_lossy().to_string()).unwrap();
+
+        let expr = format!(
+            r#"(function() {{
+                try {{
+                    Promise.resolve().then(function() {{
+                        try {{
+                            var modPromise = import('qjs:std');
+                            modPromise.then(function(std) {{
+                                try {{
+                                    var f = std.open({marker}, 'w');
+                                    f.puts('pwned');
+                                    f.close();
+                                }} catch (e) {{}}
+                            }});
+                        }} catch (e) {{}}
+                    }});
+                }} catch (e) {{}}
+                return 'sentinel-done';
+            }})()"#,
+            marker = marker_json
+        );
+
+        let result = eval_expr(&expr, &json!({})).await;
+        // Whichever way the guest's import() attempt resolves (scheduled-but-never-run,
+        // or rejected outright as unsupported in this evaluation context), the harness's
+        // own synchronous reply must still complete normally.
+        match &result {
+            Ok(v) => assert_eq!(v, &json!("sentinel-done"), "main synchronous expression must evaluate normally"),
+            Err(e) => {
+                // Acceptable only if the guest's own scheduling attempt itself failed
+                // synchronously (e.g. import() unsupported here) — not a timeout/crash.
+                assert!(!e.message.contains("exceeded"), "must not time out: {}", e.message);
+            }
+        }
+
+        assert!(
+            !marker.exists(),
+            "SANDBOX ESCAPE: a deferred Promise re-imported qjs:std and wrote a file with \
+             host privileges after the reply — flow-prelude.js's exit-before-drain defense \
+             is broken"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

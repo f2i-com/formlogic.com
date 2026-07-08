@@ -219,3 +219,54 @@ describe('executeFlow — limits', () => {
     expect(outcome.error?.code).toBe('cancelled');
   });
 });
+
+describe('executeFlow — logic_block/condition per-node timeoutMs (docs §4)', () => {
+  it('logic_block: a declared timeoutMs shorter than the flow deadline FAILS the flow, not a silent null result', async () => {
+    // Regression guard for the actual bug: previously `evaluateExpression` was called with
+    // NO budget (2 args), so the sandbox's own internal default budget fired early and
+    // swallowed to `null` well before this node-level race ever got a chance to fire. This
+    // fake reproduces exactly that pre-fix call shape (budgetMs === undefined -> resolve
+    // null immediately) vs. the fixed shape (budgetMs threaded through -> hangs past it),
+    // so — unlike a fake that simply never resolves regardless of args — this test actually
+    // fails if the budgetMs threading regresses, not just if the outer race is removed.
+    const evaluateExpression = vi.fn((_expr: string, _ctx: Record<string, unknown>, budgetMs?: number) => {
+      if (budgetMs === undefined) return Promise.resolve(null);
+      return new Promise(() => { /* never resolves within the declared budget */ });
+    });
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'lb', type: 'logic_block', data: { expr: 'neverResolves()', timeoutMs: 150 } },
+      ],
+      edges: [{ source: 'in', target: 'lb' }],
+    };
+    const outcome = await executeFlow(graph, {
+      timeoutMs: 30_000, // generous flow deadline — the NODE's own 150ms must fire first
+      deps: fakeDeps({ evaluateExpression }),
+    });
+    expect(evaluateExpression).toHaveBeenCalledWith('neverResolves()', expect.anything(), 150);
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.code).toBe('timeout');
+    expect(outcome.error?.message).toMatch(/150ms/);
+    expect(outcome.result).toBeUndefined();
+  });
+
+  it('condition: an evaluateBoolean rejection still fails the flow (unchanged fail-closed behavior)', async () => {
+    const graph: WorkflowGraph = {
+      nodes: [
+        { id: 'in', type: 'input' },
+        { id: 'c', type: 'condition', data: { expr: 'x', timeoutMs: 300 } },
+      ],
+      edges: [{ source: 'in', target: 'c' }],
+    };
+    const outcome = await executeFlow(graph, {
+      deps: fakeDeps({
+        evaluateBoolean: vi.fn(async () => {
+          throw new Error('condition budget exceeded');
+        }),
+      }),
+    });
+    expect(outcome.status).toBe('error');
+    expect(outcome.error?.message).toMatch(/condition budget exceeded/);
+  });
+});

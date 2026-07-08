@@ -84,9 +84,9 @@ Every node reads the **run scope** (`$inputs.*`, `$event.*`, `$app.*`, and prior
 | --- | --- | --- | --- |
 | `input` (**Trigger** — "When this runs") | `inputs[]` = `{name, example?}` (declared, presentation-only) | Starts the flow; declares + displays the named inputs it receives from the binding. | the flow inputs → `$inputs.<name>` |
 | `output` | `value?` (selector/JSON) | The flow result; `value` wins, else the upstream value passes through. | terminal (the flow result) |
-| `condition` | `expr` (QuickJS bool) | Branches on a sandboxed boolean. | routes the **True**/**False** handle |
+| `condition` | `expr` (QuickJS bool), `timeoutMs?` | Branches on a sandboxed boolean. Errors (incl. a budget overrun) fail the run. Wall clock capped (1s default; `timeoutMs` 100ms–30s overrides — same bounds as `logic_block`). | routes the **True**/**False** handle |
 | `template` | `template` | Interpolates `{{path}}` into a string. | string → `$nodes.<id>` |
-| `logic_block` | `expr` (QuickJS), `timeoutMs?`, `scope?` | Runs JS in the sandbox over a frozen `{inputs,event,app,nodes,upstream,kv}`. | your return value → `$nodes.<id>` |
+| `logic_block` | `expr` (QuickJS), `timeoutMs?`, `scope?` | Runs JS in the sandbox over a frozen `{inputs,event,app,nodes,upstream,kv}`. Errors (incl. a budget overrun) fail the run — same as `condition`. Wall clock capped (2s default; `timeoutMs` 100ms–30s overrides). | your return value → `$nodes.<id>` |
 | `llm_chat` | `system?`, `prompt`, `model?`, `maxTokens?`, `temperature?`, `endpoint?` | Calls an OpenAI-compatible chat endpoint (§4). | `{content,raw}` → `$nodes.<id>.content` |
 | `http_request` | `url`, `method`, `body?` | Fetches an allow-listed URL (Desktop base / FormLogic API only). | `{status,ok,body}` → `$nodes.<id>.body` |
 | `formlogic_list_responses` (**Find records**) | `form`, `filters[]`, `return?` (`first`\|`all`, presentation-only), `limit` | Finds records in a form, with an optional filter (see the frozen contract below). | `{responses,count,first,found}` |
