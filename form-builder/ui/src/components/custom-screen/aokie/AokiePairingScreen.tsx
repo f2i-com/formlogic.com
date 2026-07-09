@@ -17,10 +17,12 @@ import { useAokiePresence } from './useAokiePresence';
 interface DongleRow {
   id: string;
   name: string;
-  vendorId?: string;
-  productId?: string;
-  driverInstalled?: boolean;
-  preferred?: boolean;
+  vid: number;
+  pid: number;
+  usbId: string;
+  driverInstalled: boolean;
+  matchesCatalog: boolean;
+  preferred: boolean;
 }
 
 interface PhoneStatus {
@@ -57,26 +59,42 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   // Runtime presence: when the receptionist runs on ANOTHER machine's Desktop, the device
   // status card below names that device instead of pushing a local install (§14).
   const presence = useAokiePresence();
+  const [enumerationNote, setEnumerationNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setRefreshing(true);
     setError(null);
     try {
       if (can('dongle.list')) {
+        // The plugin returns { dongles: <compat catalog>, connected: <live USB
+        // devices>, liveEnumeration, note } - the LIVE list is what we show.
         const res = asRecord(await connector.request('dongle.list'));
-        const list = Array.isArray(res.dongles) ? res.dongles : [];
+        let preferred: { vid?: number; pid?: number } = {};
+        if (can('dongle.getPreferred')) {
+          const pref = asRecord(await connector.request('dongle.getPreferred'));
+          preferred = asRecord(pref.preferred) as { vid?: number; pid?: number };
+        }
+        const live = Array.isArray(res.connected) ? res.connected : [];
+        setEnumerationNote(res.liveEnumeration === false && typeof res.note === 'string' ? res.note : null);
         setDongles(
-          list
+          live
             .map((d) => asRecord(d))
-            .filter((d) => typeof d.id === 'string')
-            .map((d) => ({
-              id: d.id as string,
-              name: typeof d.name === 'string' ? d.name : (d.id as string),
-              vendorId: typeof d.vendorId === 'string' ? d.vendorId : undefined,
-              productId: typeof d.productId === 'string' ? d.productId : undefined,
-              driverInstalled: d.driverInstalled === true,
-              preferred: d.preferred === true,
-            }))
+            .filter((d) => typeof d.vid === 'number' && typeof d.pid === 'number')
+            .map((d) => {
+              const vid = d.vid as number;
+              const pid = d.pid as number;
+              const usbId = `${typeof d.vidHex === 'string' ? d.vidHex : vid}:${typeof d.pidHex === 'string' ? d.pidHex : pid}`;
+              return {
+                id: typeof d.hardwareId === 'string' && d.hardwareId !== '' ? d.hardwareId : usbId,
+                name: typeof d.description === 'string' && d.description !== '' ? d.description : `USB device ${usbId}`,
+                vid,
+                pid,
+                usbId,
+                driverInstalled: d.driverBound === true,
+                matchesCatalog: d.matchesCatalog === true,
+                preferred: preferred.vid === vid && preferred.pid === pid,
+              };
+            })
         );
       }
       if (can('phone.status')) {
@@ -100,11 +118,11 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
   }, [load]);
 
   const handleInstallDriver = useCallback(
-    async (dongleId: string) => {
-      setInstalling(dongleId);
+    async (row: DongleRow) => {
+      setInstalling(row.id);
       setError(null);
       try {
-        await connector.request('dongle.installDriver', { dongleId });
+        await connector.request('dongle.installDriver', { vid: row.vid, pid: row.pid });
         toast.success('Driver install started', 'Follow the WinUSB prompt on this machine.');
         await load();
       } catch (err) {
@@ -112,6 +130,20 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         setError(describeError(err));
       } finally {
         setInstalling(null);
+      }
+    },
+    [connector, load]
+  );
+
+  const handleSetPreferred = useCallback(
+    async (row: DongleRow) => {
+      setError(null);
+      try {
+        await connector.request('dongle.setPreferred', { vid: row.vid, pid: row.pid });
+        toast.success('Preferred dongle set', row.name);
+        await load();
+      } catch (err) {
+        setError(describeError(err));
       }
     },
     [connector, load]
@@ -177,7 +209,11 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
         ) : dongles === null ? (
           <p className="text-sm text-gray-400 dark:text-slate-500">Loading…</p>
         ) : dongles.length === 0 ? (
-          <p className="text-sm text-gray-400 dark:text-slate-500">No dongles detected. Plug in the certified USB dongle.</p>
+          <p className="text-sm text-gray-400 dark:text-slate-500">
+            {enumerationNote
+              ? `Live USB scan unavailable: ${enumerationNote}`
+              : 'No supported dongles detected. Plug in the certified USB dongle (or one with the WinUSB driver bound).'}
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[28rem] text-left text-sm">
@@ -199,9 +235,14 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
                           preferred
                         </span>
                       )}
+                      {d.matchesCatalog && (
+                        <span className="ml-2 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400">
+                          supported
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 pr-3 font-mono text-xs text-gray-500 dark:text-slate-400">
-                      {d.vendorId ?? '—'}:{d.productId ?? '—'}
+                      {d.usbId}
                     </td>
                     <td className="py-2 pr-3">
                       <span
@@ -213,18 +254,30 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
                       </span>
                     </td>
                     <td className="py-2 text-right">
-                      {!d.driverInstalled && (
-                        <button
-                          type="button"
-                          onClick={() => void handleInstallDriver(d.id)}
-                          disabled={!can('dongle.installDriver') || installing !== null}
-                          title={can('dongle.installDriver') ? undefined : 'Not granted to this app / role'}
-                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          {installing === d.id ? 'Installing…' : 'Install driver'}
-                        </button>
-                      )}
+                      <div className="inline-flex items-center gap-2">
+                        {!d.driverInstalled && (
+                          <button
+                            type="button"
+                            onClick={() => void handleInstallDriver(d)}
+                            disabled={!can('dongle.installDriver') || installing !== null}
+                            title={can('dongle.installDriver') ? undefined : 'Not granted to this app / role'}
+                            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            {installing === d.id ? 'Installing…' : 'Install driver'}
+                          </button>
+                        )}
+                        {!d.preferred && can('dongle.setPreferred') && (
+                          <button
+                            type="button"
+                            onClick={() => void handleSetPreferred(d)}
+                            disabled={installing !== null}
+                            className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          >
+                            Set preferred
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
