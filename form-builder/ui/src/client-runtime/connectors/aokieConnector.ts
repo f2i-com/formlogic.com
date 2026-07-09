@@ -65,6 +65,39 @@ interface MockCall {
 // Simulator state shared between call.current and simulateIncomingCall().
 let mockCurrentCall: MockCall | null = null;
 let mockSmsCounter = 0;
+// Operator-spoken demo turns need idempotency keys that can never collide
+// with the scripted sequence's turn.0/turn.1 — start well above them.
+let mockTurnCounter = 100;
+
+/**
+ * The mock twin of the plugin's callId guard (audit C-01): a supplied callId
+ * that isn't the current call is the typed `stale_call` error, and state
+ * requirements surface as `command_failed` — the demo bridge fails the same
+ * way the real plugin does, so the Live Call screen can be exercised honestly.
+ */
+function requireMockCall(
+  command: string,
+  payload: unknown,
+  allowed: ReadonlyArray<MockCall['state']>
+): MockCall {
+  const p = (payload ?? {}) as { callId?: unknown };
+  if (typeof p.callId === 'string' && p.callId !== mockCurrentCall?.callId) {
+    throw new ConnectorError(
+      'stale_call',
+      mockCurrentCall
+        ? `callId ${p.callId} is not the current call (${mockCurrentCall.callId})`
+        : `callId ${p.callId} is stale: there is no current call`
+    );
+  }
+  if (!mockCurrentCall) throw new ConnectorError('command_failed', `${command}: no active call`);
+  if (!allowed.includes(mockCurrentCall.state)) {
+    throw new ConnectorError(
+      'command_failed',
+      `${command}: call ${mockCurrentCall.callId} is ${mockCurrentCall.state}, not ${allowed.join('/')}`
+    );
+  }
+  return mockCurrentCall;
+}
 
 const MOCK_DONGLES = [
   {
@@ -129,15 +162,81 @@ export const mockAokieConnector: BrowserConnector = {
       case 'dongle.list':
         return { dongles: MOCK_DONGLES };
       case 'phone.status':
+        // Canonical shape (audit C-02): the device is NESTED under `device`
+        // exactly like the real plugin's radio response — never a root-level
+        // deviceName the real path doesn't have.
         return {
+          paired: true,
           connected: true,
-          deviceName: 'Demo Phone',
+          device: {
+            address: '00:11:22:33:44:55',
+            name: 'Demo Phone',
+            pairedAt: new Date(Date.now() - 86_400_000).toISOString(),
+          },
           battery: 82,
           signal: 4,
-          pairedAt: new Date(Date.now() - 86_400_000).toISOString(),
+          source: 'mock',
         };
       case 'call.current':
         return { call: mockCurrentCall };
+      case 'call.answer': {
+        const call = requireMockCall('call.answer', payload, ['ringing']);
+        mockCurrentCall = { ...call, state: 'active' };
+        emitLocalDesktopEvent(
+          aokieEnvelope(call.callId, 'aokie.call.answered', `aokie:${call.callId}:answered:v1`, {
+            callId: call.callId,
+            answeredBy: 'operator',
+          })
+        );
+        return { answered: true };
+      }
+      case 'call.reject': {
+        const call = requireMockCall('call.reject', payload, ['ringing']);
+        mockCurrentCall = { ...call, state: 'ended' };
+        emitLocalDesktopEvent(
+          aokieEnvelope(call.callId, 'aokie.call.rejected', `aokie:${call.callId}:rejected:v1`, {
+            callId: call.callId,
+            reason: 'operator_reject',
+          })
+        );
+        return { rejected: true };
+      }
+      case 'call.hangup': {
+        const call = requireMockCall('call.hangup', payload, ['ringing', 'active']);
+        mockCurrentCall = { ...call, state: 'ended' };
+        const durationSeconds = Math.max(
+          0,
+          Math.round((Date.now() - new Date(call.startedAt).getTime()) / 1000)
+        );
+        emitLocalDesktopEvent(
+          aokieEnvelope(call.callId, 'aokie.call.ended', `aokie:${call.callId}:ended:v1`, {
+            callId: call.callId,
+            from: call.from,
+            callerPhone: call.from,
+            reason: 'operator_hangup',
+            durationSeconds,
+            outcome: 'completed',
+          })
+        );
+        return { ended: true };
+      }
+      case 'call.operatorSpeak': {
+        const p = (payload ?? {}) as { text?: unknown };
+        if (typeof p.text !== 'string' || !p.text.trim()) {
+          throw new ConnectorError('command_failed', 'call.operatorSpeak requires {text}.');
+        }
+        const call = requireMockCall('call.operatorSpeak', payload, ['active']);
+        mockTurnCounter += 1;
+        emitLocalDesktopEvent(
+          aokieEnvelope(
+            call.callId,
+            'aokie.call.turn.final',
+            `aokie:${call.callId}:turn.${mockTurnCounter}.final:v1`,
+            { callId: call.callId, turn: mockTurnCounter, speaker: 'operator', text: p.text }
+          )
+        );
+        return { spoken: true, mock: true };
+      }
       case 'sms.threads':
         return { threads: MOCK_THREADS };
       case 'sms.send': {
@@ -203,6 +302,9 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
   const callId = `call_demo_${Date.now().toString(36)}`;
   const key = (step: string) => `aokie:${callId}:${step}:v1`;
   const wait = () => (stepDelayMs > 0 ? new Promise((r) => setTimeout(r, stepDelayMs)) : Promise.resolve());
+  // The operator can reject/hang up mid-script through the mock call controls;
+  // a dead call must stay dead — the script stops instead of resurrecting it.
+  const callStillLive = () => mockCurrentCall?.callId === callId && mockCurrentCall.state !== 'ended';
 
   emitLocalDesktopEvent(aokieEnvelope(callId, 'aokie.dongle.detected', key('dongle.detected'), { dongleId: MOCK_DONGLES[0].id }));
   emitLocalDesktopEvent(aokieEnvelope(callId, 'aokie.dongle.ready', key('dongle.ready'), { dongleId: MOCK_DONGLES[0].id }));
@@ -217,10 +319,15 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
   };
   emitLocalDesktopEvent(aokieEnvelope(callId, 'aokie.call.incoming', key('incoming'), { callId, from, callerName }));
   await wait();
+  if (!callStillLive()) return callId;
 
-  mockCurrentCall = { ...mockCurrentCall, state: 'active' };
-  emitLocalDesktopEvent(aokieEnvelope(callId, 'aokie.call.answered', key('answered'), { callId, answeredBy: 'bot' }));
+  // The operator may have ANSWERED already (mock call.answer) — don't double-emit.
+  if (mockCurrentCall?.state !== 'active') {
+    mockCurrentCall = { ...mockCurrentCall!, state: 'active' };
+    emitLocalDesktopEvent(aokieEnvelope(callId, 'aokie.call.answered', key('answered'), { callId, answeredBy: 'bot' }));
+  }
   await wait();
+  if (!callStillLive()) return callId;
 
   emitLocalDesktopEvent(
     aokieEnvelope(callId, 'aokie.call.turn.final', key('turn.0.final'), {
@@ -231,6 +338,7 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
     })
   );
   await wait();
+  if (!callStillLive()) return callId;
   emitLocalDesktopEvent(
     aokieEnvelope(callId, 'aokie.call.turn.final', key('turn.1.final'), {
       callId,
@@ -240,6 +348,7 @@ export async function simulateIncomingCall(options: SimulateIncomingCallOptions 
     })
   );
   await wait();
+  if (!callStillLive()) return callId;
 
   mockCurrentCall = null;
   emitLocalDesktopEvent(

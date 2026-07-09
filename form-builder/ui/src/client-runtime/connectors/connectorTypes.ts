@@ -58,6 +58,10 @@ export type ConnectorErrorCode =
   | 'connector_missing'
   | 'connector_unavailable'
   | 'command_failed'
+  // A call-control command named a callId that is no longer the connector's
+  // current call (stale tab / raced lifecycle). Never fallbackable — the
+  // command was correctly refused, not lost.
+  | 'stale_call'
   | 'ipc_unavailable';
 
 export interface ConnectorErrorShape {

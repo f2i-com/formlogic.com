@@ -177,9 +177,81 @@ describe('mock event simulation', () => {
   });
 
   it('mock rejects an unsupported command with a typed ConnectorError', async () => {
-    await expect(mockAokieConnector.request('call.operatorSpeak')).rejects.toMatchObject({
+    await expect(mockAokieConnector.request('sms.thread', { threadId: 'x' })).rejects.toMatchObject({
       name: 'ConnectorError',
       code: 'command_failed',
     });
+  });
+});
+
+/** Poll until the predicate passes (the demo script advances on real timers). */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error('waitUntil timed out');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+// Canonical contract shapes (audit C-01/C-02): the mock answers with the SAME
+// schema as the real plugin, and its call controls enforce the same callId
+// guard — demo parity means the Live Call screen exercises real behaviour.
+describe('mock contract parity', () => {
+  it('phone.status nests the device like the real plugin (no root deviceName)', async () => {
+    const res = (await mockAokieConnector.request('phone.status')) as Record<string, unknown>;
+    expect(res.paired).toBe(true);
+    expect(res.connected).toBe(true);
+    expect((res.device as Record<string, unknown>).name).toBe('Demo Phone');
+    expect((res.device as Record<string, unknown>).address).toBeTruthy();
+    expect('deviceName' in res).toBe(false);
+  });
+
+  it('call controls honour callId: stale ids are refused, the current id operates the call', async () => {
+    setFetch(vi.fn(() => Promise.reject(new Error('offline'))));
+    const names: string[] = [];
+    const unsub = subscribeDesktopEvents((e) => names.push(e.name));
+
+    // No live call yet — a callId is stale, not "unsupported".
+    await expect(mockAokieConnector.request('call.answer', { callId: 'call_gone' })).rejects.toMatchObject({
+      name: 'ConnectorError',
+      code: 'stale_call',
+    });
+
+    const scriptDone = simulateIncomingCall({ stepDelayMs: 150 });
+    await waitUntil(() => names.includes('aokie.call.incoming'));
+
+    const current = (await mockAokieConnector.request('call.current')) as {
+      call: { callId: string; state: string; from: string; startedAt: string };
+    };
+    expect(current.call.callId).toMatch(/^call_demo_/);
+    expect(current.call.state).toBe('ringing');
+    expect(current.call.startedAt).toBeTruthy();
+
+    // A stale id must not touch the call.
+    await expect(mockAokieConnector.request('call.hangup', { callId: 'call_other' })).rejects.toMatchObject({
+      code: 'stale_call',
+    });
+
+    // The exact payload the Live Call screen sends (audit C-01's broken case).
+    const answered = await mockAokieConnector.request('call.answer', { callId: current.call.callId });
+    expect(answered).toMatchObject({ answered: true });
+    const active = (await mockAokieConnector.request('call.current')) as { call: { state: string } };
+    expect(active.call.state).toBe('active');
+
+    const spoken = await mockAokieConnector.request('call.operatorSpeak', {
+      text: 'One moment please.',
+      callId: current.call.callId,
+    });
+    expect(spoken).toMatchObject({ spoken: true });
+
+    const ended = await mockAokieConnector.request('call.hangup', { callId: current.call.callId });
+    expect(ended).toMatchObject({ ended: true });
+
+    // The demo script must NOT resurrect the ended call.
+    await scriptDone;
+    const final = (await mockAokieConnector.request('call.current')) as { call: { state: string } | null };
+    expect(final.call?.state ?? 'ended').toBe('ended');
+    expect(names).not.toContain('aokie.sms.received');
+    unsub();
   });
 });

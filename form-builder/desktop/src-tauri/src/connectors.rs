@@ -33,12 +33,13 @@ pub const MIN_TIMEOUT_MS: u64 = 100;
 pub const MAX_TIMEOUT_MS: u64 = 120_000;
 
 /// The typed error codes of `connector-response.schema.json`.
-pub const VALID_ERROR_CODES: [&str; 7] = [
+pub const VALID_ERROR_CODES: [&str; 8] = [
     "origin_denied",
     "capability_denied",
     "connector_missing",
     "connector_unavailable",
     "command_failed",
+    "stale_call",
     "ipc_unavailable",
     "auth_required",
 ];

@@ -99,9 +99,18 @@ export function AokiePairingScreen({ params }: { params?: Record<string, unknown
       }
       if (can('phone.status')) {
         const res = asRecord(await connector.request('phone.status'));
+        // Canonical shape (audit C-02): the paired device is nested under
+        // `device` ({address, name}); a root deviceName only ever existed in
+        // the old mock — kept as a legacy fallback for older plugin builds.
+        const device = asRecord(res.device);
         setPhone({
           connected: res.connected === true,
-          deviceName: typeof res.deviceName === 'string' ? res.deviceName : undefined,
+          deviceName:
+            typeof device.name === 'string'
+              ? device.name
+              : typeof res.deviceName === 'string'
+                ? res.deviceName
+                : undefined,
           battery: typeof res.battery === 'number' ? res.battery : undefined,
           signal: typeof res.signal === 'number' ? res.signal : undefined,
         });

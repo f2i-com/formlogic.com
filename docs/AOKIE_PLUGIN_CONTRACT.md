@@ -28,18 +28,27 @@ Post-MVP (declared in the manifest only when implemented): `phone.syncContacts`,
 
 Payload/response shapes follow the legacy Tauri commands they wrap (e.g. `sms.send {to, body}` → `{messageId, status:"queued"}`); each command handler validates its payload and rejects unknown fields.
 
+**Canonical call-control shapes** (single source: `crates/aokie-plugin/src/contract.rs` in the aokie repo; test-locked against the manifest and both mocks):
+
+- `call.answer` / `call.reject` / `call.hangup` accept `{callId?}`; `call.operatorSpeak` accepts `{text, callId?}`. When `callId` is present it MUST equal the plugin's current call id, else the typed **`stale_call`** error is returned and the phone is NOT touched (a stale browser tab can never control a newer call). An omitted `callId` acts on the current call (compatibility for flow/desktop callers).
+- `call.current` → `{call: null | {callId, from?, callerName?, state, startedAt?, …}}` with `state ∈ ringing|active|ended`. The real radio, the plugin's dev mock and the browser mock all return exactly this shape.
+- `phone.status` → `{paired, connected, device: null | {address, name, …}, …}` — the paired device is always NESTED under `device`; there is no root-level `deviceName`.
+
 ## 3. Events (envelope per `desktop-event.schema.json`, `source:"aokie"`)
 
 MVP set:
 
 ```
 aokie.dongle.detected        aokie.dongle.driver_required   aokie.dongle.ready    aokie.dongle.error
-aokie.phone.pairing_started  aokie.phone.paired             aokie.phone.disconnected
-aokie.call.incoming          aokie.call.answered            aokie.call.rejected
+aokie.phone.pairing_started  aokie.phone.paired             aokie.phone.connected aokie.phone.disconnected
+aokie.call.incoming          aokie.call.ringing             aokie.call.answered   aokie.call.rejected
+aokie.call.audio.connected   aokie.call.audio.disconnected
 aokie.call.turn.partial      aokie.call.turn.final          aokie.call.ended
 aokie.sms.received           aokie.sms.sent                 aokie.sms.failed
 aokie.hardware.error
 ```
+
+The list is generated from ONE source (`contract.rs::events::ALL` in the aokie repo): the plugin's `manifest.json`, the desktop's bundled manifest copy and the flow event catalog must all declare exactly this set — Desktop silently drops any event a plugin emits without declaring, so drift here is a release blocker, and `cargo test -p aokie-plugin` fails on it.
 
 Conventions:
 - `correlationId` = call id (`call_<uuid>`), SMS handle, or pairing session id.

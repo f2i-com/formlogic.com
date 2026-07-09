@@ -195,6 +195,12 @@ mod tests {
             "aokie.call.ended",
             "aokie.sms.received",
             "aokie.dongle.ready",
+            // Live-radio events the plugin actually emits — undeclared, the
+            // host would silently drop them (audit C-03).
+            "aokie.phone.connected",
+            "aokie.call.ringing",
+            "aokie.call.audio.connected",
+            "aokie.call.audio.disconnected",
         ] {
             assert!(m.declares_event(ev), "MVP event {ev} missing");
         }
