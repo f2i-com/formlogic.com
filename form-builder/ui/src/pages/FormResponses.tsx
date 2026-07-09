@@ -167,7 +167,7 @@ const linkedFormCache = new Map<string, Form>();
 // with the referenced record's details. Used where the row is NOT already a button.
 function LinkedRecordChips({ items }: { items: ResolvedLink[] }) {
   const [peek, setPeek] = useState<ResolvedLink | null>(null);
-  if (!items.length) return <span className="text-gray-400 dark:text-slate-500">-</span>;
+  if (!items.length) return <span className="text-gray-300 dark:text-slate-600">—</span>;
   return (
     <>
       <span className="flex flex-wrap items-center gap-1 max-w-full min-w-0">
@@ -468,15 +468,31 @@ function FormResponses() {
   // Calculate stats
   const stats = useMemo(() => {
     const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
     const today = new Date().toDateString();
 
-    const thisWeek = responses.filter((r) => parseServerDate(r.submittedAt).getTime() > weekAgo).length;
-    const todayCount = responses.filter((r) => parseServerDate(r.submittedAt).toDateString() === today).length;
+    let thisWeek = 0;
+    let lastWeek = 0;
+    let todayCount = 0;
+    for (const r of responses) {
+      const d = parseServerDate(r.submittedAt);
+      const t = d.getTime();
+      if (t > weekAgo) thisWeek++;
+      else if (t > twoWeeksAgo) lastWeek++;
+      if (d.toDateString() === today) todayCount++;
+    }
     const avgTime = responses.length > 0
       ? responses.reduce((acc, r) => acc + (r.completionTime || 0), 0) / responses.length
       : 0;
 
-    return { total: responses.length, thisWeek, todayCount, avgTime };
+    return {
+      total: responses.length,
+      thisWeek,
+      todayCount,
+      avgTime,
+      // null = no prior week to compare against
+      weeklyPct: lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null,
+    };
   }, [responses]);
 
   // Precompute a lowercased search haystack per response ONCE (keyed on responses), so
@@ -940,6 +956,7 @@ function FormResponses() {
             icon={CalendarDays}
             label="This Week"
             value={stats.thisWeek}
+            trend={{ pct: stats.weeklyPct, label: 'vs last week' }}
             iconBg="bg-green-500/10"
             iconColor="text-green-500"
           />
@@ -963,7 +980,7 @@ function FormResponses() {
         <div className="flex flex-col sm:flex-row gap-4 mb-6">
           <div className="flex-1">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <input
                 placeholder="Search responses..."
                 aria-label="Search responses"
@@ -1145,7 +1162,12 @@ function FormResponses() {
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-slate-800 bg-white dark:bg-slate-900/20">
                   {paginatedResponses.map((response) => (
-                    <tr key={response.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
+                    <tr
+                      key={response.id}
+                      onClick={() => handleView(response)}
+                      title="Open this response"
+                      className="even:bg-gray-50/60 dark:even:bg-slate-800/20 hover:bg-gray-100/80 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                    >
                       <td className="px-4 py-4 text-sm text-gray-900 dark:text-white">
                         <span className="whitespace-nowrap">{formatDate(response.submittedAt)}</span>
                         {response.tags && response.tags.length > 0 && (
@@ -1156,18 +1178,28 @@ function FormResponses() {
                           </span>
                         )}
                       </td>
-                      {visibleFields.map((field) => {
+                      {visibleFields.map((field, fieldIndex) => {
                         const isLinked = field.type === 'linked_record';
                         const plain = isLinked
                           ? linkedText(linksFor(response, field.id))
                           : formatValue(response.answers[field.id], field.type, field.properties?.options);
+                        const isEmpty = plain === '-';
                         return (
                           <td
                             key={field.id}
-                            className={cn('px-4 py-4 text-sm text-gray-600 dark:text-slate-300', isLinked ? 'align-middle overflow-hidden' : 'truncate')}
+                            className={cn(
+                              'px-4 py-4 text-sm',
+                              // The first answer column is the row's de-facto title — give it primary ink.
+                              fieldIndex === 0 && !isEmpty ? 'font-medium text-gray-900 dark:text-white' : 'text-gray-600 dark:text-slate-300',
+                              isLinked ? 'align-middle overflow-hidden' : 'truncate'
+                            )}
                             title={plain}
                           >
-                            {isLinked ? <LinkedRecordChips items={linksFor(response, field.id)} /> : plain}
+                            {isLinked
+                              ? <LinkedRecordChips items={linksFor(response, field.id)} />
+                              : isEmpty
+                                ? <span className="text-gray-300 dark:text-slate-600">—</span>
+                                : plain}
                           </td>
                         );
                       })}
@@ -1180,9 +1212,11 @@ function FormResponses() {
                         </Badge>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap text-right">
+                        {/* The row itself opens the record — the buttons stop propagation so
+                            edit/delete never ALSO trigger the row's view handler. */}
                         <div className="flex justify-end gap-1">
                           <button
-                            onClick={() => handleView(response)}
+                            onClick={(e) => { e.stopPropagation(); handleView(response); }}
                             className="p-2 text-gray-500 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors cursor-pointer"
                             title="View details"
                             aria-label="View response details"
@@ -1190,7 +1224,7 @@ function FormResponses() {
                             <Eye className="h-4 w-4" />
                           </button>
                           <button
-                            onClick={() => handleEdit(response)}
+                            onClick={(e) => { e.stopPropagation(); handleEdit(response); }}
                             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer"
                             title="Edit response"
                             aria-label="Edit response"
@@ -1198,7 +1232,7 @@ function FormResponses() {
                             <Edit2 className="h-4 w-4" />
                           </button>
                           <button
-                            onClick={() => handleDeleteConfirm(response)}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteConfirm(response); }}
                             className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
                             title="Delete response"
                             aria-label="Delete response"

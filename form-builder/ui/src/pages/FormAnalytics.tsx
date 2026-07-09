@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick } from 'lucide-react';
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList } from 'recharts';
+import { useUIStore } from '../stores/uiStore';
 import { ListRowSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Header } from '../components/layout/Header';
@@ -22,6 +24,16 @@ interface DailyResponse {
   day: string;
   count: number;
 }
+
+// Bucket a Date by LOCAL calendar day (toISOString would bucket by UTC day,
+// mis-attributing near-midnight responses).
+const localDayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Range options for the Responses Over Time chart — the server ships up to 30
+// days of per-day counts, so all three ranges render from already-fetched data.
+const CHART_RANGES = [7, 14, 30] as const;
+type ChartRange = (typeof CHART_RANGES)[number];
 
 export default function FormAnalytics() {
   const { formId } = useParams<{ formId: string }>();
@@ -57,49 +69,10 @@ export default function FormAnalytics() {
       ? Math.round(localResponses.reduce((sum, r) => sum + r.completionTime, 0) / localResponses.length / 1000)
       : 0;
 
-    // Group responses by day for chart (last 7 days). Bucket by LOCAL calendar day
-    // so each response lands under the bar labeled with the same local day
-    // (toISOString would bucket by UTC day, mis-attributing near-midnight responses).
-    const localDayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const responseCounts: Record<string, number> = {};
-    localResponses.forEach(r => {
-      const dayKey = localDayKey(parseServerDate(r.submittedAt));
-      responseCounts[dayKey] = (responseCounts[dayKey] || 0) + 1;
-    });
-
-    const last7Days: DailyResponse[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const dayKey = localDayKey(date);
-      last7Days.push({
-        day: date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        count: responseCounts[dayKey] || 0,
-      });
-    }
-    const dailyResponses: DailyResponse[] = last7Days;
-
-    // Calculate week-over-week change
-    const now = new Date();
-    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-
-    const thisWeekResponses = localResponses.filter(r => parseServerDate(r.submittedAt) >= oneWeekAgo).length;
-    const lastWeekResponses = localResponses.filter(r => {
-      const date = parseServerDate(r.submittedAt);
-      return date >= twoWeeksAgo && date < oneWeekAgo;
-    }).length;
-
-    const weeklyChange = lastWeekResponses > 0
-      ? Math.round(((thisWeekResponses - lastWeekResponses) / lastWeekResponses) * 100)
-      : null; // null = no prior data to compare against
-
     return {
       totalResponses: localResponses.length,
       completionRate: localResponses.length > 0 ? 100 : 0, // All submitted responses are complete
       averageCompletionTime: avgCompletionTime * 1000, // Convert back to ms for consistency
-      dailyResponses,
-      weeklyChange,
     };
   }, [localResponses]);
 
@@ -182,7 +155,7 @@ export default function FormAnalytics() {
 
   // Calculate field breakdown statistics
   const fieldBreakdown = useMemo(() => {
-    const breakdown: Record<string, { type: string; label: string; data: { label: string; count: number; percentage: number }[] }> = {};
+    const breakdown: Record<string, { type: string; label: string; total: number; avg?: number; data: { label: string; count: number; percentage: number }[] }> = {};
 
     formFields.forEach((field) => {
       // Only analyze rating, scale, dropdown, multiple_choice, and checkboxes fields
@@ -254,9 +227,22 @@ export default function FormAnalytics() {
       }
 
       if (data.length > 0) {
+        // Mean for numeric distributions (rating/scale) — shown beside the field label.
+        let avg: number | undefined;
+        if (field.type === 'rating' || field.type === 'scale') {
+          let weighted = 0;
+          let n = 0;
+          for (const [k, c] of Object.entries(counts)) {
+            const v = Number(k);
+            if (Number.isFinite(v)) { weighted += v * c; n += c; }
+          }
+          if (n > 0) avg = Math.round((weighted / n) * 10) / 10;
+        }
         breakdown[field.id] = {
           type: field.type,
           label: field.label,
+          total: totalAnswers,
+          avg,
           data,
         };
       }
@@ -265,10 +251,10 @@ export default function FormAnalytics() {
     return breakdown;
   }, [formFields, responses]);
 
-  // Week-over-week change. In cloud mode localResponses is empty, so prefer the
+  // Week-over-week trend. In cloud mode localResponses is empty, so prefer the
   // server's per-day series (covers ALL responses, not just the fetched page);
   // fall back to the in-memory responses for local mode.
-  const weeklyChange = useMemo(() => {
+  const weeklyTrend = useMemo(() => {
     const now = Date.now();
     const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
     const twoWeeksAgo = now - 14 * 24 * 60 * 60 * 1000;
@@ -287,8 +273,63 @@ export default function FormAnalytics() {
         else if (t >= twoWeeksAgo && t < oneWeekAgo) lastWeek++;
       }
     }
-    return lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
+    return {
+      thisWeek,
+      // null = no prior week to compare against
+      pct: lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null,
+    };
   }, [analytics, responses]);
+
+  // Responses Over Time — selectable window over the (up to 30-day) per-day counts.
+  const [rangeDays, setRangeDays] = useState<ChartRange>(7);
+  // Fill the last N CONTIGUOUS calendar days (empty days render as gaps, not
+  // collapsed into adjacent bars) and derive each label from a local Date (so
+  // labels aren't off-by-one in negative-UTC zones the way `new Date('YYYY-MM-DD')`
+  // — parsed as UTC midnight — would be).
+  const dailySeries: DailyResponse[] = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (analytics?.responsesByDate) {
+      for (const { date, count } of analytics.responsesByDate) counts[date] = count;
+    } else {
+      for (const r of localResponses) {
+        const key = localDayKey(parseServerDate(r.submittedAt));
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    const out: DailyResponse[] = [];
+    for (let i = rangeDays - 1; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      out.push({
+        day: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        count: counts[localDayKey(d)] || 0,
+      });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- localResponses is a fresh array each render by design (see above); keying on its length + analytics keeps the memo honest without thrashing
+  }, [analytics, localResponses.length, rangeDays]);
+  const rangeTotal = useMemo(() => dailySeries.reduce((a, d) => a + d.count, 0), [dailySeries]);
+
+  // Chart inks follow the mode (subscribed, so a theme toggle re-renders the chart);
+  // the accent reads the live --primary-* CSS variables, so it tracks the curated
+  // per-mode palette (indigo by day, lime by night) AND user theme-color overrides.
+  const isDark = useUIStore((s) => s.theme === 'dark');
+  const chartInk = useMemo(() => ({
+    accent: 'rgb(var(--primary-500))',
+    axis: isDark ? '#94a3b8' : '#64748b',
+    grid: isDark ? '#1e293b' : '#e2e8f0',
+    cursor: isDark ? 'rgba(148,163,184,0.08)' : 'rgba(0,0,0,0.04)',
+    tooltip: {
+      background: isDark ? '#0f172a' : '#ffffff',
+      border: `1px solid ${isDark ? '#1e293b' : '#e2e8f0'}`,
+      borderRadius: 10,
+      fontSize: 12,
+      color: isDark ? '#e2e8f0' : '#0f172a',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+      padding: '8px 12px',
+    } as const,
+    tooltipLabel: { color: isDark ? '#94a3b8' : '#64748b', fontWeight: 600, fontSize: 11 } as const,
+  }), [isDark]);
 
   // Preview only INPUT fields (skip welcome/statement/thank-you layout fields, which have no
   // answer). Computed defensively and the column-fit hook is called BEFORE the early return below,
@@ -347,27 +388,6 @@ export default function FormAnalytics() {
   const openResponse = (responseId: string) =>
     navigate(`/responses/${form.id}?open=${encodeURIComponent(responseId)}`);
 
-  // Process daily responses for chart. Fill the last 7 CONTIGUOUS calendar days
-  // (so empty days render as gaps, not collapsed into adjacent bars) and derive each
-  // label from a local Date (so labels aren't off-by-one in negative-UTC zones the
-  // way `new Date('YYYY-MM-DD')` — parsed as UTC midnight — would be). Mirrors the
-  // local-mode fill above.
-  const dailyResponses: DailyResponse[] = analytics?.responsesByDate
-    ? (() => {
-        const counts: Record<string, number> = {};
-        for (const { date, count } of analytics.responsesByDate) counts[date] = count;
-        const out: DailyResponse[] = [];
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-          out.push({ day: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }), count: counts[key] || 0 });
-        }
-        return out;
-      })()
-    : localAnalytics.dailyResponses;
-
-
   // Shared value formatter for the recent-responses preview (table + card modes).
   // Server-resolved label(s) for a linked_record field on a response, or null if unresolved.
   const resolvedLinkLabel = (response: unknown, fieldId: string): string | null => {
@@ -401,8 +421,6 @@ export default function FormAnalytics() {
     if (typeof val === 'object') return JSON.stringify(val);
     return String(val);
   };
-
-  const maxCount = Math.max(...dailyResponses.map((d) => d.count), 1);
 
   const handleExportCSV = async () => {
     setIsExporting(true);
@@ -619,7 +637,7 @@ export default function FormAnalytics() {
             icon={CheckCircle}
             iconBg="bg-green-500/10"
             iconColor="text-green-500"
-            value={hasServerAnalytics ? `${completionRate}%` : '—'}
+            value={hasServerAnalytics ? `${Math.round(completionRate)}%` : '—'}
             subtext={hasServerAnalytics ? undefined : 'Cloud analytics only'}
             label="Completion"
           />
@@ -634,45 +652,93 @@ export default function FormAnalytics() {
             icon={TrendingUp}
             iconBg="bg-orange-500/10"
             iconColor="text-orange-500"
-            value={
-              <span className={weeklyChange === null ? '' : weeklyChange >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-600 dark:text-red-500'}>
-                {weeklyChange === null ? 'New' : `${weeklyChange >= 0 ? '+' : ''}${weeklyChange}%`}
-              </span>
-            }
+            value={weeklyTrend.thisWeek}
             label="This Week"
+            trend={{ pct: weeklyTrend.pct, label: 'vs last week' }}
           />
         </div>
 
         {/* Chart */}
         <Card>
-          <CardHeader>
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Responses Over Time</h2>
-          </CardHeader>
-          <CardContent>
-            {/* One labelled figure for AT — the per-bar div aria-labels aren't exposed. */}
-            <div
-              className="h-48 sm:h-64 flex items-end justify-between gap-1 sm:gap-2"
-              role="img"
-              aria-label={`Responses over the last ${dailyResponses.length} days. ${dailyResponses.map((d) => `${d.day} ${d.count}`).join(', ')}.`}
-            >
-              {dailyResponses.map((day) => (
-                <div key={day.day} className="flex-1 flex flex-col items-center gap-1 sm:gap-2">
-                  <span className="text-xs text-gray-500 dark:text-slate-500 font-medium tabular-nums">
-                    {day.count > 0 ? day.count : ''}
-                  </span>
-                  <div
-                    className="w-full bg-primary-600 rounded-t-lg transition-all hover:bg-primary-500 min-h-[4px]"
-                    style={{ height: `${Math.max((day.count / maxCount) * 100, 2)}%` }}
-                    title={`${day.day}: ${day.count} response${day.count !== 1 ? 's' : ''}`}
-                    aria-label={`${day.day}: ${day.count} response${day.count !== 1 ? 's' : ''}`}
-                  />
-                  <span className="text-xs sm:text-sm text-gray-500 dark:text-slate-500 transition-colors">
-                    <span className="sm:hidden">{day.day.slice(0, 2)}</span>
-                    <span className="hidden sm:inline">{day.day}</span>
-                  </span>
-                </div>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Responses Over Time</h2>
+              <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5 tabular-nums">
+                {rangeTotal} {rangeTotal === 1 ? 'response' : 'responses'} in the last {rangeDays} days
+              </p>
+            </div>
+            {/* Range switch — the server already ships up to 30 days of per-day counts */}
+            <div className="flex flex-none items-center gap-0.5 rounded-lg border border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/60 p-0.5" role="group" aria-label="Chart range">
+              {CHART_RANGES.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setRangeDays(d)}
+                  aria-pressed={rangeDays === d}
+                  className={cn(
+                    'px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                    rangeDays === d
+                      ? 'bg-white dark:bg-slate-800 text-gray-900 dark:text-white shadow-sm'
+                      : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
+                  )}
+                >
+                  {d}d
+                </button>
               ))}
             </div>
+          </CardHeader>
+          <CardContent>
+            {rangeTotal === 0 ? (
+              <div className="h-52 sm:h-64 flex flex-col items-center justify-center text-center text-gray-400 dark:text-slate-500">
+                <BarChart3 className="mb-2 h-6 w-6 opacity-60" aria-hidden="true" />
+                <p className="text-sm">No responses in the last {rangeDays} days</p>
+              </div>
+            ) : (
+              /* One labelled figure for AT — recharts' inner SVG isn't self-describing. */
+              <div
+                className="h-52 sm:h-64"
+                role="img"
+                aria-label={`Responses over the last ${dailySeries.length} days. ${dailySeries.map((d) => `${d.day} ${d.count}`).join(', ')}.`}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={dailySeries} margin={{ top: rangeDays === 7 ? 20 : 8, right: 4, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartInk.grid} vertical={false} />
+                    <XAxis
+                      dataKey="day"
+                      tick={{ fontSize: 11, fill: chartInk.axis }}
+                      tickLine={false}
+                      axisLine={{ stroke: chartInk.grid }}
+                      interval="preserveStartEnd"
+                      minTickGap={rangeDays === 7 ? 8 : 24}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: chartInk.axis }}
+                      tickLine={false}
+                      axisLine={false}
+                      allowDecimals={false}
+                      width={32}
+                    />
+                    <Tooltip
+                      contentStyle={chartInk.tooltip}
+                      labelStyle={chartInk.tooltipLabel}
+                      formatter={(v) => [`${v} ${v === 1 ? 'response' : 'responses'}`, null]}
+                      cursor={{ fill: chartInk.cursor }}
+                    />
+                    <Bar dataKey="count" name="Responses" fill={chartInk.accent} radius={[6, 6, 0, 0]} maxBarSize={42}>
+                      {/* Direct labels only on the roomy 7-day view; longer ranges rely on the tooltip. */}
+                      {rangeDays === 7 && (
+                        <LabelList
+                          dataKey="count"
+                          position="top"
+                          formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')}
+                          style={{ fontSize: 11, fill: chartInk.axis }}
+                        />
+                      )}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -692,25 +758,32 @@ export default function FormAnalytics() {
               <div className="space-y-6 sm:space-y-8">
                 {Object.entries(fieldBreakdown).map(([fieldId, breakdown]) => (
                   <div key={fieldId}>
-                    <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                      {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500" />}
-                      <h3 className="font-medium text-gray-900 dark:text-white text-sm sm:text-base transition-colors">{breakdown.label}</h3>
+                    <div className="flex items-baseline gap-2 mb-2 sm:mb-3">
+                      {breakdown.type === 'rating' && <Star className="h-4 w-4 text-yellow-500 self-center flex-shrink-0" />}
+                      <h3 className="font-medium text-gray-900 dark:text-white text-sm sm:text-base transition-colors truncate" title={breakdown.label}>{breakdown.label}</h3>
+                      <span className="ml-auto flex-shrink-0 text-xs text-gray-400 dark:text-slate-500 tabular-nums">
+                        {breakdown.avg !== undefined && (
+                          <span className="font-medium text-gray-500 dark:text-slate-400">{breakdown.avg} avg · </span>
+                        )}
+                        {breakdown.total} {breakdown.total === 1 ? 'answer' : 'answers'}
+                      </span>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {breakdown.data.map((item, index) => (
                         <div key={index} className="flex items-center gap-2 sm:gap-3">
                           <div className="w-20 sm:w-32 md:w-40 text-xs sm:text-sm text-gray-500 dark:text-slate-400 truncate flex-shrink-0 transition-colors" title={item.label}>
                             {item.label}
                           </div>
-                          <div className="flex-1 h-5 sm:h-6 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
+                          <div className="flex-1 h-2.5 bg-gray-100 dark:bg-slate-800 rounded-full overflow-hidden transition-colors">
                             {/* Width is the TRUE share of answers (a 4% option renders at 4%),
-                                not normalized to the largest option. */}
+                                not normalized to the largest option. A non-zero count keeps a
+                                visible 2% sliver even when it rounds to 0%. */}
                             <div
-                              className="h-full bg-primary-600 rounded-full transition-all"
-                              style={{ width: `${item.percentage}%` }}
+                              className="h-full bg-primary-500 rounded-full transition-all"
+                              style={{ width: `${Math.max(item.percentage, item.count > 0 ? 2 : 0)}%` }}
                             />
                           </div>
-                          <div className="w-16 sm:w-20 text-right flex-shrink-0">
+                          <div className="w-16 sm:w-24 text-right flex-shrink-0 tabular-nums">
                             <span className="text-xs sm:text-sm font-medium text-gray-900 dark:text-white transition-colors">{item.percentage}%</span>
                             <span className="text-xs text-gray-500 dark:text-slate-500 ml-1 hidden sm:inline transition-colors">({item.count})</span>
                           </div>

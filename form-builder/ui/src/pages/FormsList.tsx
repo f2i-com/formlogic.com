@@ -41,6 +41,7 @@ import { ShowMore } from '../components/ui/ShowMore';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { useFormStore } from '../stores/formStore';
 import { useAppStore } from '../stores/appStore';
+import { useAuthStore } from '../stores/authStore';
 import { useResponseStore } from '../stores/responseStore';
 import { toast } from '../stores/toastStore';
 import { formatRelativeTime, parseServerDate } from '../lib/utils';
@@ -49,24 +50,14 @@ import { PackImportModal } from '../components/builder/PackImportModal';
 import { useFormPreview } from '../components/builder/useFormPreview';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { api } from '../lib/api';
+import { loadUiCache, saveUiCache } from '../lib/uiCache';
+import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
 import type { PackInstallation } from '../lib/api';
 import type { Form } from '../types/form';
 
 // Incremental pagination page sizes for the card grids.
 const FORMS_PAGE = 12;
 const APPS_PAGE = 8;
-
-// An app as grouped on this page: identity (icon/logo/accent) + which forms belong to it.
-type AppGroup = {
-  id: string;
-  name: string;
-  slug: string | null;
-  description: string | null;
-  logoUrl: string | null;
-  icon: string | null;
-  accent: string | null;
-  formIds: string[];
-};
 
 // App accents are user/pack-authored hex values; validate strictly before injecting into an
 // inline CSS custom property (same rule as the landing page's DemoAppCard).
@@ -481,12 +472,25 @@ export function FormsList() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
   const [packFilter, setPackFilter] = useState<string>('all');
-  const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>([]);
+  const user = useAuthStore((s) => s.user);
+  const [installedPacks, setInstalledPacks] = useState<PackInstallation[]>(
+    // Last visit's packs paint the badges/filter immediately; the fetch below refreshes them.
+    () => loadUiCache<PackInstallation[]>('installed-packs', useAuthStore.getState().user?.id)?.data ?? []
+  );
   // App grouping: which forms belong to which app, and the current drill-in.
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
-  const [appGroups, setAppGroups] = useState<AppGroup[]>([]);
-  // Apps load async — track it so the section reserves space (skeleton) instead of popping in.
-  const [appsLoading, setAppsLoading] = useState(() => useFormStore.getState().storageMode === 'api');
+  // Hydrate the apps rail from the shared per-user cache (see lib/appGroups) so it
+  // renders instantly on revisit; the background fetch below revalidates it.
+  const [appGroups, setAppGroups] = useState<AppGroup[]>(() =>
+    useFormStore.getState().storageMode === 'api'
+      ? loadAppGroupsCache(useAuthStore.getState().user?.id) ?? []
+      : []
+  );
+  // Apps load async — reserve skeleton space only when there's nothing cached to show.
+  const [appsLoading, setAppsLoading] = useState(() =>
+    useFormStore.getState().storageMode === 'api' &&
+    !loadAppGroupsCache(useAuthStore.getState().user?.id)
+  );
   // Hints cached from the previous apps fetch so this visit doesn't jump while apps load:
   // whether to reserve apps-rail skeleton space at all (zero-apps users must not see a
   // skeleton that vanishes), and which forms were in-app (hidden from the top level).
@@ -538,61 +542,45 @@ export function FormsList() {
     return map;
   }, [installedPacks]);
 
-  // Fetch installed packs on mount
+  // Fetch installed packs on mount (cached copy already painted; this revalidates it).
   useEffect(() => {
     api.getInstalledPacks().then((result) => {
       if (!result.error && result.data) {
         setInstalledPacks(result.data.installations);
+        saveUiCache('installed-packs', useAuthStore.getState().user?.id, result.data.installations);
       }
     });
   }, []);
 
-  // Load apps + their form memberships so My Forms can group forms by app (cloud mode only).
+  // Load apps + their form memberships so My Forms can group forms by app (cloud mode
+  // only). Shared cached fetch (lib/appGroups): a cached rail renders immediately and
+  // this refresh lands silently; only a cache miss shows the skeleton.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (storageMode !== 'api') { if (!cancelled) { setAppGroups([]); setAppsLoading(false); } return; }
-      if (!cancelled) setAppsLoading(true);
+      const cached = loadAppGroupsCache(user?.id);
+      if (!cancelled) {
+        if (cached) { setAppGroups(cached); setAppsLoading(false); }
+        else setAppsLoading(true);
+      }
       try {
-        const res = await api.getApps();
-        const apps = (res.data?.apps || []) as Array<{
-          id: string;
-          name: string;
-          slug?: string | null;
-          description?: string | null;
-          logoUrl?: string | null;
-          settings?: { icon?: string | null } | null;
-          theme?: { primaryColor?: string | null } | null;
-        }>;
-        const groups: AppGroup[] = await Promise.all(apps.map(async (a) => {
-          const fr = await api.getAppForms(a.id);
-          const formIds = ((fr.data?.forms || []) as Array<{ formId: string }>).map((f) => f.formId);
-          return {
-            id: a.id,
-            name: a.name,
-            slug: a.slug ?? null,
-            description: a.description ?? null,
-            logoUrl: a.logoUrl ?? null,
-            icon: a.settings?.icon ?? null,
-            accent: a.theme?.primaryColor ?? null,
-            formIds,
-          };
-        }));
+        const groups = await fetchAppGroups(user?.id);
         if (!cancelled) setAppGroups(groups);
         // Refresh the layout hints for the next visit (skip on fetch errors so a
         // transient failure doesn't wrongly clear them).
-        if (!res.error) {
-          try {
-            localStorage.setItem('fl-had-apps', groups.length > 0 ? '1' : '0');
-            localStorage.setItem('fl-app-form-ids', JSON.stringify(groups.flatMap((g) => g.formIds)));
-          } catch { /* storage unavailable — hints are optional */ }
-        }
+        try {
+          localStorage.setItem('fl-had-apps', groups.length > 0 ? '1' : '0');
+          localStorage.setItem('fl-app-form-ids', JSON.stringify(groups.flatMap((g) => g.formIds)));
+        } catch { /* storage unavailable — hints are optional */ }
+      } catch {
+        // Keep whatever is on screen (cached or empty) on a transient failure.
       } finally {
         if (!cancelled) setAppsLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [storageMode]);
+  }, [storageMode, user?.id]);
 
   // formId → its app, for GROUPING standalone vs in-app forms only. Preview routing does NOT
   // use this map — a form can be in several apps (companion apps), so preview does a fresh

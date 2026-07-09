@@ -39,6 +39,8 @@ import { useResponseStore } from '../stores/responseStore';
 import { useAuthStore } from '../stores/authStore';
 import { useAppStore } from '../stores/appStore';
 import { api } from '../lib/api';
+import { loadUiCache, saveUiCache } from '../lib/uiCache';
+import { loadAppGroupsCache, fetchAppGroups, type AppGroup } from '../lib/appGroups';
 import { cn, formatRelativeTime, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '../components/builder';
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
@@ -52,6 +54,20 @@ import type { Form } from '../types/form';
 interface DashboardStats {
   totalResponses: number;
 }
+
+// The last visit's computed aggregates, persisted per user (see uiCache) so the
+// dashboard paints instantly instead of re-blocking on the per-form analytics
+// fan-out. Always revalidated in the background after hydration.
+interface DashboardStatsCache {
+  totalResponses: number;
+  responseCounts: Record<string, number>;
+  pulses: Record<string, PulseDay[]>;
+  recent: Array<{ id: string; formId: string; formTitle: string; submittedAt: string }>;
+}
+
+// Within this window a remount reuses the cache without refetching at all —
+// rapid Dashboard ↔ Forms navigation shouldn't hammer N analytics endpoints.
+const STATS_FRESH_MS = 60_000;
 
 // App accents are user/pack-authored hex values; validate strictly before injecting into an
 // inline CSS custom property (same rule as AppsDashboard / FormsList).
@@ -585,14 +601,40 @@ export function Dashboard() {
 
   const pulseByForm = storageMode === 'api' ? apiPulses : localPulses;
 
+  // Which user's data is currently on screen (cache hydration or a landed fetch).
+  // Lets the fetch effect refresh silently instead of dropping back to skeletons.
+  const statsShownFor = useRef<string | null>(null);
+
+  // Hydrate the last visit's aggregates instantly (stale-while-revalidate).
+  useEffect(() => {
+    if (storageMode !== 'api' || !user?.id) return;
+    if (statsShownFor.current === user.id) return;
+    const cached = loadUiCache<DashboardStatsCache>('dashboard-stats', user.id);
+    if (!cached) return;
+    statsShownFor.current = user.id;
+    setStats({ totalResponses: cached.data.totalResponses });
+    setResponseCounts(cached.data.responseCounts);
+    setApiPulses(cached.data.pulses);
+    setApiRecent(cached.data.recent);
+    setStatsReady(true);
+  }, [storageMode, user?.id]);
+
   // Fetch stats from API when in API mode
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       await Promise.resolve();
       if (cancelled) return;
-      if (storageMode === 'api') setStatsReady(false);
+      // Only drop to the loading state when nothing is on screen yet — a cache
+      // hydration (or an earlier fetch) keeps rendering while we revalidate.
+      if (storageMode === 'api' && statsShownFor.current !== user?.id) setStatsReady(false);
       if (storageMode === 'api' && user && forms.length > 0) {
+        // Fresh-enough cache + data already shown → skip the fan-out entirely.
+        const cached = loadUiCache<DashboardStatsCache>('dashboard-stats', user.id);
+        if (cached && cached.ageMs < STATS_FRESH_MS && statsShownFor.current === user.id) {
+          setStatsReady(true);
+          return;
+        }
         try {
           let totalResponses = 0;
           // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
@@ -655,13 +697,25 @@ export function Dashboard() {
               : []
           );
           merged.sort((a, b) => parseServerDate(b.submittedAt).getTime() - parseServerDate(a.submittedAt).getTime());
-          setApiRecent(merged.slice(0, 5));
+          const recent = merged.slice(0, 5);
+          setApiRecent(recent);
           setStatsReady(true);
+          statsShownFor.current = user.id;
+          saveUiCache<DashboardStatsCache>('dashboard-stats', user.id, {
+            totalResponses,
+            responseCounts: counts,
+            pulses,
+            recent,
+          });
         } catch (error) {
           if (cancelled) return;
           logger.error('Failed to fetch dashboard stats:', error);
-          toast.warning('Connection issue', 'Using local data. Some stats may not be up to date.');
-          setStats(localStats);
+          // With cached data on screen a failed revalidate degrades silently to
+          // the stale numbers; only an empty dashboard warns and falls back.
+          if (statsShownFor.current !== user?.id) {
+            toast.warning('Connection issue', 'Using local data. Some stats may not be up to date.');
+            setStats(localStats);
+          }
           setStatsReady(true);
         }
       } else {
@@ -690,23 +744,23 @@ export function Dashboard() {
   }, [forms, pulseByForm]);
 
   // Load which app each form belongs to (cloud mode) so Recent Forms can tag it (badge only).
+  // Shared cached fetch (see lib/appGroups): the last visit's mapping applies instantly,
+  // the per-app fan-out refreshes it in the background.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      if (storageMode !== 'api') { if (!cancelled) setAppOfForm({}); return; }
-      const res = await api.getApps();
-      const apps = (res.data?.apps || []) as Array<{ id: string; name: string; slug?: string | null }>;
+    if (storageMode !== 'api') { setAppOfForm({}); return; }
+    const toMap = (groups: AppGroup[]) => {
       const map: Record<string, string> = {};
-      await Promise.all(apps.map(async (a) => {
-        const fr = await api.getAppForms(a.id);
-        for (const f of (fr.data?.forms || []) as Array<{ formId: string }>) {
-          map[f.formId] = a.name;
-        }
-      }));
-      if (!cancelled) setAppOfForm(map);
-    })();
+      for (const g of groups) for (const fid of g.formIds) map[fid] = g.name;
+      return map;
+    };
+    const cached = loadAppGroupsCache(user?.id);
+    if (cached) setAppOfForm(toMap(cached));
+    fetchAppGroups(user?.id)
+      .then((groups) => { if (!cancelled) setAppOfForm(toMap(groups)); })
+      .catch(() => { /* badge-only data — keep whatever is shown */ });
     return () => { cancelled = true; };
-  }, [storageMode]);
+  }, [storageMode, user?.id]);
 
   // Preview a form in a NEW TAB and IN CONTEXT: fresh app-context lookup on click (shared
   // mechanism) — one published app opens the app runtime at that form, several ask which,
@@ -841,8 +895,10 @@ export function Dashboard() {
 
         {/* Main Content - Two Column Layout on Desktop */}
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Recent Forms - Takes 2/3 on desktop */}
-          <div className="lg:col-span-2">
+          {/* Recent Forms - Takes 2/3 on desktop. min-w-0: grid items default to
+              min-width:auto, so one long nowrap form title would otherwise blow the
+              track past the viewport and shove the pulse strips over/under the text. */}
+          <div className="min-w-0 lg:col-span-2">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">My forms</h2>
               {forms.length > 0 && (
@@ -906,7 +962,9 @@ export function Dashboard() {
                         <div className="flex items-center justify-between gap-4">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <h4 className="font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
+                              {/* min-w-0: as a flex item the title must be allowed to shrink,
+                                  else a long name can't truncate and spills under the pulse strip. */}
+                              <h4 className="min-w-0 max-w-full font-semibold text-gray-900 dark:text-white truncate group-hover:text-primary-600 dark:group-hover:text-primary-400 motion-safe:transition-colors" title={form.title || 'Untitled Form'}>
                                 {form.title || 'Untitled Form'}
                               </h4>
                               <Badge
@@ -1070,8 +1128,8 @@ export function Dashboard() {
             )}
           </div>
 
-          {/* Recent Activity - Takes 1/3 on desktop */}
-          <div className="lg:col-span-1">
+          {/* Recent Activity - Takes 1/3 on desktop (min-w-0: same grid-item rule as above) */}
+          <div className="min-w-0 lg:col-span-1">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">Recent activity</h2>
             </div>
