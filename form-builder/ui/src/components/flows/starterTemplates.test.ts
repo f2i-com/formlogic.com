@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FLOW_STARTER_TEMPLATES, buildFlowCreateInput, slugifyFlowName } from './starterTemplates';
+import { FLOW_STARTER_TEMPLATES, buildFlowCreateInput, flowStarterTemplatesForConnectors, slugifyFlowName } from './starterTemplates';
 import { validateWorkflowGraph } from '../../client-runtime/flows/flowExecutor';
 import { lintFlowGraph, triggerInputNames } from './flowGraphLint';
 
@@ -39,6 +39,17 @@ describe('flow starter templates', () => {
     expect((known.data as { expr: string }).expr).toContain('nodes.lookup.found');
     const greet = t.flowJson.nodes.find((n) => n.id === 'greet')!;
     expect((greet.data as { template: string }).template).toContain('nodes.lookup.first.answers.name');
+  });
+
+  it('marks Aokie starter templates and hides them when the connector is unavailable', () => {
+    expect(FLOW_STARTER_TEMPLATES.filter((template) => template.requiresConnector === 'aokie').map((template) => template.id)).toEqual([
+      'caller-lookup',
+      'call-summary',
+      'sms-auto-draft',
+    ]);
+    expect(flowStarterTemplatesForConnectors([]).map((template) => template.id)).toEqual(['blank']);
+    expect(flowStarterTemplatesForConnectors(['stripe']).map((template) => template.id)).toEqual(['blank']);
+    expect(flowStarterTemplatesForConnectors(['aokie']).map((template) => template.id)).toEqual(FLOW_STARTER_TEMPLATES.map((template) => template.id));
   });
 });
 

@@ -622,12 +622,13 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
 }
 
 // ── Desktop-service-backed nodes (docs §4) ─────────────────────────────────────────────────
-// browser_action / image_gen / stt_transcribe / tts_speak drive a LOCAL FormLogic Desktop
-// service over its loopback HTTP API. The browser path is best-effort: resolve the service
-// base (node data.endpoint override, else the paired Desktop's GET /api/services), then a
-// short loopback fetch. On ANY transport failure (Desktop absent / unpaired / service not
-// running / CORS / connection refused) the node fails with an ACTIONABLE message — never
-// "coming soon". The desktop Rust runner (flows/runner.rs) mirrors these semantics exactly.
+// browser_action / image_gen drive LOCAL FormLogic Desktop services over loopback HTTP. Speech
+// nodes use configured OpenAI-compatible endpoints; their optional Desktop service id only
+// resolves a base URL. The browser path is best-effort: resolve the service base (node
+// data.endpoint override, else the paired Desktop's GET /api/services), then a short loopback
+// fetch. On ANY transport failure (Desktop absent / unpaired / service not running / CORS /
+// connection refused) the node fails with an ACTIONABLE message — never "coming soon". The
+// desktop Rust runner (flows/runner.rs) mirrors these semantics exactly.
 
 /** The actionable failure raised when a desktop service can't be reached (never "coming soon"). */
 function desktopServiceUnavailable(node: WorkflowGraphNode, service: string, bundled: boolean): FlowExecError {
@@ -828,7 +829,7 @@ async function runBrowserAction(ctx: FlowNodeContext): Promise<unknown> {
 }
 
 /** The krea2 (text-to-image) service id + human name (docs §4). */
-const IMAGE_SERVICE = { id: 'krea2', name: 'Krea-2 Turbo (image generation)' } as const;
+const IMAGE_SERVICE = { id: 'krea2', name: 'Krea-2 Turbo (Text-to-Image)' } as const;
 
 /**
  * image_gen — text-to-image via the local Krea-2 service (POST /generate → {imageUrl}) or a

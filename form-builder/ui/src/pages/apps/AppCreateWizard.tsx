@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2, Sparkles, Layers } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Globe, FileText, Plus, Share2, Sparkles, Layers, Plug } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { useFormStore } from '../../stores/formStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -10,6 +10,7 @@ import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Textarea } from '../../components/ui/Textarea';
+import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { cn } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { DEFAULT_APP_SETTINGS, KIND_LABELS } from '../../types/app';
@@ -77,6 +78,7 @@ export function AppCreateWizard() {
     useAppStore.getState().fetchApps();
   }, []);
   const [isCreating, setIsCreating] = useState(false);
+  const [showHandToAi, setShowHandToAi] = useState(false);
 
   // ONE batched request (GET /apps/form-usage) powers BOTH derived views below: the
   // "in <app>" share badges (formId → other-app names) and the companion picker's REAL
@@ -303,19 +305,19 @@ export function AppCreateWizard() {
       id: 'fresh',
       icon: Sparkles,
       title: 'Start fresh',
-      body: 'A brand-new app. Build new forms as you go, or pick forms later.',
+      body: 'A brand-new app with its own forms.',
     },
     {
       id: 'existing',
       icon: FileText,
       title: 'Use existing forms',
-      body: 'Attach forms you already have. Attached forms are shared — every app they belong to reads and writes the same data.',
+      body: 'Build on forms you already have — apps share their data.',
     },
     {
       id: 'companion',
       icon: Layers,
-      title: 'Companion of an existing app',
-      body: 'A second app — e.g. an admin console — over another app’s forms and data. Optionally copies its dashboard, reports and logic.',
+      title: 'Companion',
+      body: 'A second app, like an admin console, over another app’s data.',
     },
   ];
 
@@ -358,7 +360,7 @@ export function AppCreateWizard() {
         {step === 0 && (
           <div>
             <p className="text-sm text-gray-500 dark:text-slate-400 mb-4">How do you want to start?</p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {modeCards.map(({ id, icon: Icon, title, body }) => (
                 <button
                   key={id}
@@ -368,7 +370,7 @@ export function AppCreateWizard() {
                     // flex-col + justify-start: grid rows stretch the buttons to equal height, and a
                     // button's default vertical centering would float shorter cards' content lower —
                     // pinning content to the top keeps every icon/title/body aligned across cards.
-                    'flex flex-col justify-start items-stretch text-left p-4 rounded-xl border transition-all duration-200 cursor-pointer',
+                    'flex h-full min-h-32 flex-col justify-start items-stretch text-left p-4 rounded-xl border transition-all duration-200 cursor-pointer',
                     mode === id
                       ? 'border-primary-300 dark:border-primary-500/30 bg-primary-50 dark:bg-primary-500/10'
                       : 'border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800'
@@ -383,6 +385,19 @@ export function AppCreateWizard() {
                   <p className="text-xs text-gray-500 dark:text-slate-400">{body}</p>
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowHandToAi(true)}
+                className="flex h-full min-h-32 flex-col items-stretch justify-start rounded-xl border border-gray-200 p-4 text-left transition-all duration-200 cursor-pointer hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800"
+              >
+                <div className="mb-2 flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-400">
+                    <Plug className="h-4 w-4" />
+                  </div>
+                  <div className="text-sm font-medium leading-snug text-gray-900 dark:text-white">Hand to an AI</div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Let your AI create the app with a secure connection.</p>
+              </button>
             </div>
           </div>
         )}
@@ -414,7 +429,7 @@ export function AppCreateWizard() {
                 What kind of app is this? <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
               </p>
               <p className="text-xs text-gray-400 dark:text-slate-400 mt-0.5 mb-2">
-                Tunes the new app's starting role permissions and suggests a matching dashboard layout. Everything stays editable later.
+                Tunes starting permissions and suggests a dashboard — everything stays editable.
               </p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {KIND_OPTIONS.map(({ kind: k, desc }) => (
@@ -821,6 +836,7 @@ export function AppCreateWizard() {
           </div>
         </div>
       </div>
+      <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); void useAppStore.getState().fetchApps(); }} creator />
     </div>
   );
 }

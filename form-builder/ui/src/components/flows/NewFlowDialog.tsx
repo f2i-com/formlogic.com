@@ -8,7 +8,7 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { cn } from '../../lib/utils';
 import { deriveFlowConnectors } from './flowConnectors';
-import { FLOW_STARTER_TEMPLATES, buildFlowCreateInput, type FlowStarterTemplate } from './starterTemplates';
+import { FLOW_STARTER_TEMPLATES, buildFlowCreateInput, flowStarterTemplatesForConnectors, type FlowStarterTemplate } from './starterTemplates';
 import type { AppListItem } from '../../types/app';
 
 /** Icon per starter template (keeps lucide out of the data module). */
@@ -19,12 +19,14 @@ const TEMPLATE_ICON: Record<string, LucideIcon> = {
   'sms-auto-draft': MessageSquare,
 };
 
-const AOKIE_TEMPLATE_IDS = new Set(['caller-lookup', 'call-summary', 'sms-auto-draft']);
+function connectorIdsForApps(apps: AppListItem[]): string[] {
+  return [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort();
+}
 
 function recommendedScope(template: FlowStarterTemplate, apps: AppListItem[]): string | null {
-  if (!AOKIE_TEMPLATE_IDS.has(template.id)) return null;
-  const aokieApps = apps.filter((app) => deriveFlowConnectors(app).some((connector) => connector.id === 'aokie'));
-  return aokieApps.length === 1 ? aokieApps[0].id : null;
+  if (!template.requiresConnector) return null;
+  const appsWithConnector = apps.filter((app) => deriveFlowConnectors(app).some((connector) => connector.id === template.requiresConnector));
+  return appsWithConnector.length === 1 ? appsWithConnector[0].id : null;
 }
 
 export function NewFlowDialog({
@@ -42,7 +44,9 @@ export function NewFlowDialog({
   apps?: AppListItem[];
   initialTemplate?: FlowStarterTemplate | null;
 }) {
-  const initial = initialTemplate ?? FLOW_STARTER_TEMPLATES[0];
+  const availableConnectorIds = useMemo(() => connectorIdsForApps(apps), [apps]);
+  const visibleTemplates = useMemo(() => flowStarterTemplatesForConnectors(availableConnectorIds), [availableConnectorIds]);
+  const initial = visibleTemplates.find((candidate) => candidate.id === initialTemplate?.id) ?? visibleTemplates[0] ?? FLOW_STARTER_TEMPLATES[0];
   const [templateId, setTemplateId] = useState<string>(initial.id);
   const [name, setName] = useState<string>(initial.name);
   const [scopeAppId, setScopeAppId] = useState<string | null>(() => recommendedScope(initial, apps));
@@ -50,7 +54,7 @@ export function NewFlowDialog({
   const [nameEdited, setNameEdited] = useState(false);
   const [scopeEdited, setScopeEdited] = useState(false);
 
-  const template = FLOW_STARTER_TEMPLATES.find((t) => t.id === templateId) ?? FLOW_STARTER_TEMPLATES[0];
+  const template = visibleTemplates.find((t) => t.id === templateId) ?? visibleTemplates[0] ?? FLOW_STARTER_TEMPLATES[0];
   const autoScopeAppId = useMemo(() => recommendedScope(template, apps), [template, apps]);
 
   // Reset ONLY on the closed→open transition, during render (React's "adjusting state when
@@ -60,7 +64,7 @@ export function NewFlowDialog({
   if (prevOpen !== isOpen) {
     setPrevOpen(isOpen);
     if (isOpen) {
-      const nextTemplate = initialTemplate ?? FLOW_STARTER_TEMPLATES[0];
+      const nextTemplate = visibleTemplates.find((candidate) => candidate.id === initialTemplate?.id) ?? visibleTemplates[0] ?? FLOW_STARTER_TEMPLATES[0];
       setTemplateId(nextTemplate.id);
       setName(nextTemplate.name);
       setNameEdited(false);
@@ -77,7 +81,7 @@ export function NewFlowDialog({
 
   const submit = () => {
     if (creating) return;
-    onCreate({ ...buildFlowCreateInput(templateId, name), appId: scopeAppId });
+    onCreate({ ...buildFlowCreateInput(template.id, name), appId: scopeAppId });
   };
 
   return (
@@ -140,8 +144,8 @@ export function NewFlowDialog({
         <fieldset>
           <legend className="mb-2 text-xs font-medium text-gray-600 dark:text-slate-300">Start from</legend>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {FLOW_STARTER_TEMPLATES.map((t) => {
-              const active = t.id === templateId;
+            {visibleTemplates.map((t) => {
+              const active = t.id === template.id;
               const Icon = TEMPLATE_ICON[t.id] ?? FileText;
               return (
                 <button

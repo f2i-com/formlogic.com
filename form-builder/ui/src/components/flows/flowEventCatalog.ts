@@ -9,6 +9,7 @@ export type FlowEventGroupId = 'aokie.calls' | 'aokie.sms' | 'aokie.device' | 'f
 export interface FlowEventGroupMeta {
   id: FlowEventGroupId;
   label: string;
+  requiresConnector?: string;
 }
 
 interface FlowEventEntryBase {
@@ -34,9 +35,9 @@ export interface FlowTeachEventEntry extends FlowEventEntryBase {
 export type FlowEventCatalogEntry = FlowTriggerEventEntry | FlowTeachEventEntry;
 
 export const FLOW_EVENT_GROUPS: readonly FlowEventGroupMeta[] = [
-  { id: 'aokie.calls', label: 'Aokie · Calls' },
-  { id: 'aokie.sms', label: 'Aokie · SMS' },
-  { id: 'aokie.device', label: 'Aokie · Device' },
+  { id: 'aokie.calls', label: 'Aokie · Calls', requiresConnector: 'aokie' },
+  { id: 'aokie.sms', label: 'Aokie · SMS', requiresConnector: 'aokie' },
+  { id: 'aokie.device', label: 'Aokie · Device', requiresConnector: 'aokie' },
   { id: 'formlogic', label: 'FormLogic' },
 ] as const;
 
@@ -283,7 +284,16 @@ export function flowEventsForGroup(group: FlowEventGroupId): readonly FlowEventC
   return FLOW_EVENT_CATALOG.filter((entry) => entry.group === group);
 }
 
-export function mergeKnownConnectorCommands(connectorId: unknown, grantCommands: readonly string[] = []): string[] {
+export function flowEventGroupsForConnectors(connectorIds: readonly string[] = []): readonly FlowEventGroupMeta[] {
+  const available = new Set(connectorIds);
+  return FLOW_EVENT_GROUPS.filter((group) => !group.requiresConnector || available.has(group.requiresConnector));
+}
+
+export function mergeKnownConnectorCommands(
+  connectorId: unknown,
+  grantCommands: readonly string[] = [],
+  availableConnectorIds: readonly string[] = [],
+): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (command: string) => {
@@ -292,7 +302,7 @@ export function mergeKnownConnectorCommands(connectorId: unknown, grantCommands:
     out.push(command);
   };
   for (const command of grantCommands) add(command);
-  if (connectorId === 'aokie') {
+  if (connectorId === 'aokie' && availableConnectorIds.includes('aokie')) {
     for (const command of AOKIE_CONNECTOR_COMMANDS) add(command);
   }
   return out;

@@ -10,9 +10,10 @@
 // the nodeCatalog↔executor parity test asserts this set matches the executor exactly:
 //   (a) BROWSER-SAFE — input/output/logic/AI/formlogic/connector/storage nodes the browser runner
 //       executes directly (storage_get/storage_set flow KV, docs §9; aokie_speak connector sugar).
-//   (b) DESKTOP-SERVICE-BACKED ("Requires FormLogic Desktop") — browser_action / image_gen /
-//       stt_transcribe / tts_speak drive a LOCAL FormLogic Desktop service over its loopback HTTP
-//       API; they declare `requiresDesktopService` and render a "Runs on FormLogic Desktop" badge.
+//   (b) DESKTOP-SERVICE-BACKED ("Requires FormLogic Desktop") — browser_action / image_gen drive
+//       a LOCAL FormLogic Desktop service over its loopback HTTP API; they declare
+//       `requiresDesktopService` and render a "Runs on FormLogic Desktop" badge. Speech nodes are
+//       endpoint-based AI nodes; their optional Desktop service id just resolves an endpoint.
 //       Reachable → real execution; unreachable → an actionable "install & start it" node_failed.
 import {
   Zap,
@@ -76,9 +77,9 @@ export type FieldType =
   /** Connector command — a datalist of the chosen connector's known commands, else free text. */
   | 'connectorCommand'
   /**
-   * Desktop service id — a select of the paired Desktop's running services (fetched live via
-   * `desktopClient.services.list()`), else free text when Desktop is unpaired/unreachable.
-   * Backs `http_request`'s optional `service` field (docs §4).
+   * Desktop service id — a select of all services advertised by the paired Desktop (fetched live
+   * via `desktopClient.services.list()`), else free text when Desktop is unpaired/unreachable.
+   * Desktop auto-starts services by id/port, so non-running entries are valid choices too.
    */
   | 'desktopService';
 
@@ -772,7 +773,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
     icon: Image,
     accent: 'slate',
     executable: true,
-    requiresDesktopService: 'Krea-2 Turbo (image generation)',
+    requiresDesktopService: 'Krea-2 Turbo (Text-to-Image)',
     output: 'Object { imageUrl } (a link to the generated image) or { dataUrl } — reference as $nodes.<id>.imageUrl.',
     inputs: IN,
     outputs: OUT,
@@ -782,19 +783,18 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'height', label: 'Height', type: 'number', placeholder: '1024' },
       { key: 'steps', label: 'Steps', type: 'number', placeholder: '8', help: 'Optional. Sampling steps.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: '(service default)', help: 'Optional. For an OpenAI-compatible endpoint.' },
-      { key: 'service', label: 'Service id', type: 'text', placeholder: 'krea2', help: 'Optional. The Desktop service id (default krea2).' },
+      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: 'krea2', help: 'Optional. The Desktop service id (default krea2).' },
       { key: 'endpoint', label: 'Endpoint override', type: 'text', placeholder: '(auto) http://127.0.0.1:17910/generate', help: 'Optional. A full loopback POST URL (native /generate or /v1/images/generations).' },
     ],
   },
   {
     type: 'stt_transcribe',
     label: 'Speech → text',
-    category: 'desktop',
-    description: 'Transcribe audio to text via a configured OpenAI-compatible transcription endpoint running on FormLogic Desktop.',
+    category: 'ai',
+    description: 'Transcribe audio to text via any OpenAI-compatible endpoint — e.g. one running on FormLogic Desktop.',
     icon: Mic,
     accent: 'slate',
     executable: true,
-    requiresDesktopService: 'speech-to-text',
     output: 'Object { text } — the transcript. Reference as $nodes.<id>.text.',
     inputs: IN,
     outputs: OUT,
@@ -802,18 +802,17 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'endpoint', label: 'Endpoint', type: 'text', required: true, placeholder: 'http://127.0.0.1:PORT/v1/audio/transcriptions', help: 'A local OpenAI-compatible transcription endpoint.' },
       { key: 'model', label: 'Model', type: 'text', placeholder: 'whisper-1', help: 'Optional.' },
       { key: 'audio', label: 'Audio (selector)', type: 'text', required: true, placeholder: '$inputs.recording', help: 'A data URL, URL or base64 audio string.' },
-      { key: 'service', label: 'Service id', type: 'text', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
+      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
     ],
   },
   {
     type: 'tts_speak',
     label: 'Text → speech',
-    category: 'desktop',
-    description: 'Synthesise speech from text via a configured OpenAI-compatible speech endpoint running on FormLogic Desktop.',
+    category: 'ai',
+    description: 'Synthesise speech from text via any OpenAI-compatible endpoint — e.g. one running on FormLogic Desktop.',
     icon: Volume2,
     accent: 'slate',
     executable: true,
-    requiresDesktopService: 'text-to-speech',
     output: 'Object { audioUrl } (a link or data: URL to the audio) or { dataUrl } — reference as $nodes.<id>.audioUrl.',
     inputs: IN,
     outputs: OUT,
@@ -822,7 +821,7 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'model', label: 'Model', type: 'text', placeholder: 'tts-1', help: 'Optional.' },
       { key: 'voice', label: 'Voice', type: 'text', placeholder: 'alloy', help: 'Optional.' },
       { key: 'text', label: 'Text', type: 'textarea', required: true, placeholder: 'Hello {{inputs.name}} ({{...}} ok)', help: 'The text to speak.', referenceSyntax: 'template' },
-      { key: 'service', label: 'Service id', type: 'text', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
+      { key: 'service', label: 'Service id', type: 'desktopService', placeholder: '(optional)', help: 'Optional. A Desktop service id to resolve the endpoint from.' },
     ],
   },
 ];

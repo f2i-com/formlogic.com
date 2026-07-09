@@ -17,7 +17,6 @@ import {
   FileJson,
   Table,
   Share2,
-  LayoutTemplate,
   Clock,
   ArrowRight,
   Inbox,
@@ -26,10 +25,11 @@ import {
   Package,
   Boxes,
   ChevronRight,
+  Plug,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { Card, CardContent } from '../components/ui/Card';
-import { ListRowSkeleton } from '../components/ui/Skeleton';
+import { ListRowSkeleton, Skeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -44,6 +44,7 @@ import { EmbedModal, TemplateSelector, PackImportModal, useFormPreview } from '.
 import { WelcomeModal } from '../components/onboarding/WelcomeModal';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
+import { ConnectAiModal } from '../components/mcp/ConnectAiModal';
 import type { FormTemplate } from '../data/formTemplates';
 import type { App } from '../types/app';
 import type { Form } from '../types/form';
@@ -149,7 +150,7 @@ function buildPulseFromTimestamps(timestamps: string[]): PulseDay[] {
 
 const EMPTY_PULSE_BAR_H = 2; // px — the sliver a zero-response day still shows
 
-function PulseStrip({ days, className }: { days: PulseDay[]; className?: string }) {
+function PulseStrip({ days, className, loading = false }: { days: PulseDay[]; className?: string; loading?: boolean }) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   // `realMax` is the true busiest-day count (0 for a quiet form); `scaleMax` floors that
   // to 1 purely so the height/opacity math below never divides by zero. Keep these
@@ -158,8 +159,23 @@ function PulseStrip({ days, className }: { days: PulseDay[]; className?: string 
   const scaleMax = Math.max(1, realMax);
   const barW = 5;
   const gap = 3;
-  const w = days.length * barW + (days.length - 1) * gap;
+  const barCount = days.length || PULSE_DAYS;
+  const w = barCount * barW + (barCount - 1) * gap;
   const h = 28;
+
+  if (loading) {
+    return (
+      <div className={cn('inline-flex items-end gap-[3px]', className)} style={{ width: w, height: h }} aria-hidden="true">
+        {Array.from({ length: barCount }).map((_, i) => (
+          <span
+            key={i}
+            className="w-[5px] animate-pulse rounded-sm bg-primary-200/70 dark:bg-primary-500/20"
+            style={{ height: `${8 + ((i * 7) % 18)}px`, opacity: i === barCount - 1 ? 0.65 : 0.35 }}
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className={cn('relative inline-block', className)} style={{ width: w, height: h }}>
@@ -480,6 +496,7 @@ export function Dashboard() {
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [showPackImport, setShowPackImport] = useState(false);
+  const [showHandToAi, setShowHandToAi] = useState(false);
 
   // Apps panel (cloud mode only — apps live on the server). Reuses the app store, which
   // persists across visits, so the section renders instantly on revisit.
@@ -571,7 +588,10 @@ export function Dashboard() {
   // Fetch stats from API when in API mode
   useEffect(() => {
     let cancelled = false;
-    async function fetchStats() {
+    void (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      if (storageMode === 'api') setStatsReady(false);
       if (storageMode === 'api' && user && forms.length > 0) {
         try {
           let totalResponses = 0;
@@ -648,9 +668,7 @@ export function Dashboard() {
         setStats(localStats);
         setStatsReady(true);
       }
-    }
-
-    fetchStats();
+    })();
     return () => { cancelled = true; };
   }, [forms, storageMode, user, localStats]);
 
@@ -717,6 +735,7 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getResponsesByFormId is a stable store method reading get().responses; 'responses' must stay so the memo recomputes when stored responses change
   }, [forms, responses, getResponsesByFormId]);
   const recentResponses = storageMode === 'api' ? apiRecent : localRecentResponses;
+  const statsLoading = storageMode === 'api' && !statsReady;
 
   // Show getting started only for genuinely-new users — not during the initial
   // cloud-data load (which would briefly flash the onboarding hero + zeroed stats).
@@ -764,9 +783,16 @@ export function Dashboard() {
             <Button onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
               New form
             </Button>
-            <Button variant="outline" onClick={() => setShowTemplateSelector(true)} leftIcon={<LayoutTemplate className="h-4 w-4" />}>
-              Templates
-            </Button>
+            {storageMode === 'api' && (
+              <>
+                <Button variant="outline" onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />}>
+                  Create app
+                </Button>
+                <Button variant="outline" onClick={() => setShowHandToAi(true)} leftIcon={<Plug className="h-4 w-4" />}>
+                  Hand to an AI
+                </Button>
+              </>
+            )}
             <Button variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
               Import pack
             </Button>
@@ -858,6 +884,7 @@ export function Dashboard() {
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
                   const n = storageMode === 'api' ? (responseCounts[form.id] ?? 0) : formResponses.length;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
+                  const countTitle = statsLoading ? 'Loading responses' : String(n);
                   return (
                     <Card
                       key={form.id}
@@ -904,7 +931,11 @@ export function Dashboard() {
                               <span className="hidden sm:inline">•</span>
                               <span className="hidden sm:inline">{fieldCount} field{fieldCount === 1 ? '' : 's'}</span>
                               <span className="sm:hidden">•</span>
-                              <span className="sm:hidden">{n} response{n === 1 ? '' : 's'}</span>
+                              {statsLoading ? (
+                                <Skeleton className="h-3 w-20 sm:hidden" />
+                              ) : (
+                                <span className="sm:hidden">{n} response{n === 1 ? '' : 's'}</span>
+                              )}
                             </div>
                           </div>
 
@@ -912,13 +943,17 @@ export function Dashboard() {
                               this replaces the meta-line response count on ≥sm (kept above, for mobile,
                               where the strip is hidden to avoid crowding the row). */}
                           <div className="hidden sm:flex items-center gap-3 flex-none">
-                            <PulseStrip days={days} />
-                            <span
-                              className="w-10 flex-none truncate text-right text-lg font-semibold tabular-nums text-gray-900 dark:text-white"
-                              title={String(n)}
-                            >
-                              {n}
-                            </span>
+                            <PulseStrip days={days} loading={statsLoading} />
+                            {statsLoading ? (
+                              <Skeleton className="h-6 w-10 flex-none" />
+                            ) : (
+                              <span
+                                className="w-10 flex-none truncate text-right text-lg font-semibold tabular-nums text-gray-900 dark:text-white"
+                                title={countTitle}
+                              >
+                                {n}
+                              </span>
+                            )}
                           </div>
 
                           {/* stopPropagation: the whole row navigates to the builder — inner
@@ -1043,7 +1078,11 @@ export function Dashboard() {
 
             <Card>
               <CardContent className="p-0">
-                {recentResponses.length === 0 ? (
+                {statsLoading ? (
+                  <div className="space-y-3 p-4" aria-busy="true" aria-label="Loading recent activity">
+                    {Array.from({ length: 4 }).map((_, i) => <ListRowSkeleton key={i} />)}
+                  </div>
+                ) : recentResponses.length === 0 ? (
                   <EmptyState
                     icon={Inbox}
                     title="No responses yet"
@@ -1143,6 +1182,8 @@ export function Dashboard() {
         isOpen={showPackImport}
         onClose={() => setShowPackImport(false)}
       />
+
+      <ConnectAiModal isOpen={showHandToAi} onClose={() => { setShowHandToAi(false); fetchApps(); }} creator />
 
       {/* Delete Confirmation */}
       <ConfirmDialog

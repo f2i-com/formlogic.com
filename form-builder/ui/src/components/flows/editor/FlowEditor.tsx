@@ -17,7 +17,7 @@ import {
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History, X, Zap } from 'lucide-react';
+import { Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, X, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
@@ -432,19 +432,19 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
     <div ref={editorRootRef} className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-gray-900 dark:text-white">{flow.name}</p>
             <p className="hidden truncate font-mono text-[11px] text-gray-400 dark:text-slate-500 sm:block">
               {flow.appId ? 'app flow' : 'workspace flow'} · {flow.slug} · {nodes.length} node{nodes.length === 1 ? '' : 's'}
             </p>
           </div>
-          <div className="hidden flex-none md:flex">
-            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} />
+          <div className="flex flex-none">
+            <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} compact={editorLayout.toolbar !== 'full'} />
           </div>
         </div>
 
-        <ToolbarDivider />
+        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
         <div className="flex flex-none items-center gap-1 whitespace-nowrap">
           <Button
             variant="outline"
@@ -454,7 +454,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             className={cn('whitespace-nowrap', editorLayout.palette === 'inline' && 'hidden')}
             aria-label="Add node"
           >
-            <span className="hidden sm:inline">Add node</span>
+            {editorLayout.toolbar === 'full' && <span>Add node</span>}
           </Button>
           <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
             <Undo2 className="h-4 w-4" />
@@ -464,7 +464,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           </Button>
         </div>
 
-        <ToolbarDivider />
+        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
         <div className="flex flex-none items-center gap-1 whitespace-nowrap">
           <Button
             variant={triggersOpen ? 'secondary' : 'ghost'}
@@ -475,7 +475,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             aria-pressed={triggersOpen}
             aria-label="Triggers"
           >
-            <span className="hidden lg:inline">Triggers</span>
+            {editorLayout.toolbar === 'full' && <span>Triggers</span>}
             <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
               {triggerCount}
             </span>
@@ -488,17 +488,17 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             aria-pressed={historyOpen}
             aria-label="History"
           >
-            <span className="hidden lg:inline">History</span>
+            {editorLayout.toolbar === 'full' && <span>History</span>}
           </Button>
           <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="whitespace-nowrap" aria-label="Test run">
-            <span className="hidden sm:inline">Test run</span>
+            {editorLayout.toolbar === 'full' && <span>Test run</span>}
           </Button>
         </div>
 
-        <ToolbarDivider />
+        {editorLayout.toolbar === 'full' && <ToolbarDivider />}
         <div className="flex flex-none items-center gap-1 whitespace-nowrap">
           <Button size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />} aria-label="Save flow">
-            <span className="hidden sm:inline">Save</span>
+            {editorLayout.toolbar !== 'tiny' && <span>Save</span>}
           </Button>
         </div>
       </div>
@@ -605,7 +605,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
 }
 
 function ToolbarDivider() {
-  return <div className="h-4 w-px flex-none bg-gray-200 dark:bg-slate-700" aria-hidden="true" />;
+  return <div className="hidden h-4 w-px flex-none bg-gray-200 dark:bg-slate-700 sm:block" aria-hidden="true" />;
 }
 
 function FlowBottomSheet({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
@@ -636,7 +636,56 @@ function FlowBottomSheet({ title, open, onClose, children }: { title: string; op
   );
 }
 
-function SaveStatus({ dirty, saving, failed, onRetry }: { dirty: boolean; saving: boolean; failed: boolean; onRetry: () => void }) {
+function SaveStatus({
+  dirty,
+  saving,
+  failed,
+  onRetry,
+  compact = false,
+}: {
+  dirty: boolean;
+  saving: boolean;
+  failed: boolean;
+  onRetry: () => void;
+  compact?: boolean;
+}) {
+  if (compact) {
+    if (saving) {
+      return (
+        <span role="status" aria-label="Saving" title="Saving" className="flex h-8 w-8 items-center justify-center text-gray-500 dark:text-slate-400">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        </span>
+      );
+    }
+    if (failed) {
+      return (
+        <button
+          type="button"
+          onClick={onRetry}
+          aria-label="Save failed – retry"
+          title="Save failed – retry"
+          className="flex h-8 w-8 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/15"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+      );
+    }
+    const label = dirty ? 'Unsaved changes' : 'Saved';
+    return (
+      <span
+        role="img"
+        aria-label={label}
+        title={label}
+        className={cn(
+          'flex h-8 w-8 items-center justify-center rounded-full',
+          dirty ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400',
+        )}
+      >
+        {dirty ? <span className="h-2 w-2 rounded-full bg-amber-500" /> : <Check className="h-3.5 w-3.5" />}
+      </span>
+    );
+  }
+
   if (saving) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">

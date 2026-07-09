@@ -10,10 +10,7 @@ import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { formatRelativeTime } from './relativeTime';
 import { statusChipStyle } from './runHistoryChip';
-import {
-  FLOW_STARTER_TEMPLATES,
-  type FlowStarterTemplate,
-} from './starterTemplates';
+import { flowStarterTemplatesForConnectors, type FlowStarterTemplate } from './starterTemplates';
 import {
   describeFlowsLastSeen,
   type FlowsDesktopPresence,
@@ -32,6 +29,7 @@ interface FlowsOverviewProps {
   desktopPresence: FlowsDesktopPresence;
   onNewFlow: (template?: FlowStarterTemplate) => void;
   onOpenRunFlow: (flowId: string) => void;
+  availableConnectorIds?: readonly string[];
 }
 
 function RunStatusChip({ run }: { run: FlowRunLog }) {
@@ -39,7 +37,7 @@ function RunStatusChip({ run }: { run: FlowRunLog }) {
   return <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>{label}</span>;
 }
 
-export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow }: FlowsOverviewProps) {
+export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow, availableConnectorIds = [] }: FlowsOverviewProps) {
   const [runs, setRuns] = useState<FlowRunLog[] | null>(null);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [loadingRuns, setLoadingRuns] = useState(false);
@@ -49,6 +47,7 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
     for (const flow of flows) if (!map.has(flow.slug)) map.set(flow.slug, flow);
     return map;
   }, [flows]);
+  const visibleTemplates = useMemo(() => flowStarterTemplatesForConnectors(availableConnectorIds), [availableConnectorIds]);
 
   const loadRuns = useCallback(async () => {
     setLoadingRuns(true);
@@ -158,7 +157,7 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
             <p className="text-xs text-gray-500 dark:text-slate-400">Open the New flow dialog with a starter preselected.</p>
           </div>
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            {FLOW_STARTER_TEMPLATES.map((template) => {
+            {visibleTemplates.map((template) => {
               const Icon = TEMPLATE_ICON[template.id] ?? FileText;
               return (
                 <button

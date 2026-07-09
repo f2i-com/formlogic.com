@@ -1255,7 +1255,7 @@ fn base64_encode(input: &[u8]) -> String {
 const BROWSER_SERVICE: &str = "playwright-browser";
 const BROWSER_HUMAN: &str = "Playwright Browser";
 const IMAGE_SERVICE: &str = "krea2";
-const IMAGE_HUMAN: &str = "Krea-2 Turbo (image generation)";
+const IMAGE_HUMAN: &str = "Krea-2 Turbo (Text-to-Image)";
 
 /// Resolve the browser service BASE: node `endpoint` override (allow-listed) or the registry.
 fn resolve_browser_base(node: &GraphNode, deps: &RunDeps) -> Result<String, FlowError> {

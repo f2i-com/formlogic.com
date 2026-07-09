@@ -152,6 +152,10 @@ export function FlowsWorkspace() {
   }, [selectedFlow, groups]);
   const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
+  const availableConnectorIds = useMemo(
+    () => [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort(),
+    [apps],
+  );
   const effectiveLibraryCollapsed = selectedFlowPresent ? workspaceLayout.library === 'rail' : libraryCollapsed;
   const rightPanelInline = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'rail';
   const rightPanelDrawer = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'drawer';
@@ -485,6 +489,7 @@ export function FlowsWorkspace() {
               <FlowsOverview
                 flows={allFlows}
                 desktopPresence={desktopPresence}
+                availableConnectorIds={availableConnectorIds}
                 onNewFlow={openNewFlow}
                 onOpenRunFlow={(flowId) => {
                   selectFlow(flowId);

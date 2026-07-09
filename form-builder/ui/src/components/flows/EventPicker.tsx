@@ -7,10 +7,12 @@ import { useMemo, useState } from 'react';
 import { Check, Lightbulb, Search } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
-  FLOW_EVENT_GROUPS,
+  flowEventGroupsForConnectors,
   flowEventsForGroup,
   type FlowEventCatalogEntry,
 } from './flowEventCatalog';
+
+const EMPTY_CONNECTOR_IDS: readonly string[] = [];
 
 export interface EventPickerChange {
   event: string;
@@ -23,6 +25,7 @@ interface EventPickerProps {
   ariaLabel?: string;
   placeholder?: string;
   inputClassName?: string;
+  connectorIds?: readonly string[];
 }
 
 function matches(entry: FlowEventCatalogEntry, query: string): boolean {
@@ -40,19 +43,22 @@ export function EventPicker({
   value,
   onChange,
   ariaLabel = 'Event name',
-  placeholder = 'aokie.call.incoming',
+  placeholder,
   inputClassName,
+  connectorIds = EMPTY_CONNECTOR_IDS,
 }: EventPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const hasAokie = connectorIds.includes('aokie');
+  const effectivePlaceholder = placeholder ?? (hasAokie ? 'aokie.call.incoming' : 'form.submitted');
 
   const grouped = useMemo(() => {
     const q = query.trim();
-    return FLOW_EVENT_GROUPS.map((group) => ({
+    return flowEventGroupsForConnectors(connectorIds).map((group) => ({
       group,
       entries: flowEventsForGroup(group.id).filter((entry) => matches(entry, q)),
     })).filter((group) => group.entries.length > 0);
-  }, [query]);
+  }, [connectorIds, query]);
 
   const choose = (entry: FlowEventCatalogEntry) => {
     onChange({
@@ -70,7 +76,7 @@ export function EventPicker({
         <input
           type="text"
           value={value}
-          placeholder={placeholder}
+          placeholder={effectivePlaceholder}
           role="combobox"
           aria-expanded={open}
           aria-label={ariaLabel}

@@ -278,7 +278,8 @@ function TriggerInputsField({
   const removeRow = (i: number) => commit(rows.filter((_, j) => j !== i));
 
   const existing = new Set(rows.map((r) => r.name));
-  const quickAdds = context.appScoped ? AOKIE_QUICK_INPUTS.filter((q) => !existing.has(q.name)) : [];
+  const hasAokieConnector = context.connectors.some((connector) => connector.id === 'aokie');
+  const quickAdds = hasAokieConnector ? AOKIE_QUICK_INPUTS.filter((q) => !existing.has(q.name)) : [];
 
   return (
     <div className="block">
@@ -458,6 +459,7 @@ function ConnectorField({
 }) {
   const raw = typeof value === 'string' ? value : '';
   const ids = context.connectors.map((c) => c.id);
+  const placeholder = context.connectors.some((connector) => connector.id === 'aokie') ? spec.placeholder : 'connector id';
   return (
     <label className="block">
       <span className={LABEL_CLS}>{spec.label}</span>
@@ -477,7 +479,7 @@ function ConnectorField({
         <input
           type="text"
           value={raw}
-          placeholder={spec.placeholder}
+          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
           className={INPUT_CLS}
         />
@@ -505,7 +507,9 @@ function ConnectorCommandField({
 }) {
   const raw = typeof value === 'string' ? value : '';
   const grantCommands = context.connectors.find((c) => c.id === connectorId)?.commands ?? [];
-  const commands = mergeKnownConnectorCommands(connectorId, grantCommands);
+  const availableConnectorIds = context.connectors.map((connector) => connector.id);
+  const commands = mergeKnownConnectorCommands(connectorId, grantCommands, availableConnectorIds);
+  const placeholder = availableConnectorIds.includes('aokie') ? spec.placeholder : 'command';
   const listId = `connector-cmds-${nodeId}`;
   return (
     <label className="block">
@@ -513,7 +517,7 @@ function ConnectorCommandField({
       <input
         type="text"
         value={raw}
-        placeholder={spec.placeholder}
+        placeholder={placeholder}
         list={commands.length > 0 ? listId : undefined}
         onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
         className={INPUT_CLS}
@@ -531,9 +535,9 @@ function ConnectorCommandField({
 }
 
 /**
- * Desktop-service id picker (backs `http_request`'s optional `service` field): a select of the
- * paired Desktop's currently-running services, else free text when Desktop is unpaired,
- * unreachable, or reports none — same graceful-degradation philosophy as `ConnectorField`.
+ * Desktop-service id picker: a select of all services the paired Desktop advertises, else free
+ * text when Desktop is unpaired, unreachable, or reports none. Desktop auto-starts services by
+ * id/port, so non-running entries are valid choices.
  * Unlike `ConnectorField` (which reads already-loaded `context.connectors` synchronously), the
  * service list isn't preloaded anywhere in the editor context, so this component fetches
  * `desktopClient.services.list()` itself on mount, with a simple loading state.

@@ -20,12 +20,24 @@ export type FlowPaletteTier = 'inline' | 'rail' | 'hidden';
 export type FlowPropertiesTier = 'inline' | 'sheet';
 export type FlowRightPanelTier = 'rail' | 'drawer';
 export type FlowLibraryTier = 'expanded' | 'rail';
+/**
+ * Toolbar density from the EDITOR's measured width (a docked right panel can squeeze the editor
+ * column at any viewport, so viewport breakpoints are the wrong signal):
+ *   'full'    — button labels + the full save-status chip (fits ~940px and up)
+ *   'compact' — icon-only Triggers/History/Test run/Add node, dot-only save status, no dividers
+ *   'tiny'    — compact plus an icon-only Save button (below ~560px)
+ */
+export type FlowToolbarTier = 'full' | 'compact' | 'tiny';
+
+export const TOOLBAR_FULL_MIN_W = 940;
+export const TOOLBAR_COMPACT_MIN_W = 560;
 
 export interface ResolvedEditorLayout {
   palette: FlowPaletteTier;
   properties: FlowPropertiesTier;
   rightPanel: FlowRightPanelTier;
   library: FlowLibraryTier;
+  toolbar: FlowToolbarTier;
 }
 
 export interface ResolveEditorLayoutInput {
@@ -102,11 +114,27 @@ export function resolveEditorLayout(input: ResolveEditorLayoutInput): ResolvedEd
         : 'drawer';
   }
 
-  return { palette, properties, rightPanel, library };
+  // Toolbar density: measured editor width decides; below-md is always at least compact, and an
+  // unmeasured first paint falls back to the legacy breakpoint signal.
+  let toolbar: FlowToolbarTier;
+  if (measured(input.editorWidth)) {
+    toolbar = input.editorWidth >= TOOLBAR_FULL_MIN_W ? 'full' : input.editorWidth >= TOOLBAR_COMPACT_MIN_W ? 'compact' : 'tiny';
+  } else {
+    toolbar = belowMd ? 'compact' : legacyInline ? 'full' : 'compact';
+  }
+  if (belowMd && toolbar === 'full') toolbar = 'compact';
+
+  return { palette, properties, rightPanel, library, toolbar };
 }
 
 export function sameResolvedEditorLayout(a: ResolvedEditorLayout, b: ResolvedEditorLayout): boolean {
-  return a.palette === b.palette && a.properties === b.properties && a.rightPanel === b.rightPanel && a.library === b.library;
+  return (
+    a.palette === b.palette &&
+    a.properties === b.properties &&
+    a.rightPanel === b.rightPanel &&
+    a.library === b.library &&
+    a.toolbar === b.toolbar
+  );
 }
 
 export interface PatchHistoryBurst {

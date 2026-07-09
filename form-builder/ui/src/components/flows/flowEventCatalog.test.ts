@@ -10,6 +10,8 @@ import {
   AOKIE_CONNECTOR_COMMANDS,
   AOKIE_EVENT_NAMES,
   FLOW_EVENT_CATALOG,
+  flowEventGroupsForConnectors,
+  mergeKnownConnectorCommands,
   type FlowTriggerEventEntry,
 } from './flowEventCatalog';
 
@@ -75,5 +77,25 @@ describe('flowEventCatalog parity', () => {
     const aokie = manifest().connectors.find((connector) => connector.id === 'aokie');
     expect(aokie?.commands).toEqual([...AOKIE_CONNECTOR_COMMANDS]);
     expect(AOKIE_CONNECTOR_COMMANDS).toContain('settings.set');
+  });
+
+  it('filters Aokie event groups unless the aokie connector is available', () => {
+    expect(flowEventGroupsForConnectors([]).map((group) => group.id)).toEqual(['formlogic']);
+    expect(flowEventGroupsForConnectors(['stripe']).map((group) => group.id)).toEqual(['formlogic']);
+    expect(flowEventGroupsForConnectors(['aokie']).map((group) => group.id)).toEqual([
+      'aokie.calls',
+      'aokie.sms',
+      'aokie.device',
+      'formlogic',
+    ]);
+  });
+
+  it('only injects manifest-known Aokie commands when aokie is available', () => {
+    expect(mergeKnownConnectorCommands('aokie', ['sms.send'], [])).toEqual(['sms.send']);
+    const merged = mergeKnownConnectorCommands('aokie', ['sms.send'], ['aokie']);
+    expect(merged[0]).toBe('sms.send');
+    expect(new Set(merged)).toEqual(new Set(AOKIE_CONNECTOR_COMMANDS));
+    expect(merged).toHaveLength(AOKIE_CONNECTOR_COMMANDS.length);
+    expect(mergeKnownConnectorCommands('stripe', ['charge.create'], ['aokie'])).toEqual(['charge.create']);
   });
 });

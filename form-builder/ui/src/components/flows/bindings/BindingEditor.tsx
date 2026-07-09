@@ -125,9 +125,10 @@ function draftFromBinding(
   flows: FlowDefinition[],
   forms: FlowFormOption[],
   workspaceFormOnly: boolean,
+  hasAokieConnector: boolean,
 ): BindingDraft {
   return {
-    event: workspaceFormOnly ? 'form.submitted' : binding?.event ?? 'aokie.call.incoming',
+    event: workspaceFormOnly ? 'form.submitted' : binding?.event ?? (hasAokieConnector ? 'aokie.call.incoming' : 'form.submitted'),
     flow: binding?.flow ?? flows[0]?.slug ?? '',
     formId: binding?.formId ?? (workspaceFormOnly ? forms[0]?.id ?? '' : ''),
     mode: binding?.mode ?? 'async',
@@ -297,7 +298,12 @@ export function BindingEditor({
   onDelete,
 }: BindingEditorProps) {
   const formOptions = useMemo(() => formsForContext(forms, context), [forms, context]);
-  const [draft, setDraft] = useState<BindingDraft>(() => draftFromBinding(binding, flows, formOptions, workspaceFormOnly));
+  const availableConnectorIds = useMemo(
+    () => [...new Set([...connectors.map((connector) => connector.id), ...context.connectors.map((connector) => connector.id)])],
+    [connectors, context.connectors],
+  );
+  const hasAokieConnector = availableConnectorIds.includes('aokie');
+  const [draft, setDraft] = useState<BindingDraft>(() => draftFromBinding(binding, flows, formOptions, workspaceFormOnly, hasAokieConnector));
   const [saving, setSaving] = useState(false);
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
   const [commandListPrefix] = useState(() => generateId());
@@ -387,6 +393,7 @@ export function BindingEditor({
           ) : (
             <EventPicker
               value={draft.event}
+              connectorIds={availableConnectorIds}
               onChange={(next) => patch({
                 event: next.event,
                 ...(next.event === 'form.submitted' && !draft.formId && formOptions[0] ? { formId: formOptions[0].id } : {}),
@@ -572,12 +579,12 @@ export function BindingEditor({
               )}
               {action.type === 'connector.request' && (() => {
                 const grantCommands = connectors.find((c) => c.id === action.connectorId)?.commands ?? [];
-                const commands = mergeKnownConnectorCommands(action.connectorId, grantCommands);
+                const commands = mergeKnownConnectorCommands(action.connectorId, grantCommands, availableConnectorIds);
                 const commandListId = `flow-action-commands-${commandListPrefix}-${i}`;
                 return (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <input value={action.connectorId ?? ''} onChange={(e) => patchAction(i, { connectorId: e.target.value || undefined })} placeholder="connectorId (aokie)" aria-label={`Action ${i + 1} connector`} className={MONO_INPUT_CLS} />
-                    <input value={action.command ?? ''} list={commands.length > 0 ? commandListId : undefined} onChange={(e) => patchAction(i, { command: e.target.value || undefined })} placeholder="command (sms.send)" aria-label={`Action ${i + 1} command`} className={MONO_INPUT_CLS} />
+                    <input value={action.connectorId ?? ''} onChange={(e) => patchAction(i, { connectorId: e.target.value || undefined })} placeholder={hasAokieConnector ? 'connectorId (aokie)' : 'connectorId'} aria-label={`Action ${i + 1} connector`} className={MONO_INPUT_CLS} />
+                    <input value={action.command ?? ''} list={commands.length > 0 ? commandListId : undefined} onChange={(e) => patchAction(i, { command: e.target.value || undefined })} placeholder={hasAokieConnector ? 'command (sms.send)' : 'command'} aria-label={`Action ${i + 1} command`} className={MONO_INPUT_CLS} />
                     {commands.length > 0 && (
                       <datalist id={commandListId}>
                         {commands.map((command) => <option key={command} value={command} />)}

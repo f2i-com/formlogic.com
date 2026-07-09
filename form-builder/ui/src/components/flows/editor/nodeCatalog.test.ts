@@ -102,6 +102,22 @@ describe('context-aware palette (docs §4)', () => {
       expect(isNodeAvailableInContext(getNodeSpec(type)!, workspaceCtx), `${type} should always show`).toBe(true);
     }
   });
+
+  it('models speech nodes as endpoint-based AI nodes, not desktop-service-required nodes', () => {
+    for (const type of ['stt_transcribe', 'tts_speak']) {
+      const spec = getNodeSpec(type)!;
+      expect(spec.category).toBe('ai');
+      expect(spec.requiresDesktopService).toBeUndefined();
+      expect(spec.description).toContain('OpenAI-compatible endpoint');
+      expect(spec.properties.find((property) => property.key === 'service')?.type).toBe('desktopService');
+    }
+  });
+
+  it('uses the registry human name for the Krea image service picker/badge', () => {
+    const spec = getNodeSpec('image_gen')!;
+    expect(spec.requiresDesktopService).toBe('Krea-2 Turbo (Text-to-Image)');
+    expect(spec.properties.find((property) => property.key === 'service')?.type).toBe('desktopService');
+  });
 });
 
 describe('evalShowIf (conditional property visibility)', () => {

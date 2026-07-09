@@ -15,6 +15,7 @@ export interface FlowStarterTemplate {
   summary: string;
   /** Optional "works with <app>" hint for templates that only make sense with a given app/connector. */
   appHint?: string;
+  requiresConnector?: 'aokie';
   nodeCapabilities: string[];
   flowJson: WorkflowGraph;
 }
@@ -50,6 +51,7 @@ export const FLOW_STARTER_TEMPLATES: FlowStarterTemplate[] = [
       'When a call comes in, the Trigger provides the caller\'s phone number. Find the first Customer whose phone matches, check whether one was found, and greet a known caller by name. The worked example from the node reference.',
     summary: 'Looks up a caller by phone, then greets them by name.',
     appHint: 'Works with the Aokie Receptionist app',
+    requiresConnector: 'aokie',
     nodeCapabilities: ['formlogic.responses.read'],
     flowJson: {
       nodes: [
@@ -91,6 +93,7 @@ export const FLOW_STARTER_TEMPLATES: FlowStarterTemplate[] = [
       'The Trigger provides the call transcript. Build a prompt from it, ask the local AI for a two-sentence summary, and return that summary.',
     summary: 'Summarises a call transcript with the AI.',
     appHint: 'Works with the Aokie Receptionist app',
+    requiresConnector: 'aokie',
     nodeCapabilities: ['model.llm.local'],
     flowJson: {
       nodes: [
@@ -123,6 +126,7 @@ export const FLOW_STARTER_TEMPLATES: FlowStarterTemplate[] = [
       'The Trigger provides the sender and the incoming SMS. Ask the local AI for a short reply, then return it as a pending-approval message for a human to approve before it is sent.',
     summary: 'Drafts an SMS reply for a human to approve.',
     appHint: 'Works with the Aokie Receptionist app',
+    requiresConnector: 'aokie',
     nodeCapabilities: ['model.llm.local'],
     flowJson: {
       nodes: [
@@ -148,6 +152,11 @@ export const FLOW_STARTER_TEMPLATES: FlowStarterTemplate[] = [
     },
   },
 ];
+
+export function flowStarterTemplatesForConnectors(connectorIds: readonly string[] = []): FlowStarterTemplate[] {
+  const available = new Set(connectorIds);
+  return FLOW_STARTER_TEMPLATES.filter((template) => !template.requiresConnector || available.has(template.requiresConnector));
+}
 
 /** Slugify a name for the flow slug (a-z0-9 + single hyphens). */
 export function slugifyFlowName(name: string): string {

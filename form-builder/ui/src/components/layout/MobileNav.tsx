@@ -1,20 +1,48 @@
-import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, FileText, Plus, Boxes, Workflow } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { LayoutDashboard, FileText, Plus, Boxes, Workflow, Plug, FilePlus2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useCreateFormFlow } from '../../hooks/useCreateFormFlow';
 import { useAuthStore } from '../../stores/authStore';
+import { ConnectAiModal } from '../mcp/ConnectAiModal';
 
 export function MobileNav() {
   // Tapping "Create" opens the New Form picker (template or blank), not a blank form.
   const { openNewForm, newFormPicker } = useCreateFormFlow();
+  const navigate = useNavigate();
   const isDemo = useAuthStore((s) => !!s.user?.isDemo);
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false);
+  const [showHandToAi, setShowHandToAi] = useState(false);
   // The demo account's Home/Dashboard lives at /dashboard ("/" is its marketing landing).
   const homePath = isDemo ? '/dashboard' : '/';
+
+  useEffect(() => {
+    if (!quickMenuOpen) return undefined;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setQuickMenuOpen(false);
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [quickMenuOpen]);
+
+  const closeMenu = () => setQuickMenuOpen(false);
+  const handleNewForm = () => {
+    closeMenu();
+    openNewForm();
+  };
+  const handleNewApp = () => {
+    closeMenu();
+    navigate('/apps/new');
+  };
+  const handleHandToAi = () => {
+    closeMenu();
+    setShowHandToAi(true);
+  };
 
   const navItems = [
     { path: homePath, icon: LayoutDashboard, label: 'Home' },
     { path: '/forms', icon: FileText, label: 'Forms' },
-    { action: openNewForm, icon: Plus, label: 'Create', isAction: true },
+    { action: () => setQuickMenuOpen((open) => !open), icon: Plus, label: 'Create', isAction: true },
     // Boxes matches the Apps iconography on My Forms — Globe is reserved for "publish".
     { path: '/apps', icon: Boxes, label: 'Apps' },
     // Settings moved into the profile menu (Header); Flows is now a first-class section.
@@ -23,6 +51,25 @@ export function MobileNav() {
 
   return (
     <>
+    {quickMenuOpen && (
+      <>
+        <button
+          type="button"
+          aria-label="Close create menu"
+          className="fixed inset-0 z-[55] bg-transparent md:hidden"
+          onClick={closeMenu}
+        />
+        <div
+          role="menu"
+          aria-label="Create menu"
+          className="fixed bottom-[calc(4rem+env(safe-area-inset-bottom)+0.75rem)] left-1/2 z-[60] w-56 -translate-x-1/2 rounded-xl border border-gray-200/80 bg-white py-1 shadow-lg animate-scale-in dark:border-slate-800 dark:bg-slate-900 md:hidden"
+        >
+          <QuickMenuItem icon={FilePlus2} label="New form" onClick={handleNewForm} />
+          <QuickMenuItem icon={Boxes} label="New app" onClick={handleNewApp} />
+          <QuickMenuItem icon={Plug} label="Hand to an AI" onClick={handleHandToAi} />
+        </div>
+      </>
+    )}
     <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/50 backdrop-blur-xl border-t border-gray-100 dark:border-white/10 z-50 md:hidden safe-area-bottom">
       <div className="flex items-center justify-around h-16 px-2">
         {navItems.map((item, index) => {
@@ -31,11 +78,13 @@ export function MobileNav() {
               <button
                 key={index}
                 onClick={item.action}
-                aria-label="Create new form"
+                aria-label="Create"
+                aria-haspopup="menu"
+                aria-expanded={quickMenuOpen}
                 className="flex flex-col items-center justify-center gap-1 px-3 py-2 -mt-6 group cursor-pointer"
               >
                 <div className="w-14 h-14 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shadow-lg shadow-primary-500/30 dark:shadow-primary-500/40 transition-transform duration-200 group-hover:scale-105 group-active:scale-95 border-4 border-white dark:border-slate-950">
-                  <item.icon className="h-6 w-6 text-primary-foreground" />
+                  <item.icon className={cn('h-6 w-6 text-primary-foreground transition-transform duration-200', quickMenuOpen && 'rotate-45')} />
                 </div>
               </button>
             );
@@ -68,6 +117,21 @@ export function MobileNav() {
       </div>
     </nav>
     {newFormPicker}
+    <ConnectAiModal isOpen={showHandToAi} onClose={() => setShowHandToAi(false)} creator />
     </>
+  );
+}
+
+function QuickMenuItem({ icon: Icon, label, onClick }: { icon: typeof Plus; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      role="menuitem"
+      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      <Icon className="h-4 w-4 text-gray-400 dark:text-slate-500" />
+      {label}
+    </button>
   );
 }

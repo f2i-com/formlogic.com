@@ -105,6 +105,19 @@ describe('resolveEditorLayout', () => {
       rightPanelOpen: true,
     })).toMatchObject({ palette: 'hidden', properties: 'sheet', rightPanel: 'drawer' });
   });
+
+  it('degrades the toolbar by MEASURED editor width, not viewport breakpoints', () => {
+    // Wide viewport but a docked right panel squeezing the editor column → compact labels.
+    expect(resolveEditorLayout({ editorWidth: 940, workspaceWidth: 1440 }).toolbar).toBe('full');
+    expect(resolveEditorLayout({ editorWidth: 939, workspaceWidth: 1440 }).toolbar).toBe('compact');
+    expect(resolveEditorLayout({ editorWidth: 560, workspaceWidth: 1440 }).toolbar).toBe('compact');
+    expect(resolveEditorLayout({ editorWidth: 559, workspaceWidth: 1440 }).toolbar).toBe('tiny');
+    // Below md never renders full labels even if a stale wide measurement is around.
+    expect(resolveEditorLayout({ belowMd: true, editorWidth: 1200 }).toolbar).toBe('compact');
+    // First paint (no measurement): legacy breakpoint fallback.
+    expect(resolveEditorLayout({ editorWidth: null, legacyInline: true }).toolbar).toBe('full');
+    expect(resolveEditorLayout({ editorWidth: null, legacyInline: false }).toolbar).toBe('compact');
+  });
 });
 
 describe('patch history coalescing', () => {
