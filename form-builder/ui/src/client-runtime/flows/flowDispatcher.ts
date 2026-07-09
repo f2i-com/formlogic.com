@@ -133,6 +133,14 @@ export interface FlowDispatcherDeps {
   fetchFormBindings(formId: string): Promise<FlowBinding[]>;
   /** Executor capabilities OUTSIDE an app runtime (direct owner APIs, workspace KV). */
   workspaceExecutorDeps: FlowExecutorDeps;
+  /**
+   * True when a FormLogic Desktop flow runtime heartbeated recently. Connector
+   * (aokie.*) events are DESKTOP-FIRST: the desktop has the local LLM + speech
+   * services, so the browser defers those bindings/claims while the desktop is
+   * alive and only takes over when its heartbeat goes stale (~90s). Optional —
+   * absent (tests/legacy wiring) means "unknown", and the browser proceeds.
+   */
+  desktopRuntimeFresh?(): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +340,7 @@ function buildDefaultDeps(): FlowDispatcherDeps {
       return api.isDemoMode() ? demoApplyFormBindingOverlay(formId, bindings) : bindings;
     },
     workspaceExecutorDeps: buildWorkspaceExecutorDeps(),
+    desktopRuntimeFresh: defaultDesktopRuntimeFresh,
   };
 }
 
@@ -437,6 +446,50 @@ function stopClaimTimer(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Desktop-first routing for connector events.
+// ---------------------------------------------------------------------------
+
+/** Events owned by the desktop runtime while it is alive (local LLM + speech). */
+function isDesktopFirstEvent(name: string): boolean {
+  return name.startsWith('aokie.');
+}
+
+let desktopFreshCache: { at: number; fresh: boolean } | null = null;
+
+/** 30s-cached "is a desktop flow runtime heartbeating?" probe (default dep impl). */
+export async function defaultDesktopRuntimeFresh(): Promise<boolean> {
+  const now = Date.now();
+  if (desktopFreshCache && now - desktopFreshCache.at < 30_000) return desktopFreshCache.fresh;
+  let fresh = false;
+  try {
+    const res = await api.getDesktopConnections();
+    const rows = Array.isArray(res.data) ? res.data : [];
+    fresh = rows.some((c) => {
+      const raw = (c as { lastSeenAt?: unknown }).lastSeenAt;
+      if (typeof raw !== 'string' || raw === '') return false;
+      const normalised = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? raw.replace(' ', 'T') : raw;
+      const ms = Date.parse(normalised);
+      return !Number.isNaN(ms) && now - ms < 90_000;
+    });
+  } catch {
+    fresh = false; // can't tell → let the browser act (never strand an event)
+  }
+  desktopFreshCache = { at: now, fresh };
+  return fresh;
+}
+
+/** Should the browser defer this event to the desktop runtime? Never throws. */
+async function deferToDesktop(eventName: string): Promise<boolean> {
+  if (!isDesktopFirstEvent(eventName)) return false;
+  try {
+    const probe = getDeps().desktopRuntimeFresh;
+    return probe ? await probe() : false;
+  } catch {
+    return false;
+  }
+}
+
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
   void handleEvent({
     name: envelope.name,
@@ -490,6 +543,10 @@ function bindingMatches(binding: RuntimeFlowBinding, event: FlowTriggerEvent): b
 async function handleEvent(event: FlowTriggerEvent): Promise<void> {
   const slug = getDeps().getAppSlug();
   if (!slug || !runtime) return;
+  if (await deferToDesktop(event.name)) {
+    logger.warn(`[flows] deferring ${event.name} to the desktop runtime (heartbeat fresh)`);
+    return;
+  }
   const matches = runtime.bindings.filter((b) => bindingMatches(b, event));
   for (const binding of matches) {
     if (binding.mode === 'sync') {
@@ -989,6 +1046,9 @@ export async function claimQueuedAppRuns(): Promise<number> {
   try {
     const runs = await d.listQueuedRuns(slug, CLAIM_BATCH_LIMIT);
     for (const run of runs) {
+      if (await deferToDesktop(run.triggerEvent ?? '')) {
+        continue; // desktop-first: its claim loop picks this up; we take over only when its heartbeat is stale
+      }
       let claimed = false;
       try {
         claimed = (await d.claimRun(slug, run.runId, { runtime: 'browser', instanceId: getClaimInstanceId() })).claimed;

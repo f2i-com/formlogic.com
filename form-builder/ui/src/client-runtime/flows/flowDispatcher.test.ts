@@ -174,6 +174,37 @@ describe('binding condition — sandbox semantics', () => {
   });
 });
 
+describe('desktop-first routing for connector events', () => {
+  it('defers aokie.* events to the desktop runtime while its heartbeat is fresh', async () => {
+    const harness = installDeps({ desktopRuntimeFresh: async () => true });
+    __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [binding({ event: 'aokie.call.ended' })] }, 'my-app');
+    await dispatchFormEvent('aokie.call.ended', { formId: 'form-1', responseId: 'rd1', answers: {} });
+    // The desktop owns live-call work (local LLM + speech) — the browser must not reserve.
+    expect(harness.reserveCalls).toHaveLength(0);
+  });
+
+  it('takes over aokie.* events when the desktop heartbeat is stale', async () => {
+    const harness = installDeps({ desktopRuntimeFresh: async () => false });
+    __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [binding({ event: 'aokie.call.ended' })] }, 'my-app');
+    await dispatchFormEvent('aokie.call.ended', { formId: 'form-1', responseId: 'rd2', answers: {} });
+    expect(harness.reserveCalls).toHaveLength(1);
+  });
+
+  it('never defers non-connector events, even with a fresh desktop', async () => {
+    const harness = installDeps({ desktopRuntimeFresh: async () => true });
+    __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [binding()] }, 'my-app');
+    await dispatchFormEvent('form.submitted', { formId: 'form-1', responseId: 'rd3', answers: {} });
+    expect(harness.reserveCalls).toHaveLength(1);
+  });
+
+  it('a failing freshness probe fails OPEN (the browser still handles the event)', async () => {
+    const harness = installDeps({ desktopRuntimeFresh: async () => { throw new Error('offline'); } });
+    __setRuntimeFlowsForTests({ flows: [passthroughGraph()], bindings: [binding({ event: 'aokie.call.ended' })] }, 'my-app');
+    await dispatchFormEvent('aokie.call.ended', { formId: 'form-1', responseId: 'rd4', answers: {} });
+    expect(harness.reserveCalls).toHaveLength(1);
+  });
+});
+
 describe('binding matching + output actions', () => {
   it('ignores events that match no binding', async () => {
     const harness = installDeps();
