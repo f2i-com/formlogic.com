@@ -2,8 +2,8 @@
 //
 // Left: the flow library (workspace flows + app-scoped flows grouped by app; search, create,
 // duplicate, rename, enable, delete). Centre: the real graph editor (FlowEditor — React Flow
-// canvas, node palette, properties, autosave). Right (lg+): run history for the selected flow +
-// a Test Run drawer that executes the flow through the browser executor. Deep-linked by
+// canvas, node palette, properties, autosave). Right: measured-width inline panels or the shared
+// slide-over drawer for triggers/history/test-run. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -21,6 +21,7 @@ import { api } from '../../lib/api';
 import { demoApplyFlowOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
+import { resolveEditorLayout, sameResolvedEditorLayout } from '../../components/flows/editor/flowEditorLogic';
 import { deriveFlowConnectors } from '../../components/flows/flowConnectors';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from '../../components/flows/editor/nodeCatalog';
 import type { FlowFormOption } from '../../components/flows/editor/NodeProperties';
@@ -43,6 +44,14 @@ import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../types/flo
 interface FlowGroup {
   app: AppListItem | null;
   flows: FlowDefinition[];
+}
+
+const BELOW_MD_QUERY = '(max-width: 767.98px)';
+const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
+
+function mediaMatches(query: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
+  return window.matchMedia(query).matches;
 }
 
 export function FlowsWorkspace() {
@@ -70,6 +79,8 @@ export function FlowsWorkspace() {
   const [forms, setForms] = useState<FlowFormOption[]>([]);
   const [flowBindingsById, setFlowBindingsById] = useState<Record<string, FlowBinding[]>>({});
   const [flowBindingsLoading, setFlowBindingsLoading] = useState<Record<string, boolean>>({});
+  const workspaceRowRef = useRef<HTMLDivElement | null>(null);
+  const workspaceWidthRef = useRef<number | null>(null);
 
   // Flat lookup of every flow by id (the editor + drawers work off this).
   const flowById = useMemo(() => {
@@ -78,6 +89,57 @@ export function FlowsWorkspace() {
     return m;
   }, [groups]);
   const selectedFlow = selectedId ? flowById.get(selectedId) ?? null : null;
+  const selectedFlowPresent = selectedFlow !== null;
+  const [belowMd, setBelowMd] = useState(() => mediaMatches(BELOW_MD_QUERY, false));
+  const [workspaceLayout, setWorkspaceLayout] = useState(() => resolveEditorLayout({
+    workspaceWidth: null,
+    selectedFlow: false,
+    rightPanelOpen: false,
+    libraryCollapsedPreference: libraryCollapsed,
+    belowMd: mediaMatches(BELOW_MD_QUERY, false),
+    legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
+  }));
+  const workspaceLayoutRef = useRef(workspaceLayout);
+
+  const applyWorkspaceLayout = useCallback((width: number | null = workspaceWidthRef.current) => {
+    const next = resolveEditorLayout({
+      workspaceWidth: width,
+      selectedFlow: selectedFlowPresent,
+      rightPanelOpen: rightPanel !== null,
+      libraryCollapsedPreference: libraryCollapsed,
+      belowMd,
+      legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
+    });
+    if (sameResolvedEditorLayout(workspaceLayoutRef.current, next)) return;
+    workspaceLayoutRef.current = next;
+    setWorkspaceLayout(next);
+  }, [belowMd, libraryCollapsed, rightPanel, selectedFlowPresent]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(BELOW_MD_QUERY);
+    const onChange = () => setBelowMd((current) => (current === query.matches ? current : query.matches));
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    applyWorkspaceLayout();
+  }, [applyWorkspaceLayout]);
+
+  useEffect(() => {
+    const el = workspaceRowRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== 'number') return;
+      workspaceWidthRef.current = width;
+      applyWorkspaceLayout(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [applyWorkspaceLayout]);
 
   // Editor context (docs §4): the palette + connector pickers depend on whether the selected flow
   // is app-scoped and which connectors its app actually grants. Workspace flows have no connectors.
@@ -90,6 +152,9 @@ export function FlowsWorkspace() {
   }, [selectedFlow, groups]);
   const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
+  const effectiveLibraryCollapsed = selectedFlowPresent ? workspaceLayout.library === 'rail' : libraryCollapsed;
+  const rightPanelInline = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'rail';
+  const rightPanelDrawer = selectedFlowPresent && rightPanel !== null && workspaceLayout.rightPanel === 'drawer';
 
   const fetchFlowBindings = useCallback(async (flow: FlowDefinition) => {
     // Demo too: the seeded demo flows are real server rows with real bindings, and reads are
@@ -329,7 +394,9 @@ export function FlowsWorkspace() {
   };
 
   return (
-    <div className="flex h-[calc(100dvh-4rem-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
+    // Mobile height mirrors AppShell's real bottom-nav padding — pb-[calc(5rem+safe-area)] —
+    // so the workspace fills the viewport exactly (4rem here left a 16px page scroll).
+    <div className="flex h-[calc(100dvh-5rem-env(safe-area-inset-bottom)-var(--fl-demo-banner-h,0px))] flex-col overflow-hidden md:h-[calc(100dvh-var(--fl-demo-banner-h,0px))]">
       <Header
         title="Flows"
         actions={
@@ -343,7 +410,7 @@ export function FlowsWorkspace() {
         }
       />
 
-      <div className="flex min-h-0 flex-1">
+      <div ref={workspaceRowRef} className="flex min-h-0 flex-1">
         {/* Library */}
         <FlowLibrary
           groups={groups}
@@ -357,9 +424,13 @@ export function FlowsWorkspace() {
           onToggleEnabled={toggleEnabled}
           onDelete={setPendingDelete}
           onNew={() => openNewFlow()}
-          collapsed={libraryCollapsed}
+          collapsed={effectiveLibraryCollapsed}
           onToggleCollapsed={() => setLibraryCollapsed((c) => !c)}
-          className={cn(libraryCollapsed ? 'w-14' : 'w-full md:w-72', selectedFlow ? 'hidden md:flex' : 'flex')}
+          className={cn(
+            'motion-safe:transition-[width] motion-safe:duration-200',
+            effectiveLibraryCollapsed ? 'w-14' : 'w-full md:w-72',
+            selectedFlow ? 'hidden md:flex' : 'flex',
+          )}
         />
 
         {/* Editor */}
@@ -424,10 +495,10 @@ export function FlowsWorkspace() {
           )}
         </div>
 
-        {/* Right panel: history / test run (lg+). No border here — the panel's white bg vs the
+        {/* Right panel: triggers / history / test run. No border here — the panel's white bg vs the
             canvas's gray provides the seam (docs §4, rail hierarchy: seams by value contrast). */}
-        {selectedFlow && rightPanel === 'triggers' && (
-          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 lg:flex">
+        {rightPanelInline && rightPanel === 'triggers' && selectedFlow && (
+          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <TriggersPanel
               flow={selectedFlow}
               bindings={selectedFlowBindings}
@@ -438,13 +509,13 @@ export function FlowsWorkspace() {
             />
           </div>
         )}
-        {selectedFlow && rightPanel === 'history' && (
-          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 lg:flex">
+        {rightPanelInline && rightPanel === 'history' && selectedFlow && (
+          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
           </div>
         )}
-        {selectedFlow && rightPanel === 'test' && (
-          <div className="hidden lg:flex">
+        {rightPanelInline && rightPanel === 'test' && selectedFlow && (
+          <div className="hidden md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <TestRunDrawer
               flow={selectedFlow}
               onClose={() => setRightPanel(null)}
@@ -456,7 +527,7 @@ export function FlowsWorkspace() {
         )}
       </div>
 
-      {selectedFlow && rightPanel === 'triggers' && (
+      {rightPanelDrawer && rightPanel === 'triggers' && selectedFlow && (
         <FlowMobileDrawer title="Triggers" onClose={() => setRightPanel(null)}>
           <TriggersPanel
             flow={selectedFlow}
@@ -468,12 +539,12 @@ export function FlowsWorkspace() {
           />
         </FlowMobileDrawer>
       )}
-      {selectedFlow && rightPanel === 'history' && (
+      {rightPanelDrawer && rightPanel === 'history' && selectedFlow && (
         <FlowMobileDrawer title="Run history" onClose={() => setRightPanel(null)}>
           <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
         </FlowMobileDrawer>
       )}
-      {selectedFlow && rightPanel === 'test' && (
+      {rightPanelDrawer && rightPanel === 'test' && selectedFlow && (
         <FlowMobileDrawer title="Test run" onClose={() => setRightPanel(null)}>
           <TestRunDrawer
             flow={selectedFlow}
@@ -605,7 +676,7 @@ function DesktopPresenceChip({ presence }: { presence: FlowsDesktopPresence }) {
 
 function FlowMobileDrawer({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return (
-    <div className="lg:hidden">
+    <div>
       <div className="fixed inset-0 z-[80] bg-gray-900/35 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
       <aside
         role="dialog"

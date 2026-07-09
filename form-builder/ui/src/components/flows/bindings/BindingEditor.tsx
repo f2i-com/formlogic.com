@@ -170,25 +170,6 @@ function draftToPayload(draft: BindingDraft): Record<string, unknown> {
   return payload;
 }
 
-export function bindingToPayload(binding: FlowBinding): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    event: binding.event,
-    flow: binding.flow,
-    mode: binding.mode,
-    condition: binding.condition,
-    inputMap: binding.inputMap,
-    outputActions: binding.outputActions,
-    timeoutMs: binding.timeoutMs,
-    retryPolicy: binding.retryPolicy,
-    fallbackPolicy: binding.fallbackPolicy,
-    enabled: binding.enabled,
-    sortOrder: binding.sortOrder,
-  };
-  if (binding.formId) payload.formId = binding.formId;
-  if (binding.connectorId) payload.connectorId = binding.connectorId;
-  return payload;
-}
-
 function ChipRow({ mode, onInsert }: { mode: ReferenceSyntax; onInsert: (formatted: string) => 'inserted' | 'copied' }) {
   const [flash, setFlash] = useState<{ h: string; kind: 'inserted' | 'copied' } | null>(null);
   const activate = (h: string) => {

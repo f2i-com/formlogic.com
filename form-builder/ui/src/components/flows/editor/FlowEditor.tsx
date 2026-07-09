@@ -28,7 +28,14 @@ import { NodeProperties, type FlowFormOption } from './NodeProperties';
 import { declaredInputNames } from './nodeSummary';
 import { getNodeSpec, initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
 import { graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
-import { computeCapabilitiesFromGraph, patchHistoryKey, shouldPushPatchHistory, type PatchHistoryBurst } from './flowEditorLogic';
+import {
+  computeCapabilitiesFromGraph,
+  patchHistoryKey,
+  resolveEditorLayout,
+  sameResolvedEditorLayout,
+  shouldPushPatchHistory,
+  type PatchHistoryBurst,
+} from './flowEditorLogic';
 import { cloneSelection, dagreLayout } from './canvasOps';
 import { lintNodeIssues } from '../flowGraphLint';
 import type { NodeStatusMap } from '../runStatus';
@@ -42,6 +49,14 @@ function nextNodeId(type: string, nodes: FlowRFNode[]): string {
   let id = `${type}-${i}`;
   while (used.has(id)) id = `${type}-${++i}`;
   return id;
+}
+
+const BELOW_MD_QUERY = '(max-width: 767.98px)';
+const LEGACY_INLINE_QUERY = '(min-width: 1024px)';
+
+function mediaMatches(query: string, fallback: boolean): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return fallback;
+  return window.matchMedia(query).matches;
 }
 
 interface FlowEditorProps {
@@ -76,7 +91,9 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   const [saving, setSaving] = useState(false);
   const [failedSaveGraph, setFailedSaveGraph] = useState<string | null>(null);
   const reactFlow = useReactFlow<FlowRFNode, FlowRFEdge>();
+  const editorRootRef = useRef<HTMLDivElement | null>(null);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
+  const editorWidthRef = useRef<number | null>(null);
   const [mobilePaletteOpen, setMobilePaletteOpen] = useState(false);
   // Opt-in space reclaim: collapse the palette to a narrow rail once you don't need it (e.g. a node
   // is selected and Test Run/History is open). Defaults open — today's layout, unchanged.
@@ -332,6 +349,59 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
   }, [undo, redo, selectAll, copySelection, pasteClipboard, duplicateSelection]);
 
   const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) ?? null : null;
+  const selectedNodePresent = selectedNode !== null;
+  const [belowMd, setBelowMd] = useState(() => mediaMatches(BELOW_MD_QUERY, false));
+  const [editorLayout, setEditorLayout] = useState(() => resolveEditorLayout({
+    editorWidth: null,
+    selectedNode: false,
+    paletteCollapsedPreference: paletteCollapsed,
+    belowMd: mediaMatches(BELOW_MD_QUERY, false),
+    legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
+  }));
+  const editorLayoutRef = useRef(editorLayout);
+
+  const applyEditorLayout = useCallback((width: number | null = editorWidthRef.current) => {
+    const next = resolveEditorLayout({
+      editorWidth: width,
+      selectedNode: selectedNodePresent,
+      paletteCollapsedPreference: paletteCollapsed,
+      belowMd,
+      legacyInline: mediaMatches(LEGACY_INLINE_QUERY, true),
+    });
+    if (sameResolvedEditorLayout(editorLayoutRef.current, next)) return;
+    editorLayoutRef.current = next;
+    setEditorLayout(next);
+  }, [belowMd, paletteCollapsed, selectedNodePresent]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(BELOW_MD_QUERY);
+    const onChange = () => setBelowMd((current) => (current === query.matches ? current : query.matches));
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    applyEditorLayout();
+  }, [applyEditorLayout]);
+
+  useEffect(() => {
+    const el = editorRootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (typeof width !== 'number') return;
+      editorWidthRef.current = width;
+      applyEditorLayout(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [applyEditorLayout]);
+
+  useEffect(() => {
+    if (editorLayout.palette === 'inline' && mobilePaletteOpen) setMobilePaletteOpen(false);
+  }, [editorLayout.palette, mobilePaletteOpen]);
 
   // Let node cards name a picked form by its title (not its UUID).
   const formsCtx = useMemo(
@@ -359,7 +429,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
     <FlowDesktopPresenceContext.Provider value={desktopPresence}>
     <FlowTriggerBindingsContext.Provider value={bindings}>
     <FlowNodeSignalsContext.Provider value={nodeSignals}>
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={editorRootRef} className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 overflow-hidden border-b border-gray-200/80 bg-white/70 px-3 py-2 dark:border-slate-700/60 dark:bg-slate-900/50">
         <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -381,7 +451,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             size="sm"
             onClick={() => setMobilePaletteOpen(true)}
             leftIcon={<Plus className="h-4 w-4" />}
-            className="whitespace-nowrap lg:hidden"
+            className={cn('whitespace-nowrap', editorLayout.palette === 'inline' && 'hidden')}
             aria-label="Add node"
           >
             <span className="hidden sm:inline">Add node</span>
@@ -433,17 +503,18 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
         </div>
       </div>
 
-      {/* Body: palette | canvas | properties. Palette + properties are lg+ only so the editor
-          never overflows horizontally on smaller viewports (the canvas stays usable at any size). */}
+      {/* Body: palette | canvas | properties. Measured-width tiers keep the canvas usable even
+          in a half-snapped desktop window; below-md retains the existing sheet/drawer behavior. */}
       <div className="flex min-h-0 flex-1">
-        <div className="hidden lg:flex">
+        {editorLayout.palette !== 'hidden' && (
           <NodePalette
             onAddNode={addNodeCenter}
             context={context}
-            collapsed={paletteCollapsed}
+            collapsed={editorLayout.palette === 'rail'}
             onToggleCollapsed={() => setPaletteCollapsed((c) => !c)}
+            className="hidden md:flex motion-safe:transition-[width] motion-safe:duration-200"
           />
-        </div>
+        )}
         <div ref={canvasHostRef} className="relative min-w-0 flex-1">
           {nodes.length === 0 && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
@@ -461,8 +532,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
                 </div>
                 <p className="text-sm font-semibold text-gray-700 dark:text-slate-200">Wire up your first step</p>
                 <p className="mt-1 text-xs text-gray-400 dark:text-slate-500">
-                  <span className="hidden lg:inline">Drag a node from the palette</span>
-                  <span className="lg:hidden">Tap Add node</span>
+                  {editorLayout.palette === 'inline' ? 'Drag a node from the palette' : 'Tap Add node'}
                 </p>
               </div>
             </div>
@@ -485,8 +555,8 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
             context={context}
           />
         </div>
-        {selectedNode && (
-          <div className="hidden lg:flex">
+        {selectedNode && editorLayout.properties === 'inline' && (
+          <div className="hidden md:flex motion-safe:transition-[width] motion-safe:duration-200">
             <NodeProperties
               nodeId={selectedNode.id}
               type={String(selectedNode.type)}
@@ -511,7 +581,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggl
           className="w-full bg-white dark:bg-slate-900"
         />
       </FlowBottomSheet>
-      {selectedNode && (
+      {selectedNode && editorLayout.properties === 'sheet' && (
         <FlowBottomSheet title={`${getNodeSpec(String(selectedNode.type))?.label ?? String(selectedNode.type)} settings`} open onClose={() => setSelectedId(null)}>
           <NodeProperties
             nodeId={selectedNode.id}
@@ -541,7 +611,7 @@ function ToolbarDivider() {
 function FlowBottomSheet({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: ReactNode }) {
   if (!open) return null;
   return (
-    <div className="lg:hidden">
+    <div>
       <div className="fixed inset-0 z-[80] bg-gray-900/30 dark:bg-slate-950/60" onClick={onClose} aria-hidden="true" />
       <section
         role="dialog"

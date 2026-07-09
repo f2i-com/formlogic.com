@@ -104,11 +104,27 @@ export function FlowRunHistory({ flowId, flow, refreshKey }: { flowId: string; f
     void loadRuns({ offset: 0, limit, showSpinner: false });
   }, [loadRuns, runs?.length]);
 
-  useEffect(() => {
+  // Reset stale rows when the flow/filter/refresh key changes — during render (React's
+  // "adjusting state when props change" pattern), never inside an effect body.
+  const resetKey = `${flowId}|${status}|${refreshKey ?? 0}`;
+  const [prevResetKey, setPrevResetKey] = useState(resetKey);
+  if (prevResetKey !== resetKey) {
+    setPrevResetKey(resetKey);
     setRuns(null);
     setExpanded(null);
-    void loadRuns();
-  }, [flowId, status, refreshKey, loadRuns]);
+  }
+
+  useEffect(() => {
+    // The leading await makes the load (and every setState inside it) run after the effect
+    // body returns — the lint-clean convention (react-hooks/set-state-in-effect) used by the
+    // workspace's initial-load effect.
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      if (!cancelled) await loadRuns();
+    })();
+    return () => { cancelled = true; };
+  }, [refreshKey, loadRuns]);
 
   useEffect(() => {
     if (!hasActiveRuns) return;

@@ -2,7 +2,7 @@
 //
 // Picks a starter template, creation scope (Workspace or an installed app), and name. Templates
 // that rely on an Aokie connector can auto-target the only installed app that grants Aokie.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, ClipboardList, FileText, MessageSquare, PhoneIncoming, Plug, Workflow, type LucideIcon } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -53,23 +53,21 @@ export function NewFlowDialog({
   const template = FLOW_STARTER_TEMPLATES.find((t) => t.id === templateId) ?? FLOW_STARTER_TEMPLATES[0];
   const autoScopeAppId = useMemo(() => recommendedScope(template, apps), [template, apps]);
 
-  // Reset ONLY on the closed→open transition. `apps` can change identity while the dialog is
-  // open (async load, demo overlay) and must never wipe a name the author already typed.
-  const wasOpen = useRef(false);
-  useEffect(() => {
-    if (!isOpen) {
-      wasOpen.current = false;
-      return;
+  // Reset ONLY on the closed→open transition, during render (React's "adjusting state when
+  // props change" pattern — no effect, so no cascading render). `apps` can change identity
+  // while the dialog is open (async load, demo overlay) and must never wipe a typed name.
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (prevOpen !== isOpen) {
+    setPrevOpen(isOpen);
+    if (isOpen) {
+      const nextTemplate = initialTemplate ?? FLOW_STARTER_TEMPLATES[0];
+      setTemplateId(nextTemplate.id);
+      setName(nextTemplate.name);
+      setNameEdited(false);
+      setScopeEdited(false);
+      setScopeAppId(recommendedScope(nextTemplate, apps));
     }
-    if (wasOpen.current) return;
-    wasOpen.current = true;
-    const nextTemplate = initialTemplate ?? FLOW_STARTER_TEMPLATES[0];
-    setTemplateId(nextTemplate.id);
-    setName(nextTemplate.name);
-    setNameEdited(false);
-    setScopeEdited(false);
-    setScopeAppId(recommendedScope(nextTemplate, apps));
-  }, [apps, initialTemplate, isOpen]);
+  }
 
   const pickTemplate = (t: FlowStarterTemplate) => {
     setTemplateId(t.id);

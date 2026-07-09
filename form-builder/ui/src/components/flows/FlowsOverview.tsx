@@ -64,7 +64,14 @@ export function FlowsOverview({ flows, desktopPresence, onNewFlow, onOpenRunFlow
   }, []);
 
   useEffect(() => {
-    void loadRuns();
+    // Leading await: the load (and its setStates) runs after the effect body returns
+    // (react-hooks/set-state-in-effect convention).
+    let cancelled = false;
+    void (async () => {
+      await Promise.resolve();
+      if (!cancelled) await loadRuns();
+    })();
+    return () => { cancelled = true; };
   }, [loadRuns]);
 
   const resolveFlow = (run: FlowRunLog): FlowDefinition | null => {

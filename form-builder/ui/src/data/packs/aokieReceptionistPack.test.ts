@@ -307,7 +307,6 @@ describe('aokieReceptionistPack — reply_mode (agent vs flow toggle)', () => {
     const cfgNode = configureFlow.flowJson.nodes.find((n) => n.id === 'cfg')!;
     const expr = (cfgNode.data as { expr: string }).expr;
     const nodes = { settings: { responses: answers ? [{ answers }] : [] } };
-    // eslint-disable-next-line no-new-func -- evaluating the pack's own shipped expression string
     const fn = new Function('nodes', `return ${expr};`);
     return fn(nodes);
   }
