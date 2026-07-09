@@ -6,9 +6,9 @@
 // a Test Run drawer that executes the flow through the browser executor. Deep-linked by
 // ?flow=<id> from the app-level Flows panel.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ChevronLeft, MoreVertical, Copy, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Search, Trash2, Workflow,
+  AlertTriangle, ChevronLeft, MoreVertical, Copy, Laptop, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Search, Trash2, Workflow,
 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
@@ -25,12 +25,19 @@ import { deriveFlowConnectors } from '../../components/flows/flowConnectors';
 import { EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from '../../components/flows/editor/nodeCatalog';
 import type { FlowFormOption } from '../../components/flows/editor/NodeProperties';
 import { FlowRunHistory } from '../../components/flows/FlowRunHistory';
+import { TriggersPanel } from '../../components/flows/TriggersPanel';
 import { TestRunDrawer } from '../../components/flows/TestRunDrawer';
 import { reduceNodeStatus, type NodeStatusMap } from '../../components/flows/runStatus';
 import { NewFlowDialog } from '../../components/flows/NewFlowDialog';
+import { FlowsOverview } from '../../components/flows/FlowsOverview';
+import {
+  describeFlowsLastSeen,
+  useFlowsDesktopPresence,
+  type FlowsDesktopPresence,
+} from '../../components/flows/useFlowsDesktopPresence';
 import type { FlowStarterTemplate } from '../../components/flows/starterTemplates';
 import type { AppListItem } from '../../types/app';
-import type { FlowDefinition, WorkflowGraph } from '../../types/flows';
+import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../types/flows';
 
 /** A library group: the workspace (app null) or a specific app, plus its flows. */
 interface FlowGroup {
@@ -40,13 +47,17 @@ interface FlowGroup {
 
 export function FlowsWorkspace() {
   const [, setSearchParams] = useSearchParams();
+  const desktopPresence = useFlowsDesktopPresence();
   const [groups, setGroups] = useState<FlowGroup[]>([]);
+  const [apps, setApps] = useState<AppListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [newFlowInitialTemplate, setNewFlowInitialTemplate] = useState<FlowStarterTemplate | null>(null);
   const [creating, setCreating] = useState(false);
-  const [rightPanel, setRightPanel] = useState<'history' | 'test' | null>(null);
+  const [rightPanel, setRightPanel] = useState<'history' | 'test' | 'triggers' | null>(null);
   // Opt-in space reclaim: collapse the flow library to a narrow rail once you don't need it (e.g.
   // a flow is open and Test Run/History is open too). Defaults open — today's layout, unchanged.
   const [libraryCollapsed, setLibraryCollapsed] = usePersistentBoolean('flows.libraryCollapsed', false);
@@ -57,6 +68,8 @@ export function FlowsWorkspace() {
   const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
   // The author's forms, fetched once — powers the List/Submit/Update-response form pickers.
   const [forms, setForms] = useState<FlowFormOption[]>([]);
+  const [flowBindingsById, setFlowBindingsById] = useState<Record<string, FlowBinding[]>>({});
+  const [flowBindingsLoading, setFlowBindingsLoading] = useState<Record<string, boolean>>({});
 
   // Flat lookup of every flow by id (the editor + drawers work off this).
   const flowById = useMemo(() => {
@@ -75,53 +88,99 @@ export function FlowsWorkspace() {
     const appFormIds = (app?.navConfig ?? []).map((n) => n.formId).filter((id): id is string => typeof id === 'string');
     return { appScoped: true, connectors: deriveFlowConnectors(app), appFormIds };
   }, [selectedFlow, groups]);
+  const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
+  const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
+
+  const fetchFlowBindings = useCallback(async (flow: FlowDefinition) => {
+    // Demo too: the seeded demo flows are real server rows with real bindings, and reads are
+    // allowed — only a per-browser overlay flow (id unknown to the server) 404s, which reads
+    // as "no triggers" rather than an error there.
+    setFlowBindingsLoading((map) => ({ ...map, [flow.id]: true }));
+    const res = await api.listFlowBindingsForFlow(flow.id);
+    setFlowBindingsLoading((map) => ({ ...map, [flow.id]: false }));
+    if (res.error || !res.data) {
+      if (!api.isDemoMode()) {
+        toast.error('Failed to load triggers', typeof res.error === 'string' ? res.error : undefined);
+      }
+      setFlowBindingsById((map) => ({ ...map, [flow.id]: [] }));
+      return;
+    }
+    const loaded = res.data.bindings;
+    setFlowBindingsById((map) => ({ ...map, [flow.id]: loaded }));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedFlow) return;
+    if (flowBindingsById[selectedFlow.id] !== undefined) return;
+    void fetchFlowBindings(selectedFlow);
+  }, [selectedFlow, flowBindingsById, fetchFlowBindings]);
 
   // Initial load (+ apply any ?flow=<id> deep-link once the flows are known). All setState runs
   // after awaits — never synchronously in the effect body.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+  const loadInitialData = useCallback(async (isCancelled: () => boolean = () => false) => {
+    setLoading(true);
+    setLoadError(null);
+    try {
       const demo = api.isDemoMode();
       const [wsRes, appsRes, formsRes] = await Promise.all([
         api.listWorkspaceFlows(),
         api.getApps(),
         api.getForms({ limit: 500 }),
       ]);
-      const appList = appsRes.data?.apps ?? [];
-      const appFlowLists = await Promise.all(appList.map((a) => api.listFlows(a.id)));
-      if (cancelled) return;
+      if (wsRes.error || !wsRes.data) throw new Error(typeof wsRes.error === 'string' ? wsRes.error : 'Failed to load workspace flows');
+      if (appsRes.error || !appsRes.data) throw new Error(typeof appsRes.error === 'string' ? appsRes.error : 'Failed to load apps');
+      if (formsRes.error || !formsRes.data) throw new Error(typeof formsRes.error === 'string' ? formsRes.error : 'Failed to load forms');
+
+      const appList = appsRes.data.apps;
+      const appFlowLists = await Promise.all(appList.map((app) => api.listFlows(app.id)));
+      const failedAppFlows = appFlowLists.find((result) => result.error || !result.data);
+      if (failedAppFlows) throw new Error(typeof failedAppFlows.error === 'string' ? failedAppFlows.error : 'Failed to load app flows');
+      if (isCancelled()) return;
+
       // In the shared demo, merge each scope's server-seeded flows with the per-browser overlay
       // (creates/edits/deletes kept in IndexedDB) so exploring flows persists locally, not to the server.
       const workspaceFlows = demo
-        ? await demoApplyFlowOverlay(null, wsRes.data?.flows ?? [])
-        : wsRes.data?.flows ?? [];
+        ? await demoApplyFlowOverlay(null, wsRes.data.flows)
+        : wsRes.data.flows;
       const appGroups: FlowGroup[] = (
         await Promise.all(
-          appList.map(async (a, i) => ({
-            app: a,
+          appList.map(async (app, i) => ({
+            app,
             flows: demo
-              ? await demoApplyFlowOverlay(a.id, appFlowLists[i].data?.flows ?? [])
+              ? await demoApplyFlowOverlay(app.id, appFlowLists[i].data?.flows ?? [])
               : appFlowLists[i].data?.flows ?? [],
           })),
         )
-      ).filter((g) => g.flows.length > 0);
+      ).filter((group) => group.flows.length > 0);
+      if (isCancelled()) return;
+
       const nextGroups: FlowGroup[] = [{ app: null, flows: workspaceFlows }, ...appGroups];
+      setApps(appList);
       setGroups(nextGroups);
       setForms(
-        (formsRes.data?.forms ?? []).map((f) => ({
-          id: f.id,
-          title: f.title,
-          fields: (f.fields ?? [])
-            .filter((x) => x && typeof x.id === 'string')
-            .map((x) => ({ id: x.id, label: x.label || x.id })),
+        formsRes.data.forms.map((form) => ({
+          id: form.id,
+          title: form.title,
+          fields: (form.fields ?? [])
+            .filter((field) => field && typeof field.id === 'string')
+            .map((field) => ({ id: field.id, label: field.label || field.id })),
         }))
       );
       setLoading(false);
       const target = new URLSearchParams(window.location.search).get('flow');
-      if (target && nextGroups.some((g) => g.flows.some((f) => f.id === target))) setSelectedId(target);
-    })();
-    return () => { cancelled = true; };
+      if (target && nextGroups.some((group) => group.flows.some((flow) => flow.id === target))) setSelectedId(target);
+    } catch (error) {
+      if (isCancelled()) return;
+      setLoading(false);
+      setLoadError(error instanceof Error ? error.message : 'Failed to load flows');
+    }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadInitialData(() => cancelled);
+    return () => { cancelled = true; };
+  }, [loadInitialData]);
 
   const selectFlow = (id: string | null) => {
     setSelectedId(id);
@@ -157,11 +216,16 @@ export function FlowsWorkspace() {
     return true;
   }, [selectedFlow, upsertFlow]);
 
-  const createFlow = async ({ name, slug, description, template }: { name: string; slug: string; description: string; template: FlowStarterTemplate }) => {
+  const openNewFlow = (template: FlowStarterTemplate | null = null) => {
+    setNewFlowInitialTemplate(template);
+    setShowNew(true);
+  };
+
+  const createFlow = async ({ name, slug, description, template, appId }: { name: string; slug: string; description: string; template: FlowStarterTemplate; appId: string | null }) => {
     setCreating(true);
     // Dedupe the slug (and mirror any suffix onto an auto/duplicate name) so quick repeated
     // creates — e.g. several "Untitled flow"s — never collide on the workspace slug uniqueness.
-    const takenSlugs = new Set(groups.flatMap((g) => g.flows.map((f) => f.slug)));
+    const takenSlugs = new Set((groups.find((g) => (g.app?.id ?? null) === appId)?.flows ?? []).map((f) => f.slug));
     let uniqueSlug = slug;
     let n = 1;
     while (takenSlugs.has(uniqueSlug)) {
@@ -170,14 +234,30 @@ export function FlowsWorkspace() {
     }
     const uniqueName = n > 1 && !name.trim().match(/\d$/) ? `${name} ${n}` : name;
     const body = { name: uniqueName, slug: uniqueSlug, description, flowJson: template.flowJson, enabled: true, nodeCapabilities: template.nodeCapabilities };
-    const flow = api.isDemoMode() ? await demoCreateFlow({ ...body, appId: null }) : (await api.createWorkspaceFlow(body)).data?.flow;
+    const flow = api.isDemoMode()
+      ? await demoCreateFlow({ ...body, appId })
+      : appId
+        ? (await api.createFlow(appId, body)).data?.flow
+        : (await api.createWorkspaceFlow(body)).data?.flow;
     setCreating(false);
     if (!flow) {
       toast.error('Failed to create flow');
       return;
     }
-    setGroups((gs) => gs.map((g) => (g.app === null ? { ...g, flows: [flow, ...g.flows] } : g)));
+    setGroups((gs) => {
+      let found = false;
+      const next = gs.map((g) => {
+        if ((g.app?.id ?? null) !== (flow.appId ?? null)) return g;
+        found = true;
+        return { ...g, flows: [flow, ...g.flows] };
+      });
+      if (found) return next;
+      const app = flow.appId ? apps.find((candidate) => candidate.id === flow.appId) ?? null : null;
+      if (flow.appId && !app) return next;
+      return [...next, { app, flows: [flow] }];
+    });
     setShowNew(false);
+    setNewFlowInitialTemplate(null);
     selectFlow(flow.id);
     toast.success('Flow created', flow.name);
   };
@@ -253,10 +333,13 @@ export function FlowsWorkspace() {
       <Header
         title="Flows"
         actions={
-          <Button size="sm" onClick={() => setShowNew(true)} leftIcon={<Plus className="h-4 w-4" />}>
-            <span className="hidden sm:inline">New flow</span>
-            <span className="sm:hidden">New</span>
-          </Button>
+          <>
+            <DesktopPresenceChip presence={desktopPresence} />
+            <Button size="sm" onClick={() => openNewFlow()} leftIcon={<Plus className="h-4 w-4" />}>
+              <span className="hidden sm:inline">New flow</span>
+              <span className="sm:hidden">New</span>
+            </Button>
+          </>
         }
       />
 
@@ -273,7 +356,7 @@ export function FlowsWorkspace() {
           onRename={renameFlow}
           onToggleEnabled={toggleEnabled}
           onDelete={setPendingDelete}
-          onNew={() => setShowNew(true)}
+          onNew={() => openNewFlow()}
           collapsed={libraryCollapsed}
           onToggleCollapsed={() => setLibraryCollapsed((c) => !c)}
           className={cn(libraryCollapsed ? 'w-14' : 'w-full md:w-72', selectedFlow ? 'hidden md:flex' : 'flex')}
@@ -296,33 +379,68 @@ export function FlowsWorkspace() {
                   flow={selectedFlow}
                   onSave={onSaveGraph}
                   onOpenTestRun={() => setRightPanel((p) => (p === 'test' ? null : 'test'))}
+                  onToggleTriggers={() => setRightPanel((p) => (p === 'triggers' ? null : 'triggers'))}
                   onToggleHistory={() => setRightPanel((p) => (p === 'history' ? null : 'history'))}
+                  triggersOpen={rightPanel === 'triggers'}
                   historyOpen={rightPanel === 'history'}
+                  triggerCount={selectedFlowBindings.length}
                   forms={forms}
                   context={editorContext}
                   nodeStatus={nodeStatus}
+                  desktopPresence={desktopPresence}
+                  bindings={selectedFlowBindings}
                 />
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center p-8">
-              <EmptyState
-                icon={Workflow}
-                title={loading ? 'Loading flows…' : 'Select a flow'}
-                description={loading ? '' : 'Pick a flow from the library to open it in the editor, or create a new one.'}
-                action={!loading ? (
-                  <Button size="sm" onClick={() => setShowNew(true)} leftIcon={<Plus className="h-4 w-4" />}>New flow</Button>
-                ) : undefined}
+            loadError ? (
+              <div className="flex flex-1 items-center justify-center p-8">
+                <EmptyState
+                  icon={AlertTriangle}
+                  title="Couldn't load flows"
+                  description={loadError}
+                  action={
+                    <Button size="sm" onClick={() => void loadInitialData()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+                      Retry
+                    </Button>
+                  }
+                />
+              </div>
+            ) : loading ? (
+              <div className="flex flex-1 items-center justify-center p-8">
+                <EmptyState icon={Workflow} title="Loading flows..." description="" />
+              </div>
+            ) : (
+              <FlowsOverview
+                flows={allFlows}
+                desktopPresence={desktopPresence}
+                onNewFlow={openNewFlow}
+                onOpenRunFlow={(flowId) => {
+                  selectFlow(flowId);
+                  setRightPanel('history');
+                }}
               />
-            </div>
+            )
           )}
         </div>
 
         {/* Right panel: history / test run (lg+). No border here — the panel's white bg vs the
             canvas's gray provides the seam (docs §4, rail hierarchy: seams by value contrast). */}
+        {selectedFlow && rightPanel === 'triggers' && (
+          <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 lg:flex">
+            <TriggersPanel
+              flow={selectedFlow}
+              bindings={selectedFlowBindings}
+              loading={!!flowBindingsLoading[selectedFlow.id]}
+              forms={forms}
+              context={editorContext}
+              onRefresh={() => fetchFlowBindings(selectedFlow)}
+            />
+          </div>
+        )}
         {selectedFlow && rightPanel === 'history' && (
           <div className="hidden w-96 flex-none bg-white dark:bg-slate-900 lg:flex">
-            <FlowRunHistory flowId={selectedFlow.id} refreshKey={historyKey} />
+            <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} refreshKey={historyKey} />
           </div>
         )}
         {selectedFlow && rightPanel === 'test' && (
@@ -338,7 +456,17 @@ export function FlowsWorkspace() {
         )}
       </div>
 
-      <NewFlowDialog isOpen={showNew} onClose={() => setShowNew(false)} onCreate={createFlow} creating={creating} />
+      <NewFlowDialog
+        isOpen={showNew}
+        onClose={() => {
+          setShowNew(false);
+          setNewFlowInitialTemplate(null);
+        }}
+        onCreate={createFlow}
+        creating={creating}
+        apps={apps}
+        initialTemplate={newFlowInitialTemplate}
+      />
       <ConfirmDialog
         isOpen={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
@@ -348,6 +476,100 @@ export function FlowsWorkspace() {
         confirmLabel="Delete"
         variant="danger"
       />
+    </div>
+  );
+}
+
+function DesktopPresenceChip({ presence }: { presence: FlowsDesktopPresence }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const label =
+    presence.kind === 'local'
+      ? 'Desktop connected'
+      : presence.kind === 'remote'
+        ? `Desktop online · ${presence.label}`
+        : 'Desktop offline';
+  const lastSeen = presence.kind === 'remote' ? describeFlowsLastSeen(presence.lastSeenMs) : null;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={label}
+        className={cn(
+          'inline-flex h-8 max-w-[12rem] items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+          presence.kind === 'none'
+            ? 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300 dark:hover:bg-slate-800'
+            : presence.kind === 'remote'
+              ? 'border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-50 dark:border-emerald-500/40 dark:bg-slate-900 dark:text-emerald-300 dark:hover:bg-emerald-500/10'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15',
+        )}
+      >
+        <Laptop className="h-3.5 w-3.5 flex-none" />
+        <span
+          className={cn(
+            'h-1.5 w-1.5 flex-none rounded-full',
+            presence.kind === 'none' ? 'bg-gray-400 dark:bg-slate-500' : 'bg-emerald-500',
+          )}
+        />
+        <span className="hidden min-w-0 truncate sm:inline">{label}</span>
+        <span className="sm:hidden">Desktop</span>
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-label="Desktop presence"
+            className="absolute right-0 z-20 mt-2 w-72 rounded-lg border border-gray-200 bg-white p-3 text-left shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          >
+            <div className="flex items-start gap-2.5">
+              <span
+                className={cn(
+                  'mt-1 h-2 w-2 flex-none rounded-full',
+                  presence.kind === 'none' ? 'bg-gray-400 dark:bg-slate-500' : 'bg-emerald-500',
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">{label}</p>
+                {presence.kind === 'local' && (
+                  <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
+                    This browser is paired to FormLogic Desktop on this machine.
+                  </p>
+                )}
+                {presence.kind === 'remote' && (
+                  <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
+                    A linked Desktop is online{lastSeen ? ` · last seen ${lastSeen}` : ''}.
+                  </p>
+                )}
+                {presence.kind === 'none' && (
+                  <>
+                    <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-slate-400">
+                      Desktop-powered nodes (browser, image, speech, Aokie phone) won't run until FormLogic Desktop is running and linked.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3 w-full"
+                      onClick={() => {
+                        setOpen(false);
+                        navigate('/settings#linked-desktops');
+                      }}
+                    >
+                      Set up in Settings
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -513,8 +735,23 @@ function FlowRow({ flow, selected, onSelect, onDuplicate, onRename, onToggleEnab
           />
         ) : (
           <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left focus:outline-none">
-            <p className={cn('truncate text-sm font-medium', selected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-800 dark:text-slate-200')}>{flow.name}</p>
-            <p className="truncate font-mono text-[10px] text-gray-400 dark:text-slate-500">{flow.slug} · v{flow.version}{flow.enabled ? '' : ' · off'}</p>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn(
+                  'truncate text-sm font-medium',
+                  selected ? 'text-primary-700 dark:text-primary-300' : 'text-gray-800 dark:text-slate-200',
+                  !flow.enabled && 'opacity-60',
+                )}
+              >
+                {flow.name}
+              </span>
+              {!flow.enabled && (
+                <span className="flex-none rounded-full border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-gray-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+                  off
+                </span>
+              )}
+            </span>
+            <p className="truncate font-mono text-[10px] text-gray-400 dark:text-slate-500">{flow.slug} - v{flow.version}</p>
           </button>
         )}
         <div className="relative flex-none">

@@ -4,8 +4,8 @@
 // canvas (or click-to-add at the viewport centre). Desktop-service-backed nodes (browser_action /
 // image_gen / stt_transcribe / tts_speak) are fully insertable and render a functional "Runs on
 // FormLogic Desktop" badge — they execute against a local Desktop service at run time.
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { MonitorDown, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
+import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, MonitorDown, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
 import {
@@ -17,8 +17,10 @@ import {
   type NodeSpec,
 } from './nodeCatalog';
 import { ACCENT_CHIP } from './accents';
+import { FlowDesktopPresenceContext } from './flowNodeContext';
 
 const HOVER_DELAY_MS = 450;
+const DESKTOP_OFFLINE_NODE_TOOLTIP = 'FormLogic Desktop is offline — this node will fail at run time';
 
 /** Compact "In / Out" handle summary for the hover popover. */
 function handleSummary(handles: { label: string }[]): string {
@@ -26,7 +28,7 @@ function handleSummary(handles: { label: string }[]): string {
 }
 
 /** A delayed hover popover with a node's longer doc + a compact inputs/outputs summary (docs §4). */
-function PaletteDoc({ spec, anchor }: { spec: NodeSpec; anchor: DOMRect }) {
+function PaletteDoc({ spec, anchor, degraded }: { spec: NodeSpec; anchor: DOMRect; degraded: boolean }) {
   const top = Math.max(8, Math.min(anchor.top, window.innerHeight - 220));
   const left = anchor.right + 8;
   return (
@@ -49,6 +51,11 @@ function PaletteDoc({ spec, anchor }: { spec: NodeSpec; anchor: DOMRect }) {
       {spec.requiresDesktopService && (
         <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-primary-600 dark:text-primary-300">
           <MonitorDown className="h-2.5 w-2.5" /> Runs on the {spec.requiresDesktopService} service in FormLogic Desktop
+        </p>
+      )}
+      {degraded && (
+        <p className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-2.5 w-2.5" /> {DESKTOP_OFFLINE_NODE_TOOLTIP}
         </p>
       )}
       {spec.capability && (
@@ -75,6 +82,8 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
   const Icon = spec.icon;
   const disabled = !spec.executable;
   const desktop = spec.requiresDesktopService;
+  const desktopPresence = useContext(FlowDesktopPresenceContext);
+  const degraded = desktopPresence.kind === 'none' && (spec.category === 'desktop' || !!spec.requiresConnector);
   const btnRef = useRef<HTMLButtonElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [docRect, setDocRect] = useState<DOMRect | null>(null);
@@ -109,6 +118,7 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
       onFocus={openDoc}
       onBlur={closeDoc}
       disabled={disabled}
+      title={degraded && !disabled ? DESKTOP_OFFLINE_NODE_TOOLTIP : undefined}
       aria-label={disabled ? `${spec.label} (not available)` : `Add ${spec.label} node`}
       className={cn(
         'group flex w-full items-start gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
@@ -116,6 +126,7 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
         disabled
           ? 'cursor-not-allowed opacity-55'
           : 'cursor-grab bg-white hover:border-primary-300 hover:bg-primary-50/50 dark:bg-slate-800/40 dark:hover:border-primary-500/40 dark:hover:bg-primary-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+        degraded && !disabled && 'opacity-60',
       )}
     >
       <span className={cn('mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-md', ACCENT_CHIP[spec.accent] ?? ACCENT_CHIP.slate)}>
@@ -127,13 +138,18 @@ function PaletteItem({ spec, onAddNode }: { spec: NodeSpec; onAddNode: (type: st
           {spec.description}
         </span>
         {desktop && (
-          <span className="mt-1 inline-flex items-center gap-1 rounded bg-primary-50 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
+          <span className={cn(
+            'mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium',
+            degraded
+              ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+              : 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300',
+          )}>
             <MonitorDown className="h-2.5 w-2.5" /> Runs on FormLogic Desktop
           </span>
         )}
       </span>
     </button>
-    {docRect && <PaletteDoc spec={spec} anchor={docRect} />}
+    {docRect && <PaletteDoc spec={spec} anchor={docRect} degraded={degraded && !disabled} />}
     </>
   );
 }

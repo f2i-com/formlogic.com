@@ -27,6 +27,7 @@ import {
 import { filterForms, formsForContext, shouldSearch } from './formPicker';
 import type { FlowFilterOp } from '../../../client-runtime/flows/nodes';
 import { desktopClient, type DesktopServiceSnapshot } from '../../../client-runtime/desktop/desktopClient';
+import { mergeKnownConnectorCommands } from '../flowEventCatalog';
 
 type MonacoEditor = import('monaco-editor').editor.IStandaloneCodeEditor;
 
@@ -501,7 +502,8 @@ function ConnectorCommandField({
   onChange: (value: unknown) => void;
 }) {
   const raw = typeof value === 'string' ? value : '';
-  const commands = context.connectors.find((c) => c.id === connectorId)?.commands ?? [];
+  const grantCommands = context.connectors.find((c) => c.id === connectorId)?.commands ?? [];
+  const commands = mergeKnownConnectorCommands(connectorId, grantCommands);
   const listId = `connector-cmds-${nodeId}`;
   return (
     <label className="block">

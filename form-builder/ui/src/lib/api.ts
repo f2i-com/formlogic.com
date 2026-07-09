@@ -1665,6 +1665,10 @@ class ApiClient {
     return this.request('/flows');
   }
 
+  async listFlowBindingsForFlow(flowId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
+    return this.request(`/flows/${encodeURIComponent(flowId)}/bindings`);
+  }
+
   async createWorkspaceFlow(
     data: { name: string; slug?: string; description?: string; flowJson?: WorkflowGraph; enabled?: boolean; nodeCapabilities?: string[] }
   ): Promise<ApiResponse<{ flow: FlowDefinition }>> {
@@ -1691,13 +1695,14 @@ class ApiClient {
    * appId filter: an app id, or 'workspace' for workspace-only runs.
    */
   async listMyFlowRuns(
-    options?: { flowId?: string; status?: FlowRunStatus; appId?: string; page?: number; limit?: number }
-  ): Promise<ApiResponse<{ runs: FlowRunLog[]; page: number; limit: number; total: number }>> {
+    options?: { flowId?: string; status?: FlowRunStatus; appId?: string; page?: number; offset?: number; limit?: number }
+  ): Promise<ApiResponse<{ runs: FlowRunLog[]; page: number; offset: number; limit: number; total: number }>> {
     const params = new URLSearchParams();
     if (options?.flowId) params.set('flowId', options.flowId);
     if (options?.status) params.set('status', options.status);
     if (options?.appId) params.set('appId', options.appId);
     if (options?.page) params.set('page', String(options.page));
+    if (options?.offset !== undefined) params.set('offset', String(options.offset));
     if (options?.limit) params.set('limit', String(options.limit));
     const query = params.toString();
     return this.request(`/flow-runs${query ? `?${query}` : ''}`);

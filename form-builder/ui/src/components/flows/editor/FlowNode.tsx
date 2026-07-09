@@ -18,7 +18,7 @@ import { cn } from '../../../lib/utils';
 import { Tooltip } from '../../ui/Tooltip';
 import { getNodeSpec } from './nodeCatalog';
 import { describeNode, declaredInputNames } from './nodeSummary';
-import { FlowFormsContext, FlowNodeSignalsContext } from './flowNodeContext';
+import { FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { ACCENT_CHIP } from './accents';
 import { formatDuration, nodeDurationMs, type NodeRunStatus } from '../runStatus';
 
@@ -94,13 +94,17 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
   const nodeData = (data ?? {}) as Record<string, unknown>;
   const forms = useContext(FlowFormsContext);
   const signals = useContext(FlowNodeSignalsContext);
+  const desktopPresence = useContext(FlowDesktopPresenceContext);
+  const triggerBindings = useContext(FlowTriggerBindingsContext);
   const run = signals.status[id];
   const issues = signals.issues[id] ?? [];
   const accentChip = ACCENT_CHIP[spec?.accent ?? 'slate'] ?? ACCENT_CHIP.slate;
   const Icon = spec?.icon ?? HelpCircle;
   const disabled = spec ? !spec.executable : false;
+  const desktopOffline = desktopPresence.kind === 'none';
   const isTrigger = typeStr === 'input';
   const triggerInputs = isTrigger ? declaredInputNames(nodeData) : [];
+  const triggerEvents = isTrigger ? [...new Set(triggerBindings.map((binding) => binding.event))] : [];
   const summary = spec && !isTrigger ? describeNode(typeStr, nodeData, forms ?? undefined) : null;
   const inputs = spec?.inputs ?? [{ id: 'in', label: 'In' }];
   const outputs = spec?.outputs ?? [{ id: 'out', label: 'Out' }];
@@ -168,6 +172,26 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
 
       {isTrigger && (
         <div className="border-t border-gray-100 dark:border-slate-800 px-3 py-2">
+          {triggerEvents.length > 0 && (
+            <div className="mb-2">
+              <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Events</p>
+              <div className="flex flex-wrap gap-1">
+                {triggerEvents.slice(0, 3).map((event) => (
+                  <span
+                    key={event}
+                    className="rounded bg-primary-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-primary-700 dark:bg-primary-500/10 dark:text-primary-200"
+                  >
+                    {event}
+                  </span>
+                ))}
+                {triggerEvents.length > 3 && (
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[9px] font-semibold text-gray-500 dark:bg-slate-800 dark:text-slate-400">
+                    +{triggerEvents.length - 3}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
           <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500">Provides</p>
           {triggerInputs.length > 0 ? (
             <div className="flex flex-wrap gap-1">
@@ -204,7 +228,12 @@ function FlowNodeInner({ id, type, data, selected }: NodeProps) {
       )}
 
       {spec?.requiresDesktopService && !disabled && (
-        <p className="flex items-center gap-1 border-t border-gray-100 dark:border-slate-800 px-3 py-1 text-[10px] font-medium text-primary-600 dark:text-primary-300">
+        <p className={cn(
+          'flex items-center gap-1 border-t border-gray-100 dark:border-slate-800 px-3 py-1 text-[10px] font-medium',
+          desktopOffline
+            ? 'bg-amber-50/80 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+            : 'text-primary-600 dark:text-primary-300',
+        )}>
           <MonitorDown className="h-2.5 w-2.5 flex-none" /> Runs on FormLogic Desktop
         </p>
       )}

@@ -1824,6 +1824,9 @@ $app->group('/api/flows', function (RouteCollectorProxy $group) use ($container,
     $group->post('', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->createWorkspaceFlow($request, $response);
     });
+    $group->get('/{flowId}/bindings', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\FlowController::class)->listFlowBindingsForFlow($request, $response, $getArgs($request));
+    });
     $group->get('/{flowId}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->getWorkspaceFlow($request, $response, $getArgs($request));
     });

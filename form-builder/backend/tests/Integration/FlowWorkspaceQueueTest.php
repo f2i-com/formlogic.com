@@ -236,6 +236,30 @@ class FlowWorkspaceQueueTest extends TestCase
         $this->assertSame('done', $done['status']);
     }
 
+    public function testListOwnerRunsSupportsOffsetPagination(): void
+    {
+        $flow = $this->makeWorkspaceFlow($this->userA);
+        for ($i = 0; $i < 3; $i++) {
+            self::$flows->enqueueRun($flow, [
+                'triggerEvent' => 'manual',
+                'correlationId' => 'c-' . $i,
+                'idempotencyKey' => 'k-' . $i . '-' . bin2hex(random_bytes(6)),
+            ]);
+        }
+
+        $first = self::$flows->listOwnerRuns($this->userA, [], 1, 1, 0);
+        $secondByOffset = self::$flows->listOwnerRuns($this->userA, [], 1, 1, 1);
+        $secondByPage = self::$flows->listOwnerRuns($this->userA, [], 2, 1);
+
+        $this->assertSame(3, $first['total']);
+        $this->assertSame(0, $first['offset']);
+        $this->assertSame(1, $secondByOffset['offset']);
+        $this->assertCount(1, $first['runs']);
+        $this->assertCount(1, $secondByOffset['runs']);
+        $this->assertNotSame($first['runs'][0]['runId'], $secondByOffset['runs'][0]['runId']);
+        $this->assertSame($secondByPage['runs'][0]['runId'], $secondByOffset['runs'][0]['runId']);
+    }
+
     public function testAppScopedClaimGate(): void
     {
         $flow = self::$flows->createFlow($this->appId, $this->userA, [
@@ -341,6 +365,36 @@ class FlowWorkspaceQueueTest extends TestCase
     }
 
     // ── ctx.flows.run script intents → queued rows ──────────────────────────────────────────
+
+    public function testListBindingsForFlowScopesAppAndWorkspaceBindings(): void
+    {
+        $workspaceFlow = $this->makeWorkspaceFlow($this->userA, 'triage');
+        $workspaceBinding = self::$flows->createFormBinding($this->userA, $this->formId, [
+            'flow' => 'triage', 'event' => 'form.submitted', 'mode' => 'async',
+        ]);
+        $otherWorkspaceFlow = $this->makeWorkspaceFlow($this->userA, 'other-triage');
+        self::$flows->createFormBinding($this->userA, $this->formId, [
+            'flow' => $otherWorkspaceFlow['slug'], 'event' => 'form.submitted', 'mode' => 'async',
+        ]);
+
+        $appFlow = self::$flows->createFlow($this->appId, $this->userA, [
+            'name' => 'App triage',
+            'slug' => 'triage',
+            'flowJson' => ['nodes' => [['id' => 'in', 'type' => 'input']], 'edges' => []],
+        ]);
+        $appBinding = self::$flows->createBinding($this->appId, [
+            'flow' => 'triage', 'event' => 'aokie.call.incoming', 'mode' => 'async',
+        ]);
+
+        $workspaceBindings = self::$flows->listBindingsForFlow($this->userA, $workspaceFlow['id']);
+        $this->assertSame([$workspaceBinding['id']], array_column($workspaceBindings ?? [], 'id'));
+
+        $appBindings = self::$flows->listBindingsForFlow($this->userA, $appFlow['id']);
+        $this->assertSame([$appBinding['id']], array_column($appBindings ?? [], 'id'));
+
+        $this->assertNull(self::$flows->listBindingsForFlow($this->userB, $workspaceFlow['id']));
+        $this->assertNull(self::$flows->listBindingsForFlow($this->userB, $appFlow['id']));
+    }
 
     public function testScriptFlowRunIntentsEnqueueQueuedRows(): void
     {

@@ -16,31 +16,23 @@ import {
   type EdgeChange,
   type NodeChange,
 } from '@xyflow/react';
-import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History } from 'lucide-react';
+import { Check, Loader2, PlayCircle, Plus, Redo2, Save, Undo2, History, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { usePersistentBoolean } from '../../../hooks/usePersistentBoolean';
 import { Button } from '../../ui/Button';
 import { FlowCanvas } from './FlowCanvas';
-import { FlowFormsContext, FlowNodeSignalsContext } from './flowNodeContext';
+import { EMPTY_DESKTOP_PRESENCE, FlowDesktopPresenceContext, FlowFormsContext, FlowNodeSignalsContext, FlowTriggerBindingsContext } from './flowNodeContext';
 import { NodePalette } from './NodePalette';
 import { NodeProperties, type FlowFormOption } from './NodeProperties';
 import { declaredInputNames } from './nodeSummary';
 import { getNodeSpec, initialNodeData, EMPTY_FLOW_EDITOR_CONTEXT, type FlowEditorContext } from './nodeCatalog';
 import { graphToReactFlow, reactFlowToGraph, type FlowRFEdge, type FlowRFNode } from './flowGraph';
+import { computeCapabilitiesFromGraph, patchHistoryKey, shouldPushPatchHistory, type PatchHistoryBurst } from './flowEditorLogic';
 import { cloneSelection, dagreLayout } from './canvasOps';
 import { lintNodeIssues } from '../flowGraphLint';
 import type { NodeStatusMap } from '../runStatus';
-import type { FlowDefinition, WorkflowGraph } from '../../../types/flows';
-
-/** Union of the flow's declared capabilities + every capability its nodes require. */
-function computeCapabilities(graph: WorkflowGraph, existing: string[] | null): string[] {
-  const caps = new Set(existing ?? []);
-  for (const node of graph.nodes) {
-    const cap = getNodeSpec(node.type)?.capability;
-    if (cap) caps.add(cap);
-  }
-  return [...caps];
-}
+import type { FlowBinding, FlowDefinition, WorkflowGraph } from '../../../types/flows';
+import type { FlowsDesktopPresence } from '../useFlowsDesktopPresence';
 
 /** A unique node id within the current graph (`<type>-<n>`). */
 function nextNodeId(type: string, nodes: FlowRFNode[]): string {
@@ -57,16 +49,23 @@ interface FlowEditorProps {
   onSave: (patch: { flowJson: WorkflowGraph; nodeCapabilities: string[] }) => Promise<boolean>;
   onOpenTestRun: () => void;
   onToggleHistory: () => void;
+  onToggleTriggers?: () => void;
   historyOpen: boolean;
+  triggersOpen?: boolean;
+  triggerCount?: number;
   /** The author's forms (form picker + field helpers in the properties panel). */
   forms?: FlowFormOption[];
   /** App/connector context — drives the context-aware palette + connector pickers (docs §4). */
   context?: FlowEditorContext;
   /** Live per-node run status from the current Test Run's onNodeStatus (drives the canvas pills). */
   nodeStatus?: NodeStatusMap;
+  /** FormLogic Desktop presence for editor-only affordances. */
+  desktopPresence?: FlowsDesktopPresence;
+  /** Bindings targeting this flow, rendered as Trigger node chips (view state only). */
+  bindings?: FlowBinding[];
 }
 
-function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, historyOpen, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus }: FlowEditorProps) {
+function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, onToggleTriggers, historyOpen, triggersOpen = false, triggerCount = 0, forms = [], context = EMPTY_FLOW_EDITOR_CONTEXT, nodeStatus, desktopPresence = EMPTY_DESKTOP_PRESENCE, bindings = [] }: FlowEditorProps) {
   // Seed React Flow state once (the parent renders this keyed by flow.id, so a flow switch
   // remounts with a fresh initial graph). A lazy useState initializer runs exactly on mount.
   const [initialGraph] = useState(() => graphToReactFlow(flow.flowJson ?? { nodes: [], edges: [] }));
@@ -74,6 +73,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
   const [edges, setEdges, onEdgesChangeBase] = useEdgesState<FlowRFEdge>(initialGraph.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [failedSaveGraph, setFailedSaveGraph] = useState<string | null>(null);
   // Opt-in space reclaim: collapse the palette to a narrow rail once you don't need it (e.g. a node
   // is selected and Test Run/History is open). Defaults open — today's layout, unchanged.
   const [paletteCollapsed, setPaletteCollapsed] = usePersistentBoolean('flows.paletteCollapsed', false);
@@ -88,12 +88,14 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
   // Last-saved snapshot as state (not a ref) so `dirty` derives cleanly at render time.
   const [savedGraph, setSavedGraph] = useState<string>(() => JSON.stringify(flow.flowJson ?? { nodes: [], edges: [] }));
   const dirty = serialized !== savedGraph;
+  const saveFailed = dirty && failedSaveGraph === serialized;
 
   // --- coarse undo/redo (structural edits) --------------------------------
   // The stacks are refs (mutated inside callbacks, never read during render); canUndo/canRedo
   // are mirrored into state so the toolbar buttons enable/disable without a render-time ref read.
   const pastRef = useRef<string[]>([]);
   const futureRef = useRef<string[]>([]);
+  const patchBurstRef = useRef<PatchHistoryBurst | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const syncHistFlags = useCallback(() => {
@@ -105,7 +107,8 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
     setNodes(n);
     setEdges(e);
   }, [setNodes, setEdges]);
-  const pushHistory = useCallback(() => {
+  const pushHistory = useCallback((preservePatchBurst = false) => {
+    if (!preservePatchBurst) patchBurstRef.current = null;
     pastRef.current.push(serialized);
     if (pastRef.current.length > 50) pastRef.current.shift();
     futureRef.current = [];
@@ -114,6 +117,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
   const undo = useCallback(() => {
     const prev = pastRef.current.pop();
     if (prev === undefined) return;
+    patchBurstRef.current = null;
     futureRef.current.push(serialized);
     applyGraph(prev);
     syncHistFlags();
@@ -121,6 +125,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
   const redo = useCallback(() => {
     const next = futureRef.current.pop();
     if (next === undefined) return;
+    patchBurstRef.current = null;
     pastRef.current.push(serialized);
     applyGraph(next);
     syncHistFlags();
@@ -162,7 +167,10 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
 
   const patchSelected = useCallback((patch: Record<string, unknown>) => {
     if (!selectedId) return;
-    pushHistory();
+    const key = patchHistoryKey(selectedId, patch);
+    const now = Date.now();
+    if (shouldPushPatchHistory(patchBurstRef.current, key, now)) pushHistory(true);
+    patchBurstRef.current = key ? { key, atMs: now } : null;
     setNodes((nds) =>
       nds.map((n) => {
         if (n.id !== selectedId) return n;
@@ -276,18 +284,27 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
     const snapshot = serialized;
     const graph = JSON.parse(snapshot) as WorkflowGraph;
     setSaving(true);
-    const ok = await onSave({ flowJson: graph, nodeCapabilities: computeCapabilities(graph, flow.nodeCapabilities) });
+    const ok = await onSave({ flowJson: graph, nodeCapabilities: computeCapabilitiesFromGraph(graph) });
     setSaving(false);
-    if (ok) setSavedGraph(snapshot);
+    if (ok) {
+      setSavedGraph(snapshot);
+      setFailedSaveGraph(null);
+    } else {
+      setFailedSaveGraph(snapshot);
+    }
     return ok;
-  }, [saving, serialized, onSave, flow.nodeCapabilities]);
+  }, [saving, serialized, onSave]);
 
   // Debounced autosave.
   useEffect(() => {
-    if (!dirty || saving) return;
+    if (!dirty || saving || saveFailed) return;
     const t = setTimeout(() => { void save(); }, 1400);
     return () => clearTimeout(t);
-  }, [dirty, saving, serialized, save]);
+  }, [dirty, saving, saveFailed, serialized, save]);
+
+  useEffect(() => {
+    if (failedSaveGraph !== null && failedSaveGraph !== serialized) setFailedSaveGraph(null);
+  }, [failedSaveGraph, serialized]);
 
   // Keyboard: undo / redo + copy / paste / duplicate / select-all (ignore while typing in a field,
   // which also lets Monaco/textarea handle their own Ctrl+C/V). Delete is React Flow's native,
@@ -334,6 +351,8 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
 
   return (
     <FlowFormsContext.Provider value={formsCtx}>
+    <FlowDesktopPresenceContext.Provider value={desktopPresence}>
+    <FlowTriggerBindingsContext.Provider value={bindings}>
     <FlowNodeSignalsContext.Provider value={nodeSignals}>
     <div className="flex h-full min-h-0 flex-col">
       {/* Toolbar */}
@@ -345,7 +364,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
           </p>
         </div>
 
-        <SaveStatus dirty={dirty} saving={saving} />
+        <SaveStatus dirty={dirty} saving={saving} failed={saveFailed} onRetry={() => void save()} />
 
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
@@ -353,6 +372,19 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
           </Button>
           <Button variant="ghost" size="sm" onClick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
             <Redo2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant={triggersOpen ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={onToggleTriggers}
+            disabled={!onToggleTriggers}
+            leftIcon={<Zap className="h-4 w-4" />}
+            aria-pressed={triggersOpen}
+          >
+            <span className="hidden lg:inline">Triggers</span>
+            <span className="ml-1 rounded-full bg-primary-100 px-1.5 py-0.5 text-[10px] font-semibold text-primary-700 dark:bg-primary-500/20 dark:text-primary-200">
+              {triggerCount}
+            </span>
           </Button>
           <Button
             variant={historyOpen ? 'secondary' : 'ghost'}
@@ -363,7 +395,7 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
           >
             <span className="hidden lg:inline">History</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />}>
+          <Button variant="outline" size="sm" onClick={onOpenTestRun} leftIcon={<PlayCircle className="h-4 w-4" />} className="whitespace-nowrap">
             <span className="hidden sm:inline">Test run</span>
           </Button>
           <Button size="sm" onClick={() => void save()} isLoading={saving} disabled={!dirty && !saving} leftIcon={<Save className="h-4 w-4" />}>
@@ -428,16 +460,30 @@ function FlowEditorInner({ flow, onSave, onOpenTestRun, onToggleHistory, history
       </div>
     </div>
     </FlowNodeSignalsContext.Provider>
+    </FlowTriggerBindingsContext.Provider>
+    </FlowDesktopPresenceContext.Provider>
     </FlowFormsContext.Provider>
   );
 }
 
-function SaveStatus({ dirty, saving }: { dirty: boolean; saving: boolean }) {
+function SaveStatus({ dirty, saving, failed, onRetry }: { dirty: boolean; saving: boolean; failed: boolean; onRetry: () => void }) {
   if (saving) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…
+        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
       </span>
+    );
+  }
+  if (failed) {
+    return (
+      <button
+        type="button"
+        onClick={onRetry}
+        className="flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-500/25 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/15"
+      >
+        <span className="h-2 w-2 rounded-full bg-red-500" />
+        Save failed · Retry
+      </button>
     );
   }
   return (

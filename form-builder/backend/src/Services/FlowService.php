@@ -1176,6 +1176,50 @@ class FlowService
         return array_map([$this, 'formatBinding'], $stmt->fetchAll());
     }
 
+    /**
+     * Every binding that points at one owned flow. App flows read app-scoped bindings by the
+     * selected flow's app + slug; workspace flows read only app_id NULL form bindings on forms
+     * owned by the same user. Returns null when the flow is missing or foreign.
+     * @return array[]|null
+     */
+    public function listBindingsForFlow(string $ownerUserId, string $flowId): ?array
+    {
+        $flowStmt = $this->mysql->prepare("SELECT * FROM flow_definitions WHERE id = :id AND owner_user_id = :o LIMIT 1");
+        $flowStmt->execute(['id' => $flowId, 'o' => $ownerUserId]);
+        $flowRow = $flowStmt->fetch();
+        if (!$flowRow) {
+            return null;
+        }
+        $flow = $this->formatFlow($flowRow);
+
+        if ($flow['appId'] !== null) {
+            $stmt = $this->mysql->prepare("
+                SELECT b.*, f.slug AS flow_slug
+                FROM app_flow_bindings b
+                JOIN flow_definitions f ON f.id = b.flow_definition_id
+                WHERE b.app_id = :app AND f.app_id = :app2 AND f.slug = :slug
+                ORDER BY b.sort_order ASC, b.created_at ASC, b.id ASC
+            ");
+            $stmt->execute(['app' => $flow['appId'], 'app2' => $flow['appId'], 'slug' => $flow['slug']]);
+            return array_map([$this, 'formatBinding'], $stmt->fetchAll());
+        }
+
+        $stmt = $this->mysql->prepare("
+            SELECT b.*, f.slug AS flow_slug
+            FROM app_flow_bindings b
+            JOIN flow_definitions f ON f.id = b.flow_definition_id
+            JOIN forms frm ON frm.id = b.form_id
+            WHERE b.app_id IS NULL
+              AND f.app_id IS NULL
+              AND f.owner_user_id = :owner
+              AND frm.user_id = :owner2
+              AND f.slug = :slug
+            ORDER BY b.sort_order ASC, b.created_at ASC, b.id ASC
+        ");
+        $stmt->execute(['owner' => $ownerUserId, 'owner2' => $ownerUserId, 'slug' => $flow['slug']]);
+        return array_map([$this, 'formatBinding'], $stmt->fetchAll());
+    }
+
     // ── Form bindings (workspace scope: app_id NULL + form_id set, non-app forms) ──────────
 
     /** forms.user_id — the ownership gate for /api/forms/{id}/flow-bindings. */
@@ -1701,9 +1745,9 @@ class FlowService
      * Paginated run history across the user's flows, newest first; optional flow / status /
      * app ('' or 'workspace' selects workspace-only runs) filters.
      * @param array{flowId?: ?string, status?: ?string, appId?: ?string} $filters
-     * @return array{runs: array[], page: int, limit: int, total: int}
+     * @return array{runs: array[], page: int, limit: int, total: int, offset: int}
      */
-    public function listOwnerRuns(string $ownerUserId, array $filters = [], int $page = 1, int $limit = 50): array
+    public function listOwnerRuns(string $ownerUserId, array $filters = [], int $page = 1, int $limit = 50, ?int $offset = null): array
     {
         $page = max(1, $page);
         $limit = max(1, min(200, $limit));
@@ -1735,7 +1779,7 @@ class FlowService
         $countStmt->execute($params);
         $total = (int) $countStmt->fetchColumn();
 
-        $offset = ($page - 1) * $limit;
+        $offset = $offset !== null ? max(0, $offset) : (($page - 1) * $limit);
         $stmt = $this->mysql->prepare("
             SELECT r.*, f.slug AS flow_slug
             FROM flow_run_logs r
@@ -1750,6 +1794,7 @@ class FlowService
             'runs' => array_map([$this, 'formatRun'], $stmt->fetchAll()),
             'page' => $page,
             'limit' => $limit,
+            'offset' => $offset,
             'total' => $total,
         ];
     }

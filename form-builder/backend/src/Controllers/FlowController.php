@@ -309,6 +309,19 @@ class FlowController
         return $this->jsonResponse($response, ['success' => true]);
     }
 
+    public function listFlowBindingsForFlow(Request $request, Response $response, array $args): Response
+    {
+        $userId = $request->getAttribute('userId');
+        if (!$userId) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
+        }
+        $bindings = $this->flows->listBindingsForFlow($userId, (string) ($args['flowId'] ?? ''));
+        if ($bindings === null) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Flow not found'], 404);
+        }
+        return $this->jsonResponse($response, ['bindings' => $bindings]);
+    }
+
     // ── Owner-wide reads (session AND /api/v1 API-key routes) ──────────────────────────────
 
     /** Every flow the user owns; ?appId= narrows to one app, ?workspace=1 to workspace-only. */
@@ -356,7 +369,8 @@ class FlowController
                 'appId' => isset($q['appId']) ? (string) $q['appId'] : null,
             ],
             (int) ($q['page'] ?? 1),
-            (int) ($q['limit'] ?? 50)
+            (int) ($q['limit'] ?? 50),
+            isset($q['offset']) ? (int) $q['offset'] : null
         );
         return $this->jsonResponse($response, $result);
     }
