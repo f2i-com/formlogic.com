@@ -2391,7 +2391,7 @@
         "packFormId": "receptionist-settings",
         "title": "Receptionist Settings",
         "icon": "Settings",
-        "description": "Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so changes take effect on the next caller turn.",
+        "description": "Configure your AI receptionist: its business name, how it should talk (persona/instructions) and which local model to use. The live call flow reads the newest record, so persona/greeting/voice/model changes take effect on the next caller turn. Reply mode is the one exception — see its own field description below.",
         "settings": {
           "presentationMode": "both",
           "defaultPresentationMode": "focused",
@@ -2430,12 +2430,119 @@
             }
           },
           {
+            "id": "greeting",
+            "type": "short_text",
+            "label": "Greeting (spoken first, blank = friendly default)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. Thanks for calling Bright Smile Dental! How can I help?"
+            }
+          },
+          {
             "id": "model",
             "type": "short_text",
             "label": "LLM model (blank = auto-detect)",
             "required": false,
             "properties": {
               "placeholder": "e.g. llama3.1:8b"
+            }
+          },
+          {
+            "id": "llm_endpoint",
+            "type": "short_text",
+            "label": "LLM endpoint (blank = auto-detect :8080 / :11434)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. http://127.0.0.1:8080/v1/chat/completions"
+            }
+          },
+          {
+            "id": "stt_endpoint",
+            "type": "short_text",
+            "label": "Speech-to-text endpoint (blank = built-in engine)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. http://127.0.0.1:17920/v1/audio/transcriptions (Aokie Voice service)"
+            }
+          },
+          {
+            "id": "tts_endpoint",
+            "type": "short_text",
+            "label": "Text-to-speech endpoint (blank = built-in engine)",
+            "required": false,
+            "properties": {
+              "placeholder": "e.g. http://127.0.0.1:17920/v1/audio/speech (Aokie Voice service)"
+            }
+          },
+          {
+            "id": "voice",
+            "type": "dropdown",
+            "label": "Voice (blank = default)",
+            "required": false,
+            "properties": {
+              "options": [
+                {
+                  "id": "default",
+                  "label": "Default",
+                  "value": ""
+                },
+                {
+                  "id": "alba",
+                  "label": "Alba",
+                  "value": "alba"
+                },
+                {
+                  "id": "cosette",
+                  "label": "Cosette",
+                  "value": "cosette"
+                },
+                {
+                  "id": "eponine",
+                  "label": "Eponine",
+                  "value": "eponine"
+                },
+                {
+                  "id": "fantine",
+                  "label": "Fantine",
+                  "value": "fantine"
+                },
+                {
+                  "id": "javert",
+                  "label": "Javert",
+                  "value": "javert"
+                },
+                {
+                  "id": "jean",
+                  "label": "Jean",
+                  "value": "jean"
+                },
+                {
+                  "id": "marius",
+                  "label": "Marius",
+                  "value": "marius"
+                }
+              ]
+            }
+          },
+          {
+            "id": "reply_mode",
+            "type": "dropdown",
+            "label": "Reply mode",
+            "required": false,
+            "description": "Which side answers the caller: the built-in in-plugin AI agent, or this app's \"Live Reply\" flow. Unlike the fields above, this only takes effect the next time Aokie reconnects — not on the current or next call — because the plugin reads it once when it starts, not per call.",
+            "properties": {
+              "options": [
+                {
+                  "id": "agent",
+                  "label": "Built-in AI agent (fast, in-app)",
+                  "value": "agent"
+                },
+                {
+                  "id": "flow",
+                  "label": "Custom flow (edit the Live Reply flow)",
+                  "value": "flow"
+                }
+              ]
             }
           },
           {
@@ -2478,7 +2585,7 @@
                 },
                 "kind": "text",
                 "text": {
-                  "body": "Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona."
+                  "body": "Add or edit a record to change how your AI receptionist talks and which model it uses. The live call flow reads the newest record on each caller turn — no flow editing needed. Leave it empty to use the built-in default persona. Reply mode is the exception: it only applies on the next Aokie reconnect, not the current or next call."
                 }
               },
               {
@@ -2495,6 +2602,7 @@
                   "formId": "@pack:receptionist-settings",
                   "titleField": "business_name",
                   "subtitleField": "model",
+                  "metaField": "active",
                   "limit": 5
                 }
               }
@@ -2640,6 +2748,10 @@
                       "field": "status",
                       "op": "eq",
                       "value": "missed"
+                    },
+                    {
+                      "field": "__submitted_at",
+                      "op": "today"
                     }
                   ]
                 }
@@ -3331,6 +3443,97 @@
         }
       },
       {
+        "name": "Configure Receptionist",
+        "slug": "configure-receptionist",
+        "description": "On each incoming call, read the newest Receptionist Settings record and push its persona, greeting, voice, model and reply mode to the Aokie plugin (settings.set). persona/greeting/voice/model live-reconfigure the in-plugin AI receptionist immediately, so the next call uses the new config, no flow-graph or code changes. Reply mode (aiReceptionist — built-in agent vs. this app's own Live Reply flow) is different: the plugin only reads it once when its radio starts, so this push persists the choice but only takes effect on the NEXT Aokie reconnect, not the current or next call. Safe + idempotent (settings.set just updates config), so it never double-answers the caller.",
+        "nodeCapabilities": [
+          "formlogic.responses.read",
+          "connector.aokie.settings.set"
+        ],
+        "flowJson": {
+          "nodes": [
+            {
+              "id": "in",
+              "type": "input",
+              "data": {
+                "inputs": [
+                  {
+                    "name": "callId",
+                    "example": "call_123"
+                  },
+                  {
+                    "name": "from",
+                    "example": "+61400000000"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "settings",
+              "type": "formlogic_list_responses",
+              "data": {
+                "form": "@pack:receptionist-settings",
+                "return": "all",
+                "limit": 5
+              }
+            },
+            {
+              "id": "cfg",
+              "type": "logic_block",
+              "data": {
+                "expr": "(function () {\n  // formlogic_list_responses returns the array directly on the desktop f2i runner\n  // (nodes.settings) but {responses:[...]} in the TS executor — handle both.\n  var node = nodes.settings;\n  var rows = node && node.responses ? node.responses : (Array.isArray(node) ? node : []);\n  var cfg = {};\n  for (var i = 0; i < rows.length; i++) {\n    var a = (rows[i] && rows[i].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n  var greeting = String(cfg.greeting || '').trim();\n  if (!greeting) {\n    greeting = business\n      ? 'Thank you for calling ' + business + '! How can I help you today?'\n      : 'Thanks for calling! How can I help you today?';\n  }\n  var replyMode = String(cfg.reply_mode || '').trim();\n  return {\n    persona: persona,\n    greeting: greeting,\n    voice: String(cfg.voice || '').trim(),\n    model: String(cfg.model || '').trim(),\n    // AI plumbing, all flow-configurable: blank = the plugin's default behaviour\n    // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).\n    aiEndpoint: String(cfg.llm_endpoint || '').trim(),\n    sttEndpoint: String(cfg.stt_endpoint || '').trim(),\n    ttsEndpoint: String(cfg.tts_endpoint || '').trim(),\n    aiReceptionist: replyMode !== 'flow'\n  };\n})()"
+              }
+            },
+            {
+              "id": "push",
+              "type": "connector_request",
+              "data": {
+                "connectorId": "aokie",
+                "command": "settings.set",
+                "payload": {
+                  "persona": "$nodes.cfg.persona",
+                  "greeting": "$nodes.cfg.greeting",
+                  "ttsVoice": "$nodes.cfg.voice",
+                  "aiModel": "$nodes.cfg.model",
+                  "aiEndpoint": "$nodes.cfg.aiEndpoint",
+                  "sttEndpoint": "$nodes.cfg.sttEndpoint",
+                  "ttsEndpoint": "$nodes.cfg.ttsEndpoint",
+                  "aiReceptionist": "$nodes.cfg.aiReceptionist"
+                }
+              }
+            },
+            {
+              "id": "out",
+              "type": "output",
+              "data": {
+                "value": {
+                  "persona": "$nodes.cfg.persona",
+                  "greeting": "$nodes.cfg.greeting"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "source": "in",
+              "target": "settings"
+            },
+            {
+              "source": "settings",
+              "target": "cfg"
+            },
+            {
+              "source": "cfg",
+              "target": "push"
+            },
+            {
+              "source": "push",
+              "target": "out"
+            }
+          ]
+        }
+      },
+      {
         "name": "Call Summary + Follow-up",
         "slug": "call-summary-follow-up",
         "description": "Async after aokie.call.ended: summarise the transcript turns with the local LLM, write the summary onto the Calls row, and raise a Follow-up Task when the model asks for one. Raw status/duration updates are done by the app logic, not this flow.",
@@ -3554,7 +3757,7 @@
               "id": "context",
               "type": "logic_block",
               "data": {
-                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var latest = String(inputs.text || '').trim();\n\n  // Receptionist Settings: the newest active config record (user-editable), or a\n  // built-in default. This is what makes the receptionist configurable without\n  // touching the flow graph — editing the record changes persona + model live.\n  var cfgRows = (nodes.settings && nodes.settings.responses) || [];\n  var cfg = {};\n  for (var c = 0; c < cfgRows.length; c++) {\n    var a = (cfgRows[c] && cfgRows[c].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are a warm, efficient phone receptionist for a small business. You are speaking out loud on a live phone call, so reply with ONE short, natural spoken sentence — no lists, no markdown, no emoji. If you need information, ask a single clear question. If the caller wants to book, take or confirm the details briefly.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n  var model = String(cfg.model || '').trim();\n\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var picked = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });\n    }\n  }\n  picked.sort(function (a, b) { return a.idx - b.idx; });\n  var lines = [];\n  var sawLatest = false;\n  for (var k = 0; k < picked.length; k++) {\n    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';\n    lines.push(who + ': ' + picked[k].text);\n    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;\n  }\n  if (latest && !sawLatest) lines.push('Caller: ' + latest);\n  return { transcript: lines.join('\\n'), latest: latest, persona: persona, model: model };\n})()"
+                "expr": "(function () {\n  var callId = String(inputs.callId || '');\n  var latest = String(inputs.text || '').trim();\n\n  // Receptionist Settings: the newest active config record (user-editable), or a\n  // built-in default. This is what makes the receptionist configurable without\n  // touching the flow graph — editing the record changes persona + model live.\n  var cfgRows = (nodes.settings && nodes.settings.responses) || [];\n  var cfg = {};\n  for (var c = 0; c < cfgRows.length; c++) {\n    var a = (cfgRows[c] && cfgRows[c].answers) || {};\n    if (String(a.active || 'yes') !== 'no') { cfg = a; break; }\n  }\n  var persona = String(cfg.instructions || '').trim() || \"You are a warm, efficient phone receptionist for a small business, speaking out loud on a live phone call. Reply with ONE short, natural spoken sentence — no lists, markdown, or emoji. Your job: greet the caller, find out their name and how you can help, capture the key details (what they need, and a callback number or time if relevant), and either book them in or take a message. Ask only ONE clear question at a time and keep the conversation moving.\";\n  var business = String(cfg.business_name || '').trim();\n  if (business) persona = 'You are the phone receptionist for ' + business + '.\\n' + persona;\n  var model = String(cfg.model || '').trim();\n\n  var turnRows = (nodes.turns && nodes.turns.responses) || [];\n  var picked = [];\n  for (var j = 0; j < turnRows.length; j++) {\n    var t = (turnRows[j] && turnRows[j].answers) || {};\n    if (callId && String(t.call_id || '') === callId) {\n      picked.push({ idx: Number(t.turn_index || 0), speaker: String(t.speaker || 'caller'), text: String(t.text || '') });\n    }\n  }\n  picked.sort(function (a, b) { return a.idx - b.idx; });\n  var lines = [];\n  var sawLatest = false;\n  for (var k = 0; k < picked.length; k++) {\n    var who = picked[k].speaker === 'aokie' || picked[k].speaker === 'bot' ? 'Receptionist' : 'Caller';\n    lines.push(who + ': ' + picked[k].text);\n    if (who === 'Caller' && picked[k].text.trim() === latest) sawLatest = true;\n  }\n  if (latest && !sawLatest) lines.push('Caller: ' + latest);\n  return { transcript: lines.join('\\n'), latest: latest, persona: persona, model: model };\n})()"
               }
             },
             {
@@ -3725,6 +3928,22 @@
       }
     ],
     "flowBindings": [
+      {
+        "flow": "configure-receptionist",
+        "event": "aokie.call.incoming",
+        "connectorId": "aokie",
+        "mode": "sync",
+        "timeoutMs": 3000,
+        "inputMap": {
+          "callId": "$event.data.callId",
+          "from": "$event.data.from"
+        },
+        "fallbackPolicy": {
+          "onError": "log_and_continue",
+          "fallbackReply": "Thanks for calling! How can I help you today?"
+        },
+        "sortOrder": 0
+      },
       {
         "flow": "incoming-caller-lookup",
         "event": "aokie.call.incoming",

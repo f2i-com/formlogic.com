@@ -341,6 +341,11 @@ const FLOW_AGENT_CONFIG = `(function () {
     greeting: greeting,
     voice: String(cfg.voice || '').trim(),
     model: String(cfg.model || '').trim(),
+    // AI plumbing, all flow-configurable: blank = the plugin's default behaviour
+    // (LLM auto-detect :8080/:11434; built-in on-device STT/TTS engines).
+    aiEndpoint: String(cfg.llm_endpoint || '').trim(),
+    sttEndpoint: String(cfg.stt_endpoint || '').trim(),
+    ttsEndpoint: String(cfg.tts_endpoint || '').trim(),
     aiReceptionist: replyMode !== 'flow'
   };
 })()`;
@@ -988,6 +993,27 @@ export const aokieReceptionistPack: PackData = {
         },
         { id: 'model', type: 'short_text', label: 'LLM model (blank = auto-detect)', required: false, properties: { placeholder: 'e.g. llama3.1:8b' } },
         {
+          id: 'llm_endpoint',
+          type: 'short_text',
+          label: 'LLM endpoint (blank = auto-detect :8080 / :11434)',
+          required: false,
+          properties: { placeholder: 'e.g. http://127.0.0.1:8080/v1/chat/completions' },
+        },
+        {
+          id: 'stt_endpoint',
+          type: 'short_text',
+          label: 'Speech-to-text endpoint (blank = built-in engine)',
+          required: false,
+          properties: { placeholder: 'e.g. http://127.0.0.1:17920/v1/audio/transcriptions (Aokie Voice service)' },
+        },
+        {
+          id: 'tts_endpoint',
+          type: 'short_text',
+          label: 'Text-to-speech endpoint (blank = built-in engine)',
+          required: false,
+          properties: { placeholder: 'e.g. http://127.0.0.1:17920/v1/audio/speech (Aokie Voice service)' },
+        },
+        {
           id: 'voice',
           type: 'dropdown',
           label: 'Voice (blank = default)',
@@ -1320,6 +1346,13 @@ export const aokieReceptionistPack: PackData = {
                 greeting: '$nodes.cfg.greeting',
                 ttsVoice: '$nodes.cfg.voice',
                 aiModel: '$nodes.cfg.model',
+                // AI plumbing, also live-reconfigured: which LLM endpoint the agent
+                // streams from, and which speech engines it uses (blank = LLM
+                // auto-detect / built-in on-device STT+TTS; set the Aokie Voice
+                // service URLs to share the desktop's speech service).
+                aiEndpoint: '$nodes.cfg.aiEndpoint',
+                sttEndpoint: '$nodes.cfg.sttEndpoint',
+                ttsEndpoint: '$nodes.cfg.ttsEndpoint',
                 aiReceptionist: '$nodes.cfg.aiReceptionist',
               },
             },
