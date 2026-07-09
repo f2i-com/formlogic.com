@@ -258,6 +258,100 @@ const FLOW_MISSED_TASK = `(function () {
   };
 })()`;
 
+// After-call actions context: this call's transcript (ordered by turn), the caller
+// matched against Customers by phone (digits-only, last-9 suffix so +61… and 04…
+// formats match), and today's date so the LLM can resolve "next Tuesday".
+const FLOW_AFTER_CALL_CTX = `(function () {
+  var callId = String(inputs.callId || '');
+  var phone = String(inputs.callerPhone || inputs.from || '');
+  var tail = phone.replace(/[^0-9]/g, '').slice(-9);
+  var custRows = (nodes.customers && nodes.customers.responses) || [];
+  var hit = null;
+  for (var i = 0; i < custRows.length; i++) {
+    var a = (custRows[i] && custRows[i].answers) || {};
+    var d = String(a.phone || '').replace(/[^0-9]/g, '');
+    if (tail && d.slice(-9) === tail) { hit = custRows[i]; break; }
+  }
+  var turnRows = (nodes.turns && nodes.turns.responses) || [];
+  var turns = [];
+  for (var j = 0; j < turnRows.length; j++) {
+    var t = (turnRows[j] && turnRows[j].answers) || {};
+    if (callId && String(t.call_id || '') === callId) {
+      turns.push({ i: Number(t.turn_index || j), line: String(t.speaker || 'caller') + ': ' + String(t.text || '') });
+    }
+  }
+  turns.sort(function (x, y) { return x.i - y.i; });
+  var lines = [];
+  for (var k = 0; k < turns.length; k++) lines.push(turns[k].line);
+  var now = new Date();
+  return {
+    hasTranscript: lines.length > 0,
+    transcript: lines.join('\\n'),
+    phone: phone,
+    customerId: hit ? hit.id : null,
+    customerName: hit ? String((hit.answers || {}).name || '') : '',
+    today: now.toDateString() + ' (' + now.toISOString().slice(0, 10) + ')'
+  };
+})()`;
+
+// Turn the extractor's JSON into concrete record payloads. Defensive by design:
+// fenced/prosy LLM output is trimmed to its outermost {...}; a malformed date or
+// time never blocks — the appointment degrades to a follow-up task instead. The
+// binding's outputActions perform the actual writes, gated on the has* flags.
+const FLOW_AFTER_CALL_PLAN = `(function () {
+  var raw = String(((nodes.extract || {}).content) || '').trim();
+  var m = raw.match(/\\{[\\s\\S]*\\}/);
+  var data = {};
+  try { data = JSON.parse(m ? m[0] : raw) || {}; } catch (e) { data = {}; }
+  var intent = String(data.intent || 'other').toLowerCase();
+  var name = String(data.caller_name || '').trim();
+  var service = String(data.service || '').trim();
+  var dateStr = String(data.date || '').trim();
+  var timeStr = String(data.time || '').trim();
+  var summary = String(data.summary || '').trim() || 'Call ended - no summary available.';
+  var callback = data.callback_requested === true;
+  var validDate = /^\\d{4}-\\d{2}-\\d{2}$/.test(dateStr);
+  var validTime = /^\\d{2}:\\d{2}$/.test(timeStr);
+  var ctx = nodes.ctx || {};
+  var phone = String(ctx.phone || '');
+  var knownId = ctx.customerId || null;
+  var caller = name || String(ctx.customerName || '') || (phone ? 'Caller ' + phone : 'Unknown caller');
+  var callId = String(inputs.callId || '');
+  var wantsBooking = intent === 'appointment';
+  var hasAppointment = wantsBooking && !!service && validDate;
+  var appointment = {
+    service: service || 'Appointment',
+    date: dateStr,
+    status: 'requested',
+    source: 'call',
+    notes: 'Booked automatically from call ' + callId + '\\nCaller: ' + caller + (phone ? ' (' + phone + ')' : '') + '\\nSummary: ' + summary
+  };
+  if (validTime) appointment.time = timeStr;
+  if (knownId) appointment.customer_link = knownId;
+  var hasCustomerCreate = !knownId && !!name && !!phone && ctx.hasTranscript === true;
+  var needTask = callback || intent === 'message' || (wantsBooking && !hasAppointment);
+  var taskSummary = wantsBooking && !hasAppointment
+    ? 'Confirm booking for ' + caller + (service ? ' (' + service + ')' : '') + ' - date/time unclear on the call'
+    : intent === 'message'
+      ? 'Message from ' + caller + ': ' + summary
+      : 'Call back ' + caller + ': ' + summary;
+  return {
+    summaryLine: (hasAppointment ? 'Appointment requested. ' : '') + (hasCustomerCreate ? 'New customer added. ' : '') + (needTask ? 'Follow-up created. ' : '') + summary,
+    hasCustomerCreate: hasCustomerCreate,
+    customer: {
+      name: name || caller,
+      phone: phone,
+      preferred_service: service,
+      status: 'active',
+      notes: 'Added automatically from call ' + callId + '. ' + summary
+    },
+    hasAppointment: hasAppointment,
+    appointment: appointment,
+    hasTask: needTask,
+    task: { summary: taskSummary.slice(0, 180), status: 'open', priority: (callback || wantsBooking) ? 'high' : 'medium' }
+  };
+})()`;
+
 // Live conversation context: gather the transcript turns already stored for this
 // call (prior turns) into a compact history string the LLM can condition on, so
 // replies remember what was said earlier in the call. The current caller line is
@@ -1490,6 +1584,62 @@ export const aokieReceptionistPack: PackData = {
       },
     },
     {
+      name: 'After-Call Actions (Auto-Book)',
+      slug: 'after-call-actions',
+      description:
+        'The automation that makes it a real receptionist: async after aokie.call.ended, read this call\'s transcript turns, have the local LLM extract structured intent (who called, what they want, and the agreed date/time), then — via the binding\'s guarded output actions — add the caller to Customers if new, create a requested Appointment when a slot was agreed, and raise a Follow-up Task when a human needs to confirm (unclear time, message taken, or callback asked). Malformed model output degrades to a follow-up task, never a bad record.',
+      nodeCapabilities: ['model.llm.local', 'formlogic.responses.read'],
+      flowJson: {
+        nodes: [
+          {
+            id: 'in',
+            type: 'input',
+            data: { inputs: [{ name: 'callId', example: 'call_123' }, { name: 'from', example: '+61400000000' }, { name: 'callerPhone', example: '+61400000000' }] },
+          },
+          { id: 'customers', type: 'formlogic_list_responses', data: { form: '@pack:customers', return: 'all', limit: 200 } },
+          { id: 'turns', type: 'formlogic_list_responses', data: { form: '@pack:transcript-turns', return: 'all', limit: 200 } },
+          { id: 'ctx', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_CTX } },
+          {
+            id: 'extract',
+            type: 'llm_chat',
+            data: {
+              system:
+                'You extract structured booking data from phone-call transcripts for a small business. Reply with ONLY one JSON object — no prose, no markdown fences.',
+              prompt:
+                'Today is {{nodes.ctx.today}}. The caller\'s phone number is {{nodes.ctx.phone}}.\n\nTranscript:\n{{nodes.ctx.transcript}}\n\nReturn ONLY this JSON:\n{"intent": "appointment" | "order" | "message" | "question" | "other", "caller_name": string or null, "service": string or null, "date": "YYYY-MM-DD" or null, "time": "HH:MM" or null, "summary": "one factual sentence", "callback_requested": true or false}\n\nRules: set date/time ONLY if the caller agreed to a specific slot; resolve relative dates ("tomorrow", "next Tuesday") from today\'s date; use 24-hour time; use null when unsure — never guess.',
+              maxTokens: 300,
+              temperature: 0,
+              extraBody: { chat_template_kwargs: { enable_thinking: false } },
+            },
+          },
+          { id: 'plan', type: 'logic_block', data: { expr: FLOW_AFTER_CALL_PLAN } },
+          {
+            id: 'out',
+            type: 'output',
+            data: {
+              value: {
+                summaryLine: '$nodes.plan.summaryLine',
+                hasCustomerCreate: '$nodes.plan.hasCustomerCreate',
+                customer: '$nodes.plan.customer',
+                hasAppointment: '$nodes.plan.hasAppointment',
+                appointment: '$nodes.plan.appointment',
+                hasTask: '$nodes.plan.hasTask',
+                task: '$nodes.plan.task',
+              },
+            },
+          },
+        ],
+        edges: [
+          { source: 'in', target: 'customers' },
+          { source: 'customers', target: 'turns' },
+          { source: 'turns', target: 'ctx' },
+          { source: 'ctx', target: 'extract' },
+          { source: 'extract', target: 'plan' },
+          { source: 'plan', target: 'out' },
+        ],
+      },
+    },
+    {
       name: 'Missed Call Follow-up',
       slug: 'missed-call-follow-up',
       description:
@@ -1593,6 +1743,31 @@ export const aokieReceptionistPack: PackData = {
       ],
       fallbackPolicy: { onError: 'log_and_continue' },
       sortOrder: 3,
+    },
+    {
+      flow: 'after-call-actions',
+      event: 'aokie.call.ended',
+      connectorId: 'aokie',
+      mode: 'async',
+      // Generous budget: reads two forms + one local-LLM extraction. Async, so it
+      // never delays the caller — it runs after hang-up.
+      timeoutMs: 90000,
+      // Only real conversations: skip missed calls and sub-5s pocket dials (the
+      // missed-call binding below owns the missed path).
+      condition: {
+        type: 'expression',
+        expr: "event && event.data ? (Number(event.data.durationSeconds || 0) > 5 && String(event.data.outcome || '') !== 'missed' && String(event.data.status || '') !== 'missed') : false",
+      },
+      inputMap: { callId: '$event.data.callId', from: '$event.data.from', callerPhone: '$event.data.callerPhone' },
+      outputActions: [
+        { type: 'formlogic.submitResponse', form: '@pack:customers', when: '$result.hasCustomerCreate', answers: '$result.customer' },
+        { type: 'formlogic.submitResponse', form: '@pack:appointments', when: '$result.hasAppointment', answers: '$result.appointment' },
+        { type: 'formlogic.submitResponse', form: '@pack:follow-up-tasks', when: '$result.hasTask', answers: '$result.task' },
+        { type: 'formlogic.toast', message: 'After-call: {{result.summaryLine}}' },
+      ],
+      retryPolicy: { maxAttempts: 2, backoff: 'exponential' },
+      fallbackPolicy: { onError: 'log_and_continue' },
+      sortOrder: 7,
     },
     {
       flow: 'missed-call-follow-up',

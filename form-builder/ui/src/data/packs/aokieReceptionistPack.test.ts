@@ -198,6 +198,7 @@ describe('aokieReceptionistPack — app', () => {
 describe('aokieReceptionistPack — flows & bindings', () => {
   it('ships the starter flows on valid v0 graphs', () => {
     expect([...FLOW_SLUGS].sort()).toEqual([
+      'after-call-actions',
       'call-summary-follow-up',
       'configure-receptionist',
       'hardware-error-alert',
@@ -231,7 +232,7 @@ describe('aokieReceptionistPack — flows & bindings', () => {
   });
 
   it('bindings reference declared flows, contract events, and declared forms', () => {
-    expect(pack.flowBindings?.length).toBe(7);
+    expect(pack.flowBindings?.length).toBe(8);
     for (const binding of pack.flowBindings ?? []) {
       expect(FLOW_SLUGS.has(binding.flow), `binding → flow '${binding.flow}'`).toBe(true);
       expect(AOKIE_EVENTS.has(binding.event), `binding event '${binding.event}'`).toBe(true);
