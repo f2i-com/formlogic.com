@@ -13,10 +13,9 @@ import {
   Keyboard,
   History,
   MoreVertical,
-  Cloud,
   Check,
   Loader2,
-  HardDrive,
+  Save,
   Rocket,
   X,
   SlidersHorizontal,
@@ -42,6 +41,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -149,11 +149,12 @@ function BuilderToolbarDivider() {
 function BuilderSaveIndicator({ isSaving, storageMode, compact = false }: { isSaving: boolean; storageMode: string; compact?: boolean }) {
   const savedToCloud = storageMode === 'api';
   const label = isSaving ? 'Saving' : savedToCloud ? 'Saved to cloud' : 'Saved locally';
+  // The floppy disk IS the save glyph (user request) — the title still says where it went.
   const icon = isSaving
     ? <Loader2 className="h-3 w-3 animate-spin" />
     : (
       <>
-        {savedToCloud ? <Cloud className="h-3 w-3" /> : <HardDrive className="h-3 w-3" />}
+        <Save className="h-3 w-3" />
         <Check className="h-3 w-3" />
       </>
     );
@@ -1114,7 +1115,12 @@ export default function FormBuilder() {
             <div className="flex items-center justify-between gap-2 p-4 border-b border-gray-200 dark:border-slate-800 flex-shrink-0">
               <h2 className="font-semibold text-gray-900 dark:text-white">Add a field</h2>
               <button
-                onClick={() => { setPaletteOpenPref(false); addFieldToggleRef.current?.focus(); }}
+                onClick={() => {
+                  setPaletteOpenPref(false);
+                  // The Add Field toggle only renders once the palette is closed — focus it on
+                  // the next frame, after React has put it back in the toolbar.
+                  requestAnimationFrame(() => addFieldToggleRef.current?.focus());
+                }}
                 className="hidden md:inline-flex items-center justify-center min-h-8 min-w-8 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                 aria-label="Collapse fields panel"
                 title="Collapse"
@@ -1134,17 +1140,21 @@ export default function FormBuilder() {
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
             <div className="hidden md:flex items-center justify-between gap-3 px-6 py-2.5 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
               <div className="flex items-center gap-2">
-                <Button
-                  ref={addFieldToggleRef}
-                  size="sm"
-                  variant={builderLayout.palette === 'inline' ? 'secondary' : 'outline'}
-                  onClick={() => toggleDock('palette')}
-                  leftIcon={<Plus className="h-4 w-4" />}
-                  aria-pressed={builderLayout.palette === 'inline'}
-                >
-                  Add Field
-                </Button>
-                <div className="flex items-center gap-0.5 border-l border-gray-200 dark:border-slate-700 pl-2">
+                {/* Redundant while the palette sidebar is showing (it has its own X) — the
+                    button reappears the moment the palette closes. Mobile keeps its own
+                    always-visible Add Field button since the sidebar can't show there. */}
+                {builderLayout.palette !== 'inline' && (
+                  <Button
+                    ref={addFieldToggleRef}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => toggleDock('palette')}
+                    leftIcon={<Plus className="h-4 w-4" />}
+                  >
+                    Add Field
+                  </Button>
+                )}
+                <div className={cn('flex items-center gap-0.5', builderLayout.palette !== 'inline' && 'border-l border-gray-200 dark:border-slate-700 pl-2')}>
                   <Button size="sm" variant="ghost" onClick={handleUndo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl+Z)">
                     <Undo2 className="h-4 w-4" />
                   </Button>
